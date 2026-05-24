@@ -1,0 +1,30 @@
+# File Index
+
+- `.env.example`
+- `.gitignore`
+- `AGENTS.md`
+- `README.md`
+- `docs/seed/APP_STORE_COPY.md`
+- `docs/seed/CODEX_PROMPTS.md`
+- `docs/seed/MOCK_SCAN_RESULTS.json`
+- `docs/seed/OKYO_MASTER_ONE_NOTE.md`
+- `docs/seed/README.md`
+- `docs/seed/RESTAURANT_PACKS.md`
+- `docs/seed/SHARE_CARD_EXAMPLES.md`
+- `docs/seed/VIRAL_HOOKS.md`
+- `docs/seed/XP_AND_LEADERBOARD_SYSTEM.md`
+- `docs/seed/restaurant_pack_dataset.csv`
+- `docs/wiki/AI_PIPELINE.md`
+- `docs/wiki/ANALYTICS_EVENTS.md`
+- `docs/wiki/API_SPEC.md`
+- `docs/wiki/BUILD_FROM_ZERO.md`
+- `docs/wiki/COST_ENGINE.md`
+- `docs/wiki/DATA_MODEL.md`
+- `docs/wiki/FEATURE_RANKINGS_GALLERY_PACKS.md`
+- `docs/wiki/FRONTEND_ARCHITECTURE.md`
+- `docs/wiki/MONETIZATION.md`
+- `docs/wiki/PRD_SUMMARY.md`
+- `docs/wiki/START_HERE.md`
+- `docs/wiki/USER_FLOWS.md`
+- `docs/wiki/UX_COPY.md`
+- `docs/wiki/V1_BUILD_TASKS.md`

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "001",
+    "dish_name": "Spicy Vodka Rigatoni",
+    "restaurant_style": "Italian-American",
+    "estimated_restaurant_price": 38,
+    "estimated_homemade_cost": 6.4,
+    "estimated_savings": 31.6,
+    "confidence": 0.84,
+    "match_score": 8.4,
+    "difficulty": "Easy",
+    "modes": [
+      "Restaurant Copy",
+      "Budget",
+      "Healthy"
+    ]
+  },
+  {
+    "id": "002",
+    "dish_name": "Cheddar-style Biscuits",
+    "restaurant_style": "Seafood chain inspired",
+    "estimated_restaurant_price": 12,
+    "estimated_homemade_cost": 2.5,
+    "estimated_savings": 9.5,
+    "confidence": 0.88,
+    "match_score": 9.1,
+    "difficulty": "Easy",
+    "modes": [
+      "Restaurant Copy",
+      "Budget",
+      "Healthy"
+    ]
+  },
+  {
+    "id": "003",
+    "dish_name": "Cava-style Grain Bowl",
+    "restaurant_style": "Mediterranean",
+    "estimated_restaurant_price": 17,
+    "estimated_homemade_cost": 5.8,
+    "estimated_savings": 11.2,
+    "confidence": 0.81,
+    "match_score": 8.2,
+    "difficulty": "Easy",
+    "modes": [
+      "Restaurant Copy",
+      "Budget",
+      "Healthy"
+    ]
+  }
+]
