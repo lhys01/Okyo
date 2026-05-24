@@ -3,10 +3,15 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@react-navigation/bottom-tabs": "^7.16.1",
+    "@react-navigation/native": "^7.2.4",
+    "@react-navigation/native-stack": "^7.15.1",
     "expo": "~55.0.0",
     "expo-status-bar": "~55.0.6",
     "react": "19.2.0",
-    "react-native": "0.83.6"
+    "react-native": "0.83.6",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-screens": "~4.23.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
@@ -14,6 +19,7 @@
   },
   "scripts": {
     "start": "expo start",
+    "sim": "expo start -c --host lan --port 8082",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web"
