@@ -1,3 +1,21 @@
 #!/bin/zsh
 cd /Users/rober/Documents/GitHub/Okyo-1/apps/mobile
 npm run sim
+
+#!/bin/zsh
+
+cd /Users/rober/Documents/GitHub/Okyo-1/apps/mobile
+
+npm run sim &
+SERVER_PID=$!
+
+echo "Starting Okyo..."
+sleep 8
+
+xcrun simctl boot 55788C71-3219-4A7A-AEE1-04BA60AFBC3C 2>/dev/null || true
+open -a Simulator
+sleep 4
+
+xcrun simctl openurl 55788C71-3219-4A7A-AEE1-04BA60AFBC3C exp://localhost:8082
+
+wait $SERVER_PID
