@@ -1,3 +1,12 @@
+import type { RecipeMode } from '../mocks';
+
+export type ShareCardType =
+  | 'scan_result'
+  | 'challenge_result'
+  | 'ranking'
+  | 'badge'
+  | 'restaurant_pack';
+
 export type RootStackParamList = {
   WelcomeScreen: undefined;
   GoalScreen: undefined;
@@ -5,16 +14,16 @@ export type RootStackParamList = {
   AnalysisLoadingScreen: undefined;
   ResultSummaryScreen: undefined;
   RecipeDetailScreen: { mode?: RecipeMode } | undefined;
-  GroceryListScreen: undefined;
-  ShareCardPreviewScreen: undefined;
-  DupeChallengeScreen: undefined;
-  ChallengeCompleteScreen: undefined;
-  RestaurantPackDetailScreen: undefined;
+  GroceryListScreen: { mode?: RecipeMode } | undefined;
+  ShareCardPreviewScreen:
+    | { cardType?: ShareCardType; mode?: RecipeMode; packId?: string; dishId?: string }
+    | undefined;
+  DupeChallengeScreen: { mode?: RecipeMode } | undefined;
+  ChallengeCompleteScreen: { challengeId?: string } | undefined;
+  RestaurantPackDetailScreen: { packId?: string } | undefined;
   PaywallScreen: undefined;
   MainTabs: undefined;
 };
-
-type RecipeMode = 'Restaurant Copy' | 'Budget' | 'Healthy';
 
 export type MainTabParamList = {
   ScanScreen: undefined;

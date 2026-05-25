@@ -1,9 +1,12 @@
 import { useNavigation } from '@react-navigation/native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { analyticsEvents, track } from '../analytics/track';
+import { colors, sharedStyles } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
+import { type OnboardingGoal, useOkyoStore } from '../state/useOkyoStore';
 
-const goals = [
+const goals: OnboardingGoal[] = [
   'Save money',
   'Eat healthier',
   'Recreate restaurant meals',
@@ -13,6 +16,13 @@ const goals = [
 
 export function GoalScreen() {
   const navigation = useNavigation();
+  const setGoal = useOkyoStore((state) => state.setGoal);
+
+  const selectGoal = (goal: OnboardingGoal) => {
+    setGoal(goal);
+    track(analyticsEvents.ONBOARDING_GOAL_SELECTED, { screen: 'GoalScreen', goal });
+    navigation.navigate('ScanScreen' as never);
+  };
 
   return (
     <ScreenScaffold
@@ -23,8 +33,8 @@ export function GoalScreen() {
         {goals.map((goal) => (
           <Pressable
             key={goal}
-            style={styles.goalButton}
-            onPress={() => navigation.navigate('ScanScreen' as never)}
+            style={({ pressed }) => [styles.goalButton, pressed ? styles.goalButtonPressed : null]}
+            onPress={() => selectGoal(goal)}
           >
             <Text style={styles.goalText}>{goal}</Text>
           </Pressable>
@@ -40,17 +50,17 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   goalButton: {
-    backgroundColor: '#ffffff',
-    borderColor: '#e4d6c3',
-    borderRadius: 8,
-    borderWidth: 1,
+    ...sharedStyles.card,
     minHeight: 52,
     justifyContent: 'center',
     paddingHorizontal: 16,
   },
+  goalButtonPressed: {
+    opacity: 0.78,
+  },
   goalText: {
-    color: '#1d1b16',
+    color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '900',
   },
 });

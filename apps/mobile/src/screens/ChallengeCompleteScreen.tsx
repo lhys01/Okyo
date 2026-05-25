@@ -1,10 +1,109 @@
-import { ScreenScaffold } from '../components/ScreenScaffold';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { StyleSheet, Text, View } from 'react-native';
+
+import { EmptyState, PrimaryButton, ScreenContainer, SecondaryButton, StatCard, colors } from '../components/OkyoUI';
+import type { RootStackParamList } from '../navigation/types';
+import { useOkyoStore } from '../state/useOkyoStore';
+
+type ChallengeCompleteNavigation = NativeStackNavigationProp<RootStackParamList, 'ChallengeCompleteScreen'>;
+type ChallengeCompleteRoute = RouteProp<RootStackParamList, 'ChallengeCompleteScreen'>;
+const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 
 export function ChallengeCompleteScreen() {
+  const navigation = useNavigation<ChallengeCompleteNavigation>();
+  const route = useRoute<ChallengeCompleteRoute>();
+  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
+  const challenge =
+    completedChallenges.find((completedChallenge) => completedChallenge.id === route.params?.challengeId) ??
+    completedChallenges[completedChallenges.length - 1];
+
+  if (!challenge) {
+    return (
+      <EmptyState
+        eyebrow="Challenge complete"
+        title="No challenge result yet"
+        body="Complete a Dupe Challenge to see your score and savings."
+      />
+    );
+  }
+
   return (
-    <ScreenScaffold
-      title="Challenge complete"
-      body="Placeholder score, XP, badge, and savings confirmation screen."
-    />
+    <ScreenContainer>
+      <Text style={styles.kicker}>Challenge complete</Text>
+      <Text style={styles.title}>{challenge.recipeTitle}</Text>
+      <Text style={styles.description}>
+        You rated this {challenge.rating.toLowerCase()} and logged your estimated savings.
+      </Text>
+
+      <View style={styles.scoreCard}>
+        <Text style={styles.scoreLabel}>Match score</Text>
+        <Text style={styles.scoreValue}>{challenge.matchScore.toFixed(1)}/10</Text>
+      </View>
+
+      <View style={styles.grid}>
+        <StatCard label="Mode" value={challenge.mode} />
+        <StatCard label="Savings earned" value={formatCurrency(challenge.moneySaved)} tone="savings" />
+        <StatCard label="XP earned" value={`+${challenge.xpEarned}`} />
+        <StatCard label="Badge" value={challenge.badgeUnlocked ?? 'None'} />
+      </View>
+
+      <View style={styles.actions}>
+        <PrimaryButton onPress={() => navigation.navigate('ShareCardPreviewScreen', { cardType: 'challenge_result', mode: challenge.mode })}>
+          Share Result
+        </PrimaryButton>
+        <SecondaryButton onPress={() => navigation.navigate('MainTabs')}>Back to Tabs</SecondaryButton>
+      </View>
+    </ScreenContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  kicker: {
+    color: colors.coral,
+    fontSize: 13,
+    fontWeight: '900',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  title: {
+    color: colors.charcoal,
+    fontSize: 32,
+    fontWeight: '900',
+    lineHeight: 37,
+  },
+  description: {
+    color: colors.body,
+    fontSize: 16,
+    lineHeight: 23,
+    marginTop: 10,
+  },
+  scoreCard: {
+    backgroundColor: colors.greenSoft,
+    borderRadius: 20,
+    marginTop: 22,
+    padding: 18,
+  },
+  scoreLabel: {
+    color: colors.green,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  scoreValue: {
+    color: colors.green,
+    fontSize: 38,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 14,
+  },
+  actions: {
+    gap: 10,
+    marginTop: 20,
+  },
+});

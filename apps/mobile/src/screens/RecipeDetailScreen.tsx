@@ -2,14 +2,26 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 
+import { analyticsEvents, track } from '../analytics/track';
+import {
+  BadgePill,
+  ModeTabs,
+  PrimaryButton,
+  ScreenContainer,
+  SecondaryButton,
+  StatCard,
+  colors,
+  sharedStyles,
+} from '../components/OkyoUI';
 import {
   defaultScanResult,
   getDefaultRecipeForMode,
   type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
+import { useOkyoStore } from '../state/useOkyoStore';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 type RecipeDetailNavigation = NativeStackNavigationProp<RootStackParamList, 'RecipeDetailScreen'>;
@@ -19,57 +31,62 @@ export function RecipeDetailScreen() {
   const navigation = useNavigation<RecipeDetailNavigation>();
   const route = useRoute<RecipeDetailRoute>();
   const initialMode = route.params?.mode ?? defaultScanResult.modes[0];
-  const [selectedMode, setSelectedMode] = useState<RecipeMode>(initialMode);
+  const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
+  const setStoreSelectedMode = useOkyoStore((state) => state.setSelectedMode);
+  const saveRecipe = useOkyoStore((state) => state.saveRecipe);
+  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
+  const unlockBadge = useOkyoStore((state) => state.unlockBadge);
+  const [selectedMode, setSelectedMode] = useState<RecipeMode>(initialMode ?? storeSelectedMode);
   const recipe = getDefaultRecipeForMode(selectedMode);
 
   useEffect(() => {
     setSelectedMode(initialMode);
   }, [initialMode]);
 
+  const chooseMode = (mode: RecipeMode) => {
+    setSelectedMode(mode);
+    setStoreSelectedMode(mode);
+    track(analyticsEvents.MODE_SELECTED, {
+      dishName: recipe.title,
+      mode,
+      screen: 'RecipeDetailScreen',
+    });
+  };
+
+  const saveSelectedRecipe = () => {
+    const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
+    saveRecipe(recipe);
+    if (!alreadySaved) {
+      awardXPOnce(`save-recipe-${recipe.id}`, 5);
+    }
+    unlockBadge('first-dupe');
+    track(analyticsEvents.RECIPE_SAVED, {
+      dishName: recipe.title,
+      mode: recipe.mode,
+      savings: recipe.estimatedSavings,
+      screen: 'RecipeDetailScreen',
+    });
+    Alert.alert('Saved', `${recipe.title} was added to your library.`);
+  };
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScreenContainer>
       <View style={styles.headerRow}>
         <Text style={styles.kicker}>Recipe</Text>
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{selectedMode}</Text>
-        </View>
+        <BadgePill tone="dark">{selectedMode}</BadgePill>
       </View>
 
       <Text style={styles.title}>{recipe.title}</Text>
       <Text style={styles.description}>{recipe.description}</Text>
 
-      <View style={styles.modeTabs}>
-        {defaultScanResult.modes.map((mode) => {
-          const selected = selectedMode === mode;
-          return (
-            <Pressable
-              key={mode}
-              style={[styles.modeTab, selected ? styles.modeTabSelected : null]}
-              onPress={() => setSelectedMode(mode)}
-            >
-              <Text style={[styles.modeText, selected ? styles.modeTextSelected : null]}>{mode}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <ModeTabs modes={defaultScanResult.modes} selectedMode={selectedMode} onSelectMode={chooseMode} />
 
       <View style={styles.statsGrid}>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Prep</Text>
-          <Text style={styles.statValue}>{recipe.prepTimeMinutes} min</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Cook</Text>
-          <Text style={styles.statValue}>{recipe.cookTimeMinutes} min</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Difficulty</Text>
-          <Text style={styles.statValue}>{recipe.difficulty}</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Cost</Text>
-          <Text style={styles.statValue}>{formatCurrency(recipe.estimatedHomemadeCost)}</Text>
-        </View>
+        <StatCard label="Prep" value={`${recipe.prepTimeMinutes} min`} />
+        <StatCard label="Cook" value={`${recipe.cookTimeMinutes} min`} />
+        <StatCard label="Difficulty" value={recipe.difficulty} />
+        <StatCard label="Cost" value={formatCurrency(recipe.estimatedHomemadeCost)} />
       </View>
 
       <View style={styles.savingsCard}>
@@ -116,34 +133,22 @@ export function RecipeDetailScreen() {
       </View>
 
       <View style={styles.actions}>
-        <Pressable style={styles.primaryButton} onPress={() => navigation.navigate('MainTabs')}>
-          <Text style={styles.primaryButtonText}>Save Recipe</Text>
-        </Pressable>
-        <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate('GroceryListScreen')}>
-          <Text style={styles.secondaryButtonText}>Grocery List</Text>
-        </Pressable>
-        <Pressable
-          style={styles.secondaryButton}
-          onPress={() => navigation.navigate('DupeChallengeScreen')}
-        >
-          <Text style={styles.secondaryButtonText}>Start Dupe Challenge</Text>
-        </Pressable>
-        <Pressable
-          style={styles.secondaryButton}
-          onPress={() => navigation.navigate('ShareCardPreviewScreen')}
-        >
-          <Text style={styles.secondaryButtonText}>Share Dupe</Text>
-        </Pressable>
+        <PrimaryButton onPress={saveSelectedRecipe}>Save Recipe</PrimaryButton>
+        <SecondaryButton onPress={() => navigation.navigate('GroceryListScreen', { mode: selectedMode })}>
+          Grocery List
+        </SecondaryButton>
+        <SecondaryButton onPress={() => navigation.navigate('DupeChallengeScreen', { mode: selectedMode })}>
+          Start Dupe Challenge
+        </SecondaryButton>
+        <SecondaryButton onPress={() => navigation.navigate('ShareCardPreviewScreen', { cardType: 'scan_result', mode: selectedMode })}>
+          Share Dupe
+        </SecondaryButton>
       </View>
-    </ScrollView>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 24,
-    paddingBottom: 44,
-  },
   headerRow: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -151,62 +156,22 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   kicker: {
-    color: '#8d5d23',
+    color: colors.coral,
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '900',
     textTransform: 'uppercase',
   },
-  badge: {
-    backgroundColor: '#1d1b16',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  badgeText: {
-    color: '#fffaf3',
-    fontSize: 12,
-    fontWeight: '900',
-  },
   title: {
-    color: '#1d1b16',
+    color: colors.charcoal,
     fontSize: 32,
     fontWeight: '900',
     lineHeight: 37,
   },
   description: {
-    color: '#625b50',
+    color: colors.body,
     fontSize: 16,
     lineHeight: 23,
     marginTop: 10,
-  },
-  modeTabs: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 22,
-  },
-  modeTab: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: '#d8cab8',
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    minHeight: 46,
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  modeTabSelected: {
-    backgroundColor: '#1d1b16',
-    borderColor: '#1d1b16',
-  },
-  modeText: {
-    color: '#1d1b16',
-    fontSize: 13,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  modeTextSelected: {
-    color: '#fffaf3',
   },
   statsGrid: {
     flexDirection: 'row',
@@ -214,39 +179,19 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 20,
   },
-  statCard: {
-    backgroundColor: '#ffffff',
-    borderColor: '#eadfce',
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 74,
-    padding: 14,
-    width: '48%',
-  },
-  statLabel: {
-    color: '#625b50',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  statValue: {
-    color: '#1d1b16',
-    fontSize: 18,
-    fontWeight: '900',
-    marginTop: 6,
-  },
   savingsCard: {
-    backgroundColor: '#eef8f1',
-    borderRadius: 8,
+    backgroundColor: colors.greenSoft,
+    borderRadius: 20,
     marginTop: 12,
     padding: 16,
   },
   savingsLabel: {
-    color: '#26583d',
+    color: colors.green,
     fontSize: 14,
     fontWeight: '800',
   },
   savingsValue: {
-    color: '#167247',
+    color: colors.green,
     fontSize: 30,
     fontWeight: '900',
     marginTop: 2,
@@ -258,21 +203,18 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   section: {
-    backgroundColor: '#ffffff',
-    borderColor: '#eadfce',
-    borderRadius: 8,
-    borderWidth: 1,
+    ...sharedStyles.card,
     marginTop: 14,
     padding: 18,
   },
   sectionTitle: {
-    color: '#1d1b16',
+    color: colors.charcoal,
     fontSize: 18,
     fontWeight: '900',
     marginBottom: 10,
   },
   listItem: {
-    color: '#3d372f',
+    color: colors.charcoal,
     fontSize: 15,
     lineHeight: 22,
     marginBottom: 8,
@@ -283,9 +225,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   stepNumber: {
-    backgroundColor: '#1d1b16',
-    borderRadius: 8,
-    color: '#fffaf3',
+    backgroundColor: colors.coral,
+    borderRadius: 999,
+    color: '#fffdf8',
     fontSize: 13,
     fontWeight: '900',
     height: 25,
@@ -295,30 +237,30 @@ const styles = StyleSheet.create({
     width: 25,
   },
   stepText: {
-    color: '#3d372f',
+    color: colors.charcoal,
     flex: 1,
     fontSize: 15,
     lineHeight: 22,
   },
   noteCard: {
-    backgroundColor: '#f7efe2',
-    borderRadius: 8,
+    backgroundColor: colors.cream,
+    borderRadius: 20,
     marginTop: 14,
     padding: 18,
   },
   noteTitle: {
-    color: '#1d1b16',
+    color: colors.charcoal,
     fontSize: 16,
     fontWeight: '900',
     marginBottom: 8,
   },
   noteText: {
-    color: '#3d372f',
+    color: colors.charcoal,
     fontSize: 15,
     lineHeight: 22,
   },
   confidenceText: {
-    color: '#625b50',
+    color: colors.body,
     fontSize: 13,
     lineHeight: 19,
     marginTop: 12,
@@ -326,33 +268,5 @@ const styles = StyleSheet.create({
   actions: {
     gap: 10,
     marginTop: 20,
-  },
-  primaryButton: {
-    alignItems: 'center',
-    backgroundColor: '#1d1b16',
-    borderRadius: 8,
-    minHeight: 54,
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  primaryButtonText: {
-    color: '#fffaf3',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: '#d3c4ae',
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 50,
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  secondaryButtonText: {
-    color: '#1d1b16',
-    fontSize: 15,
-    fontWeight: '800',
   },
 });

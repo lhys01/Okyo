@@ -1,16 +1,193 @@
-import { useNavigation } from '@react-navigation/native';
+import { useEffect, useRef } from 'react';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
-import { ScreenScaffold } from '../components/ScreenScaffold';
+import appConfig from '../../app.json';
+import { analyticsEvents, track } from '../analytics/track';
+import { SecondaryButton, colors, sharedStyles } from '../components/OkyoUI';
+import { useOkyoStore } from '../state/useOkyoStore';
 
 export function SettingsScreen() {
-  const navigation = useNavigation();
+  const resetOnboarding = useOkyoStore((state) => state.resetOnboarding);
+  const clearSavedData = useOkyoStore((state) => state.clearSavedData);
+  const appVersion = appConfig.expo.version;
+  const didTrackView = useRef(false);
+
+  useEffect(() => {
+    if (didTrackView.current) {
+      return;
+    }
+
+    didTrackView.current = true;
+    track(analyticsEvents.SETTINGS_VIEWED, { screen: 'SettingsScreen' });
+  }, []);
+
+  const showPlaceholder = (label: string) => {
+    Alert.alert(label, 'Placeholder only. This will be connected before launch.');
+  };
+
+  const confirmResetOnboarding = () => {
+    Alert.alert('Reset onboarding?', 'You will see the Okyo onboarding flow again.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reset',
+        style: 'destructive',
+        onPress: () => {
+          resetOnboarding();
+          track(analyticsEvents.ONBOARDING_RESET, { screen: 'SettingsScreen' });
+        },
+      },
+    ]);
+  };
+
+  const confirmClearData = () => {
+    Alert.alert(
+      'Clear saved recipes and challenges?',
+      'This clears local saved dupes, challenge results, XP, and badges for testing.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => {
+            clearSavedData();
+            track(analyticsEvents.LOCAL_DATA_CLEARED, { screen: 'SettingsScreen' });
+          },
+        },
+      ],
+    );
+  };
 
   return (
-    <ScreenScaffold
-      title="Settings"
-      body="Placeholder settings, privacy, and support screen."
-      primaryActionLabel="View Okyo Plus"
-      onPrimaryAction={() => navigation.navigate('PaywallScreen' as never)}
-    />
+    <ScrollView contentContainerStyle={styles.container}>
+      <Text style={styles.kicker}>Settings</Text>
+      <Text style={styles.title}>Okyo</Text>
+      <Text style={styles.description}>Version {appVersion}</Text>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Preferences</Text>
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.rowTitle}>Notifications</Text>
+            <Text style={styles.rowBody}>Placeholder. No push notifications are requested yet.</Text>
+          </View>
+          <Switch value={false} onValueChange={() => showPlaceholder('Notifications')} />
+        </View>
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.rowTitle}>Dark theme</Text>
+            <Text style={styles.rowBody}>Placeholder theme toggle.</Text>
+          </View>
+          <Switch value={false} onValueChange={() => showPlaceholder('Theme')} />
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Help and legal</Text>
+        <Pressable style={styles.linkRow} onPress={() => showPlaceholder('Privacy Policy')}>
+          <Text style={styles.linkText}>Privacy Policy</Text>
+        </Pressable>
+        <Pressable style={styles.linkRow} onPress={() => showPlaceholder('Support')}>
+          <Text style={styles.linkText}>Support</Text>
+        </Pressable>
+        <Pressable style={styles.linkRow} onPress={() => showPlaceholder('Terms')}>
+          <Text style={styles.linkText}>Terms</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Development</Text>
+        <SecondaryButton onPress={confirmResetOnboarding}>Reset Onboarding</SecondaryButton>
+        <Pressable style={styles.dangerButton} onPress={confirmClearData}>
+          <Text style={styles.dangerButtonText}>Delete Saved Data</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    backgroundColor: colors.background,
+    padding: 24,
+    paddingBottom: 44,
+  },
+  kicker: {
+    color: colors.coral,
+    fontSize: 13,
+    fontWeight: '900',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  title: {
+    color: colors.charcoal,
+    fontSize: 34,
+    fontWeight: '900',
+    lineHeight: 39,
+  },
+  description: {
+    color: colors.body,
+    fontSize: 16,
+    lineHeight: 23,
+    marginTop: 8,
+  },
+  section: {
+    ...sharedStyles.card,
+    marginTop: 18,
+    padding: 18,
+  },
+  sectionTitle: {
+    color: colors.charcoal,
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 12,
+  },
+  row: {
+    alignItems: 'center',
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: 14,
+    minHeight: 74,
+    paddingVertical: 12,
+  },
+  rowText: {
+    flex: 1,
+  },
+  rowTitle: {
+    color: colors.charcoal,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  rowBody: {
+    color: colors.body,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
+  },
+  linkRow: {
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    minHeight: 48,
+    justifyContent: 'center',
+  },
+  linkText: {
+    color: colors.charcoal,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  dangerButton: {
+    alignItems: 'center',
+    borderColor: '#c98a80',
+    borderRadius: 16,
+    borderWidth: 1,
+    minHeight: 50,
+    justifyContent: 'center',
+    marginTop: 10,
+    paddingHorizontal: 18,
+  },
+  dangerButtonText: {
+    color: '#8c2f21',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+});

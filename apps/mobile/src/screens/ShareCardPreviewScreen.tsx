@@ -1,55 +1,404 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { useRoute } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
+import * as Clipboard from 'expo-clipboard';
+import { useEffect, useRef } from 'react';
+import { Alert, Share, StyleSheet, Text, View } from 'react-native';
 
-import { ScreenScaffold } from '../components/ScreenScaffold';
-import { defaultShareCard } from '../mocks';
+import { analyticsEvents, track } from '../analytics/track';
+import { PrimaryButton, ScreenContainer, SecondaryButton, colors } from '../components/OkyoUI';
+import {
+  defaultRestaurantPack,
+  defaultScanResult,
+  getDefaultRecipeForMode,
+  mockBadges,
+  mockRestaurantPacks,
+  type RecipeMode,
+} from '../mocks';
+import type { RootStackParamList, ShareCardType } from '../navigation/types';
+import { useOkyoStore } from '../state/useOkyoStore';
+
+type ShareCardRoute = RouteProp<RootStackParamList, 'ShareCardPreviewScreen'>;
+
+type StoryCardData = {
+  cardType: ShareCardType;
+  eyebrow: string;
+  dishName: string;
+  restaurantPrice: number;
+  homemadeCost: number;
+  estimatedSavings: number;
+  scoreLabel: string;
+  selectedMode: RecipeMode | string;
+  caption: string;
+  fallbackNote?: string;
+};
+
+const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
+
+function getCardLabel(cardType: ShareCardType) {
+  switch (cardType) {
+    case 'challenge_result':
+      return 'Challenge result';
+    case 'ranking':
+      return 'Weekly ranking';
+    case 'badge':
+      return 'Badge unlocked';
+    case 'restaurant_pack':
+      return 'Restaurant pack';
+    case 'scan_result':
+    default:
+      return 'Scan result';
+  }
+}
+
+function buildCaption(data: StoryCardData) {
+  return `${formatCurrency(data.restaurantPrice)} restaurant ${data.dishName.toLowerCase()} -> ${formatCurrency(
+    data.homemadeCost,
+  )} homemade dupe. Saved about ${formatCurrency(data.estimatedSavings)} with Okyo.`;
+}
 
 export function ShareCardPreviewScreen() {
+  const route = useRoute<ShareCardRoute>();
+  const cardType = route.params?.cardType ?? 'scan_result';
+  const storeMode = useOkyoStore((state) => state.selectedMode);
+  const latestScanResult = useOkyoStore((state) => state.latestScanResult);
+  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
+  const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
+  const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
+  const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
+  const selectedMode = route.params?.mode ?? storeMode;
+  const scanResult = latestScanResult ?? defaultScanResult;
+  const recipe = getDefaultRecipeForMode(selectedMode);
+  const latestChallenge = completedChallenges[completedChallenges.length - 1];
+  const topLeaderboardEntry = leaderboardEntries[0];
+  const unlockedBadge = mockBadges.find((badge) => unlockedBadges.includes(badge.id)) ?? mockBadges[1];
+  const selectedPack =
+    mockRestaurantPacks.find((restaurantPack) => restaurantPack.id === route.params?.packId) ??
+    defaultRestaurantPack;
+  const packDish =
+    selectedPack.dishes.find((dish) => dish.id === route.params?.dishId) ??
+    selectedPack.dishes[0];
+  const fallbackNote = latestScanResult ? undefined : 'Using the default mock scan result.';
+
+  const dataByType: Record<ShareCardType, StoryCardData> = {
+    scan_result: {
+      cardType: 'scan_result',
+      eyebrow: 'I found a dupe',
+      dishName: scanResult.dishName,
+      restaurantPrice: scanResult.restaurantPrice,
+      homemadeCost: recipe.estimatedHomemadeCost,
+      estimatedSavings: recipe.estimatedSavings,
+      scoreLabel: `${scanResult.matchScore.toFixed(1)}/10 match`,
+      selectedMode,
+      caption: '',
+      fallbackNote,
+    },
+    challenge_result: {
+      cardType: 'challenge_result',
+      eyebrow: 'Dupe Challenge complete',
+      dishName: latestChallenge?.recipeTitle ?? scanResult.dishName,
+      restaurantPrice: scanResult.restaurantPrice,
+      homemadeCost: recipe.estimatedHomemadeCost,
+      estimatedSavings: latestChallenge?.moneySaved ?? recipe.estimatedSavings,
+      scoreLabel: `${(latestChallenge?.matchScore ?? scanResult.matchScore).toFixed(1)}/10 match`,
+      selectedMode: latestChallenge?.mode ?? selectedMode,
+      caption: '',
+      fallbackNote,
+    },
+    ranking: {
+      cardType: 'ranking',
+      eyebrow: topLeaderboardEntry.category,
+      dishName: topLeaderboardEntry.displayName,
+      restaurantPrice: scanResult.restaurantPrice,
+      homemadeCost: recipe.estimatedHomemadeCost,
+      estimatedSavings: recipe.estimatedSavings,
+      scoreLabel: `#${topLeaderboardEntry.rank} this week`,
+      selectedMode: topLeaderboardEntry.value,
+      caption: '',
+    },
+    badge: {
+      cardType: 'badge',
+      eyebrow: unlockedBadge.name,
+      dishName: scanResult.dishName,
+      restaurantPrice: scanResult.restaurantPrice,
+      homemadeCost: recipe.estimatedHomemadeCost,
+      estimatedSavings: recipe.estimatedSavings,
+      scoreLabel: unlockedBadge.description,
+      selectedMode,
+      caption: '',
+      fallbackNote,
+    },
+    restaurant_pack: {
+      cardType: 'restaurant_pack',
+      eyebrow: selectedPack.name,
+      dishName: packDish.dishName,
+      restaurantPrice: packDish.restaurantPrice,
+      homemadeCost: packDish.homemadeCost,
+      estimatedSavings: packDish.estimatedSavings,
+      scoreLabel: `${selectedPack.dishes.length} inspired-by dupes`,
+      selectedMode: packDish.difficulty,
+      caption: '',
+    },
+  };
+
+  const cardData = dataByType[cardType];
+  const caption = buildCaption(cardData);
+  const didTrackGenerated = useRef(false);
+
+  useEffect(() => {
+    if (didTrackGenerated.current) {
+      return;
+    }
+
+    didTrackGenerated.current = true;
+    track(analyticsEvents.SHARE_CARD_GENERATED, {
+      cardType,
+      dishName: cardData.dishName,
+      mode: cardData.selectedMode,
+      savings: cardData.estimatedSavings,
+      packName: cardType === 'restaurant_pack' ? selectedPack.name : undefined,
+      screen: 'ShareCardPreviewScreen',
+    });
+  }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, cardType, selectedPack.name]);
+
+  const shareCard = async () => {
+    try {
+      track(analyticsEvents.SHARE_TAPPED, {
+        cardType,
+        dishName: cardData.dishName,
+        savings: cardData.estimatedSavings,
+        screen: 'ShareCardPreviewScreen',
+      });
+      await Share.share({ message: caption, title: 'Okyo dupe card' });
+      awardXPOnce(`share-card-${cardType}-${selectedMode}`, 20);
+      track(analyticsEvents.SHARE_COMPLETED, {
+        cardType,
+        dishName: cardData.dishName,
+        savings: cardData.estimatedSavings,
+        screen: 'ShareCardPreviewScreen',
+      });
+    } catch {
+      Alert.alert('Share unavailable', 'This device could not open the native share sheet.');
+    }
+  };
+
+  const copyCaption = async () => {
+    try {
+      await Clipboard.setStringAsync(caption);
+      Alert.alert('Copied', 'Share caption copied.');
+    } catch {
+      Alert.alert('Copy unavailable', 'The caption could not be copied on this device.');
+    }
+  };
+
+  const saveToPhotos = () => {
+    Alert.alert('Coming soon', 'Saving share cards to Photos is a placeholder for now.');
+  };
+
   return (
-    <ScreenScaffold
-      title="Share card preview"
-      body="Mock preview only. Expo Sharing is not connected yet."
-    >
-      <View style={styles.card}>
-        <Text style={styles.headline}>{defaultShareCard.headline}</Text>
-        <Text style={styles.subheadline}>{defaultShareCard.subheadline}</Text>
-        {defaultShareCard.matchScore ? (
-          <Text style={styles.match}>{defaultShareCard.matchScore.toFixed(1)}/10 match</Text>
-        ) : null}
-        <Text style={styles.footer}>{defaultShareCard.footer}</Text>
+    <ScreenContainer>
+      <Text style={styles.kicker}>{getCardLabel(cardData.cardType)}</Text>
+      <Text style={styles.title}>Share preview</Text>
+      <Text style={styles.description}>
+        Mock story card using local Okyo data. Real image export comes later.
+      </Text>
+
+      <View style={styles.previewFrame}>
+        <View style={styles.storyCard}>
+          <View style={styles.imagePlaceholder}>
+            <View style={styles.photoPlate}>
+              <Text style={styles.imageMonogram}>OK</Text>
+              <Text style={styles.imageLabel}>Food photo</Text>
+            </View>
+          </View>
+
+          <View style={styles.cardBody}>
+            <Text style={styles.cardEyebrow}>{cardData.eyebrow}</Text>
+            <Text style={styles.cardTitle}>{cardData.dishName}</Text>
+
+            <View style={styles.priceRow}>
+              <View>
+                <Text style={styles.priceLabel}>Restaurant</Text>
+                <Text style={styles.priceValue}>{formatCurrency(cardData.restaurantPrice)}</Text>
+              </View>
+              <Text style={styles.arrow}>-&gt;</Text>
+              <View>
+                <Text style={styles.priceLabel}>Homemade</Text>
+                <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
+              </View>
+            </View>
+
+            <View style={styles.savingsBlock}>
+              <Text style={styles.savingsLabel}>Saved about</Text>
+              <Text style={styles.savingsValue}>{formatCurrency(cardData.estimatedSavings)}</Text>
+            </View>
+
+            <View style={styles.metaRow}>
+              <Text style={styles.metaPill}>{cardData.scoreLabel}</Text>
+              <Text style={styles.metaPill}>{cardData.selectedMode}</Text>
+            </View>
+
+            <Text style={styles.watermark}>Made with Okyo</Text>
+          </View>
+        </View>
       </View>
-    </ScreenScaffold>
+
+      {cardData.fallbackNote ? <Text style={styles.fallbackNote}>{cardData.fallbackNote}</Text> : null}
+
+      <View style={styles.actions}>
+        <PrimaryButton onPress={shareCard}>Share</PrimaryButton>
+        <SecondaryButton onPress={copyCaption}>Copy Caption</SecondaryButton>
+        <SecondaryButton onPress={saveToPhotos}>Save to Photos</SecondaryButton>
+      </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: '#1d1b16',
-    borderRadius: 8,
-    marginTop: 24,
-    padding: 22,
-  },
-  headline: {
-    color: '#fffaf3',
-    fontSize: 22,
+  kicker: {
+    color: colors.coral,
+    fontSize: 13,
     fontWeight: '900',
-    lineHeight: 28,
+    marginBottom: 8,
+    textTransform: 'uppercase',
   },
-  subheadline: {
-    color: '#7ee0a8',
-    fontSize: 18,
-    fontWeight: '800',
-    marginTop: 16,
+  title: {
+    color: colors.charcoal,
+    fontSize: 32,
+    fontWeight: '900',
+    lineHeight: 37,
   },
-  match: {
-    color: '#fffaf3',
+  description: {
+    color: colors.body,
     fontSize: 16,
-    fontWeight: '700',
-    marginTop: 8,
+    lineHeight: 23,
+    marginTop: 10,
   },
-  footer: {
-    color: '#d8cab8',
+  previewFrame: {
+    alignItems: 'center',
+    marginTop: 22,
+  },
+  storyCard: {
+    aspectRatio: 9 / 16,
+    backgroundColor: colors.charcoal,
+    borderRadius: 28,
+    maxWidth: 360,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  imagePlaceholder: {
+    alignItems: 'center',
+    backgroundColor: colors.creamDeep,
+    flex: 0.42,
+    justifyContent: 'center',
+  },
+  photoPlate: {
+    alignItems: 'center',
+    backgroundColor: '#fffdf8',
+    borderColor: colors.coral,
+    borderRadius: 74,
+    borderWidth: 5,
+    height: 148,
+    justifyContent: 'center',
+    width: 148,
+  },
+  imageMonogram: {
+    color: colors.coral,
+    fontSize: 42,
+    fontWeight: '900',
+  },
+  imageLabel: {
+    color: colors.body,
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 8,
+    textTransform: 'uppercase',
+  },
+  cardBody: {
+    flex: 0.58,
+    justifyContent: 'space-between',
+    padding: 18,
+  },
+  cardEyebrow: {
+    color: '#ffb199',
+    fontSize: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  cardTitle: {
+    color: '#fffdf8',
+    fontSize: 27,
+    fontWeight: '900',
+    lineHeight: 32,
+  },
+  priceRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  priceLabel: {
+    color: '#cabdab',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  priceValue: {
+    color: '#fffdf8',
+    fontSize: 21,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  arrow: {
+    color: '#ffb199',
+    fontSize: 26,
+    fontWeight: '900',
+  },
+  savingsBlock: {
+    backgroundColor: '#99ebb9',
+    borderRadius: 20,
+    padding: 14,
+  },
+  savingsLabel: {
+    color: '#173523',
+    fontSize: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  savingsValue: {
+    color: '#102418',
+    fontSize: 38,
+    fontWeight: '900',
+    lineHeight: 42,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  metaPill: {
+    backgroundColor: '#fffdf8',
+    borderRadius: 999,
+    color: colors.charcoal,
+    fontSize: 12,
+    fontWeight: '900',
+    overflow: 'hidden',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  watermark: {
+    color: '#fffdf8',
     fontSize: 14,
-    fontWeight: '700',
-    marginTop: 28,
+    fontWeight: '900',
+    textAlign: 'right',
+  },
+  fallbackNote: {
+    color: colors.body,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  actions: {
+    gap: 10,
+    marginTop: 22,
   },
 });

@@ -1,24 +1,30 @@
 import { useNavigation } from '@react-navigation/native';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
+import { analyticsEvents, track } from '../analytics/track';
+import { PrimaryButton, SecondaryButton, colors } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
 
 export function ScanScreen() {
   const navigation = useNavigation();
-  const useMockScan = () => navigation.navigate('AnalysisLoadingScreen' as never);
+  const useMockScan = (source: 'camera' | 'photos') => {
+    track(analyticsEvents.SCAN_STARTED, { screen: 'ScanScreen', source });
+    track(analyticsEvents.PHOTO_UPLOADED, { screen: 'ScanScreen', source });
+    navigation.navigate('AnalysisLoadingScreen' as never);
+  };
 
   return (
     <ScreenScaffold
       title="Scan a meal"
-      body="Take a photo or choose one from your library. For now, both use the same mock result."
+      body="Take a photo or choose one from your library. Okyo will estimate the homemade dupe and savings."
     >
+      <View style={styles.cameraCard}>
+        <Text style={styles.cameraIcon}>OK</Text>
+        <Text style={styles.cameraText}>Mock scan ready</Text>
+      </View>
       <View style={styles.actions}>
-        <Pressable style={styles.primaryButton} onPress={useMockScan}>
-          <Text style={styles.primaryButtonText}>Take Photo</Text>
-        </Pressable>
-        <Pressable style={styles.secondaryButton} onPress={useMockScan}>
-          <Text style={styles.secondaryButtonText}>Upload From Photos</Text>
-        </Pressable>
+        <PrimaryButton onPress={() => useMockScan('camera')}>Take Photo</PrimaryButton>
+        <SecondaryButton onPress={() => useMockScan('photos')}>Upload From Photos</SecondaryButton>
       </View>
     </ScreenScaffold>
   );
@@ -27,34 +33,26 @@ export function ScanScreen() {
 const styles = StyleSheet.create({
   actions: {
     gap: 12,
-    marginTop: 28,
+    marginTop: 20,
   },
-  primaryButton: {
+  cameraCard: {
     alignItems: 'center',
-    backgroundColor: '#1d1b16',
-    borderRadius: 8,
-    minHeight: 54,
+    backgroundColor: colors.cream,
+    borderRadius: 18,
+    height: 150,
     justifyContent: 'center',
-    paddingHorizontal: 18,
+    marginTop: 20,
   },
-  primaryButtonText: {
-    color: '#fffaf3',
-    fontSize: 16,
-    fontWeight: '800',
+  cameraIcon: {
+    color: colors.coral,
+    fontSize: 44,
+    fontWeight: '900',
   },
-  secondaryButton: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: '#d3c4ae',
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 54,
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  secondaryButtonText: {
-    color: '#1d1b16',
-    fontSize: 16,
-    fontWeight: '800',
+  cameraText: {
+    color: colors.body,
+    fontSize: 13,
+    fontWeight: '900',
+    marginTop: 6,
+    textTransform: 'uppercase',
   },
 });

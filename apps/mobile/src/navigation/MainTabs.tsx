@@ -1,5 +1,6 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 
+import { colors } from '../components/OkyoUI';
 import { LibraryScreen } from '../screens/LibraryScreen';
 import { RankingsScreen } from '../screens/RankingsScreen';
 import { RestaurantPacksScreen } from '../screens/RestaurantPacksScreen';
@@ -16,12 +17,19 @@ export function MainTabs() {
       initialRouteName="ScanScreen"
       screenOptions={{
         headerShadowVisible: false,
-        headerStyle: { backgroundColor: '#fffaf3' },
-        headerTintColor: '#1d1b16',
-        sceneStyle: { backgroundColor: '#fffaf3' },
-        tabBarActiveTintColor: '#1d1b16',
-        tabBarInactiveTintColor: '#837b6f',
-        tabBarStyle: { backgroundColor: '#fffaf3', borderTopColor: '#eadfce' },
+        headerStyle: { backgroundColor: colors.background },
+        headerTintColor: colors.charcoal,
+        sceneStyle: { backgroundColor: colors.background },
+        tabBarActiveTintColor: colors.coral,
+        tabBarInactiveTintColor: colors.muted,
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '800' },
+        tabBarStyle: {
+          backgroundColor: colors.card,
+          borderTopColor: colors.border,
+          minHeight: 64,
+          paddingBottom: 8,
+          paddingTop: 6,
+        },
       }}
     >
       <Tab.Screen name="ScanScreen" component={ScanScreen} options={{ title: 'Scan' }} />

@@ -1,5 +1,8 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useEffect, useRef } from 'react';
 
+import { analyticsEvents, track } from '../analytics/track';
+import { colors } from '../components/OkyoUI';
 import { AnalysisLoadingScreen } from '../screens/AnalysisLoadingScreen';
 import { ChallengeCompleteScreen } from '../screens/ChallengeCompleteScreen';
 import { DupeChallengeScreen } from '../screens/DupeChallengeScreen';
@@ -12,20 +15,46 @@ import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
 import { ScanScreen } from '../screens/ScanScreen';
 import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
+import { useOkyoStore } from '../state/useOkyoStore';
 import { MainTabs } from './MainTabs';
 import type { RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function AppNavigator() {
+  const hasCompletedOnboarding = useOkyoStore((state) => state.hasCompletedOnboarding);
+  const didTrackAppOpen = useRef(false);
+
+  useEffect(() => {
+    if (didTrackAppOpen.current) {
+      return;
+    }
+
+    didTrackAppOpen.current = true;
+    track(analyticsEvents.APP_OPEN);
+  }, []);
+
+  if (!hasCompletedOnboarding) {
+    return (
+      <Stack.Navigator
+        screenOptions={{
+          contentStyle: { backgroundColor: colors.background },
+          headerShown: false,
+        }}
+      >
+        <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} />
+      </Stack.Navigator>
+    );
+  }
+
   return (
     <Stack.Navigator
-      initialRouteName="WelcomeScreen"
+      initialRouteName="MainTabs"
       screenOptions={{
-        contentStyle: { backgroundColor: '#fffaf3' },
+        contentStyle: { backgroundColor: colors.background },
         headerShadowVisible: false,
-        headerStyle: { backgroundColor: '#fffaf3' },
-        headerTintColor: '#1d1b16',
+        headerStyle: { backgroundColor: colors.background },
+        headerTintColor: colors.charcoal,
       }}
     >
       <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} options={{ title: 'Okyo' }} />

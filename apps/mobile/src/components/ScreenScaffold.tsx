@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+
+import { PrimaryButton, ScreenContainer, SecondaryButton, colors, sharedStyles } from './OkyoUI';
 
 type ScreenScaffoldProps = {
   title: string;
@@ -21,81 +23,51 @@ export function ScreenScaffold({
   children,
 }: ScreenScaffoldProps) {
   return (
-    <View style={styles.container}>
+    <ScreenContainer scroll={false} centered>
       <Text style={styles.kicker}>Okyo</Text>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.body}>{body}</Text>
-      {children}
+      <View style={styles.heroCard}>
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.body}>{body}</Text>
+        {children}
+      </View>
       <View style={styles.actions}>
         {primaryActionLabel && onPrimaryAction ? (
-          <Pressable style={styles.primaryButton} onPress={onPrimaryAction}>
-            <Text style={styles.primaryButtonText}>{primaryActionLabel}</Text>
-          </Pressable>
+          <PrimaryButton onPress={onPrimaryAction}>{primaryActionLabel}</PrimaryButton>
         ) : null}
         {secondaryActionLabel && onSecondaryAction ? (
-          <Pressable style={styles.secondaryButton} onPress={onSecondaryAction}>
-            <Text style={styles.secondaryButtonText}>{secondaryActionLabel}</Text>
-          </Pressable>
+          <SecondaryButton onPress={onSecondaryAction}>{secondaryActionLabel}</SecondaryButton>
         ) : null}
       </View>
-    </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
   kicker: {
-    color: '#8d5d23',
+    color: colors.coral,
     fontSize: 14,
-    fontWeight: '800',
-    marginBottom: 10,
+    fontWeight: '900',
+    marginBottom: 12,
     textTransform: 'uppercase',
   },
+  heroCard: {
+    ...sharedStyles.card,
+    padding: 20,
+  },
   title: {
-    color: '#1d1b16',
+    color: colors.charcoal,
     fontSize: 32,
-    fontWeight: '800',
+    fontWeight: '900',
     lineHeight: 38,
     marginBottom: 12,
   },
   body: {
-    color: '#5f5a51',
+    color: colors.body,
     fontSize: 17,
     lineHeight: 25,
   },
   actions: {
     gap: 12,
-    marginTop: 28,
-  },
-  primaryButton: {
-    alignItems: 'center',
-    backgroundColor: '#1d1b16',
-    borderRadius: 8,
-    minHeight: 52,
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  primaryButtonText: {
-    color: '#fffaf3',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderColor: '#d3c4ae',
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 52,
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-  },
-  secondaryButtonText: {
-    color: '#1d1b16',
-    fontSize: 16,
-    fontWeight: '700',
+    marginTop: 18,
   },
 });

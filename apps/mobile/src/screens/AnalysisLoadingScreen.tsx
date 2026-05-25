@@ -2,7 +2,10 @@ import { useNavigation } from '@react-navigation/native';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
+import { analyticsEvents, track } from '../analytics/track';
+import { colors, sharedStyles } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
+import { defaultScanResult, getDefaultRecipeForMode } from '../mocks';
 
 const loadingCopy = [
   'Identifying the dish…',
@@ -20,6 +23,17 @@ export function AnalysisLoadingScreen() {
       setCopyIndex((currentIndex) => (currentIndex + 1) % loadingCopy.length);
     }, 500);
     const finish = setTimeout(() => {
+      const recipe = getDefaultRecipeForMode(defaultScanResult.modes[0]);
+      track(analyticsEvents.DISH_DETECTED, {
+        dishName: defaultScanResult.dishName,
+        screen: 'AnalysisLoadingScreen',
+      });
+      track(analyticsEvents.RECIPE_GENERATED, {
+        dishName: defaultScanResult.dishName,
+        mode: recipe.mode,
+        savings: recipe.estimatedSavings,
+        screen: 'AnalysisLoadingScreen',
+      });
       navigation.navigate('ResultSummaryScreen' as never);
     }, 2000);
 
@@ -35,7 +49,9 @@ export function AnalysisLoadingScreen() {
       body="Using mock data for this first scan."
     >
       <View style={styles.loadingCard}>
-        <ActivityIndicator color="#1d1b16" size="large" />
+        <View style={styles.pulse}>
+          <ActivityIndicator color={colors.coral} size="large" />
+        </View>
         <Text style={styles.loadingText}>{loadingCopy[copyIndex]}</Text>
       </View>
     </ScreenScaffold>
@@ -44,19 +60,24 @@ export function AnalysisLoadingScreen() {
 
 const styles = StyleSheet.create({
   loadingCard: {
+    ...sharedStyles.card,
     alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: '#eadfce',
-    borderRadius: 8,
-    borderWidth: 1,
     gap: 14,
     marginTop: 28,
     padding: 24,
   },
+  pulse: {
+    alignItems: 'center',
+    backgroundColor: colors.cream,
+    borderRadius: 34,
+    height: 68,
+    justifyContent: 'center',
+    width: 68,
+  },
   loadingText: {
-    color: '#1d1b16',
+    color: colors.charcoal,
     fontSize: 17,
-    fontWeight: '700',
+    fontWeight: '900',
     textAlign: 'center',
   },
 });
