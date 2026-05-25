@@ -1,14 +1,18 @@
 import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { defaultScanResult, type RecipeMode } from '../mocks';
+import { defaultScanResult, getDefaultRecipeForMode, type RecipeMode } from '../mocks';
+import type { RootStackParamList } from '../navigation/types';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
+type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'ResultSummaryScreen'>;
 
 export function ResultSummaryScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<ResultSummaryNavigation>();
   const [selectedMode, setSelectedMode] = useState<RecipeMode>(defaultScanResult.modes[0]);
+  const selectedRecipe = getDefaultRecipeForMode(selectedMode);
   const confidencePercent = Math.round(defaultScanResult.confidence * 100);
 
   return (
@@ -30,11 +34,15 @@ export function ResultSummaryScreen() {
         </View>
         <View style={styles.metricRow}>
           <Text style={styles.metricLabel}>Homemade cost</Text>
-          <Text style={styles.metricValue}>{formatCurrency(defaultScanResult.homemadeCost)}</Text>
+          <Text style={styles.metricValue}>{formatCurrency(selectedRecipe.estimatedHomemadeCost)}</Text>
+        </View>
+        <View style={styles.metricRow}>
+          <Text style={styles.metricLabel}>Difficulty</Text>
+          <Text style={styles.metricValue}>{selectedRecipe.difficulty}</Text>
         </View>
         <View style={styles.savingsRow}>
           <Text style={styles.savingsLabel}>Estimated savings</Text>
-          <Text style={styles.savingsValue}>{formatCurrency(defaultScanResult.estimatedSavings)}</Text>
+          <Text style={styles.savingsValue}>{formatCurrency(selectedRecipe.estimatedSavings)}</Text>
         </View>
       </View>
 
@@ -57,14 +65,14 @@ export function ResultSummaryScreen() {
         <Text style={styles.matchLabel}>Match score</Text>
         <Text style={styles.matchValue}>{defaultScanResult.matchScore.toFixed(1)}/10</Text>
         <Text style={styles.matchNote}>
-          {selectedMode} mode is selected. This is fake data for the MVP flow.
+          {selectedRecipe.title}: {selectedRecipe.description}
         </Text>
       </View>
 
       <View style={styles.actions}>
         <Pressable
           style={styles.primaryButton}
-          onPress={() => navigation.navigate('RecipeDetailScreen' as never)}
+          onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })}
         >
           <Text style={styles.primaryButtonText}>View Recipe</Text>
         </Pressable>

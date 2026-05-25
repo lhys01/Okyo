@@ -1,15 +1,18 @@
-import type { Recipe } from './types';
+import type { Recipe, RecipeMode } from './types';
 
 export const mockRecipes: Recipe[] = [
   {
-    id: 'recipe-spicy-vodka-rigatoni',
+    id: 'recipe-spicy-vodka-rigatoni-restaurant-copy',
     scanResultId: '001',
-    title: 'Spicy Vodka Rigatoni',
+    title: 'Spicy Vodka Rigatoni Copycat',
     mode: 'Restaurant Copy',
+    description: 'A creamy tomato rigatoni with parmesan, gentle heat, and a glossy restaurant-style sauce.',
     prepTimeMinutes: 10,
     cookTimeMinutes: 20,
     servings: 2,
     difficulty: 'Easy',
+    estimatedHomemadeCost: 6.4,
+    estimatedSavings: 31.6,
     ingredients: [
       { name: 'rigatoni', quantity: '8 oz' },
       { name: 'tomato paste', quantity: '3 tbsp' },
@@ -19,22 +22,96 @@ export const mockRecipes: Recipe[] = [
       { name: 'olive oil', quantity: '2 tbsp', pantryItem: true },
     ],
     steps: [
-      'Boil rigatoni until just shy of al dente.',
-      'Bloom tomato paste and red pepper flakes in olive oil.',
-      'Stir in cream, parmesan, and pasta water to make a glossy sauce.',
-      'Toss pasta in the sauce and adjust seasoning before serving.',
+      'Boil rigatoni until just shy of al dente, reserving 1 cup of pasta water.',
+      'Bloom tomato paste and red pepper flakes in olive oil until brick red.',
+      'Stir in cream, parmesan, and splashes of pasta water until glossy.',
+      'Toss rigatoni in the sauce until coated, then season to taste.',
     ],
+    substitutions: [
+      'Use penne or mezzi rigatoni if rigatoni is unavailable.',
+      'Swap parmesan for pecorino for a sharper finish.',
+    ],
+    pantryNote: 'Assumes olive oil, salt, pepper, and red pepper flakes are already in the pantry.',
     confidenceNote: 'Mock recipe based on the visible dish style; ingredients and costs are estimates.',
   },
   {
-    id: 'recipe-cheddar-biscuits',
+    id: 'recipe-spicy-vodka-rigatoni-budget',
+    scanResultId: '001',
+    title: 'Budget Spicy Tomato Rigatoni',
+    mode: 'Budget',
+    description: 'A lower-cost version that keeps the creamy tomato feel with fewer premium ingredients.',
+    prepTimeMinutes: 8,
+    cookTimeMinutes: 18,
+    servings: 2,
+    difficulty: 'Easy',
+    estimatedHomemadeCost: 4.9,
+    estimatedSavings: 33.1,
+    ingredients: [
+      { name: 'rigatoni', quantity: '8 oz' },
+      { name: 'tomato paste', quantity: '2 tbsp' },
+      { name: 'milk', quantity: '1/2 cup' },
+      { name: 'butter', quantity: '1 tbsp' },
+      { name: 'grated parmesan blend', quantity: '1/4 cup' },
+      { name: 'red pepper flakes', quantity: '1 tsp', pantryItem: true },
+    ],
+    steps: [
+      'Cook pasta until al dente and reserve pasta water.',
+      'Toast tomato paste and red pepper flakes with butter.',
+      'Add milk and a splash of pasta water, then simmer until lightly thickened.',
+      'Fold in pasta and parmesan blend until creamy.',
+    ],
+    substitutions: [
+      'Use any short pasta already on hand.',
+      'Use evaporated milk for a creamier sauce without buying heavy cream.',
+    ],
+    pantryNote: 'Assumes butter, salt, pepper, and chili flakes may already be on hand.',
+    confidenceNote: 'Budget mode is a mock estimate and may trade some restaurant richness for cost savings.',
+  },
+  {
+    id: 'recipe-spicy-vodka-rigatoni-healthy',
+    scanResultId: '001',
+    title: 'Lighter Spicy Vodka Rigatoni',
+    mode: 'Healthy',
+    description: 'A lighter take with extra vegetables and Greek yogurt for a creamy finish.',
+    prepTimeMinutes: 12,
+    cookTimeMinutes: 20,
+    servings: 2,
+    difficulty: 'Medium',
+    estimatedHomemadeCost: 7.15,
+    estimatedSavings: 30.85,
+    ingredients: [
+      { name: 'whole wheat rigatoni', quantity: '8 oz' },
+      { name: 'tomato paste', quantity: '2 tbsp' },
+      { name: 'plain Greek yogurt', quantity: '1/3 cup' },
+      { name: 'spinach', quantity: '2 cups' },
+      { name: 'parmesan', quantity: '1/4 cup grated' },
+      { name: 'red pepper flakes', quantity: '1/2 tsp', pantryItem: true },
+    ],
+    steps: [
+      'Cook whole wheat rigatoni and reserve pasta water.',
+      'Bloom tomato paste and red pepper flakes with a small splash of olive oil.',
+      'Wilt spinach into the sauce, then remove from heat before stirring in Greek yogurt.',
+      'Toss pasta with parmesan and enough pasta water to loosen the sauce.',
+    ],
+    substitutions: [
+      'Use chickpea pasta for more protein.',
+      'Swap spinach for kale or arugula.',
+    ],
+    pantryNote: 'Assumes olive oil, salt, pepper, and red pepper flakes are pantry staples.',
+    confidenceNote: 'Healthy mode is a mock estimate and is not a nutrition calculation.',
+  },
+  {
+    id: 'recipe-cheddar-biscuits-restaurant-copy',
     scanResultId: '002',
     title: 'Cheddar-style Biscuits',
     mode: 'Restaurant Copy',
+    description: 'Tender cheddar biscuits brushed with garlic butter.',
     prepTimeMinutes: 10,
     cookTimeMinutes: 15,
     servings: 6,
     difficulty: 'Easy',
+    estimatedHomemadeCost: 2.5,
+    estimatedSavings: 9.5,
     ingredients: [
       { name: 'biscuit mix', quantity: '2 cups' },
       { name: 'shredded cheddar', quantity: '1 cup' },
@@ -47,17 +124,22 @@ export const mockRecipes: Recipe[] = [
       'Scoop onto a baking sheet and bake until golden.',
       'Brush with melted garlic butter before serving.',
     ],
+    substitutions: ['Use any sharp shredded cheese.', 'Use dairy-free butter if needed.'],
+    pantryNote: 'Assumes garlic powder, salt, and pepper are pantry staples.',
     confidenceNote: 'Mock recipe inspired by seafood-chain cheddar biscuits; values are estimates.',
   },
   {
-    id: 'recipe-cava-grain-bowl',
+    id: 'recipe-cava-grain-bowl-healthy',
     scanResultId: '003',
     title: 'Cava-style Grain Bowl',
     mode: 'Healthy',
+    description: 'A fresh grain bowl with greens, protein, hummus, and harissa dressing.',
     prepTimeMinutes: 15,
     cookTimeMinutes: 10,
     servings: 2,
     difficulty: 'Easy',
+    estimatedHomemadeCost: 5.8,
+    estimatedSavings: 11.2,
     ingredients: [
       { name: 'cooked grains', quantity: '2 cups' },
       { name: 'chicken or falafel', quantity: '8 oz' },
@@ -71,8 +153,16 @@ export const mockRecipes: Recipe[] = [
       'Add protein, cucumber, hummus, and dressing.',
       'Finish with herbs or extra sauce to taste.',
     ],
+    substitutions: ['Use rice, lentils, or quinoa as the grain base.', 'Swap chicken for falafel.'],
+    pantryNote: 'Assumes salt, pepper, and olive oil are available.',
     confidenceNote: 'Mock bowl composition based on the seed result; nutrition and costs are estimates.',
   },
 ];
 
 export const defaultRecipe = mockRecipes[0];
+
+export function getDefaultRecipeForMode(mode: RecipeMode) {
+  return (
+    mockRecipes.find((recipe) => recipe.scanResultId === '001' && recipe.mode === mode) ?? defaultRecipe
+  );
+}

@@ -29,12 +29,17 @@ export type Recipe = {
   scanResultId: string;
   title: string;
   mode: RecipeMode;
+  description: string;
   prepTimeMinutes: number;
   cookTimeMinutes: number;
   servings: number;
   difficulty: Difficulty;
+  estimatedHomemadeCost: number;
+  estimatedSavings: number;
   ingredients: RecipeIngredient[];
   steps: string[];
+  substitutions: string[];
+  pantryNote: string;
   confidenceNote: string;
 };
 

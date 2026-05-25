@@ -4,7 +4,7 @@ export type RootStackParamList = {
   ScanScreen: undefined;
   AnalysisLoadingScreen: undefined;
   ResultSummaryScreen: undefined;
-  RecipeDetailScreen: undefined;
+  RecipeDetailScreen: { mode?: RecipeMode } | undefined;
   GroceryListScreen: undefined;
   ShareCardPreviewScreen: undefined;
   DupeChallengeScreen: undefined;
@@ -13,6 +13,8 @@ export type RootStackParamList = {
   PaywallScreen: undefined;
   MainTabs: undefined;
 };
+
+type RecipeMode = 'Restaurant Copy' | 'Budget' | 'Healthy';
 
 export type MainTabParamList = {
   ScanScreen: undefined;
