@@ -1,7 +1,9 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { analyticsEvents, track } from '../analytics/track';
 import { EmptyState, PackCard, ScreenContainer, colors } from '../components/OkyoUI';
 import { mockRestaurantPacks, type RestaurantPack } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
@@ -14,22 +16,45 @@ function getPackDescription(packName: string) {
 }
 
 function getAverageSavings(pack: RestaurantPack) {
-  if (pack.dishes.length === 0) {
+  const dishes = Array.isArray(pack.dishes) ? pack.dishes : [];
+
+  if (dishes.length === 0) {
     return 0;
   }
 
-  return pack.dishes.reduce((total, dish) => total + dish.estimatedSavings, 0) / pack.dishes.length;
+  return dishes.reduce((total, dish) => total + (typeof dish?.estimatedSavings === 'number' ? dish.estimatedSavings : 0), 0) / dishes.length;
 }
 
 export function RestaurantPacksScreen() {
   const navigation = useNavigation<RestaurantPacksNavigation>();
+  const didTrackMalformedData = useRef(false);
+  const safePacks = Array.isArray(mockRestaurantPacks)
+    ? mockRestaurantPacks.filter((pack) => pack?.id && pack?.name && Array.isArray(pack?.dishes))
+    : [];
+  const malformedPackCount = Array.isArray(mockRestaurantPacks)
+    ? mockRestaurantPacks.length - safePacks.length
+    : 1;
 
-  if (mockRestaurantPacks.length === 0) {
+  useEffect(() => {
+    if (didTrackMalformedData.current || malformedPackCount <= 0) {
+      return;
+    }
+
+    didTrackMalformedData.current = true;
+    track(analyticsEvents.RESULT_ERROR, {
+      errorMessage: 'Restaurant pack data was missing required fields.',
+      screen: 'RestaurantPacksScreen',
+    });
+  }, [malformedPackCount]);
+
+  if (safePacks.length === 0) {
     return (
       <EmptyState
         eyebrow="Packs"
         title="No packs yet"
-        body="Static inspired-by restaurant packs will appear here."
+        body="Static inspired-by restaurant packs will appear here. You can still start with the first mock scan."
+        actionLabel="Start a Scan"
+        onAction={() => navigation.navigate('ScanScreen')}
       />
     );
   }
@@ -43,8 +68,9 @@ export function RestaurantPacksScreen() {
       </Text>
 
       <View style={styles.packGrid}>
-        {mockRestaurantPacks.map((pack, index) => {
-          const topDish = [...pack.dishes].sort((a, b) => b.estimatedSavings - a.estimatedSavings)[0];
+        {safePacks.map((pack, index) => {
+          const packDishes = Array.isArray(pack.dishes) ? pack.dishes : [];
+          const topDish = [...packDishes].sort((a, b) => b.estimatedSavings - a.estimatedSavings)[0];
           const label = index < 3 ? 'Free' : 'Premium preview';
 
           return (

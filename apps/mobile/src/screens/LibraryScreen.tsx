@@ -1,8 +1,11 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { analyticsEvents, track } from '../analytics/track';
 import { EmptyState, RecipeCard, ScreenContainer, colors } from '../components/OkyoUI';
+import { getSafeRecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 
@@ -12,13 +15,30 @@ export function LibraryScreen() {
   const navigation = useNavigation<LibraryNavigation>();
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const removeSavedRecipe = useOkyoStore((state) => state.removeSavedRecipe);
+  const didTrackMalformedData = useRef(false);
+  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
+  const malformedRecipeCount = safeSavedRecipes.filter((recipe) => !recipe?.id || !recipe?.title).length;
 
-  if (savedRecipes.length === 0) {
+  useEffect(() => {
+    if (didTrackMalformedData.current || malformedRecipeCount === 0) {
+      return;
+    }
+
+    didTrackMalformedData.current = true;
+    track(analyticsEvents.RESULT_ERROR, {
+      errorMessage: 'Saved recipe data was missing fields.',
+      screen: 'LibraryScreen',
+    });
+  }, [malformedRecipeCount]);
+
+  if (safeSavedRecipes.length === 0) {
     return (
       <EmptyState
         eyebrow="Library"
         title="Your saved dupes will appear here."
         body="Save a recipe from a scan result to build your local Okyo library."
+        actionLabel="Start a Scan"
+        onAction={() => navigation.navigate('ScanScreen')}
       />
     );
   }
@@ -28,16 +48,16 @@ export function LibraryScreen() {
       <Text style={styles.kicker}>Library</Text>
       <Text style={styles.title}>Saved recipes</Text>
       <Text style={styles.description}>
-        {savedRecipes.length} local {savedRecipes.length === 1 ? 'dupe' : 'dupes'} saved.
+        {safeSavedRecipes.length} local {safeSavedRecipes.length === 1 ? 'dupe' : 'dupes'} saved.
       </Text>
 
       <View style={styles.cardList}>
-        {savedRecipes.map((recipe) => (
+        {safeSavedRecipes.map((recipe, index) => (
           <RecipeCard
-            key={recipe.id}
+            key={recipe?.id ?? `saved-recipe-${index}`}
             recipe={recipe}
-            onPress={() => navigation.navigate('RecipeDetailScreen', { mode: recipe.mode })}
-            onRemove={() => removeSavedRecipe(recipe.id)}
+            onPress={() => navigation.navigate('RecipeDetailScreen', { mode: getSafeRecipeMode(recipe?.mode) })}
+            onRemove={() => recipe?.id ? removeSavedRecipe(recipe.id) : undefined}
           />
         ))}
       </View>

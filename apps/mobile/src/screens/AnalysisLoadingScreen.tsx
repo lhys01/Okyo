@@ -5,7 +5,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { analyticsEvents, track } from '../analytics/track';
 import { colors, sharedStyles } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
-import { defaultScanResult, getDefaultRecipeForMode } from '../mocks';
+import { defaultScanResult, getSafeRecipeForMode } from '../mocks';
 
 const loadingCopy = [
   'Identifying the dish…',
@@ -23,7 +23,16 @@ export function AnalysisLoadingScreen() {
       setCopyIndex((currentIndex) => (currentIndex + 1) % loadingCopy.length);
     }, 500);
     const finish = setTimeout(() => {
-      const recipe = getDefaultRecipeForMode(defaultScanResult.modes[0]);
+      const recipe = getSafeRecipeForMode(defaultScanResult.modes[0]);
+      if (!recipe) {
+        track(analyticsEvents.RESULT_ERROR, {
+          errorMessage: 'Mock recipe was unavailable after loading.',
+          screen: 'AnalysisLoadingScreen',
+        });
+        navigation.navigate('ScanScreen' as never);
+        return;
+      }
+
       track(analyticsEvents.DISH_DETECTED, {
         dishName: defaultScanResult.dishName,
         screen: 'AnalysisLoadingScreen',

@@ -14,7 +14,6 @@ import {
   sharedStyles,
 } from '../components/OkyoUI';
 import {
-  defaultRestaurantPack,
   mockRestaurantPacks,
   type Recipe,
   type RecipeMode,
@@ -34,11 +33,13 @@ function getPackDescription(packName: string) {
 }
 
 function getAverageSavings(pack: RestaurantPack) {
-  if (pack.dishes.length === 0) {
+  const dishes = Array.isArray(pack.dishes) ? pack.dishes : [];
+
+  if (dishes.length === 0) {
     return 0;
   }
 
-  return pack.dishes.reduce((total, dish) => total + dish.estimatedSavings, 0) / pack.dishes.length;
+  return dishes.reduce((total, dish) => total + (typeof dish?.estimatedSavings === 'number' ? dish.estimatedSavings : 0), 0) / dishes.length;
 }
 
 function getClosestMode(dish: RestaurantPackDish): RecipeMode {
@@ -85,9 +86,8 @@ function makePackRecipe(pack: RestaurantPack, dish: RestaurantPackDish): Recipe 
 export function RestaurantPackDetailScreen() {
   const navigation = useNavigation<RestaurantPackDetailNavigation>();
   const route = useRoute<RestaurantPackDetailRoute>();
-  const pack =
-    mockRestaurantPacks.find((restaurantPack) => restaurantPack.id === route.params?.packId) ??
-    defaultRestaurantPack;
+  const packId = route.params?.packId;
+  const pack = mockRestaurantPacks.find((restaurantPack) => restaurantPack.id === packId);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
@@ -100,11 +100,36 @@ export function RestaurantPackDetailScreen() {
     }
 
     didTrackView.current = true;
+    if (!pack) {
+      track(analyticsEvents.RESULT_ERROR, {
+        errorMessage: 'Restaurant pack was missing or not found.',
+        packName: packId,
+        screen: 'RestaurantPackDetailScreen',
+      });
+      return;
+    }
+
     track(analyticsEvents.RESTAURANT_PACK_VIEWED, {
       packName: pack.name,
       screen: 'RestaurantPackDetailScreen',
     });
-  }, [pack.name]);
+  }, [pack, packId]);
+
+  if (!pack) {
+    return (
+      <ScreenContainer scroll={false} centered>
+        <Text style={styles.kicker}>Restaurant Pack</Text>
+        <Text style={styles.title}>Pack not found</Text>
+        <Text style={styles.description}>
+          This inspired-by pack is not available in the mock data yet.
+        </Text>
+        <View style={styles.primaryAction}>
+          <PrimaryButton onPress={() => navigation.navigate('MainTabs')}>Back to Packs</PrimaryButton>
+        </View>
+      </ScreenContainer>
+    );
+  }
+  const safeDishes = Array.isArray(pack.dishes) ? pack.dishes : [];
 
   const saveDish = (dish: RestaurantPackDish) => {
     const recipe = makePackRecipe(pack, dish);
@@ -151,7 +176,7 @@ export function RestaurantPackDetailScreen() {
         </View>
         <View>
           <Text style={styles.summaryLabel}>Dishes</Text>
-          <Text style={styles.summaryValue}>{pack.dishes.length}</Text>
+          <Text style={styles.summaryValue}>{safeDishes.length}</Text>
         </View>
       </View>
 
@@ -160,7 +185,7 @@ export function RestaurantPackDetailScreen() {
       </View>
 
       <View style={styles.dishList}>
-        {pack.dishes.map((dish) => (
+        {safeDishes.length > 0 ? safeDishes.map((dish) => (
           <View key={dish.id} style={styles.dishCard}>
             <View style={styles.dishHeader}>
               <Text style={styles.dishName}>{dish.dishName}</Text>
@@ -186,7 +211,14 @@ export function RestaurantPackDetailScreen() {
               <SecondaryButton onPress={() => sharePack(dish)}>Share Dish</SecondaryButton>
             </View>
           </View>
-        ))}
+        )) : (
+          <View style={styles.dishCard}>
+            <Text style={styles.dishName}>No dishes in this pack yet</Text>
+            <Text style={styles.description}>
+              This pack exists, but its mock dish list is empty.
+            </Text>
+          </View>
+        )}
       </View>
     </ScreenContainer>
   );

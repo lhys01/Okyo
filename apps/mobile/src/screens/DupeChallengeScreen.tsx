@@ -6,7 +6,13 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { BadgePill, PrimaryButton, ScreenContainer, colors, sharedStyles } from '../components/OkyoUI';
-import { defaultScanResult, getDefaultRecipeForMode, type RecipeMode } from '../mocks';
+import {
+  defaultScanResult,
+  getSafeRecipeForMode,
+  getSafeRecipeMode,
+  isRecipeMode,
+  type RecipeMode,
+} from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { type ChallengeRating, useOkyoStore } from '../state/useOkyoStore';
 
@@ -42,7 +48,8 @@ export function DupeChallengeScreen() {
   const navigation = useNavigation<DupeChallengeNavigation>();
   const route = useRoute<DupeChallengeRoute>();
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
-  const selectedMode = route.params?.mode ?? storeSelectedMode;
+  const rawMode = route.params?.mode ?? storeSelectedMode;
+  const selectedMode = getSafeRecipeMode(rawMode);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const completeChallenge = useOkyoStore((state) => state.completeChallenge);
   const incrementMoneySaved = useOkyoStore((state) => state.incrementMoneySaved);
@@ -52,7 +59,7 @@ export function DupeChallengeScreen() {
   const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
   const [isCooked, setIsCooked] = useState(false);
   const startedXpAdded = useRef(false);
-  const recipe = getDefaultRecipeForMode(selectedMode);
+  const recipe = getSafeRecipeForMode(selectedMode);
 
   useEffect(() => {
     setSelectedMode(selectedMode);
@@ -63,10 +70,16 @@ export function DupeChallengeScreen() {
         savings: recipe.estimatedSavings,
         screen: 'DupeChallengeScreen',
       });
+      if (!isRecipeMode(rawMode)) {
+        track(analyticsEvents.RESULT_ERROR, {
+          errorMessage: 'Challenge mode was missing or invalid.',
+          screen: 'DupeChallengeScreen',
+        });
+      }
       awardXPOnce(`start-dupe-challenge-${recipe.id}`, 15);
       startedXpAdded.current = true;
     }
-  }, [awardXPOnce, recipe.estimatedSavings, recipe.id, recipe.title, selectedMode, setSelectedMode]);
+  }, [awardXPOnce, rawMode, recipe.estimatedSavings, recipe.id, recipe.title, selectedMode, setSelectedMode]);
 
   const finishChallenge = (rating: ChallengeRating, matchScore: number) => {
     const savings = recipe.estimatedSavings;
@@ -121,6 +134,13 @@ export function DupeChallengeScreen() {
       <Text style={styles.description}>
         Cook the mock recipe, compare it with the restaurant version, then rate how close you got.
       </Text>
+      {!isRecipeMode(rawMode) ? (
+        <View style={styles.fallbackNote}>
+          <Text style={styles.fallbackNoteText}>
+            We could not find that challenge mode, so Okyo is using Restaurant Copy.
+          </Text>
+        </View>
+      ) : null}
 
       <View style={styles.summaryCard}>
         <View style={styles.summaryRow}>
@@ -164,6 +184,11 @@ export function DupeChallengeScreen() {
           ))}
         </View>
       )}
+      <View style={styles.returnAction}>
+        <PrimaryButton onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })}>
+          Back to Recipe
+        </PrimaryButton>
+      </View>
     </ScreenContainer>
   );
 }
@@ -187,6 +212,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 23,
     marginTop: 10,
+  },
+  fallbackNote: {
+    backgroundColor: colors.cream,
+    borderRadius: 16,
+    marginTop: 14,
+    padding: 14,
+  },
+  fallbackNoteText: {
+    color: colors.body,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
   },
   summaryCard: {
     ...sharedStyles.card,
@@ -270,5 +307,8 @@ const styles = StyleSheet.create({
     color: colors.green,
     fontSize: 15,
     fontWeight: '900',
+  },
+  returnAction: {
+    marginTop: 12,
   },
 });

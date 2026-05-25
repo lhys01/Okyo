@@ -112,26 +112,41 @@ export function RankingsScreen() {
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
   const didTrackView = useRef(false);
-  const level = getLevel(xp);
+  const safeXp = typeof xp === 'number' && Number.isFinite(xp) ? xp : 0;
+  const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
+  const safeLeaderboardEntries = Array.isArray(leaderboardEntries) ? leaderboardEntries : [];
+  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
+  const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
+  const safeTotalMoneySaved = typeof totalMoneySaved === 'number' && Number.isFinite(totalMoneySaved)
+    ? totalMoneySaved
+    : 0;
+  const safeBadges = Array.isArray(mockBadges) && mockBadges.length > 0 ? mockBadges : [];
+  const level = getLevel(safeXp);
   const nextLevelXp = level * 100;
-  const xpIntoLevel = xp % 100;
-  const bestMatchScore = Math.max(0, ...completedChallenges.map((challenge) => challenge.matchScore));
+  const xpIntoLevel = safeXp % 100;
+  const bestMatchScore = Math.max(
+    0,
+    ...safeCompletedChallenges.map((challenge) => typeof challenge?.matchScore === 'number' ? challenge.matchScore : 0),
+  );
   const bestSavings = Math.max(
     0,
-    ...savedRecipes.map((recipe) => recipe.estimatedSavings),
-    ...completedChallenges.map((challenge) => challenge.moneySaved),
+    ...safeSavedRecipes.map((recipe) => typeof recipe?.estimatedSavings === 'number' ? recipe.estimatedSavings : 0),
+    ...safeCompletedChallenges.map((challenge) => typeof challenge?.moneySaved === 'number' ? challenge.moneySaved : 0),
   );
-  const savedRecipeCount = savedRecipes.length;
-  const completedChallengeCount = completedChallenges.length;
-  const hasBudgetSave = savedRecipes.some((recipe) => recipe.mode === 'Budget' && recipe.estimatedSavings >= 25);
-  const hasHealthyChallenge = completedChallenges.some((challenge) => challenge.mode === 'Healthy');
-  const hasPastaRecipe = [...savedRecipes.map((recipe) => recipe.title), ...completedChallenges.map((challenge) => challenge.recipeTitle)]
-    .some((title) => title.toLowerCase().includes('pasta') || title.toLowerCase().includes('rigatoni'));
-  const recentBadge = mockBadges.find((badge) => badge.id === recentBadgeUnlock);
+  const savedRecipeCount = safeSavedRecipes.length;
+  const completedChallengeCount = safeCompletedChallenges.length;
+  const hasBudgetSave = safeSavedRecipes.some((recipe) => recipe?.mode === 'Budget' && recipe?.estimatedSavings >= 25);
+  const hasHealthyChallenge = safeCompletedChallenges.some((challenge) => challenge?.mode === 'Healthy');
+  const hasPastaRecipe = [
+    ...safeSavedRecipes.map((recipe) => recipe?.title ?? ''),
+    ...safeCompletedChallenges.map((challenge) => challenge?.recipeTitle ?? ''),
+  ].some((title) => title.toLowerCase().includes('pasta') || title.toLowerCase().includes('rigatoni'));
+  const recentBadge = safeBadges.find((badge) => badge.id === recentBadgeUnlock);
+  const hasUserActivity = safeXp > 0 || savedRecipeCount > 0 || completedChallengeCount > 0;
   const badgeContext = {
     savedRecipeCount,
     completedChallengeCount,
-    totalMoneySaved,
+    totalMoneySaved: safeTotalMoneySaved,
     bestMatchScore,
     hasBudgetSave,
     hasHealthyChallenge,
@@ -146,14 +161,14 @@ export function RankingsScreen() {
     didTrackView.current = true;
     track(analyticsEvents.LEADERBOARD_VIEWED, {
       screen: 'RankingsScreen',
-      xpAmount: xp,
+      xpAmount: safeXp,
     });
-  }, [xp]);
+  }, [safeXp]);
 
   const getUserValueForSection = (section: string) => {
     switch (section) {
       case 'Biggest Saver This Week':
-        return `${formatCurrency(totalMoneySaved + savedRecipes.reduce((total, recipe) => total + recipe.estimatedSavings, 0))} saved`;
+        return `${formatCurrency(safeTotalMoneySaved + safeSavedRecipes.reduce((total, recipe) => total + (typeof recipe?.estimatedSavings === 'number' ? recipe.estimatedSavings : 0), 0))} saved`;
       case 'Best Match Score':
         return bestMatchScore > 0 ? `${bestMatchScore.toFixed(1)}/10 match` : 'No score yet';
       case 'Most Dupes Completed':
@@ -164,15 +179,24 @@ export function RankingsScreen() {
         return hasHealthyChallenge ? `${bestMatchScore.toFixed(1)}/10 healthy` : 'Try Healthy mode';
       case 'Rising Cook':
       default:
-        return `+${xp} XP`;
+        return `+${safeXp} XP`;
     }
   };
 
   return (
     <ScreenContainer>
       <Text style={styles.kicker}>Rankings</Text>
-      <Text style={styles.title}>{getRankTitle(xp)}</Text>
-      <Text style={styles.description}>Level {level} · {xp} XP</Text>
+      <Text style={styles.title}>{getRankTitle(safeXp)}</Text>
+      <Text style={styles.description}>Level {level} · {safeXp} XP</Text>
+
+      {!hasUserActivity ? (
+        <View style={styles.lowActivityCard}>
+          <Text style={styles.lowActivityTitle}>Your ranking is warming up</Text>
+          <Text style={styles.lowActivityText}>
+            Scan, save, export a grocery list, or finish a Dupe Challenge to start earning XP. Mock leaderboards are still shown below.
+          </Text>
+        </View>
+      ) : null}
 
       <View style={styles.xpCard}>
         <View style={styles.xpHeader}>
@@ -200,8 +224,8 @@ export function RankingsScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Badges</Text>
         <View style={styles.badgeGrid}>
-          {mockBadges.map((badge) => {
-            const unlocked = unlockedBadges.includes(badge.id);
+          {safeBadges.map((badge) => {
+            const unlocked = safeUnlockedBadges.includes(badge.id);
             return (
               <View key={badge.id} style={[styles.badgeCard, unlocked ? styles.badgeUnlocked : null]}>
                 <View style={styles.badgeHeader}>
@@ -222,7 +246,7 @@ export function RankingsScreen() {
       </View>
 
       {leaderboardSections.map((section) => {
-        const seededEntries = leaderboardEntries.filter((entry) => entry.category === section);
+        const seededEntries = safeLeaderboardEntries.filter((entry) => entry?.category === section);
         const entries = seededEntries.length > 0 ? seededEntries : getFallbackEntries(section);
         const userEntry: LeaderboardEntry = {
           id: `you-${section}`,
@@ -230,7 +254,7 @@ export function RankingsScreen() {
           displayName: 'You',
           category: section,
           value: getUserValueForSection(section),
-          xp,
+          xp: safeXp,
         };
 
         return (
@@ -277,6 +301,23 @@ const styles = StyleSheet.create({
     ...sharedStyles.card,
     marginTop: 22,
     padding: 18,
+  },
+  lowActivityCard: {
+    backgroundColor: colors.cream,
+    borderRadius: 18,
+    marginTop: 18,
+    padding: 16,
+  },
+  lowActivityTitle: {
+    color: colors.charcoal,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  lowActivityText: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 6,
   },
   xpHeader: {
     flexDirection: 'row',

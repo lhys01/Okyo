@@ -1,32 +1,42 @@
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { EmptyState, ScreenContainer, StatCard, colors } from '../components/OkyoUI';
+import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
+type SavingsNavigation = NativeStackNavigationProp<RootStackParamList>;
 
 export function SavingsDashboardScreen() {
+  const navigation = useNavigation<SavingsNavigation>();
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const storedMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
+  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
+  const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
+  const safeStoredMoneySaved = typeof storedMoneySaved === 'number' && Number.isFinite(storedMoneySaved)
+    ? storedMoneySaved
+    : 0;
 
-  const savedRecipeSavings = savedRecipes.reduce(
-    (total, recipe) => total + recipe.estimatedSavings,
+  const savedRecipeSavings = safeSavedRecipes.reduce(
+    (total, recipe) => total + (typeof recipe?.estimatedSavings === 'number' ? recipe.estimatedSavings : 0),
     0,
   );
-  const challengeSavings = completedChallenges.reduce(
-    (total, challenge) => total + challenge.moneySaved,
+  const challengeSavings = safeCompletedChallenges.reduce(
+    (total, challenge) => total + (typeof challenge?.moneySaved === 'number' ? challenge.moneySaved : 0),
     0,
   );
-  const totalEstimatedSaved = savedRecipeSavings + storedMoneySaved;
+  const totalEstimatedSaved = savedRecipeSavings + safeStoredMoneySaved;
   const savingsThisWeek = savedRecipeSavings + challengeSavings;
   const savingsThisMonth = totalEstimatedSaved;
   const biggestSavingsWin = Math.max(
     0,
-    ...savedRecipes.map((recipe) => recipe.estimatedSavings),
-    ...completedChallenges.map((challenge) => challenge.moneySaved),
+    ...safeSavedRecipes.map((recipe) => typeof recipe?.estimatedSavings === 'number' ? recipe.estimatedSavings : 0),
+    ...safeCompletedChallenges.map((challenge) => typeof challenge?.moneySaved === 'number' ? challenge.moneySaved : 0),
   );
-  const completedDupeCount = savedRecipes.length + completedChallenges.length;
+  const completedDupeCount = safeSavedRecipes.length + safeCompletedChallenges.length;
   const averageSavings =
     completedDupeCount > 0 ? totalEstimatedSaved / completedDupeCount : 0;
   const hasSavingsData = completedDupeCount > 0 || totalEstimatedSaved > 0;
@@ -36,7 +46,9 @@ export function SavingsDashboardScreen() {
       <EmptyState
         eyebrow="Savings"
         title="No savings yet"
-        body="Save dupes or complete challenges to see your estimated Okyo savings here."
+        body="Okyo tracks estimated savings when you save recipes and complete Dupe Challenges. Start with one mock scan to get your first savings estimate."
+        actionLabel="Start a Scan"
+        onAction={() => navigation.navigate('ScanScreen')}
       />
     );
   }
@@ -55,8 +67,8 @@ export function SavingsDashboardScreen() {
       <View style={styles.grid}>
         <StatCard label="This week" value={formatCurrency(savingsThisWeek)} />
         <StatCard label="This month" value={formatCurrency(savingsThisMonth)} />
-        <StatCard label="Saved dupes" value={savedRecipes.length} />
-        <StatCard label="Challenges" value={completedChallenges.length} />
+        <StatCard label="Saved dupes" value={safeSavedRecipes.length} />
+        <StatCard label="Challenges" value={safeCompletedChallenges.length} />
       </View>
 
       <View style={styles.averageCard}>

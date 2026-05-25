@@ -1,15 +1,17 @@
-import { useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useRef } from 'react';
 import { Alert, Share, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { PrimaryButton, ScreenContainer, SecondaryButton, colors } from '../components/OkyoUI';
+import { EmptyState, PrimaryButton, ScreenContainer, SecondaryButton, colors } from '../components/OkyoUI';
 import {
   defaultRestaurantPack,
   defaultScanResult,
-  getDefaultRecipeForMode,
+  getSafeRecipeForMode,
+  getSafeRecipeMode,
   mockBadges,
   mockRestaurantPacks,
   type RecipeMode,
@@ -18,6 +20,7 @@ import type { RootStackParamList, ShareCardType } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 
 type ShareCardRoute = RouteProp<RootStackParamList, 'ShareCardPreviewScreen'>;
+type ShareCardNavigation = NativeStackNavigationProp<RootStackParamList, 'ShareCardPreviewScreen'>;
 
 type StoryCardData = {
   cardType: ShareCardType;
@@ -50,6 +53,13 @@ function getCardLabel(cardType: ShareCardType) {
   }
 }
 
+function getSafeCardType(cardType: unknown): ShareCardType {
+  const cardTypes: ShareCardType[] = ['scan_result', 'challenge_result', 'ranking', 'badge', 'restaurant_pack'];
+  return typeof cardType === 'string' && cardTypes.includes(cardType as ShareCardType)
+    ? cardType as ShareCardType
+    : 'scan_result';
+}
+
 function buildCaption(data: StoryCardData) {
   return `${formatCurrency(data.restaurantPrice)} restaurant ${data.dishName.toLowerCase()} -> ${formatCurrency(
     data.homemadeCost,
@@ -57,20 +67,37 @@ function buildCaption(data: StoryCardData) {
 }
 
 export function ShareCardPreviewScreen() {
+  const navigation = useNavigation<ShareCardNavigation>();
   const route = useRoute<ShareCardRoute>();
-  const cardType = route.params?.cardType ?? 'scan_result';
+  const cardType = getSafeCardType(route.params?.cardType);
   const storeMode = useOkyoStore((state) => state.selectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
   const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
-  const selectedMode = route.params?.mode ?? storeMode;
+  const selectedMode = getSafeRecipeMode(route.params?.mode ?? storeMode);
   const scanResult = latestScanResult ?? defaultScanResult;
-  const recipe = getDefaultRecipeForMode(selectedMode);
-  const latestChallenge = completedChallenges[completedChallenges.length - 1];
-  const topLeaderboardEntry = leaderboardEntries[0];
-  const unlockedBadge = mockBadges.find((badge) => unlockedBadges.includes(badge.id)) ?? mockBadges[1];
+  const recipe = getSafeRecipeForMode(selectedMode);
+  const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
+  const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
+  const latestChallenge = safeCompletedChallenges[safeCompletedChallenges.length - 1];
+  const topLeaderboardEntry = (Array.isArray(leaderboardEntries) ? leaderboardEntries[0] : undefined) ?? {
+    id: 'fallback-ranking',
+    rank: 1,
+    displayName: 'Okyo Cook',
+    category: 'Rising Cook',
+    value: '+0 XP',
+    xp: 0,
+  };
+  const unlockedBadge =
+    (Array.isArray(mockBadges) ? mockBadges.find((badge) => safeUnlockedBadges.includes(badge.id)) : undefined) ??
+    mockBadges[0] ?? {
+      id: 'fallback-badge',
+      name: 'Okyo Badge',
+      description: 'Keep scanning to unlock badges.',
+      unlocked: false,
+    };
   const selectedPack =
     mockRestaurantPacks.find((restaurantPack) => restaurantPack.id === route.params?.packId) ??
     defaultRestaurantPack;
@@ -78,6 +105,8 @@ export function ShareCardPreviewScreen() {
     selectedPack.dishes.find((dish) => dish.id === route.params?.dishId) ??
     selectedPack.dishes[0];
   const fallbackNote = latestScanResult ? undefined : 'Using the default mock scan result.';
+  const needsScanResult = cardType === 'scan_result' || cardType === 'challenge_result';
+  const missingScanResult = needsScanResult && !latestScanResult;
 
   const dataByType: Record<ShareCardType, StoryCardData> = {
     scan_result: {
@@ -130,12 +159,12 @@ export function ShareCardPreviewScreen() {
     restaurant_pack: {
       cardType: 'restaurant_pack',
       eyebrow: selectedPack.name,
-      dishName: packDish.dishName,
-      restaurantPrice: packDish.restaurantPrice,
-      homemadeCost: packDish.homemadeCost,
-      estimatedSavings: packDish.estimatedSavings,
+      dishName: packDish?.dishName ?? selectedPack.name,
+      restaurantPrice: packDish?.restaurantPrice ?? 0,
+      homemadeCost: packDish?.homemadeCost ?? 0,
+      estimatedSavings: packDish?.estimatedSavings ?? 0,
       scoreLabel: `${selectedPack.dishes.length} inspired-by dupes`,
-      selectedMode: packDish.difficulty,
+      selectedMode: packDish?.difficulty ?? 'Pack',
       caption: '',
     },
   };
@@ -150,6 +179,15 @@ export function ShareCardPreviewScreen() {
     }
 
     didTrackGenerated.current = true;
+    if (missingScanResult) {
+      track(analyticsEvents.RESULT_ERROR, {
+        cardType,
+        errorMessage: 'Share card opened without a latest scan result.',
+        screen: 'ShareCardPreviewScreen',
+      });
+      return;
+    }
+
     track(analyticsEvents.SHARE_CARD_GENERATED, {
       cardType,
       dishName: cardData.dishName,
@@ -158,7 +196,19 @@ export function ShareCardPreviewScreen() {
       packName: cardType === 'restaurant_pack' ? selectedPack.name : undefined,
       screen: 'ShareCardPreviewScreen',
     });
-  }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, cardType, selectedPack.name]);
+  }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, cardType, missingScanResult, selectedPack.name]);
+
+  if (missingScanResult) {
+    return (
+      <EmptyState
+        eyebrow="Share preview"
+        title="Scan something first"
+        body="Okyo needs a mock scan result before it can build this savings card."
+        actionLabel="Start a Scan"
+        onAction={() => navigation.navigate('ScanScreen')}
+      />
+    );
+  }
 
   const shareCard = async () => {
     try {

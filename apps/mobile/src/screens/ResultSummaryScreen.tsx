@@ -13,7 +13,13 @@ import {
   colors,
   sharedStyles,
 } from '../components/OkyoUI';
-import { defaultScanResult, getDefaultRecipeForMode, type RecipeMode } from '../mocks';
+import {
+  defaultScanResult,
+  getSafeRecipeForMode,
+  getSafeRecipeMode,
+  isRecipeMode,
+  type RecipeMode,
+} from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 
@@ -22,7 +28,8 @@ type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'Re
 
 export function ResultSummaryScreen() {
   const navigation = useNavigation<ResultSummaryNavigation>();
-  const selectedMode = useOkyoStore((state) => state.selectedMode);
+  const selectedModeRaw = useOkyoStore((state) => state.selectedMode);
+  const selectedMode = getSafeRecipeMode(selectedModeRaw);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
@@ -30,7 +37,7 @@ export function ResultSummaryScreen() {
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
-  const selectedRecipe = getDefaultRecipeForMode(selectedMode);
+  const selectedRecipe = getSafeRecipeForMode(selectedMode);
   const confidencePercent = Math.round(defaultScanResult.confidence * 100);
   const didTrackResultView = useRef(false);
 
@@ -41,6 +48,12 @@ export function ResultSummaryScreen() {
 
     didTrackResultView.current = true;
     setLatestScanResult(defaultScanResult);
+    if (!isRecipeMode(selectedModeRaw)) {
+      track(analyticsEvents.RESULT_ERROR, {
+        errorMessage: 'Selected mode was missing or invalid on result view.',
+        screen: 'ResultSummaryScreen',
+      });
+    }
     incrementWeeklyScanCount();
     awardXPOnce(`first-scan-${defaultScanResult.id}`, 10);
     track(analyticsEvents.RESULT_VIEWED, {

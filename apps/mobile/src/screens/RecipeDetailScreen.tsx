@@ -17,7 +17,9 @@ import {
 } from '../components/OkyoUI';
 import {
   defaultScanResult,
-  getDefaultRecipeForMode,
+  getSafeRecipeForMode,
+  getSafeRecipeMode,
+  isRecipeMode,
   type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
@@ -30,19 +32,30 @@ type RecipeDetailRoute = RouteProp<RootStackParamList, 'RecipeDetailScreen'>;
 export function RecipeDetailScreen() {
   const navigation = useNavigation<RecipeDetailNavigation>();
   const route = useRoute<RecipeDetailRoute>();
-  const initialMode = route.params?.mode ?? defaultScanResult.modes[0];
+  const routeMode = route.params?.mode;
+  const initialMode = getSafeRecipeMode(routeMode ?? defaultScanResult.modes[0]);
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
   const setStoreSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
-  const [selectedMode, setSelectedMode] = useState<RecipeMode>(initialMode ?? storeSelectedMode);
-  const recipe = getDefaultRecipeForMode(selectedMode);
+  const [selectedMode, setSelectedMode] = useState<RecipeMode>(
+    getSafeRecipeMode(initialMode ?? storeSelectedMode),
+  );
+  const recipe = getSafeRecipeForMode(selectedMode);
 
   useEffect(() => {
-    setSelectedMode(initialMode);
-  }, [initialMode]);
+    const safeMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
+    setSelectedMode(safeMode);
+
+    if (routeMode && !isRecipeMode(routeMode)) {
+      track(analyticsEvents.RESULT_ERROR, {
+        errorMessage: 'Recipe mode was missing or invalid.',
+        screen: 'RecipeDetailScreen',
+      });
+    }
+  }, [routeMode, storeSelectedMode]);
 
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
@@ -79,6 +92,13 @@ export function RecipeDetailScreen() {
 
       <Text style={styles.title}>{recipe.title}</Text>
       <Text style={styles.description}>{recipe.description}</Text>
+      {!isRecipeMode(routeMode ?? storeSelectedMode) ? (
+        <View style={styles.fallbackNote}>
+          <Text style={styles.fallbackNoteText}>
+            We could not find that mode, so Okyo is showing Restaurant Copy.
+          </Text>
+        </View>
+      ) : null}
 
       <ModeTabs modes={defaultScanResult.modes} selectedMode={selectedMode} onSelectMode={chooseMode} />
 
@@ -99,31 +119,43 @@ export function RecipeDetailScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Ingredients</Text>
-        {recipe.ingredients.map((ingredient) => (
+        {(Array.isArray(recipe.ingredients) ? recipe.ingredients : []).length > 0 ? (
+          recipe.ingredients.map((ingredient) => (
           <Text key={`${recipe.id}-${ingredient.name}`} style={styles.listItem}>
             {ingredient.quantity} {ingredient.name}
             {ingredient.pantryItem ? ' (pantry)' : ''}
           </Text>
-        ))}
+          ))
+        ) : (
+          <Text style={styles.listItem}>Ingredients are not available for this mock recipe yet.</Text>
+        )}
       </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Instructions</Text>
-        {recipe.steps.map((step, index) => (
+        {(Array.isArray(recipe.steps) ? recipe.steps : []).length > 0 ? (
+          recipe.steps.map((step, index) => (
           <View key={`${recipe.id}-step-${step}`} style={styles.stepRow}>
             <Text style={styles.stepNumber}>{index + 1}</Text>
             <Text style={styles.stepText}>{step}</Text>
           </View>
-        ))}
+          ))
+        ) : (
+          <Text style={styles.listItem}>Steps are not available yet. Try Restaurant Copy mode.</Text>
+        )}
       </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Substitutions</Text>
-        {recipe.substitutions.map((substitution) => (
+        {(Array.isArray(recipe.substitutions) ? recipe.substitutions : []).length > 0 ? (
+          recipe.substitutions.map((substitution) => (
           <Text key={`${recipe.id}-${substitution}`} style={styles.listItem}>
             {substitution}
           </Text>
-        ))}
+          ))
+        ) : (
+          <Text style={styles.listItem}>No substitutions listed yet.</Text>
+        )}
       </View>
 
       <View style={styles.noteCard}>
@@ -172,6 +204,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 23,
     marginTop: 10,
+  },
+  fallbackNote: {
+    backgroundColor: colors.cream,
+    borderRadius: 16,
+    marginTop: 14,
+    padding: 14,
+  },
+  fallbackNoteText: {
+    color: colors.body,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
   },
   statsGrid: {
     flexDirection: 'row',

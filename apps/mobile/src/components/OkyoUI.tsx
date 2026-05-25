@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { getSafeNumber, getSafeText, isRecipeMode } from '../mocks';
 import type { Recipe, RecipeMode, RestaurantPack } from '../mocks';
 
 export const colors = {
@@ -160,9 +161,11 @@ type ModeTabsProps = {
 };
 
 export function ModeTabs({ modes, selectedMode, onSelectMode }: ModeTabsProps) {
+  const safeModes: RecipeMode[] = modes.length > 0 ? modes : ['Restaurant Copy'];
+
   return (
     <View style={styles.modeTabs}>
-      {modes.map((mode) => {
+      {safeModes.map((mode) => {
         const selected = selectedMode === mode;
 
         return (
@@ -193,21 +196,26 @@ type RecipeCardProps = {
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 
 export function RecipeCard({ recipe, onPress, onRemove }: RecipeCardProps) {
+  const title = getSafeText(recipe?.title, 'Saved Okyo dupe');
+  const mode = isRecipeMode(recipe?.mode) ? recipe.mode : 'Restaurant Copy';
+  const estimatedSavings = getSafeNumber(recipe?.estimatedSavings);
+  const difficulty = getSafeText(recipe?.difficulty, 'Easy');
+
   return (
     <View style={styles.card}>
       <Pressable style={styles.cardPressable} onPress={onPress}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>{recipe.title}</Text>
-          <BadgePill tone="dark">{recipe.mode}</BadgePill>
+          <Text style={styles.cardTitle}>{title}</Text>
+          <BadgePill tone="dark">{mode}</BadgePill>
         </View>
         <View style={styles.cardMetaRow}>
           <View>
             <Text style={styles.statLabel}>Estimated savings</Text>
-            <Text style={styles.savingsText}>{formatCurrency(recipe.estimatedSavings)}</Text>
+            <Text style={styles.savingsText}>{formatCurrency(estimatedSavings)}</Text>
           </View>
           <View style={styles.cardMetaRight}>
             <Text style={styles.statLabel}>Difficulty</Text>
-            <Text style={styles.cardMetaValue}>{recipe.difficulty}</Text>
+            <Text style={styles.cardMetaValue}>{difficulty}</Text>
           </View>
         </View>
       </Pressable>
@@ -230,17 +238,20 @@ type PackCardProps = {
 };
 
 export function PackCard({ pack, label, description, averageSavings, topDish, onPress }: PackCardProps) {
+  const dishes = Array.isArray(pack?.dishes) ? pack.dishes : [];
+  const name = getSafeText(pack?.name, 'Restaurant-inspired pack');
+
   return (
     <Pressable style={({ pressed }) => [styles.card, styles.cardPressable, pressed ? styles.pressed : null]} onPress={onPress}>
       <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle}>{pack.name}</Text>
+        <Text style={styles.cardTitle}>{name}</Text>
         <BadgePill tone={label === 'Free' ? 'green' : 'coral'}>{label}</BadgePill>
       </View>
       <Text style={styles.cardBody}>{description}</Text>
       <View style={styles.cardMetaRow}>
         <View>
           <Text style={styles.statLabel}>Dupes</Text>
-          <Text style={styles.cardMetaValue}>{pack.dishes.length}</Text>
+          <Text style={styles.cardMetaValue}>{dishes.length}</Text>
         </View>
         <View style={styles.cardMetaRight}>
           <Text style={styles.statLabel}>Avg. savings</Text>

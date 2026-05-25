@@ -1,5 +1,6 @@
-import { useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Share, StyleSheet, Text, View } from 'react-native';
@@ -15,7 +16,9 @@ import {
 } from '../components/OkyoUI';
 import {
   defaultScanResult,
-  getDefaultRecipeForMode,
+  getSafeRecipeForMode,
+  getSafeRecipeMode,
+  isRecipeMode,
   type Recipe,
   type RecipeIngredient,
 } from '../mocks';
@@ -23,6 +26,7 @@ import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 
 type GroceryListRoute = RouteProp<RootStackParamList, 'GroceryListScreen'>;
+type GroceryListNavigation = NativeStackNavigationProp<RootStackParamList, 'GroceryListScreen'>;
 type GroceryCategory = 'Produce' | 'Dairy' | 'Protein' | 'Pantry' | 'Spices' | 'Other';
 type GroceryItem = RecipeIngredient & {
   id: string;
@@ -59,7 +63,9 @@ function getCategory(ingredient: RecipeIngredient): GroceryCategory {
 }
 
 function buildItems(recipe: Recipe): GroceryItem[] {
-  return recipe.ingredients.map((ingredient) => ({
+  const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+
+  return ingredients.map((ingredient) => ({
     ...ingredient,
     category: getCategory(ingredient),
     id: `${recipe.id}-${ingredient.name}`,
@@ -93,9 +99,11 @@ function buildListText(recipe: Recipe, items: GroceryItem[]) {
 }
 
 export function GroceryListScreen() {
+  const navigation = useNavigation<GroceryListNavigation>();
   const route = useRoute<GroceryListRoute>();
-  const selectedMode = route.params?.mode ?? defaultScanResult.modes[0];
-  const recipe = getDefaultRecipeForMode(selectedMode);
+  const rawMode = route.params?.mode ?? defaultScanResult.modes[0];
+  const selectedMode = getSafeRecipeMode(rawMode);
+  const recipe = getSafeRecipeForMode(selectedMode);
   const items = useMemo(() => buildItems(recipe), [recipe]);
   const listText = useMemo(() => buildListText(recipe, items), [items, recipe]);
   const [checkedItemIds, setCheckedItemIds] = useState<string[]>([]);
@@ -112,12 +120,19 @@ export function GroceryListScreen() {
     }
 
     didTrackView.current = true;
+    if (!isRecipeMode(rawMode)) {
+      track(analyticsEvents.RESULT_ERROR, {
+        errorMessage: 'Grocery list mode was missing or invalid.',
+        screen: 'GroceryListScreen',
+      });
+    }
+
     track(analyticsEvents.GROCERY_LIST_VIEWED, {
       dishName: recipe.title,
       mode: selectedMode,
       screen: 'GroceryListScreen',
     });
-  }, [recipe.title, selectedMode]);
+  }, [rawMode, recipe.title, selectedMode]);
 
   const toggleItem = (itemId: string) => {
     setCheckedItemIds((currentIds) =>
@@ -129,6 +144,11 @@ export function GroceryListScreen() {
 
   const copyList = async () => {
     try {
+      if (items.length === 0) {
+        Alert.alert('List unavailable', 'This recipe does not have grocery items yet.');
+        return;
+      }
+
       await Clipboard.setStringAsync(listText);
       awardXPOnce(`export-grocery-list-${recipe.id}`, 10);
       unlockBadge('grocery-exporter');
@@ -146,6 +166,11 @@ export function GroceryListScreen() {
 
   const shareList = async () => {
     try {
+      if (items.length === 0) {
+        Alert.alert('List unavailable', 'This recipe does not have grocery items yet.');
+        return;
+      }
+
       await Share.share({ message: listText, title: `${recipe.title} Grocery List` });
       awardXPOnce(`export-grocery-list-${recipe.id}`, 10);
       unlockBadge('grocery-exporter');
@@ -166,6 +191,8 @@ export function GroceryListScreen() {
         eyebrow="Grocery list"
         title="No ingredients yet"
         body="Choose a mock recipe first and Okyo will build an estimated grocery list here."
+        actionLabel="Back to Recipe"
+        onAction={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })}
       />
     );
   }

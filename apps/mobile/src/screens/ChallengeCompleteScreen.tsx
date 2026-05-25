@@ -1,8 +1,10 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { analyticsEvents, track } from '../analytics/track';
 import { EmptyState, PrimaryButton, ScreenContainer, SecondaryButton, StatCard, colors } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
@@ -15,9 +17,23 @@ export function ChallengeCompleteScreen() {
   const navigation = useNavigation<ChallengeCompleteNavigation>();
   const route = useRoute<ChallengeCompleteRoute>();
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
+  const didTrackMissingChallenge = useRef(false);
+  const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const challenge =
-    completedChallenges.find((completedChallenge) => completedChallenge.id === route.params?.challengeId) ??
-    completedChallenges[completedChallenges.length - 1];
+    safeCompletedChallenges.find((completedChallenge) => completedChallenge.id === route.params?.challengeId) ??
+    safeCompletedChallenges[safeCompletedChallenges.length - 1];
+
+  useEffect(() => {
+    if (didTrackMissingChallenge.current || challenge) {
+      return;
+    }
+
+    didTrackMissingChallenge.current = true;
+    track(analyticsEvents.RESULT_ERROR, {
+      errorMessage: 'Challenge complete opened without a completed challenge.',
+      screen: 'ChallengeCompleteScreen',
+    });
+  }, [challenge]);
 
   if (!challenge) {
     return (
@@ -25,6 +41,8 @@ export function ChallengeCompleteScreen() {
         eyebrow="Challenge complete"
         title="No challenge result yet"
         body="Complete a Dupe Challenge to see your score and savings."
+        actionLabel="Start a Scan"
+        onAction={() => navigation.navigate('ScanScreen')}
       />
     );
   }
