@@ -1,131 +1,244 @@
 # Okyo
 
-Okyo is a mobile-first AI food app that turns restaurant meal photos into homemade copycat recipes with estimated cost savings, grocery lists, Dupe Challenge, rankings, and shareable result cards.
+Okyo is a mobile-first food app prototype that turns restaurant meal photos into homemade copycat recipes with estimated cost savings, grocery lists, Dupe Challenge, rankings, and shareable result cards.
 
-## Source of Truth
+The current app is a fake-data V1 prototype. It is useful for product QA and flow testing, but it does not call a backend or a real AI provider yet.
 
-Codex should read these files first:
+## Current Local Paths
+
+Use these paths on this machine:
+
+```text
+Repo root:  /Users/rober/Documents/Okyo-1
+Mobile app: /Users/rober/Documents/Okyo-1/apps/mobile
+```
+
+The global terminal `run` shortcut is expected to point to `/Users/rober/Documents/Okyo-1`.
+
+There is also a repo-level executable file named `run` at:
+
+```text
+/Users/rober/Documents/Okyo-1/run
+```
+
+That file changes into `apps/mobile`, starts Expo on port `8082` if needed, boots the iOS Simulator, and opens the app using the machine LAN IP.
+
+## Source Of Truth
+
+New developers and Codex sessions should read these first:
 
 1. `AGENTS.md`
-2. `docs/wiki/BUILD_FROM_ZERO.md`
-3. `docs/wiki/PRD_SUMMARY.md`
-4. `docs/seed/OKYO_MASTER_ONE_NOTE.md`
-5. `docs/wiki/V1_BUILD_TASKS.md`
+2. `README.md`
+3. `docs/wiki/BUILD_FROM_ZERO.md`
+4. `docs/wiki/FAKE_V1_STATUS.md`
+5. `docs/wiki/PRD_SUMMARY.md`
+6. `docs/seed/OKYO_MASTER_ONE_NOTE.md`
 
 The app name is **Okyo**.
 
-## V1 Scope
+## Current Status
 
-Build:
-- mock first-scan flow
-- photo upload
-- AI dish recognition
-- recipe generation
-- cost comparison
-- grocery list
-- saved recipe library
-- share cards
-- Dupe Challenge
-- XP, badges, weekly rankings
-- static Restaurant Packs
-- freemium scan limits
-- basic premium paywall
-- analytics
-- onboarding, settings, privacy/support screens
+Implemented now:
 
-Do not build yet:
-- full map
-- full social feed
-- comments
-- DMs
-- restaurant reviews
+- Expo React Native mobile app in `apps/mobile`
+- TypeScript
+- React Navigation stack + tabs
+- Zustand local state with AsyncStorage persistence
+- Fake-data onboarding and first-scan flow
+- Result summary, recipe detail, grocery list, share preview, saved library, savings dashboard
+- Dupe Challenge, challenge complete, XP, badges, rankings
+- Static Restaurant Packs and pack detail screens
+- Settings with Reset Onboarding and Delete Saved Data
+- Analytics wrapper and UI debug wrapper, currently quiet by default
 
-## Running Locally (mobile)
+Not built yet:
 
-Quick one-command start (from repo root):
+- Backend API
+- Real image upload
+- Real AI dish recognition or recipe generation
+- Real cost engine
+- Login/accounts
+- Payments/subscriptions
+- Maps
+- Comments, DMs, or social feed
+- Real share-card image export to Photos
+- App Store/TestFlight setup
+
+## Requirements
+
+Use this setup:
+
+- Node 22, tested with Node `v22.22.3`
+- Installed Xcode, tested with Xcode `26.5`
+- Expo SDK 55, app dependency is `expo ~55.0.0`
+- iOS Simulator available through Xcode
+
+The mobile app uses:
+
+- Port `8082`
+- Expo LAN host mode: `expo start -c --host lan --port 8082`
+
+LAN mode is intentional. In this local setup, simulator connections through `localhost` or `127.0.0.1` were unreliable.
+
+## Run The App
+
+Beginner path:
+
+1. Open a terminal.
+2. Run:
 
 ```bash
 run
 ```
 
-Mobile-specific (inside the mobile app):
+That global shortcut should start Okyo from `/Users/rober/Documents/Okyo-1`.
+
+Repo-local path:
 
 ```bash
-cd apps/mobile
+cd /Users/rober/Documents/Okyo-1
+./run
+```
+
+Mobile-only path:
+
+```bash
+cd /Users/rober/Documents/Okyo-1/apps/mobile
 npm run sim
 ```
 
-Notes:
-- Use Node 22 (tested with Node v22.22.3).
-- Xcode: 26.5 or newer to run the iOS Simulator.
-- Expo SDK: ~55 (app uses expo ~55.0.0).
-- The dev server uses port `8082` and the `--host lan` flag by default to avoid simulator connectivity issues with `localhost`/`127.0.0.1`.
+The `sim` script runs:
 
-## Current Fake-data Features (what's implemented)
+```bash
+expo start -c --host lan --port 8082
+```
 
-- Onboarding flow
-- Mock first-scan flow (photo + upload flows use typed mock data)
-- Result summary with confidence, savings, and mode tabs
-- Recipe detail with mode-specific recipes and ingredients
-- Grocery list generation, copy/share, pantry checks
-- Save to Library + Library screen
-- Savings dashboard (weekly/total stats)
-- Share card preview and native share/copy
-- Dupe Challenge flow (start, mark cooked, rate, complete)
-- Challenge complete screen with XP/badges
-- XP, badges, and weekly rankings (mock data)
-- Static Restaurant Packs and pack details
-- Settings + onboarding reset + AsyncStorage persistence
-- Analytics stubs (console logging only)
+## Useful Commands
 
-## Intentionally Not Built
+TypeScript check:
 
-- No backend or persistent cloud storage
-- No real AI model or remote inference
-- No payments or user accounts
-- No social feed, comments, or maps
+```bash
+cd /Users/rober/Documents/Okyo-1/apps/mobile
+npx tsc --noEmit
+```
+
+Start Expo without opening the simulator:
+
+```bash
+cd /Users/rober/Documents/Okyo-1/apps/mobile
+npm start
+```
+
+Check which process is using port `8082`:
+
+```bash
+lsof -nP -iTCP:8082 -sTCP:LISTEN
+```
+
+## Current Fake-data Features
+
+- Onboarding flow with Start Scanning reset into the Scan tab
+- Mock scan from Take Photo or Upload From Photos
+- Loading/analyzing screen
+- Result summary with confidence, restaurant estimate, homemade cost, savings, and mode tabs
+- Mode-specific recipe detail for Restaurant Copy, Budget, and Healthy
+- Grocery list with pantry check, checkbox items, copy, and native share
+- Save recipe to local library and remove saved recipes
+- Savings dashboard based on saved recipes and completed challenges
+- Share card preview with native share and copy caption
+- Dupe Challenge with Mark Cooked, rating, XP, badges, and challenge complete screen
+- Rankings screen with mock leaderboards and badge progress
+- Static Restaurant Packs with save, challenge, and share actions
+- Settings with Reset Onboarding and Delete Saved Data
+
+All food identification, costs, savings, and recipes are mock estimates. Do not present them as exact.
 
 ## Troubleshooting
 
-- Expo Go incompatible: use the iOS Simulator or a supported Expo client version matching SDK 55.
-- No devices booted: open Simulator from Xcode or run `open -a Simulator`.
-- Could not connect to server: ensure the machine IP is reachable by the simulator and use `--host lan --port 8082`.
-- Wrong folder / package.json does not exist: ensure you are in the repo root and `apps/mobile/package.json` exists.
+### Expo Go incompatible
 
+The app uses Expo SDK 55. If Expo Go says the project is incompatible, use the iOS Simulator flow through `run` or install an Expo Go/client version that supports SDK 55.
 
-## Clean Repo Structure
+### No devices are booted
 
-```text
-okyo/
-  README.md
-  AGENTS.md
-  .gitignore
-  .env.example
-  docs/
-    wiki/
-    seed/
+Run:
+
+```bash
+open -a Simulator
 ```
 
-## First Codex Prompt
+Then run:
+
+```bash
+run
+```
+
+The repo-level `run` file looks for an `iPhone 17 Pro` simulator. If that simulator does not exist, it prints the available iPhone simulators so you can install or choose one.
+
+### Could not connect to server
+
+Make sure Expo is running on port `8082`:
+
+```bash
+lsof -nP -iTCP:8082 -sTCP:LISTEN
+```
+
+Then restart from the current repo:
+
+```bash
+cd /Users/rober/Documents/Okyo-1
+./run
+```
+
+Use LAN host mode. Avoid switching this setup back to `localhost` or `127.0.0.1` unless you are intentionally debugging simulator networking.
+
+### Wrong folder / package.json does not exist
+
+You are probably not in the repo root or mobile app folder.
+
+Use:
+
+```bash
+cd /Users/rober/Documents/Okyo-1
+ls apps/mobile/package.json
+```
+
+If that file exists, run:
+
+```bash
+./run
+```
+
+### `run` points to old folder
+
+The global terminal `run` shortcut should point to:
 
 ```text
-Read README.md, AGENTS.md, docs/wiki/BUILD_FROM_ZERO.md, docs/wiki/PRD_SUMMARY.md, and docs/seed/OKYO_MASTER_ONE_NOTE.md.
-
-Set up the Okyo monorepo structure.
-
-Create:
-- apps/mobile
-- apps/api
-- packages/shared
-- packages/config
-
-Do not build app features yet.
-Do not add backend logic yet.
-Do not add real AI.
-Do not add login.
-Do not add payments.
-Do not add map.
-Do not add social feed.
-
-After setup, tell me exactly what files you created and how to run the project.
+/Users/rober/Documents/Okyo-1
 ```
+
+If it tries to start from another folder, update the shortcut or run the repo-local file directly:
+
+```bash
+cd /Users/rober/Documents/Okyo-1
+./run
+```
+
+### `/Users/rober/Documents/GitHub/Okyo-1` missing
+
+That old folder is not the current working copy. Do not recreate it just to make Okyo run.
+
+Use the current folder instead:
+
+```text
+/Users/rober/Documents/Okyo-1
+```
+
+## Development Rules
+
+- Prioritize V1 MVP stability over new scope.
+- Keep the first session fast: open app, scan meal, see result.
+- Do not add backend, real AI, login, payments, maps, comments, DMs, or social feed unless explicitly requested.
+- Treat all AI-like outputs as uncertain and editable.
+- Keep TypeScript simple and readable.
+- Do not store user food images unless the user saves a recipe or explicitly opts in.

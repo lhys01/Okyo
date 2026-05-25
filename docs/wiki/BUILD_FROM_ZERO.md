@@ -2,6 +2,50 @@
 
 This file is the build path for creating Okyo from zero with Codex.
 
+## Current local setup
+
+The active local repo on this machine is:
+
+```text
+/Users/rober/Documents/Okyo-1
+```
+
+The mobile app lives at:
+
+```text
+/Users/rober/Documents/Okyo-1/apps/mobile
+```
+
+The repo has a root-level executable named `run`. The global terminal `run` shortcut should point to this repo and start the mobile app from this path.
+
+Current mobile setup:
+
+- Node 22, tested with `v22.22.3`
+- Installed Xcode, tested with Xcode `26.5`
+- Expo SDK 55 (`expo ~55.0.0`)
+- Expo dev server on port `8082`
+- LAN host mode because the simulator was unreliable with `localhost` / `127.0.0.1`
+
+Run the current fake-data V1 app with:
+
+```bash
+run
+```
+
+Or from the repo root:
+
+```bash
+cd /Users/rober/Documents/Okyo-1
+./run
+```
+
+Or from the mobile app:
+
+```bash
+cd /Users/rober/Documents/Okyo-1/apps/mobile
+npm run sim
+```
+
 ## Phase 1 — Repo setup
 
 Ask Codex:
@@ -41,7 +85,7 @@ Build only the starter app shell.
 
 Requirements:
 - app name should be Okyo
-- it should run in Expo Go
+- it should run in the iOS Simulator with Expo SDK 55
 - no backend
 - no real AI
 - no login
@@ -54,10 +98,10 @@ Run:
 
 ```bash
 cd apps/mobile
-npm start
+npm run sim
 ```
 
-Scan QR code with Expo Go.
+Use the iOS Simulator. Expo Go can be incompatible if the installed client does not support Expo SDK 55.
 
 Commit after it runs.
 
@@ -86,7 +130,7 @@ Screens:
 - RecipeDetailScreen
 
 Flow:
-Welcome → Goal → Scan → Loading → Result Summary → Recipe Detail
+Welcome -> Goal -> Scan -> Loading -> Result Summary -> Recipe Detail
 
 Requirements:
 - Use mock data only
@@ -108,7 +152,7 @@ Do not add comments.
 
 ## Phase 4 — Build utility screens
 
-Build in this order:
+Completed for fake-data V1:
 
 1. Recipe detail + dupe modes
 2. Grocery list
