@@ -1,0 +1,98 @@
+export type RecipeMode = 'Restaurant Copy' | 'Budget' | 'Healthy';
+
+export type Difficulty = 'Easy' | 'Medium' | 'Hard';
+
+export type ScanResult = {
+  id: string;
+  dishName: string;
+  restaurantStyle: string;
+  restaurantPrice: number;
+  homemadeCost: number;
+  estimatedSavings: number;
+  confidence: number;
+  matchScore: number;
+  difficulty: Difficulty;
+  modes: RecipeMode[];
+  recipeId: string;
+  groceryListId: string;
+  shareCardId: string;
+};
+
+export type RecipeIngredient = {
+  name: string;
+  quantity: string;
+  pantryItem?: boolean;
+};
+
+export type Recipe = {
+  id: string;
+  scanResultId: string;
+  title: string;
+  mode: RecipeMode;
+  prepTimeMinutes: number;
+  cookTimeMinutes: number;
+  servings: number;
+  difficulty: Difficulty;
+  ingredients: RecipeIngredient[];
+  steps: string[];
+  confidenceNote: string;
+};
+
+export type GroceryListItem = RecipeIngredient & {
+  category: 'Produce' | 'Dairy' | 'Pantry' | 'Protein' | 'Bakery' | 'Beverages';
+};
+
+export type GroceryList = {
+  id: string;
+  recipeId: string;
+  title: string;
+  items: GroceryListItem[];
+};
+
+export type ShareCard = {
+  id: string;
+  scanResultId?: string;
+  kind: 'scan-result' | 'ranking' | 'badge';
+  headline: string;
+  subheadline: string;
+  savedAmount?: number;
+  matchScore?: number;
+  footer: string;
+};
+
+export type RestaurantPackDish = {
+  id: string;
+  dishName: string;
+  restaurantPrice: number;
+  homemadeCost: number;
+  estimatedSavings: number;
+  difficulty: Difficulty;
+};
+
+export type RestaurantPack = {
+  id: string;
+  name: string;
+  dishes: RestaurantPackDish[];
+};
+
+export type XpEvent = {
+  id: string;
+  label: string;
+  points: number;
+};
+
+export type Badge = {
+  id: string;
+  name: string;
+  description: string;
+  unlocked: boolean;
+};
+
+export type LeaderboardEntry = {
+  id: string;
+  rank: number;
+  displayName: string;
+  category: string;
+  value: string;
+  xp: number;
+};

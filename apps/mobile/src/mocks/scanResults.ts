@@ -1,0 +1,51 @@
+import type { ScanResult } from './types';
+
+export const mockScanResults: ScanResult[] = [
+  {
+    id: '001',
+    dishName: 'Spicy Vodka Rigatoni',
+    restaurantStyle: 'Italian-American',
+    restaurantPrice: 38,
+    homemadeCost: 6.4,
+    estimatedSavings: 31.6,
+    confidence: 0.84,
+    matchScore: 8.4,
+    difficulty: 'Easy',
+    modes: ['Restaurant Copy', 'Budget', 'Healthy'],
+    recipeId: 'recipe-spicy-vodka-rigatoni',
+    groceryListId: 'grocery-spicy-vodka-rigatoni',
+    shareCardId: 'share-spicy-vodka-rigatoni',
+  },
+  {
+    id: '002',
+    dishName: 'Cheddar-style Biscuits',
+    restaurantStyle: 'Seafood chain inspired',
+    restaurantPrice: 12,
+    homemadeCost: 2.5,
+    estimatedSavings: 9.5,
+    confidence: 0.88,
+    matchScore: 9.1,
+    difficulty: 'Easy',
+    modes: ['Restaurant Copy', 'Budget', 'Healthy'],
+    recipeId: 'recipe-cheddar-biscuits',
+    groceryListId: 'grocery-cheddar-biscuits',
+    shareCardId: 'share-cheddar-biscuits',
+  },
+  {
+    id: '003',
+    dishName: 'Cava-style Grain Bowl',
+    restaurantStyle: 'Mediterranean',
+    restaurantPrice: 17,
+    homemadeCost: 5.8,
+    estimatedSavings: 11.2,
+    confidence: 0.81,
+    matchScore: 8.2,
+    difficulty: 'Easy',
+    modes: ['Restaurant Copy', 'Budget', 'Healthy'],
+    recipeId: 'recipe-cava-grain-bowl',
+    groceryListId: 'grocery-cava-grain-bowl',
+    shareCardId: 'share-cava-grain-bowl',
+  },
+];
+
+export const defaultScanResult = mockScanResults[0];
