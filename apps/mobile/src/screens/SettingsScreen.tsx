@@ -3,6 +3,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 're
 
 import appConfig from '../../app.json';
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import { SecondaryButton, colors, sharedStyles } from '../components/OkyoUI';
 import { useOkyoStore } from '../state/useOkyoStore';
 
@@ -16,6 +17,8 @@ export function SettingsScreen() {
     if (didTrackView.current) {
       return;
     }
+
+    uiLog('SettingsScreen', 'enter');
 
     didTrackView.current = true;
     track(analyticsEvents.SETTINGS_VIEWED, { screen: 'SettingsScreen' });
@@ -32,6 +35,7 @@ export function SettingsScreen() {
         text: 'Reset',
         style: 'destructive',
         onPress: () => {
+          uiLog('SettingsScreen', 'reset_onboarding');
           resetOnboarding();
           track(analyticsEvents.ONBOARDING_RESET, { screen: 'SettingsScreen' });
         },
@@ -49,6 +53,7 @@ export function SettingsScreen() {
           text: 'Clear',
           style: 'destructive',
           onPress: () => {
+            uiLog('SettingsScreen', 'clear_saved_data');
             clearSavedData();
             track(analyticsEvents.LOCAL_DATA_CLEARED, { screen: 'SettingsScreen' });
           },

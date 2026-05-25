@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import {
   BadgePill,
   ModeTabs,
@@ -36,15 +37,19 @@ export function ResultSummaryScreen() {
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
+  const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const selectedRecipe = getSafeRecipeForMode(selectedMode);
   const confidencePercent = Math.round(defaultScanResult.confidence * 100);
   const didTrackResultView = useRef(false);
+  const firstScanEventId = `first-scan-${defaultScanResult.id}`;
 
   useEffect(() => {
     if (didTrackResultView.current) {
       return;
     }
+
+    uiLog('ResultSummaryScreen', 'enter', { mode: selectedMode });
 
     didTrackResultView.current = true;
     setLatestScanResult(defaultScanResult);
@@ -54,18 +59,21 @@ export function ResultSummaryScreen() {
         screen: 'ResultSummaryScreen',
       });
     }
-    incrementWeeklyScanCount();
-    awardXPOnce(`first-scan-${defaultScanResult.id}`, 10);
+    if (!awardedXpEvents.includes(firstScanEventId)) {
+      incrementWeeklyScanCount();
+    }
+    awardXPOnce(firstScanEventId, 10);
     track(analyticsEvents.RESULT_VIEWED, {
       dishName: defaultScanResult.dishName,
       mode: selectedMode,
       savings: selectedRecipe.estimatedSavings,
       screen: 'ResultSummaryScreen',
     });
-  }, [awardXPOnce, incrementWeeklyScanCount, setLatestScanResult]);
+  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, setLatestScanResult]);
 
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
+    uiLog('ResultSummaryScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
       dishName: defaultScanResult.dishName,
       mode,
@@ -75,6 +83,7 @@ export function ResultSummaryScreen() {
 
   const saveSelectedRecipe = () => {
     const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === selectedRecipe.id);
+    uiLog('ResultSummaryScreen', 'save_recipe', { recipeId: selectedRecipe.id });
     saveRecipe(selectedRecipe);
     if (!alreadySaved) {
       awardXPOnce(`save-recipe-${selectedRecipe.id}`, 5);

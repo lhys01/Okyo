@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import {
   BadgePill,
   ModeTabs,
@@ -49,6 +50,8 @@ export function RecipeDetailScreen() {
     const safeMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
     setSelectedMode(safeMode);
 
+    uiLog('RecipeDetailScreen', 'enter', { routeMode, safeMode });
+
     if (routeMode && !isRecipeMode(routeMode)) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: 'Recipe mode was missing or invalid.',
@@ -60,6 +63,7 @@ export function RecipeDetailScreen() {
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
     setStoreSelectedMode(mode);
+    uiLog('RecipeDetailScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
       dishName: recipe.title,
       mode,
@@ -69,6 +73,7 @@ export function RecipeDetailScreen() {
 
   const saveSelectedRecipe = () => {
     const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
+    uiLog('RecipeDetailScreen', 'save_recipe', { recipeId: recipe.id });
     saveRecipe(recipe);
     if (!alreadySaved) {
       awardXPOnce(`save-recipe-${recipe.id}`, 5);

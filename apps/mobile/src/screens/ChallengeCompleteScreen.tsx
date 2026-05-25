@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import { EmptyState, PrimaryButton, ScreenContainer, SecondaryButton, StatCard, colors } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
@@ -27,6 +28,8 @@ export function ChallengeCompleteScreen() {
     if (didTrackMissingChallenge.current || challenge) {
       return;
     }
+
+    uiLog('ChallengeCompleteScreen', 'enter', { challengeId: route.params?.challengeId });
 
     didTrackMissingChallenge.current = true;
     track(analyticsEvents.RESULT_ERROR, {
@@ -68,7 +71,7 @@ export function ChallengeCompleteScreen() {
       </View>
 
       <View style={styles.actions}>
-        <PrimaryButton onPress={() => navigation.navigate('ShareCardPreviewScreen', { cardType: 'challenge_result', mode: challenge.mode })}>
+        <PrimaryButton onPress={() => { uiLog('ChallengeCompleteScreen', 'share_result', { challengeId: challenge.id }); navigation.navigate('ShareCardPreviewScreen', { cardType: 'challenge_result', mode: challenge.mode }); }}>
           Share Result
         </PrimaryButton>
         <SecondaryButton onPress={() => navigation.navigate('MainTabs')}>Back to Tabs</SecondaryButton>

@@ -2,12 +2,14 @@ import { useNavigation } from '@react-navigation/native';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import { PrimaryButton, SecondaryButton, colors } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
 
 export function ScanScreen() {
   const navigation = useNavigation();
   const useMockScan = (source: 'camera' | 'photos') => {
+    uiLog('ScanScreen', 'mock_scan', { source });
     track(analyticsEvents.SCAN_STARTED, { screen: 'ScanScreen', source });
     track(analyticsEvents.PHOTO_UPLOADED, { screen: 'ScanScreen', source });
     navigation.navigate('AnalysisLoadingScreen' as never);

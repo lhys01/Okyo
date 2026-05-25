@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import { BadgePill, PrimaryButton, ScreenContainer, colors, sharedStyles } from '../components/OkyoUI';
 import { mockBadges, type Badge, type LeaderboardEntry } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
@@ -158,6 +159,8 @@ export function RankingsScreen() {
       return;
     }
 
+    uiLog('RankingsScreen', 'enter', { xp: safeXp });
+
     didTrackView.current = true;
     track(analyticsEvents.LEADERBOARD_VIEWED, {
       screen: 'RankingsScreen',
@@ -240,7 +243,7 @@ export function RankingsScreen() {
       </View>
 
       <View style={styles.shareAction}>
-        <PrimaryButton onPress={() => navigation.navigate('ShareCardPreviewScreen', { cardType: 'ranking' })}>
+        <PrimaryButton onPress={() => { uiLog('RankingsScreen', 'share_ranking'); navigation.navigate('ShareCardPreviewScreen', { cardType: 'ranking' }); }}>
           Share Ranking
         </PrimaryButton>
       </View>

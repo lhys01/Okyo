@@ -12,7 +12,7 @@ Codex should read these files first:
 4. `docs/seed/OKYO_MASTER_ONE_NOTE.md`
 5. `docs/wiki/V1_BUILD_TASKS.md`
 
-The app name is **Okyo**. Do not use DupeAI as the product name.
+The app name is **Okyo**.
 
 ## V1 Scope
 

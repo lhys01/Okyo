@@ -59,8 +59,14 @@ const appContext = {
   platform: Platform.OS,
 };
 
+const shouldLogAnalytics = false;
+
 export function track(eventName: AnalyticsEventName, properties: AnalyticsEventProperties = {}) {
   try {
+    if (!shouldLogAnalytics) {
+      return;
+    }
+
     console.log('[Okyo analytics]', {
       eventName,
       properties,

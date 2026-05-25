@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import { EmptyState, RecipeCard, ScreenContainer, colors } from '../components/OkyoUI';
 import { getSafeRecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
@@ -23,6 +24,8 @@ export function LibraryScreen() {
     if (didTrackMalformedData.current || malformedRecipeCount === 0) {
       return;
     }
+
+    uiLog('LibraryScreen', 'enter', { malformedRecipeCount });
 
     didTrackMalformedData.current = true;
     track(analyticsEvents.RESULT_ERROR, {
@@ -56,8 +59,8 @@ export function LibraryScreen() {
           <RecipeCard
             key={recipe?.id ?? `saved-recipe-${index}`}
             recipe={recipe}
-            onPress={() => navigation.navigate('RecipeDetailScreen', { mode: getSafeRecipeMode(recipe?.mode) })}
-            onRemove={() => recipe?.id ? removeSavedRecipe(recipe.id) : undefined}
+            onPress={() => { uiLog('LibraryScreen', 'open_saved_recipe', { recipeId: recipe?.id }); navigation.navigate('RecipeDetailScreen', { mode: getSafeRecipeMode(recipe?.mode) }); }}
+            onRemove={() => recipe?.id ? (uiLog('LibraryScreen', 'remove_saved_recipe', { recipeId: recipe.id }), removeSavedRecipe(recipe.id)) : undefined}
           />
         ))}
       </View>

@@ -1,9 +1,13 @@
+import { CommonActions, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { PrimaryButton, ScreenContainer, colors, sharedStyles } from '../components/OkyoUI';
+import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { uiLog } from '../utils/uiDebug';
 
 const onboardingSteps = [
   {
@@ -20,7 +24,10 @@ const onboardingSteps = [
   },
 ];
 
+type WelcomeNavigation = NativeStackNavigationProp<RootStackParamList, 'WelcomeScreen'>;
+
 export function WelcomeScreen() {
+  const navigation = useNavigation<WelcomeNavigation>();
   const [stepIndex, setStepIndex] = useState(0);
   const completeOnboarding = useOkyoStore((state) => state.completeOnboarding);
   const didTrackStart = useRef(false);
@@ -31,6 +38,7 @@ export function WelcomeScreen() {
     if (didTrackStart.current) {
       return;
     }
+    uiLog('WelcomeScreen', 'enter');
 
     didTrackStart.current = true;
     track(analyticsEvents.ONBOARDING_START, { screen: 'WelcomeScreen' });
@@ -38,8 +46,22 @@ export function WelcomeScreen() {
 
   const continueOnboarding = () => {
     if (isLastStep) {
+      uiLog('WelcomeScreen', 'start_scanning_pressed', { stepIndex });
+      uiLog('WelcomeScreen', 'complete_onboarding');
       track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'WelcomeScreen' });
       completeOnboarding();
+      uiLog('WelcomeScreen', 'reset_to_main_tabs');
+      navigation.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [
+            {
+              name: 'MainTabs',
+              params: { screen: 'ScanScreen' },
+            },
+          ],
+        }),
+      );
       return;
     }
 

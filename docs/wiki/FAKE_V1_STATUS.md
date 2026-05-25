@@ -34,7 +34,7 @@ Date: 2026-05-24
 - Share and clipboard actions guarded with try/catch and show user-friendly alerts.
 - XP awarding uses `awardXPOnce` to prevent duplicate stacking where appropriate.
 - Empty states present for missing latest scan and missing challenge results.
-- No remaining references to "DupeAI" found.
+- No legacy product-name references found.
 
 ## Next recommended phase
 

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import {
   EmptyState,
   PrimaryButton,
@@ -119,6 +120,8 @@ export function GroceryListScreen() {
       return;
     }
 
+    uiLog('GroceryListScreen', 'enter', { mode: rawMode });
+
     didTrackView.current = true;
     if (!isRecipeMode(rawMode)) {
       track(analyticsEvents.RESULT_ERROR, {
@@ -135,6 +138,7 @@ export function GroceryListScreen() {
   }, [rawMode, recipe.title, selectedMode]);
 
   const toggleItem = (itemId: string) => {
+    uiLog('GroceryListScreen', 'toggle_item', { itemId });
     setCheckedItemIds((currentIds) =>
       currentIds.includes(itemId)
         ? currentIds.filter((currentId) => currentId !== itemId)
@@ -144,6 +148,7 @@ export function GroceryListScreen() {
 
   const copyList = async () => {
     try {
+      uiLog('GroceryListScreen', 'copy_list', { recipeId: recipe.id });
       if (items.length === 0) {
         Alert.alert('List unavailable', 'This recipe does not have grocery items yet.');
         return;
@@ -166,12 +171,17 @@ export function GroceryListScreen() {
 
   const shareList = async () => {
     try {
+      uiLog('GroceryListScreen', 'share_list', { recipeId: recipe.id });
       if (items.length === 0) {
         Alert.alert('List unavailable', 'This recipe does not have grocery items yet.');
         return;
       }
 
-      await Share.share({ message: listText, title: `${recipe.title} Grocery List` });
+      const result = await Share.share({ message: listText, title: `${recipe.title} Grocery List` });
+      if (result.action !== Share.sharedAction) {
+        return;
+      }
+
       awardXPOnce(`export-grocery-list-${recipe.id}`, 10);
       unlockBadge('grocery-exporter');
       track(analyticsEvents.GROCERY_LIST_EXPORTED, {

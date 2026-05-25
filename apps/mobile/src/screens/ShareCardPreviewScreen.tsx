@@ -6,6 +6,7 @@ import { useEffect, useRef } from 'react';
 import { Alert, Share, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import { EmptyState, PrimaryButton, ScreenContainer, SecondaryButton, colors } from '../components/OkyoUI';
 import {
   defaultRestaurantPack,
@@ -177,6 +178,7 @@ export function ShareCardPreviewScreen() {
     if (didTrackGenerated.current) {
       return;
     }
+    uiLog('ShareCardPreviewScreen', 'enter', { cardType, missingScanResult });
 
     didTrackGenerated.current = true;
     if (missingScanResult) {
@@ -212,13 +214,18 @@ export function ShareCardPreviewScreen() {
 
   const shareCard = async () => {
     try {
+      uiLog('ShareCardPreviewScreen', 'share_tapped', { cardType, dishName: cardData.dishName });
       track(analyticsEvents.SHARE_TAPPED, {
         cardType,
         dishName: cardData.dishName,
         savings: cardData.estimatedSavings,
         screen: 'ShareCardPreviewScreen',
       });
-      await Share.share({ message: caption, title: 'Okyo dupe card' });
+      const result = await Share.share({ message: caption, title: 'Okyo dupe card' });
+      if (result.action !== Share.sharedAction) {
+        return;
+      }
+
       awardXPOnce(`share-card-${cardType}-${selectedMode}`, 20);
       track(analyticsEvents.SHARE_COMPLETED, {
         cardType,
@@ -233,6 +240,7 @@ export function ShareCardPreviewScreen() {
 
   const copyCaption = async () => {
     try {
+      uiLog('ShareCardPreviewScreen', 'copy_caption', { cardType });
       await Clipboard.setStringAsync(caption);
       Alert.alert('Copied', 'Share caption copied.');
     } catch {
@@ -241,6 +249,7 @@ export function ShareCardPreviewScreen() {
   };
 
   const saveToPhotos = () => {
+    uiLog('ShareCardPreviewScreen', 'save_to_photos');
     Alert.alert('Coming soon', 'Saving share cards to Photos is a placeholder for now.');
   };
 

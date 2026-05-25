@@ -16,6 +16,7 @@ import { ScanScreen } from '../screens/ScanScreen';
 import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { uiLog } from '../utils/uiDebug';
 import { MainTabs } from './MainTabs';
 import type { RootStackParamList } from './types';
 
@@ -34,21 +35,28 @@ export function AppNavigator() {
     track(analyticsEvents.APP_OPEN);
   }, []);
 
+  useEffect(() => {
+    uiLog('AppNavigator', 'onboarding_state', { hasCompletedOnboarding });
+  }, [hasCompletedOnboarding]);
+
   if (!hasCompletedOnboarding) {
     return (
       <Stack.Navigator
+        key="onboarding"
         screenOptions={{
           contentStyle: { backgroundColor: colors.background },
           headerShown: false,
         }}
       >
         <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} />
+        <Stack.Screen name="MainTabs" component={MainTabs} />
       </Stack.Navigator>
     );
   }
 
   return (
     <Stack.Navigator
+      key="main"
       initialRouteName="MainTabs"
       screenOptions={{
         contentStyle: { backgroundColor: colors.background },

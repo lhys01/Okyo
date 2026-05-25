@@ -1,3 +1,4 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { RecipeMode } from '../mocks';
 
 export type ShareCardType =
@@ -22,7 +23,7 @@ export type RootStackParamList = {
   ChallengeCompleteScreen: { challengeId?: string } | undefined;
   RestaurantPackDetailScreen: { packId?: string } | undefined;
   PaywallScreen: undefined;
-  MainTabs: undefined;
+  MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
 };
 
 export type MainTabParamList = {

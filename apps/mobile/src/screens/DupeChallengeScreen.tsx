@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import { BadgePill, PrimaryButton, ScreenContainer, colors, sharedStyles } from '../components/OkyoUI';
 import {
   defaultScanResult,
@@ -59,11 +60,13 @@ export function DupeChallengeScreen() {
   const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
   const [isCooked, setIsCooked] = useState(false);
   const startedXpAdded = useRef(false);
+  const completionLocked = useRef(false);
   const recipe = getSafeRecipeForMode(selectedMode);
 
   useEffect(() => {
     setSelectedMode(selectedMode);
     if (!startedXpAdded.current) {
+      uiLog('DupeChallengeScreen', 'enter', { mode: selectedMode });
       track(analyticsEvents.CHALLENGE_STARTED, {
         dishName: recipe.title,
         mode: selectedMode,
@@ -82,6 +85,12 @@ export function DupeChallengeScreen() {
   }, [awardXPOnce, rawMode, recipe.estimatedSavings, recipe.id, recipe.title, selectedMode, setSelectedMode]);
 
   const finishChallenge = (rating: ChallengeRating, matchScore: number) => {
+    if (completionLocked.current) {
+      return;
+    }
+
+    completionLocked.current = true;
+    uiLog('DupeChallengeScreen', 'finish_challenge', { rating, matchScore, recipeId: recipe.id });
     const savings = recipe.estimatedSavings;
     const bonusXp = matchScore >= 8 ? 25 : 0;
     const savingsXp = savings >= 25 ? 25 : 0;
@@ -166,7 +175,7 @@ export function DupeChallengeScreen() {
 
       {!isCooked ? (
         <View style={styles.primaryAction}>
-          <PrimaryButton onPress={() => setIsCooked(true)}>Mark Cooked</PrimaryButton>
+          <PrimaryButton onPress={() => { uiLog('DupeChallengeScreen', 'mark_cooked', { recipeId: recipe.id }); setIsCooked(true); }}>Mark Cooked</PrimaryButton>
         </View>
       ) : (
         <View style={styles.ratingCard}>

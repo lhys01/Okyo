@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import { EmptyState, PackCard, ScreenContainer, colors } from '../components/OkyoUI';
 import { mockRestaurantPacks, type RestaurantPack } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
@@ -40,6 +41,8 @@ export function RestaurantPacksScreen() {
       return;
     }
 
+    uiLog('RestaurantPacksScreen', 'enter', { packCount: safePacks.length });
+
     didTrackMalformedData.current = true;
     track(analyticsEvents.RESULT_ERROR, {
       errorMessage: 'Restaurant pack data was missing required fields.',
@@ -73,7 +76,7 @@ export function RestaurantPacksScreen() {
           const topDish = [...packDishes].sort((a, b) => b.estimatedSavings - a.estimatedSavings)[0];
           const label = index < 3 ? 'Free' : 'Premium preview';
 
-          return (
+            return (
             <PackCard
               key={pack.id}
               pack={pack}
@@ -81,7 +84,7 @@ export function RestaurantPacksScreen() {
               description={getPackDescription(pack.name)}
               averageSavings={getAverageSavings(pack)}
               topDish={topDish?.dishName}
-              onPress={() => navigation.navigate('RestaurantPackDetailScreen', { packId: pack.id })}
+              onPress={() => { uiLog('RestaurantPacksScreen', 'open_pack', { packId: pack.id }); navigation.navigate('RestaurantPackDetailScreen', { packId: pack.id }); }}
             />
           );
         })}

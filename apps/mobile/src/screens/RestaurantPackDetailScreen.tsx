@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import {
   BadgePill,
   PrimaryButton,
@@ -99,6 +100,8 @@ export function RestaurantPackDetailScreen() {
       return;
     }
 
+    uiLog('RestaurantPackDetailScreen', 'enter', { packId });
+
     didTrackView.current = true;
     if (!pack) {
       track(analyticsEvents.RESULT_ERROR, {
@@ -132,6 +135,7 @@ export function RestaurantPackDetailScreen() {
   const safeDishes = Array.isArray(pack.dishes) ? pack.dishes : [];
 
   const saveDish = (dish: RestaurantPackDish) => {
+    uiLog('RestaurantPackDetailScreen', 'save_dish', { dishId: dish.id });
     const recipe = makePackRecipe(pack, dish);
     const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
     saveRecipe(recipe);
@@ -150,10 +154,12 @@ export function RestaurantPackDetailScreen() {
   };
 
   const startChallenge = (dish: RestaurantPackDish) => {
+    uiLog('RestaurantPackDetailScreen', 'start_challenge', { dishId: dish.id });
     navigation.navigate('DupeChallengeScreen', { mode: getClosestMode(dish) });
   };
 
   const sharePack = (dish?: RestaurantPackDish) => {
+    uiLog('RestaurantPackDetailScreen', 'share_pack', { dishId: dish?.id });
     navigation.navigate('ShareCardPreviewScreen', {
       cardType: 'restaurant_pack',
       packId: pack.id,

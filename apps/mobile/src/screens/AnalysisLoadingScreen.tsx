@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { uiLog } from '../utils/uiDebug';
 import { colors, sharedStyles } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
 import { defaultScanResult, getSafeRecipeForMode } from '../mocks';
@@ -19,6 +20,7 @@ export function AnalysisLoadingScreen() {
   const [copyIndex, setCopyIndex] = useState(0);
 
   useEffect(() => {
+    uiLog('AnalysisLoadingScreen', 'enter');
     const rotation = setInterval(() => {
       setCopyIndex((currentIndex) => (currentIndex + 1) % loadingCopy.length);
     }, 500);
@@ -43,6 +45,7 @@ export function AnalysisLoadingScreen() {
         savings: recipe.estimatedSavings,
         screen: 'AnalysisLoadingScreen',
       });
+      uiLog('AnalysisLoadingScreen', 'navigate_result');
       navigation.navigate('ResultSummaryScreen' as never);
     }, 2000);
 

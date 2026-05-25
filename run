@@ -1,21 +1,58 @@
 #!/bin/zsh
-cd /Users/rober/Documents/GitHub/Okyo-1/apps/mobile
-npm run sim
 
-#!/bin/zsh
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-cd /Users/rober/Documents/GitHub/Okyo-1/apps/mobile
+cd /Users/rober/Documents/Okyo-1/apps/mobile
 
-npm run sim &
-SERVER_PID=$!
+if lsof -nP -iTCP:8082 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Okyo server is already running on port 8082."
+  SERVER_PID=""
+else
+  echo "Starting Okyo server..."
+  npm run sim &
+  SERVER_PID=$!
+fi
 
-echo "Starting Okyo..."
-sleep 8
+echo "Waiting for Expo to start..."
+sleep 10
 
-xcrun simctl boot 55788C71-3219-4A7A-AEE1-04BA60AFBC3C 2>/dev/null || true
+echo "Opening iPhone Simulator..."
+DEVICE_ID=$(xcrun simctl list devices | grep "iPhone 17 Pro" | head -1 | sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')
+
+if [ -z "$DEVICE_ID" ]; then
+  echo "Could not find iPhone 17 Pro simulator."
+  echo "Available devices:"
+  xcrun simctl list devices | grep iPhone
+  exit 1
+fi
+
+for _ in {1..12}; do
+  DEVICE_LINE=$(xcrun simctl list devices | grep "$DEVICE_ID")
+  if ! echo "$DEVICE_LINE" | grep -q "Shutting Down"; then
+    break
+  fi
+  sleep 1
+done
+
+DEVICE_LINE=$(xcrun simctl list devices | grep "$DEVICE_ID")
+if ! echo "$DEVICE_LINE" | grep -q "Booted"; then
+  xcrun simctl boot "$DEVICE_ID" 2>/dev/null || true
+fi
+
 open -a Simulator
-sleep 4
+xcrun simctl bootstatus "$DEVICE_ID" -b >/dev/null 2>&1 || true
 
-xcrun simctl openurl 55788C71-3219-4A7A-AEE1-04BA60AFBC3C exp://localhost:8082
+sleep 5
 
-wait $SERVER_PID
+IP=$(ipconfig getifaddr en0)
+
+if [ -z "$IP" ]; then
+  IP="localhost"
+fi
+
+echo "Opening Okyo at exp://$IP:8082"
+xcrun simctl openurl "$DEVICE_ID" "exp://$IP:8082"
+
+if [ -n "$SERVER_PID" ]; then
+  wait $SERVER_PID
+fi

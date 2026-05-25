@@ -28,7 +28,7 @@ Do not upload these separately:
 Okyo_Mini_Wiki/
 Okyo_Seed_Folder/
 old ZIPs
-old DupeAI PRD
+old duplicate PRD drafts
 ```
 
 This clean starter already includes the important docs in the correct place.
