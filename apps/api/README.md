@@ -41,3 +41,24 @@ curl http://localhost:8081/health
 - `GET /v1/rankings/weekly`
 - `GET /v1/restaurant-packs`
 - `GET /v1/restaurant-packs/:packId`
+
+`POST /v1/scans` accepts optional image metadata:
+
+```json
+{
+  "source": "photos",
+  "mode": "Restaurant Copy",
+  "image": {
+    "uri": "file:///local-only-photo.jpg",
+    "fileName": "meal.jpg",
+    "mimeType": "image/jpeg",
+    "width": 1200,
+    "height": 900,
+    "sizeBytes": 345678,
+    "source": "photos",
+    "placeholder": false
+  }
+}
+```
+
+The API validates this payload, returns the same mock scan shape, and does not store files or call AI.

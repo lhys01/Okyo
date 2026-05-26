@@ -16,9 +16,21 @@ export type ApiResponse<T> =
 
 export type ScanSource = 'camera' | 'photos' | 'mock';
 
+export type ScanImageMetadata = {
+  uri?: string;
+  fileName?: string;
+  mimeType?: string;
+  width?: number;
+  height?: number;
+  sizeBytes?: number;
+  source?: ScanSource;
+  placeholder?: boolean;
+};
+
 export type CreateScanRequest = {
   source: ScanSource;
   mode?: RecipeMode;
+  image?: ScanImageMetadata;
 };
 
 export type CreateScanResult = {
@@ -26,6 +38,7 @@ export type CreateScanResult = {
   recipe?: Recipe;
   groceryList?: GroceryList;
   shareCard?: ShareCard;
+  image?: ScanImageMetadata;
   note?: string;
   source: ScanSource;
 };

@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { analyticsEvents, track } from '../analytics/track';
+import type { ScanImageMetadata } from '../api/types';
 import {
   mockLeaderboardEntries,
   type LeaderboardEntry,
@@ -37,6 +38,7 @@ type OkyoState = {
   hasCompletedOnboarding: boolean;
   onboardingGoal: OnboardingGoal | null;
   latestScanResult: ScanResult | null;
+  selectedScanImage: ScanImageMetadata | null;
   selectedMode: RecipeMode;
   savedRecipes: Recipe[];
   completedChallenges: CompletedChallenge[];
@@ -52,6 +54,7 @@ type OkyoState = {
   resetOnboarding: () => void;
   setGoal: (goal: OnboardingGoal) => void;
   setLatestScanResult: (scanResult: ScanResult) => void;
+  setSelectedScanImage: (image: ScanImageMetadata | null) => void;
   setSelectedMode: (mode: RecipeMode) => void;
   saveRecipe: (recipe: Recipe) => void;
   removeSavedRecipe: (recipeId: string) => void;
@@ -72,6 +75,7 @@ export const useOkyoStore = create<OkyoState>()(
       hasCompletedOnboarding: false,
       onboardingGoal: null,
       latestScanResult: null,
+      selectedScanImage: null,
       selectedMode: 'Restaurant Copy',
       savedRecipes: [],
       completedChallenges: [],
@@ -87,6 +91,7 @@ export const useOkyoStore = create<OkyoState>()(
       resetOnboarding: () => set({ hasCompletedOnboarding: false }),
       setGoal: (goal) => set({ onboardingGoal: goal }),
       setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
+      setSelectedScanImage: (image) => set({ selectedScanImage: image }),
       setSelectedMode: (mode) => set({ selectedMode: mode }),
       saveRecipe: (recipe) =>
         set((state) => ({
@@ -159,6 +164,7 @@ export const useOkyoStore = create<OkyoState>()(
           unlockedBadges: [],
           recentBadgeUnlock: null,
           awardedXpEvents: [],
+          selectedScanImage: null,
         }),
     }),
     {
@@ -168,6 +174,7 @@ export const useOkyoStore = create<OkyoState>()(
         hasCompletedOnboarding: state.hasCompletedOnboarding,
         onboardingGoal: state.onboardingGoal,
         latestScanResult: state.latestScanResult,
+        selectedScanImage: state.selectedScanImage,
         selectedMode: state.selectedMode,
         savedRecipes: state.savedRecipes,
         completedChallenges: state.completedChallenges,

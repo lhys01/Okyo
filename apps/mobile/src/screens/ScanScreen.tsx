@@ -1,8 +1,10 @@
 import { useNavigation } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
+import type { ScanImageMetadata, ScanSource } from '../api/types';
 import { PrimaryButton, SecondaryButton, colors } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
 import { defaultScanResult, getSafeRecipeMode } from '../mocks';
@@ -13,18 +15,21 @@ export function ScanScreen() {
   const navigation = useNavigation();
   const selectedMode = useOkyoStore((state) => state.selectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
+  const setSelectedScanImage = useOkyoStore((state) => state.setSelectedScanImage);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
 
-  const useMockScan = (source: 'camera' | 'photos') => {
-    uiLog('ScanScreen', 'mock_scan', { source });
+  const useMockScan = (source: ScanSource, image?: ScanImageMetadata) => {
+    uiLog('ScanScreen', 'mock_scan', { source, hasImage: Boolean(image?.uri), placeholder: image?.placeholder });
     track(analyticsEvents.SCAN_STARTED, { screen: 'ScanScreen', source });
     track(analyticsEvents.PHOTO_UPLOADED, { screen: 'ScanScreen', source });
     setLatestScanResult(defaultScanResult);
+    setSelectedScanImage(image ?? null);
     navigation.navigate('AnalysisLoadingScreen' as never);
 
-    createMockScan({ mode: selectedMode, source })
+    createMockScan({ image, mode: selectedMode, source })
       .then((result) => {
         setLatestScanResult(result.scan);
+        setSelectedScanImage(result.image ?? image ?? null);
         if (result.recipe?.mode) {
           setSelectedMode(getSafeRecipeMode(result.recipe.mode));
         }
@@ -38,7 +43,38 @@ export function ScanScreen() {
         });
         uiLog('ScanScreen', 'api_scan_fallback', { source });
         setLatestScanResult(defaultScanResult);
+        setSelectedScanImage(image ?? null);
       });
+  };
+
+  const takePhoto = () => {
+    useMockScan('camera', createPlaceholderImage('camera'));
+  };
+
+  const uploadFromPhotos = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        allowsEditing: false,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+
+      if (result.canceled || result.assets.length === 0) {
+        uiLog('ScanScreen', 'photo_picker_cancelled');
+        useMockScan('photos', createPlaceholderImage('photos'));
+        return;
+      }
+
+      useMockScan('photos', getImageMetadata(result.assets[0], 'photos'));
+    } catch (error) {
+      track(analyticsEvents.RESULT_ERROR, {
+        errorMessage: error instanceof Error ? error.message : 'Image picker failed.',
+        screen: 'ScanScreen',
+        source: 'photos',
+      });
+      uiLog('ScanScreen', 'photo_picker_fallback');
+      useMockScan('photos', createPlaceholderImage('photos'));
+    }
   };
 
   return (
@@ -51,11 +87,33 @@ export function ScanScreen() {
         <Text style={styles.cameraText}>Mock scan ready</Text>
       </View>
       <View style={styles.actions}>
-        <PrimaryButton onPress={() => useMockScan('camera')}>Take Photo</PrimaryButton>
-        <SecondaryButton onPress={() => useMockScan('photos')}>Upload From Photos</SecondaryButton>
+        <PrimaryButton onPress={takePhoto}>Take Photo</PrimaryButton>
+        <SecondaryButton onPress={uploadFromPhotos}>Upload From Photos</SecondaryButton>
       </View>
     </ScreenScaffold>
   );
+}
+
+function createPlaceholderImage(source: ScanSource): ScanImageMetadata {
+  return {
+    fileName: `${source}-mock-placeholder.jpg`,
+    mimeType: 'image/jpeg',
+    placeholder: true,
+    source,
+  };
+}
+
+function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: ScanSource): ScanImageMetadata {
+  return {
+    fileName: asset.fileName ?? undefined,
+    height: asset.height,
+    mimeType: asset.mimeType ?? undefined,
+    placeholder: false,
+    sizeBytes: asset.fileSize ?? undefined,
+    source,
+    uri: asset.uri,
+    width: asset.width,
+  };
 }
 
 const styles = StyleSheet.create({

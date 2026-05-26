@@ -22,9 +22,21 @@ const port = Number(process.env.PORT ?? 8081);
 const app = express();
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
+const scanSourceSchema = z.enum(['camera', 'photos', 'mock']);
+const scanImageMetadataSchema = z.object({
+  uri: z.string().min(1).max(2000).optional(),
+  fileName: z.string().min(1).max(255).optional(),
+  mimeType: z.string().min(1).max(120).optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  source: scanSourceSchema.optional(),
+  placeholder: z.boolean().optional(),
+}).strict();
 const scanRequestSchema = z.object({
-  source: z.enum(['camera', 'photos', 'mock']).optional().default('mock'),
+  source: scanSourceSchema.optional().default('mock'),
   mode: recipeModeSchema.optional().default('Restaurant Copy'),
+  image: scanImageMetadataSchema.optional(),
 });
 const challengeRequestSchema = z.object({
   recipeId: z.string().min(1),
@@ -57,6 +69,7 @@ app.post('/v1/scans', (request, response) => {
 
   sendOk(response.status(201), {
     ...result,
+    image: body.image,
     source: body.source,
   });
 });

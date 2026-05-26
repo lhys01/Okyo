@@ -52,10 +52,11 @@ Implemented now:
 - Settings with Reset Onboarding and Delete Saved Data
 - Analytics wrapper and UI debug wrapper, currently quiet by default
 - Safe mobile API client for mock scan calls with local mock fallback
+- Image picker plumbing that sends safe image metadata or placeholders to the mock API
 
 Not built yet:
 
-- Real image upload
+- Real image upload/storage
 - Real AI dish recognition or recipe generation
 - Real cost engine
 - Login/accounts
@@ -178,7 +179,7 @@ lsof -nP -iTCP:8082 -sTCP:LISTEN
 ## Current Fake-data Features
 
 - Onboarding flow with Start Scanning reset into the Scan tab
-- Mock scan from Take Photo or Upload From Photos
+- Mock scan from Take Photo or Upload From Photos, including optional local photo metadata
 - Loading/analyzing screen
 - Result summary with confidence, restaurant estimate, homemade cost, savings, and mode tabs
 - Mode-specific recipe detail for Restaurant Copy, Budget, and Healthy
@@ -207,6 +208,8 @@ All food identification, costs, savings, and recipes are mock estimates. Do not 
 - `GET /v1/rankings/weekly`
 - `GET /v1/restaurant-packs`
 - `GET /v1/restaurant-packs/:packId`
+
+`POST /v1/scans` accepts optional image metadata or a placeholder image payload. The API does not store files and still returns mock scan data only.
 
 ## Troubleshooting
 

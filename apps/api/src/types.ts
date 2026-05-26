@@ -2,6 +2,19 @@ export type RecipeMode = 'Restaurant Copy' | 'Budget' | 'Healthy';
 
 export type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
+export type ScanSource = 'camera' | 'photos' | 'mock';
+
+export type ScanImageMetadata = {
+  uri?: string;
+  fileName?: string;
+  mimeType?: string;
+  width?: number;
+  height?: number;
+  sizeBytes?: number;
+  source?: ScanSource;
+  placeholder?: boolean;
+};
+
 export type ScanResult = {
   id: string;
   dishName: string;

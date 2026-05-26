@@ -85,13 +85,15 @@ Setup notes:
 - Loading state on analysis screen
 - Error, fallback, and empty states for missing recipe modes, missing share scan result, missing challenge result, empty library, empty savings, empty packs, and missing pack detail
 - Safe mock API scan call from Take Photo / Upload From Photos with fallback to existing local mock data if the API is offline
+- Upload From Photos opens the Expo photo picker and sends safe image metadata to the mock API
+- Take Photo uses a safe placeholder image payload until real camera capture is connected
 
 ## Known Limitations
 
 - Mobile app only calls the API for mock scan creation so far
 - API is mock-only and in-memory; no database or cloud persistence
 - Mock-only scan, dish recognition, recipes, costs, savings, XP, badges, rankings, and packs
-- No real image upload or camera integration yet
+- No real image file storage, camera capture, or dish recognition yet
 - No real AI provider or prompt/evaluation harness yet
 - No real cost engine or grocery price source yet
 - Native share sends text only; real share-card image export is still a placeholder

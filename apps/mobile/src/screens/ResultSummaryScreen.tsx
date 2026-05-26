@@ -1,7 +1,7 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useRef } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
@@ -32,6 +32,7 @@ export function ResultSummaryScreen() {
   const selectedModeRaw = useOkyoStore((state) => state.selectedMode);
   const selectedMode = getSafeRecipeMode(selectedModeRaw);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
+  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
@@ -109,6 +110,10 @@ export function ResultSummaryScreen() {
       <Text style={styles.subtitle}>
         {scanResult.restaurantStyle} copycat estimate
       </Text>
+
+      {selectedScanImage?.uri ? (
+        <Image source={{ uri: selectedScanImage.uri }} style={styles.scanPreview} />
+      ) : null}
 
       <View style={styles.savingsHero}>
         <Text style={styles.savingsHeroLabel}>Estimated savings</Text>
@@ -195,6 +200,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginTop: 22,
     padding: 20,
+  },
+  scanPreview: {
+    backgroundColor: colors.cream,
+    borderRadius: 18,
+    height: 190,
+    marginTop: 18,
+    width: '100%',
   },
   savingsHeroLabel: {
     color: colors.green,
