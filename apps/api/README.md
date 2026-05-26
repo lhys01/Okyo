@@ -1,10 +1,10 @@
 # Okyo API
 
-Mock TypeScript API skeleton for Okyo fake-data V1.
+Mock-first TypeScript API skeleton for Okyo fake-data V1.
 
-This app uses mock data only. It does not connect real AI, a database, auth, payments, maps, comments, or a social feed.
+This app uses mock data by default. It does not connect a database, auth, payments, maps, comments, a social feed, or permanent file storage.
 
-The scan endpoint is routed through a mock AI service interface at `src/services/aiService.ts`. That interface is the future replacement point for real dish recognition, recipe generation, and cost estimation.
+The scan endpoint is routed through an AI service interface at `src/services/aiService.ts`. OpenRouter can be enabled for testing, but disabled AI, missing keys, timeouts, invalid JSON, and provider failures all fall back to seeded mock data.
 
 ## Run Locally
 
@@ -63,9 +63,32 @@ curl http://localhost:8081/health
 }
 ```
 
-The API validates this payload, returns the same mock scan shape, and does not store files or call AI.
+The API validates this payload, returns the same scan shape, and does not store files. It calls AI only when `AI_ENABLED=true` and `OPENROUTER_API_KEY` is present.
 
-## Mock AI Service
+## OpenRouter Testing
+
+OpenRouter is disabled by default. Do not commit `.env` or API keys.
+
+```bash
+cp ../../.env.example ../../.env
+```
+
+Set these values in the local `.env` file:
+
+```bash
+AI_ENABLED=true
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_local_key_here
+OPENROUTER_VISION_MODEL=nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+OPENROUTER_TEXT_MODEL=nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+AI_TIMEOUT_MS=30000
+```
+
+This adapter uses OpenRouter's OpenAI-compatible chat completions endpoint. It asks for JSON-only food analysis and recipe output, validates responses with Zod, and logs `openrouter_ai` only when provider calls succeed. It logs `mock_ai` when mock mode is selected and `fallback_ai` when provider output fails.
+
+This is for testing only. Do not upload confidential information or personal data.
+
+## AI Service
 
 Current typed service functions:
 
@@ -73,4 +96,4 @@ Current typed service functions:
 - `generateRecipeFromDish(input)`
 - `estimateIngredientCosts(input)`
 
-These functions return validated mock structured data with confidence scores. `POST /v1/scans` falls back to seeded mock scan data if a mock AI-shaped output is missing or invalid. Future real AI provider calls should replace the internals of this service without changing the mobile response shape.
+These functions return validated structured data with confidence scores. `POST /v1/scans` keeps the same mobile response shape and falls back to seeded mock scan data if AI-shaped output is missing or invalid.

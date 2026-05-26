@@ -6,7 +6,7 @@ Date: 2026-05-25
 
 Fake-data V1 is complete for the current prototype scope. The app has the primary local-only flow from onboarding to scan, result, recipe, grocery list, save, share, Dupe Challenge, rankings, packs, and settings.
 
-No real AI, login, payments, maps, comments, DMs, or social feed were added for this phase. A mock TypeScript API skeleton exists, and the mobile scan flow can call it with local mock fallback.
+No production AI, login, payments, maps, comments, DMs, or social feed were added for this phase. A mock-first TypeScript API skeleton exists, and the mobile scan flow can call it with local mock fallback.
 
 ## Current Paths
 
@@ -24,6 +24,7 @@ The global terminal `run` shortcut should start from `/Users/rober/Documents/Oky
 - TypeScript
 - Mock Node/Express API in `apps/api`
 - Mock AI service interface in `apps/api/src/services/aiService.ts`
+- Optional OpenRouter testing adapter using `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, disabled by default
 - React Navigation native stack and bottom tabs
 - Zustand for local app state
 - AsyncStorage persistence through Zustand middleware
@@ -89,14 +90,15 @@ Setup notes:
 - Upload From Photos opens the Expo photo picker and sends safe image metadata to the mock API
 - Take Photo uses a safe placeholder image payload until real camera capture is connected
 - API scan endpoint uses a mock AI service interface for image analysis, recipe generation, and cost estimation, with schema validation and seeded-data fallback
+- OpenRouter provider adapter can be enabled locally with `.env`, while missing keys, disabled AI, timeouts, invalid JSON, or provider errors fall back to mock data
 
 ## Known Limitations
 
 - Mobile app only calls the API for mock scan creation so far
-- API is mock-only and in-memory; no database or cloud persistence
-- Mock-only scan, dish recognition, recipes, costs, savings, XP, badges, rankings, and packs
+- API is mock-first and in-memory; no database or cloud persistence
+- Mock fallback remains the default for scan, dish recognition, recipes, costs, savings, XP, badges, rankings, and packs
 - No real image file storage, camera capture, or dish recognition yet
-- No real AI provider, prompts, or evaluation harness yet
+- No production AI provider workflow, prompt versioning, or evaluation harness yet
 - No real cost engine or grocery price source yet
 - Native share sends text only; real share-card image export is still a placeholder
 - Paywall screen exists only as a placeholder; no purchases or subscriptions are connected

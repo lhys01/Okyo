@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { getAiConfig } from '../config/aiConfig.js';
 import {
   mockGroceryLists,
   mockRecipes,
@@ -7,14 +8,22 @@ import {
   mockShareCards,
 } from '../mockData.js';
 import type {
+  Difficulty,
   GroceryList,
   Recipe,
+  RecipeIngredient,
   RecipeMode,
   ScanImageMetadata,
   ScanResult,
   ScanSource,
   ShareCard,
 } from '../types.js';
+import {
+  analyzeFoodImageWithOpenRouter,
+  generateRecipeWithOpenRouter,
+  type OpenRouterRecipeOutput,
+  type OpenRouterRecipeVariant,
+} from './openRouterProvider.js';
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
 const difficultySchema = z.enum(['Easy', 'Medium', 'Hard']);
@@ -24,8 +33,14 @@ const matchScoreSchema = z.number().min(0).max(10);
 export const foodImageAnalysisSchema = z.object({
   candidateScanId: z.string().min(1),
   dishName: z.string().min(1),
+  cuisine: z.string().min(1),
   restaurantStyle: z.string().min(1),
   confidence: confidenceSchema,
+  confidenceReason: z.string().min(1),
+  visibleIngredients: z.array(z.string()).default([]),
+  likelyIngredients: z.array(z.string()).default([]),
+  restaurantPriceEstimate: z.number().nonnegative(),
+  homemadeCostEstimate: z.number().nonnegative(),
   matchScore: matchScoreSchema,
   difficulty: difficultySchema,
   modes: z.array(recipeModeSchema).min(1),
@@ -49,7 +64,9 @@ export const ingredientCostEstimateSchema = z.object({
 });
 
 export type FoodImageAnalysis = z.infer<typeof foodImageAnalysisSchema>;
-export type GeneratedRecipeOutput = z.infer<typeof generatedRecipeOutputSchema>;
+export type GeneratedRecipeOutput = z.infer<typeof generatedRecipeOutputSchema> & {
+  recipe?: Recipe;
+};
 export type IngredientCostEstimate = z.infer<typeof ingredientCostEstimateSchema>;
 
 export type AnalyzeFoodImageInput = {
@@ -68,7 +85,7 @@ export type EstimateIngredientCostsInput = {
   recipe: Recipe;
 };
 
-export type MockAiScanResult = {
+export type AiScanResult = {
   scan: ScanResult;
   recipe?: Recipe;
   groceryList?: GroceryList;
@@ -76,14 +93,145 @@ export type MockAiScanResult = {
   note: string;
 };
 
-export function analyzeFoodImage(input: AnalyzeFoodImageInput): FoodImageAnalysis {
-  // TODO: Replace this mock with a real vision provider behind a privacy-safe image upload flow.
+export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<FoodImageAnalysis> {
+  const config = getAiConfig();
+  if (!canUseOpenRouter(config)) {
+    logAi('mock_ai', getMockReason(config));
+    return analyzeFoodImageWithMock(input);
+  }
+
+  try {
+    const output = await analyzeFoodImageWithOpenRouter({
+      config,
+      image: input.image,
+      mode: input.mode,
+    });
+    logAi('openrouter_ai', { stage: 'vision', model: config.openRouterVisionModel });
+
+    return foodImageAnalysisSchema.parse({
+      candidateScanId: mockScanResults[0].id,
+      confidence: clampConfidence(output.confidence),
+      confidenceReason: output.confidenceReason,
+      cuisine: output.cuisine,
+      difficulty: 'Medium',
+      dishName: output.dishName,
+      homemadeCostEstimate: output.homemadeCostEstimate,
+      likelyIngredients: output.likelyIngredients,
+      matchScore: getMatchScoreFromConfidence(output.confidence),
+      modes: ['Restaurant Copy', 'Budget', 'Healthy'],
+      notes: ['OpenRouter test output; verify before using.'],
+      restaurantPriceEstimate: output.restaurantPriceEstimate,
+      restaurantStyle: output.cuisine,
+      visibleIngredients: output.visibleIngredients,
+    });
+  } catch {
+    logAi('fallback_ai', { reason: 'openrouter_vision_failed' });
+    return analyzeFoodImageWithMock(input);
+  }
+}
+
+export async function generateRecipeFromDish(
+  input: GenerateRecipeFromDishInput,
+): Promise<GeneratedRecipeOutput> {
+  const config = getAiConfig();
+  if (!canUseOpenRouter(config)) {
+    logAi('mock_ai', getMockReason(config));
+    return generateRecipeFromDishWithMock(input);
+  }
+
+  try {
+    const output = await generateRecipeWithOpenRouter({
+      analysis: input.analysis,
+      config,
+      mode: input.mode,
+    });
+    logAi('openrouter_ai', { stage: 'recipe', model: config.openRouterTextModel });
+    return createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
+  } catch {
+    logAi('fallback_ai', { reason: 'openrouter_recipe_failed' });
+    return generateRecipeFromDishWithMock(input);
+  }
+}
+
+export function estimateIngredientCosts(input: EstimateIngredientCostsInput): IngredientCostEstimate {
+  const estimate = ingredientCostEstimateSchema.safeParse({
+    restaurantPrice: input.analysis.restaurantPriceEstimate,
+    homemadeCost: input.analysis.homemadeCostEstimate,
+    estimatedSavings: input.analysis.restaurantPriceEstimate - input.analysis.homemadeCostEstimate,
+    confidence: Math.min(input.analysis.confidence, 0.82),
+    assumptions: [
+      'Uses AI-shaped restaurant estimate when available.',
+      'Uses AI-shaped homemade ingredient estimate when available.',
+    ],
+  });
+
+  if (estimate.success) {
+    return estimate.data;
+  }
+
+  logAi('fallback_ai', { reason: 'cost_estimate_invalid' });
+  return estimateIngredientCostsWithMock(input);
+}
+
+export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanResult> {
+  const fallback = createFallbackScan(input.mode);
+
+  try {
+    const analysis = await analyzeFoodImage(input);
+    const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode });
+    const recipe = generatedRecipe.recipe ?? getRecipeById(generatedRecipe.recipeId) ?? fallback.recipe;
+
+    if (!recipe) {
+      logAi('fallback_ai', { reason: 'recipe_missing' });
+      return fallback;
+    }
+
+    const costEstimate = estimateIngredientCosts({ analysis, recipe });
+    const seedScan = getScanById(analysis.candidateScanId) ?? fallback.scan;
+    const usedOpenRouterAnalysis = analysis.notes.includes('OpenRouter test output; verify before using.');
+    const scan: ScanResult = {
+      ...seedScan,
+      confidence: getBlendedConfidence(analysis.confidence, generatedRecipe.confidence, costEstimate.confidence),
+      difficulty: analysis.difficulty,
+      dishName: analysis.dishName,
+      estimatedSavings: costEstimate.estimatedSavings,
+      homemadeCost: costEstimate.homemadeCost,
+      matchScore: analysis.matchScore,
+      modes: analysis.modes,
+      restaurantPrice: costEstimate.restaurantPrice,
+      restaurantStyle: analysis.restaurantStyle,
+    };
+
+    return {
+      scan,
+      recipe,
+      groceryList: getGroceryList(seedScan.groceryListId),
+      shareCard: getShareCard(seedScan.shareCardId),
+      note: usedOpenRouterAnalysis
+        ? 'AI provider output is for testing only. No image was stored; verify all food, cost, and recipe details.'
+        : 'Mock AI service output only. No image was stored and no AI provider was called.',
+    };
+  } catch {
+    logAi('fallback_ai', { reason: 'ai_scan_failed' });
+    return fallback;
+  }
+}
+
+export const createMockAiScan = createAiScan;
+
+function analyzeFoodImageWithMock(input: AnalyzeFoodImageInput): FoodImageAnalysis {
   const scan = getSeedScan(input.image, input.source);
   return foodImageAnalysisSchema.parse({
     candidateScanId: scan.id,
     dishName: scan.dishName,
+    cuisine: scan.restaurantStyle,
     restaurantStyle: scan.restaurantStyle,
     confidence: input.image?.placeholder ? Math.min(scan.confidence, 0.72) : scan.confidence,
+    confidenceReason: 'Seeded mock analysis for local testing; dish identity is not verified.',
+    visibleIngredients: ['pasta', 'tomato sauce', 'cheese'],
+    likelyIngredients: ['rigatoni', 'tomato paste', 'cream', 'parmesan', 'red pepper flakes'],
+    restaurantPriceEstimate: scan.restaurantPrice,
+    homemadeCostEstimate: scan.homemadeCost,
     matchScore: scan.matchScore,
     difficulty: scan.difficulty,
     modes: scan.modes,
@@ -94,8 +242,7 @@ export function analyzeFoodImage(input: AnalyzeFoodImageInput): FoodImageAnalysi
   });
 }
 
-export function generateRecipeFromDish(input: GenerateRecipeFromDishInput): GeneratedRecipeOutput {
-  // TODO: Replace this mock with a recipe-generation provider and persist user edits separately.
+function generateRecipeFromDishWithMock(input: GenerateRecipeFromDishInput): GeneratedRecipeOutput {
   const recipe = getRecipeForAnalysis(input.analysis, input.mode);
   return generatedRecipeOutputSchema.parse({
     recipeId: recipe.id,
@@ -106,8 +253,7 @@ export function generateRecipeFromDish(input: GenerateRecipeFromDishInput): Gene
   });
 }
 
-export function estimateIngredientCosts(input: EstimateIngredientCostsInput): IngredientCostEstimate {
-  // TODO: Replace this mock with a real cost engine and grocery price source.
+function estimateIngredientCostsWithMock(input: EstimateIngredientCostsInput): IngredientCostEstimate {
   const scan = getScanById(input.analysis.candidateScanId) ?? mockScanResults[0];
   return ingredientCostEstimateSchema.parse({
     restaurantPrice: scan.restaurantPrice,
@@ -121,47 +267,53 @@ export function estimateIngredientCosts(input: EstimateIngredientCostsInput): In
   });
 }
 
-export function createMockAiScan(input: AnalyzeFoodImageInput): MockAiScanResult {
-  const fallback = createFallbackScan(input.mode);
+function createRecipeFromOpenRouterOutput(
+  output: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+  mode: RecipeMode,
+): GeneratedRecipeOutput {
+  const variant = getRecipeVariant(output, mode);
+  const recipe = createRecipeFromVariant(variant, analysis, mode);
 
-  try {
-    const analysis = analyzeFoodImage(input);
-    const generatedRecipe = generateRecipeFromDish({ analysis, mode: input.mode });
-    const recipe = getRecipeById(generatedRecipe.recipeId) ?? fallback.recipe;
-
-    if (!recipe) {
-      return fallback;
-    }
-
-    const costEstimate = estimateIngredientCosts({ analysis, recipe });
-    const seedScan = getScanById(analysis.candidateScanId) ?? fallback.scan;
-    const scan: ScanResult = {
-      ...seedScan,
-      confidence: getBlendedConfidence(analysis.confidence, generatedRecipe.confidence, costEstimate.confidence),
-      difficulty: analysis.difficulty,
-      dishName: analysis.dishName,
-      estimatedSavings: costEstimate.estimatedSavings,
-      homemadeCost: costEstimate.homemadeCost,
-      matchScore: analysis.matchScore,
-      modes: analysis.modes,
-      restaurantPrice: costEstimate.restaurantPrice,
-      restaurantStyle: analysis.restaurantStyle,
-      recipeId: recipe.scanResultId ? seedScan.recipeId : recipe.id,
-    };
-
-    return {
-      scan,
-      recipe,
-      groceryList: getGroceryList(seedScan.groceryListId),
-      shareCard: getShareCard(seedScan.shareCardId),
-      note: 'Mock AI service output only. No image was stored and no AI provider was called.',
-    };
-  } catch {
-    return fallback;
-  }
+  return {
+    confidence: Math.min(analysis.confidence, 0.82),
+    confidenceNote: `AI-assisted testing output. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
+    mode,
+    recipe,
+    recipeId: recipe.id,
+    title: recipe.title,
+  };
 }
 
-function createFallbackScan(mode: RecipeMode): MockAiScanResult {
+function createRecipeFromVariant(
+  variant: OpenRouterRecipeVariant,
+  analysis: FoodImageAnalysis,
+  mode: RecipeMode,
+): Recipe {
+  const homemadeCost = analysis.homemadeCostEstimate;
+  const restaurantPrice = analysis.restaurantPriceEstimate;
+
+  return {
+    id: `ai-${slugify(analysis.dishName)}-${slugify(mode)}`,
+    scanResultId: analysis.candidateScanId,
+    title: ensureCopycatTitle(variant.title),
+    mode,
+    description: ensureInspiredCopy(variant.description),
+    prepTimeMinutes: parseMinutes(variant.prepTime, 15),
+    cookTimeMinutes: parseMinutes(variant.cookTime, 25),
+    servings: 2,
+    difficulty: normalizeDifficulty(variant.difficulty),
+    estimatedHomemadeCost: homemadeCost,
+    estimatedSavings: restaurantPrice - homemadeCost,
+    ingredients: variant.ingredients.map(toRecipeIngredient),
+    steps: variant.steps,
+    substitutions: variant.substitutions,
+    pantryNote: variant.pantryNote,
+    confidenceNote: `AI-assisted testing output. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
+  };
+}
+
+function createFallbackScan(mode: RecipeMode): AiScanResult {
   const scan = mockScanResults[0];
   const recipe = getRecipeForScan(scan, mode);
 
@@ -170,7 +322,7 @@ function createFallbackScan(mode: RecipeMode): MockAiScanResult {
     recipe,
     groceryList: getGroceryList(scan.groceryListId),
     shareCard: getShareCard(scan.shareCardId),
-    note: 'Fallback mock scan only. AI-shaped mock output was missing or invalid.',
+    note: 'Fallback mock scan only. AI-shaped output was missing or invalid.',
   };
 }
 
@@ -219,4 +371,90 @@ function getBlendedConfidence(...scores: number[]) {
 
   const average = validScores.reduce((total, score) => total + score, 0) / validScores.length;
   return Math.max(0, Math.min(1, Number(average.toFixed(2))));
+}
+
+function getRecipeVariant(output: OpenRouterRecipeOutput, mode: RecipeMode) {
+  switch (mode) {
+    case 'Budget':
+      return output.budget;
+    case 'Healthy':
+      return output.healthy;
+    case 'Restaurant Copy':
+      return output.restaurantCopy;
+  }
+}
+
+function normalizeDifficulty(value: string): Difficulty {
+  const normalized = value.toLowerCase();
+  if (normalized.includes('hard')) {
+    return 'Hard';
+  }
+  if (normalized.includes('medium')) {
+    return 'Medium';
+  }
+
+  return 'Easy';
+}
+
+function parseMinutes(value: string, fallback: number) {
+  const match = value.match(/\d+/);
+  return match ? Number(match[0]) : fallback;
+}
+
+function toRecipeIngredient(value: string): RecipeIngredient {
+  return {
+    name: value,
+    quantity: 'as needed',
+  };
+}
+
+function ensureCopycatTitle(value: string) {
+  if (value.toLowerCase().includes('copycat') || value.toLowerCase().includes('inspired')) {
+    return value;
+  }
+
+  return `${value} Copycat-style`;
+}
+
+function ensureInspiredCopy(value: string) {
+  if (value.toLowerCase().includes('copycat') || value.toLowerCase().includes('inspired')) {
+    return value;
+  }
+
+  return `${value} This is a copycat-style estimate, not an official restaurant recipe.`;
+}
+
+function slugify(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'recipe';
+}
+
+function canUseOpenRouter(config: ReturnType<typeof getAiConfig>) {
+  return config.enabled && config.provider === 'openrouter' && Boolean(config.openRouterApiKey);
+}
+
+function getMockReason(config: ReturnType<typeof getAiConfig>) {
+  if (!config.enabled) {
+    return { reason: 'ai_disabled' };
+  }
+  if (!config.openRouterApiKey) {
+    return { reason: 'openrouter_key_missing' };
+  }
+
+  return { reason: 'mock_requested' };
+}
+
+function clampConfidence(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0.5;
+  }
+
+  return Math.max(0, Math.min(1, value));
+}
+
+function getMatchScoreFromConfidence(confidence: number) {
+  return Math.max(3, Math.min(9.5, Number((confidence * 10).toFixed(1))));
+}
+
+function logAi(event: 'mock_ai' | 'openrouter_ai' | 'fallback_ai', details: Record<string, unknown>) {
+  console.log(event, details);
 }

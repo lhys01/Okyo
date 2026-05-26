@@ -54,11 +54,12 @@ Implemented now:
 - Safe mobile API client for mock scan calls with local mock fallback
 - Image picker plumbing that sends safe image metadata or placeholders to the mock API
 - Mock AI service interface in `apps/api/src/services/aiService.ts`
+- OpenRouter adapter for testing with mock fallback, disabled by default
 
 Not built yet:
 
 - Real image upload/storage
-- Real AI dish recognition or recipe generation
+- Production AI dish recognition or recipe generation
 - Real cost engine
 - Login/accounts
 - Payments/subscriptions
@@ -86,8 +87,9 @@ LAN mode is intentional. In this local setup, simulator connections through `loc
 The API uses:
 
 - Port `8081`
-- Mock data only
-- No database, auth, real AI, or payments
+- Mock fallback by default
+- Optional OpenRouter test adapter when `AI_ENABLED=true` and an API key is provided
+- No database, auth, payments, permanent file storage, or production AI workflow
 
 ## Run The Mobile App
 
@@ -145,7 +147,7 @@ cd /Users/rober/Documents/Okyo-1/apps/api
 npm run typecheck
 ```
 
-The API currently serves mock data only. It includes a mock AI service interface for future dish recognition, recipe generation, and cost estimation, but it does not call real AI or persist to a database.
+The API uses mock data by default. It includes an AI service interface for future dish recognition, recipe generation, and cost estimation. OpenRouter can be enabled for testing, but missing keys, disabled AI, timeouts, invalid JSON, or provider failures all fall back to mock data.
 
 The mobile API base URL is configured in:
 
@@ -154,6 +156,24 @@ apps/mobile/src/api/config.ts
 ```
 
 For the iOS Simulator, this currently points at the Mac LAN IP on port `8081` because `localhost` can refer to the simulator itself.
+
+## Enable OpenRouter Testing
+
+OpenRouter is optional and disabled by default. Do not commit `.env` or API keys.
+
+1. Copy `.env.example` to `.env`.
+2. Set:
+
+```bash
+AI_ENABLED=true
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_local_key_here
+OPENROUTER_VISION_MODEL=nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+OPENROUTER_TEXT_MODEL=nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+AI_TIMEOUT_MS=30000
+```
+
+This is for testing only. Do not upload confidential information or personal data. Local simulator file URIs are not permanently stored by the API.
 
 ## Useful Commands
 
@@ -212,7 +232,7 @@ All food identification, costs, savings, and recipes are mock estimates. Do not 
 
 `POST /v1/scans` accepts optional image metadata or a placeholder image payload. The API does not store files and still returns mock scan data only.
 
-Internally, `POST /v1/scans` calls the mock AI service interface in `apps/api/src/services/aiService.ts`. That service validates mock AI-shaped outputs, handles confidence scores, and falls back to seeded mock scan data if a mock output is invalid.
+Internally, `POST /v1/scans` calls the AI service interface in `apps/api/src/services/aiService.ts`. That service can use mock AI or the OpenRouter adapter, validates AI-shaped outputs, handles confidence scores, and falls back to seeded mock scan data if output is invalid.
 
 ## Troubleshooting
 

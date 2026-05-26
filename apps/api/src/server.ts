@@ -15,7 +15,7 @@ import {
   getXpDefinitions,
   saveRecipe,
 } from './store.js';
-import { createMockAiScan } from './services/aiService.js';
+import { createAiScan } from './services/aiService.js';
 import type { ApiFailure, ApiResponse } from './types.js';
 
 const port = Number(process.env.PORT ?? 8081);
@@ -57,25 +57,29 @@ app.get('/health', (_request, response) => {
     status: 'ok',
     service: 'okyo-api',
     mode: 'mock',
-    realAiEnabled: false,
+    realAiEnabled: process.env.AI_ENABLED === 'true',
     databaseEnabled: false,
     timestamp: new Date().toISOString(),
   });
 });
 
-app.post('/v1/scans', (request, response) => {
-  const body = parseRequest(scanRequestSchema, request.body);
-  const result = createMockAiScan({
-    image: body.image,
-    mode: body.mode,
-    source: body.source,
-  });
+app.post('/v1/scans', async (request, response, next) => {
+  try {
+    const body = parseRequest(scanRequestSchema, request.body);
+    const result = await createAiScan({
+      image: body.image,
+      mode: body.mode,
+      source: body.source,
+    });
 
-  sendOk(response.status(201), {
-    ...result,
-    image: body.image,
-    source: body.source,
-  });
+    sendOk(response.status(201), {
+      ...result,
+      image: body.image,
+      source: body.source,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/v1/scans/:scanId', (request, response) => {
