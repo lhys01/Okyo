@@ -53,6 +53,7 @@ Implemented now:
 - Analytics wrapper and UI debug wrapper, currently quiet by default
 - Safe mobile API client for mock scan calls with local mock fallback
 - Image picker plumbing that sends safe image metadata or placeholders to the mock API
+- Mock AI service interface in `apps/api/src/services/aiService.ts`
 
 Not built yet:
 
@@ -144,7 +145,7 @@ cd /Users/rober/Documents/Okyo-1/apps/api
 npm run typecheck
 ```
 
-The API currently serves mock data only. It is a skeleton for future mobile/API integration and does not call real AI or persist to a database.
+The API currently serves mock data only. It includes a mock AI service interface for future dish recognition, recipe generation, and cost estimation, but it does not call real AI or persist to a database.
 
 The mobile API base URL is configured in:
 
@@ -210,6 +211,8 @@ All food identification, costs, savings, and recipes are mock estimates. Do not 
 - `GET /v1/restaurant-packs/:packId`
 
 `POST /v1/scans` accepts optional image metadata or a placeholder image payload. The API does not store files and still returns mock scan data only.
+
+Internally, `POST /v1/scans` calls the mock AI service interface in `apps/api/src/services/aiService.ts`. That service validates mock AI-shaped outputs, handles confidence scores, and falls back to seeded mock scan data if a mock output is invalid.
 
 ## Troubleshooting
 

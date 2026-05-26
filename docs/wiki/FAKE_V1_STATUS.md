@@ -23,6 +23,7 @@ The global terminal `run` shortcut should start from `/Users/rober/Documents/Oky
 - React Native with Expo SDK 55
 - TypeScript
 - Mock Node/Express API in `apps/api`
+- Mock AI service interface in `apps/api/src/services/aiService.ts`
 - React Navigation native stack and bottom tabs
 - Zustand for local app state
 - AsyncStorage persistence through Zustand middleware
@@ -87,6 +88,7 @@ Setup notes:
 - Safe mock API scan call from Take Photo / Upload From Photos with fallback to existing local mock data if the API is offline
 - Upload From Photos opens the Expo photo picker and sends safe image metadata to the mock API
 - Take Photo uses a safe placeholder image payload until real camera capture is connected
+- API scan endpoint uses a mock AI service interface for image analysis, recipe generation, and cost estimation, with schema validation and seeded-data fallback
 
 ## Known Limitations
 
@@ -94,7 +96,7 @@ Setup notes:
 - API is mock-only and in-memory; no database or cloud persistence
 - Mock-only scan, dish recognition, recipes, costs, savings, XP, badges, rankings, and packs
 - No real image file storage, camera capture, or dish recognition yet
-- No real AI provider or prompt/evaluation harness yet
+- No real AI provider, prompts, or evaluation harness yet
 - No real cost engine or grocery price source yet
 - Native share sends text only; real share-card image export is still a placeholder
 - Paywall screen exists only as a placeholder; no purchases or subscriptions are connected

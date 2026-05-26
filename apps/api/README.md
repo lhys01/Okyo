@@ -4,6 +4,8 @@ Mock TypeScript API skeleton for Okyo fake-data V1.
 
 This app uses mock data only. It does not connect real AI, a database, auth, payments, maps, comments, or a social feed.
 
+The scan endpoint is routed through a mock AI service interface at `src/services/aiService.ts`. That interface is the future replacement point for real dish recognition, recipe generation, and cost estimation.
+
 ## Run Locally
 
 ```bash
@@ -62,3 +64,13 @@ curl http://localhost:8081/health
 ```
 
 The API validates this payload, returns the same mock scan shape, and does not store files or call AI.
+
+## Mock AI Service
+
+Current typed service functions:
+
+- `analyzeFoodImage(input)`
+- `generateRecipeFromDish(input)`
+- `estimateIngredientCosts(input)`
+
+These functions return validated mock structured data with confidence scores. `POST /v1/scans` falls back to seeded mock scan data if a mock AI-shaped output is missing or invalid. Future real AI provider calls should replace the internals of this service without changing the mobile response shape.

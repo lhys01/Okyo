@@ -5,7 +5,6 @@ import { z } from 'zod';
 import {
   awardXp,
   createChallenge,
-  createMockScan,
   getLibrary,
   getRecipe,
   getRestaurantPack,
@@ -16,6 +15,7 @@ import {
   getXpDefinitions,
   saveRecipe,
 } from './store.js';
+import { createMockAiScan } from './services/aiService.js';
 import type { ApiFailure, ApiResponse } from './types.js';
 
 const port = Number(process.env.PORT ?? 8081);
@@ -65,7 +65,11 @@ app.get('/health', (_request, response) => {
 
 app.post('/v1/scans', (request, response) => {
   const body = parseRequest(scanRequestSchema, request.body);
-  const result = createMockScan(body.mode);
+  const result = createMockAiScan({
+    image: body.image,
+    mode: body.mode,
+    source: body.source,
+  });
 
   sendOk(response.status(201), {
     ...result,
