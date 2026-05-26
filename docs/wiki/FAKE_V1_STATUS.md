@@ -6,7 +6,7 @@ Date: 2026-05-25
 
 Fake-data V1 is complete for the current prototype scope. The app has the primary local-only flow from onboarding to scan, result, recipe, grocery list, save, share, Dupe Challenge, rankings, packs, and settings.
 
-No backend, real AI, login, payments, maps, comments, DMs, or social feed were added for this phase.
+No real AI, login, payments, maps, comments, DMs, or social feed were added for this phase. A mock TypeScript API skeleton now exists for future integration work.
 
 ## Current Paths
 
@@ -22,6 +22,7 @@ The global terminal `run` shortcut should start from `/Users/rober/Documents/Oky
 
 - React Native with Expo SDK 55
 - TypeScript
+- Mock Node/Express API in `apps/api`
 - React Navigation native stack and bottom tabs
 - Zustand for local app state
 - AsyncStorage persistence through Zustand middleware
@@ -85,7 +86,8 @@ Setup notes:
 
 ## Known Limitations
 
-- Local-only prototype; no backend API or cloud persistence
+- Mobile app is still local-first and does not call the API yet
+- API is mock-only and in-memory; no database or cloud persistence
 - Mock-only scan, dish recognition, recipes, costs, savings, XP, badges, rankings, and packs
 - No real image upload or camera integration yet
 - No real AI provider or prompt/evaluation harness yet
@@ -96,7 +98,7 @@ Setup notes:
 
 ## Intentional Exclusions
 
-- No backend implementation
+- No production backend implementation
 - No real AI or remote inference
 - No login or account system
 - No payments or subscriptions
@@ -109,6 +111,9 @@ Setup notes:
 ## Verification
 
 - TypeScript passed with `cd apps/mobile && npx tsc --noEmit`
+- API TypeScript passed with `cd apps/api && npm run typecheck`
+- API build passed with `cd apps/api && npm run build`
+- API health check passed with `GET http://localhost:8081/health`
 - Simulator launch passed with `./run` from `/Users/rober/Documents/Okyo-1`
 - `run` opened Okyo at `exp://192.168.7.86:8082` during this review
 - Main flow reviewed: onboarding -> Start Scanning -> Scan -> Loading -> Result Summary -> Recipe Detail
@@ -119,7 +124,7 @@ Setup notes:
 
 1. Run a manual simulator UX pass with persisted state reset between runs.
 2. Add a minimal smoke-test plan or E2E harness for the fake-data V1 critical path.
-3. Add an API skeleton that serves the existing mock scan, recipe, pack, XP, and badge data.
+3. Wire the mobile app to the mock API behind a feature flag.
 4. Define the AI provider interface and response schema behind a feature flag.
 5. Design the first real image-upload flow without storing food images unless the user explicitly saves or opts in.
 

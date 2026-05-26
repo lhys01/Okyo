@@ -41,6 +41,7 @@ The app name is **Okyo**.
 Implemented now:
 
 - Expo React Native mobile app in `apps/mobile`
+- Mock TypeScript API skeleton in `apps/api`
 - TypeScript
 - React Navigation stack + tabs
 - Zustand local state with AsyncStorage persistence
@@ -53,7 +54,6 @@ Implemented now:
 
 Not built yet:
 
-- Backend API
 - Real image upload
 - Real AI dish recognition or recipe generation
 - Real cost engine
@@ -80,7 +80,13 @@ The mobile app uses:
 
 LAN mode is intentional. In this local setup, simulator connections through `localhost` or `127.0.0.1` were unreliable.
 
-## Run The App
+The API uses:
+
+- Port `8081`
+- Mock data only
+- No database, auth, real AI, or payments
+
+## Run The Mobile App
 
 Beginner path:
 
@@ -113,9 +119,34 @@ The `sim` script runs:
 expo start -c --host lan --port 8082
 ```
 
-## Useful Commands
+## Run The API
+
+From the API app:
+
+```bash
+cd /Users/rober/Documents/Okyo-1/apps/api
+npm install
+npm run dev
+```
+
+Health check:
+
+```bash
+curl http://localhost:8081/health
+```
 
 TypeScript check:
+
+```bash
+cd /Users/rober/Documents/Okyo-1/apps/api
+npm run typecheck
+```
+
+The API currently serves mock data only. It is a skeleton for future mobile/API integration and does not call real AI or persist to a database.
+
+## Useful Commands
+
+Mobile TypeScript check:
 
 ```bash
 cd /Users/rober/Documents/Okyo-1/apps/mobile
@@ -152,6 +183,21 @@ lsof -nP -iTCP:8082 -sTCP:LISTEN
 - Settings with Reset Onboarding and Delete Saved Data
 
 All food identification, costs, savings, and recipes are mock estimates. Do not present them as exact.
+
+## Current Mock API Endpoints
+
+- `GET /health`
+- `POST /v1/scans`
+- `GET /v1/scans/:scanId`
+- `GET /v1/recipes/:recipeId`
+- `POST /v1/recipes/:recipeId/save`
+- `GET /v1/library`
+- `GET /v1/savings`
+- `POST /v1/challenges`
+- `POST /v1/xp-events`
+- `GET /v1/rankings/weekly`
+- `GET /v1/restaurant-packs`
+- `GET /v1/restaurant-packs/:packId`
 
 ## Troubleshooting
 
