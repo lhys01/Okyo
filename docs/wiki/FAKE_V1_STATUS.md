@@ -6,7 +6,7 @@ Date: 2026-05-25
 
 Fake-data V1 is complete for the current prototype scope. The app has the primary local-only flow from onboarding to scan, result, recipe, grocery list, save, share, Dupe Challenge, rankings, packs, and settings.
 
-No real AI, login, payments, maps, comments, DMs, or social feed were added for this phase. A mock TypeScript API skeleton now exists for future integration work.
+No real AI, login, payments, maps, comments, DMs, or social feed were added for this phase. A mock TypeScript API skeleton exists, and the mobile scan flow can call it with local mock fallback.
 
 ## Current Paths
 
@@ -28,6 +28,7 @@ The global terminal `run` shortcut should start from `/Users/rober/Documents/Oky
 - AsyncStorage persistence through Zustand middleware
 - Expo Clipboard and React Native Share for copy/share flows
 - Local mock data in `apps/mobile/src/mocks`
+- Safe mobile API client in `apps/mobile/src/api`
 - Typed analytics stub in `apps/mobile/src/analytics/track.ts`
 - Quiet UI debug wrapper in `apps/mobile/src/utils/uiDebug.ts`
 
@@ -83,10 +84,11 @@ Setup notes:
 - UI debug logger, muted by default with dedupe logic if enabled
 - Loading state on analysis screen
 - Error, fallback, and empty states for missing recipe modes, missing share scan result, missing challenge result, empty library, empty savings, empty packs, and missing pack detail
+- Safe mock API scan call from Take Photo / Upload From Photos with fallback to existing local mock data if the API is offline
 
 ## Known Limitations
 
-- Mobile app is still local-first and does not call the API yet
+- Mobile app only calls the API for mock scan creation so far
 - API is mock-only and in-memory; no database or cloud persistence
 - Mock-only scan, dish recognition, recipes, costs, savings, XP, badges, rankings, and packs
 - No real image upload or camera integration yet
@@ -114,6 +116,7 @@ Setup notes:
 - API TypeScript passed with `cd apps/api && npm run typecheck`
 - API build passed with `cd apps/api && npm run build`
 - API health check passed with `GET http://localhost:8081/health`
+- Mobile API client falls back to local mock data if `POST /v1/scans` fails
 - Simulator launch passed with `./run` from `/Users/rober/Documents/Okyo-1`
 - `run` opened Okyo at `exp://192.168.7.86:8082` during this review
 - Main flow reviewed: onboarding -> Start Scanning -> Scan -> Loading -> Result Summary -> Recipe Detail
@@ -124,7 +127,7 @@ Setup notes:
 
 1. Run a manual simulator UX pass with persisted state reset between runs.
 2. Add a minimal smoke-test plan or E2E harness for the fake-data V1 critical path.
-3. Wire the mobile app to the mock API behind a feature flag.
+3. Expand mobile/API integration behind safe fallbacks.
 4. Define the AI provider interface and response schema behind a feature flag.
 5. Design the first real image-upload flow without storing food images unless the user explicitly saves or opts in.
 

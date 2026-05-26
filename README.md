@@ -2,7 +2,7 @@
 
 Okyo is a mobile-first food app prototype that turns restaurant meal photos into homemade copycat recipes with estimated cost savings, grocery lists, Dupe Challenge, rankings, and shareable result cards.
 
-The current app is a fake-data V1 prototype. It is useful for product QA and flow testing, but it does not call a backend or a real AI provider yet.
+The current app is a fake-data V1 prototype. It is useful for product QA and flow testing. It can call the local mock API for scans, but still falls back to local mock data and does not call a real AI provider yet.
 
 ## Current Local Paths
 
@@ -51,6 +51,7 @@ Implemented now:
 - Static Restaurant Packs and pack detail screens
 - Settings with Reset Onboarding and Delete Saved Data
 - Analytics wrapper and UI debug wrapper, currently quiet by default
+- Safe mobile API client for mock scan calls with local mock fallback
 
 Not built yet:
 
@@ -143,6 +144,14 @@ npm run typecheck
 ```
 
 The API currently serves mock data only. It is a skeleton for future mobile/API integration and does not call real AI or persist to a database.
+
+The mobile API base URL is configured in:
+
+```text
+apps/mobile/src/api/config.ts
+```
+
+For the iOS Simulator, this currently points at the Mac LAN IP on port `8081` because `localhost` can refer to the simulator itself.
 
 ## Useful Commands
 

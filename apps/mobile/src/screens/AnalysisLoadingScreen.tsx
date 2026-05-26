@@ -58,7 +58,7 @@ export function AnalysisLoadingScreen() {
   return (
     <ScreenScaffold
       title="Building your homemade dupe"
-      body="Using mock data for this first scan."
+      body="Using the mock API when available, with local data ready as backup."
     >
       <View style={styles.loadingCard}>
         <View style={styles.pulse}>

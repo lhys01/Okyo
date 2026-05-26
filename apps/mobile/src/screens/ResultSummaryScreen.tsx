@@ -31,6 +31,7 @@ export function ResultSummaryScreen() {
   const navigation = useNavigation<ResultSummaryNavigation>();
   const selectedModeRaw = useOkyoStore((state) => state.selectedMode);
   const selectedMode = getSafeRecipeMode(selectedModeRaw);
+  const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
@@ -39,10 +40,11 @@ export function ResultSummaryScreen() {
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
+  const scanResult = latestScanResult ?? defaultScanResult;
   const selectedRecipe = getSafeRecipeForMode(selectedMode);
-  const confidencePercent = Math.round(defaultScanResult.confidence * 100);
+  const confidencePercent = Math.round(scanResult.confidence * 100);
   const didTrackResultView = useRef(false);
-  const firstScanEventId = `first-scan-${defaultScanResult.id}`;
+  const firstScanEventId = `first-scan-${scanResult.id}`;
 
   useEffect(() => {
     if (didTrackResultView.current) {
@@ -52,7 +54,9 @@ export function ResultSummaryScreen() {
     uiLog('ResultSummaryScreen', 'enter', { mode: selectedMode });
 
     didTrackResultView.current = true;
-    setLatestScanResult(defaultScanResult);
+    if (!latestScanResult) {
+      setLatestScanResult(defaultScanResult);
+    }
     if (!isRecipeMode(selectedModeRaw)) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: 'Selected mode was missing or invalid on result view.',
@@ -64,18 +68,18 @@ export function ResultSummaryScreen() {
     }
     awardXPOnce(firstScanEventId, 10);
     track(analyticsEvents.RESULT_VIEWED, {
-      dishName: defaultScanResult.dishName,
+      dishName: scanResult.dishName,
       mode: selectedMode,
       savings: selectedRecipe.estimatedSavings,
       screen: 'ResultSummaryScreen',
     });
-  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, setLatestScanResult]);
+  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, latestScanResult, scanResult.dishName, selectedRecipe.estimatedSavings, selectedMode, selectedModeRaw, setLatestScanResult]);
 
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
     uiLog('ResultSummaryScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
-      dishName: defaultScanResult.dishName,
+      dishName: scanResult.dishName,
       mode,
       screen: 'ResultSummaryScreen',
     });
@@ -101,16 +105,16 @@ export function ResultSummaryScreen() {
   return (
     <ScreenContainer>
       <Text style={styles.kicker}>Mock result</Text>
-      <Text style={styles.title}>{defaultScanResult.dishName}</Text>
+      <Text style={styles.title}>{scanResult.dishName}</Text>
       <Text style={styles.subtitle}>
-        {defaultScanResult.restaurantStyle} copycat estimate
+        {scanResult.restaurantStyle} copycat estimate
       </Text>
 
       <View style={styles.savingsHero}>
         <Text style={styles.savingsHeroLabel}>Estimated savings</Text>
         <Text style={styles.savingsHeroValue}>{formatCurrency(selectedRecipe.estimatedSavings)}</Text>
         <Text style={styles.savingsHeroBody}>
-          {formatCurrency(defaultScanResult.restaurantPrice)} restaurant estimate to {formatCurrency(selectedRecipe.estimatedHomemadeCost)} at home.
+          {formatCurrency(scanResult.restaurantPrice)} restaurant estimate to {formatCurrency(selectedRecipe.estimatedHomemadeCost)} at home.
         </Text>
       </View>
 
@@ -121,7 +125,7 @@ export function ResultSummaryScreen() {
         </View>
         <View style={styles.metricRow}>
           <Text style={styles.metricLabel}>Restaurant price</Text>
-          <Text style={styles.metricValue}>{formatCurrency(defaultScanResult.restaurantPrice)}</Text>
+          <Text style={styles.metricValue}>{formatCurrency(scanResult.restaurantPrice)}</Text>
         </View>
         <View style={styles.metricRow}>
           <Text style={styles.metricLabel}>Homemade cost</Text>
@@ -133,14 +137,14 @@ export function ResultSummaryScreen() {
         </View>
       </View>
 
-      <ModeTabs modes={defaultScanResult.modes} selectedMode={selectedMode} onSelectMode={chooseMode} />
+      <ModeTabs modes={scanResult.modes} selectedMode={selectedMode} onSelectMode={chooseMode} />
 
       <View style={styles.matchCard}>
         <View style={styles.matchHeader}>
           <Text style={styles.matchLabel}>Match score</Text>
           <BadgePill tone="green">{selectedMode}</BadgePill>
         </View>
-        <Text style={styles.matchValue}>{defaultScanResult.matchScore.toFixed(1)}/10</Text>
+        <Text style={styles.matchValue}>{scanResult.matchScore.toFixed(1)}/10</Text>
         <Text style={styles.matchNote}>
           {selectedRecipe.title}: {selectedRecipe.description}
         </Text>
