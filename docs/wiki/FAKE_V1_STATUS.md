@@ -93,6 +93,7 @@ Setup notes:
 - OpenRouter provider adapter can be enabled locally with `.env`, while missing keys, disabled AI, timeouts, invalid JSON, or provider errors fall back to mock data
 - Scan responses include optional development debug metadata for AI source, provider, models, fallback reason, and confidence; the mobile app only shows this as a small `__DEV__` label.
 - AI dish names, ingredients, prices, savings, and recipes are approximate estimates; generated recipes must remain copycat-style or inspired-by, never official restaurant recipes.
+- Development scan evaluation summaries can be written locally to `apps/api/logs/scan-evals.jsonl`, and `docs/wiki/AI_SCAN_TESTING_CHECKLIST.md` supports a 10-image manual QA pass.
 
 ## Known Limitations
 
@@ -100,7 +101,7 @@ Setup notes:
 - API is mock-first and in-memory; no database or cloud persistence
 - Mock fallback remains the default for scan, dish recognition, recipes, costs, savings, XP, badges, rankings, and packs
 - No real image file storage, camera capture, or dish recognition yet
-- No production AI provider workflow, prompt versioning, or evaluation harness yet
+- No production AI provider workflow, prompt versioning, or automated evaluation harness yet
 - No real cost engine or grocery price source yet
 - Native share sends text only; real share-card image export is still a placeholder
 - Paywall screen exists only as a placeholder; no purchases or subscriptions are connected

@@ -26,6 +26,7 @@ import {
   type OpenRouterRecipeVariant,
   type OpenRouterVisionOutput,
 } from './openRouterProvider.js';
+import { logScanEvaluation } from './scanEvalLogger.js';
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
 const difficultySchema = z.enum(['Easy', 'Medium', 'Hard']);
@@ -208,7 +209,15 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
 
     if (!recipe) {
       logAi('fallback_ai', { reason: 'recipe_missing' });
-      return createFallbackScan(input.mode, config, 'recipe_missing');
+      const fallbackResult = createFallbackScan(input.mode, config, 'recipe_missing');
+      await logScanEvaluation({
+        aiSource: fallbackResult.aiSource,
+        config,
+        fallbackReason: fallbackResult.fallbackReason,
+        scan: fallbackResult.scan,
+      });
+
+      return fallbackResult;
     }
 
     const costEstimate = estimateIngredientCosts({ analysis, recipe });
@@ -229,7 +238,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       restaurantStyle: analysis.restaurantStyle,
     };
 
-    return {
+    const result = {
       scan,
       recipe,
       groceryList: getGroceryList(seedScan.groceryListId),
@@ -239,9 +248,26 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
         : 'Mock AI service output only. No image was stored and no AI provider was called.',
       ...createAiDebugMetadata(config, aiSource, scan.confidence, fallbackReason),
     };
+
+    await logScanEvaluation({
+      aiSource: result.aiSource,
+      config,
+      fallbackReason: result.fallbackReason,
+      scan,
+    });
+
+    return result;
   } catch {
     logAi('fallback_ai', { reason: 'ai_scan_failed' });
-    return createFallbackScan(input.mode, config, 'ai_scan_failed');
+    const fallbackResult = createFallbackScan(input.mode, config, 'ai_scan_failed');
+    await logScanEvaluation({
+      aiSource: fallbackResult.aiSource,
+      config,
+      fallbackReason: fallbackResult.fallbackReason,
+      scan: fallbackResult.scan,
+    });
+
+    return fallbackResult;
   }
 }
 
