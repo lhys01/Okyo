@@ -2,6 +2,7 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 
+import { getPublicAiConfig } from './config/aiConfig.js';
 import {
   awardXp,
   createChallenge,
@@ -53,14 +54,20 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/health', (_request, response) => {
+  const aiConfig = getPublicAiConfig();
+
   sendOk(response, {
     status: 'ok',
     service: 'okyo-api',
     mode: 'mock',
-    realAiEnabled: process.env.AI_ENABLED === 'true',
+    realAiEnabled: aiConfig.aiEnabled,
     databaseEnabled: false,
     timestamp: new Date().toISOString(),
   });
+});
+
+app.get('/debug/ai-config', (_request, response) => {
+  sendOk(response, getPublicAiConfig());
 });
 
 app.post('/v1/scans', async (request, response, next) => {

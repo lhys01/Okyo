@@ -21,6 +21,7 @@ import type {
 import {
   analyzeFoodImageWithOpenRouter,
   generateRecipeWithOpenRouter,
+  OpenRouterProviderError,
   type OpenRouterRecipeOutput,
   type OpenRouterRecipeVariant,
 } from './openRouterProvider.js';
@@ -96,7 +97,7 @@ export type AiScanResult = {
 export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<FoodImageAnalysis> {
   const config = getAiConfig();
   if (!canUseOpenRouter(config)) {
-    logAi('mock_ai', getMockReason(config));
+    logAi('mock_ai', getAiLogDetails(config, config.openRouterVisionModel, getMockReason(config)));
     return analyzeFoodImageWithMock(input);
   }
 
@@ -106,7 +107,7 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
       image: input.image,
       mode: input.mode,
     });
-    logAi('openrouter_ai', { stage: 'vision', model: config.openRouterVisionModel });
+    logAi('openrouter_ai', getAiLogDetails(config, config.openRouterVisionModel, { stage: 'vision' }));
 
     return foodImageAnalysisSchema.parse({
       candidateScanId: mockScanResults[0].id,
@@ -124,8 +125,8 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
       restaurantStyle: output.cuisine,
       visibleIngredients: output.visibleIngredients,
     });
-  } catch {
-    logAi('fallback_ai', { reason: 'openrouter_vision_failed' });
+  } catch (error) {
+    logAi('fallback_ai', getFallbackLogDetails(error, config, config.openRouterVisionModel));
     return analyzeFoodImageWithMock(input);
   }
 }
@@ -135,7 +136,7 @@ export async function generateRecipeFromDish(
 ): Promise<GeneratedRecipeOutput> {
   const config = getAiConfig();
   if (!canUseOpenRouter(config)) {
-    logAi('mock_ai', getMockReason(config));
+    logAi('mock_ai', getAiLogDetails(config, config.openRouterTextModel, getMockReason(config)));
     return generateRecipeFromDishWithMock(input);
   }
 
@@ -145,10 +146,10 @@ export async function generateRecipeFromDish(
       config,
       mode: input.mode,
     });
-    logAi('openrouter_ai', { stage: 'recipe', model: config.openRouterTextModel });
+    logAi('openrouter_ai', getAiLogDetails(config, config.openRouterTextModel, { stage: 'recipe' }));
     return createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
-  } catch {
-    logAi('fallback_ai', { reason: 'openrouter_recipe_failed' });
+  } catch (error) {
+    logAi('fallback_ai', getFallbackLogDetails(error, config, config.openRouterTextModel));
     return generateRecipeFromDishWithMock(input);
   }
 }
@@ -437,7 +438,7 @@ function getMockReason(config: ReturnType<typeof getAiConfig>) {
     return { reason: 'ai_disabled' };
   }
   if (!config.openRouterApiKey) {
-    return { reason: 'openrouter_key_missing' };
+    return { reason: 'openrouter_missing_key' };
   }
 
   return { reason: 'mock_requested' };
@@ -457,4 +458,35 @@ function getMatchScoreFromConfidence(confidence: number) {
 
 function logAi(event: 'mock_ai' | 'openrouter_ai' | 'fallback_ai', details: Record<string, unknown>) {
   console.log(event, details);
+}
+
+function getAiLogDetails(
+  config: ReturnType<typeof getAiConfig>,
+  model: string,
+  details: Record<string, unknown>,
+) {
+  return {
+    ...details,
+    aiEnabled: config.enabled,
+    hasOpenRouterKey: Boolean(config.openRouterApiKey),
+    model,
+    provider: config.provider,
+    timeoutMs: config.timeoutMs,
+    maxOutputTokens: config.maxOutputTokens,
+  };
+}
+
+function getFallbackLogDetails(
+  error: unknown,
+  config: ReturnType<typeof getAiConfig>,
+  model: string,
+) {
+  if (error instanceof OpenRouterProviderError) {
+    return error.failure;
+  }
+
+  return getAiLogDetails(config, model, {
+    openRouterErrorMessage: error instanceof Error ? error.message : 'Unknown OpenRouter error.',
+    reason: 'openrouter_unknown_error',
+  });
 }
