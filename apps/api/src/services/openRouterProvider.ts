@@ -41,32 +41,32 @@ export class OpenRouterProviderError extends Error {
 type SafeRecord = Record<string, unknown>;
 
 export const openRouterVisionOutputSchema = z.object({
-  dishName: z.string().min(1),
-  cuisine: z.string().min(1),
-  confidence: z.number().min(0).max(1),
+  dishName: z.string().optional(),
+  cuisine: z.string().optional(),
+  confidence: z.union([z.number(), z.string()]).optional(),
   visibleIngredients: z.array(z.string()).default([]),
   likelyIngredients: z.array(z.string()).default([]),
-  restaurantPriceEstimate: z.number().nonnegative(),
-  homemadeCostEstimate: z.number().nonnegative(),
-  confidenceReason: z.string().min(1),
+  restaurantPriceEstimate: z.union([z.number(), z.string()]).optional(),
+  homemadeCostEstimate: z.union([z.number(), z.string()]).optional(),
+  confidenceReason: z.string().optional(),
 });
 
 const recipeVariantSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().min(1),
-  ingredients: z.array(z.string()).min(1).max(6),
-  steps: z.array(z.string()).min(1).max(5),
-  substitutions: z.array(z.string()).max(3).default([]),
-  pantryNote: z.string().min(1),
-  prepTime: z.string().min(1),
-  cookTime: z.string().min(1),
-  difficulty: z.string().min(1),
+  title: z.string().optional().default(''),
+  description: z.string().optional().default(''),
+  ingredients: z.array(z.string()).optional().default([]),
+  steps: z.array(z.string()).optional().default([]),
+  substitutions: z.array(z.string()).optional().default([]),
+  pantryNote: z.string().optional().default(''),
+  prepTime: z.string().optional().default(''),
+  cookTime: z.string().optional().default(''),
+  difficulty: z.string().optional().default(''),
 });
 
 export const openRouterRecipeOutputSchema = z.object({
-  restaurantCopy: recipeVariantSchema,
-  budget: recipeVariantSchema,
-  healthy: recipeVariantSchema,
+  restaurantCopy: recipeVariantSchema.optional().default({}),
+  budget: recipeVariantSchema.optional().default({}),
+  healthy: recipeVariantSchema.optional().default({}),
 });
 
 export type OpenRouterVisionOutput = z.infer<typeof openRouterVisionOutputSchema>;
@@ -235,6 +235,9 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
     'Return ONLY valid JSON in the assistant message content. Do not put JSON in reasoning. Do not return markdown. Do not explain.',
     'Return JSON only with exactly these fields:',
     '{"dishName": string, "cuisine": string, "confidence": number, "visibleIngredients": string[], "likelyIngredients": string[], "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}',
+    'dishName should be specific but cautious, like "Possible Spicy Rigatoni" if unsure; do not use generic names like "food" or "meal".',
+    'confidence may be 0-100. Use lower confidence when the image is unclear.',
+    'Price and homemade cost must be realistic US dollar estimates, not exact; homemadeCostEstimate should usually be lower than restaurantPriceEstimate.',
     'Use cautious estimates. Never present food identification, cost, or ingredients as exact.',
     'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
     'If no actual image is available, return a cautious low-confidence result based only on metadata.',
@@ -250,7 +253,8 @@ function getRecipePrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
     'Return exactly these top-level fields: restaurantCopy, budget, healthy.',
     'Each mode must contain: title, description, ingredients, steps, substitutions, pantryNote, prepTime, cookTime, difficulty.',
     'Hard limits for each mode: description one sentence, max 6 ingredients, max 5 short steps, max 3 substitutions, pantryNote under 12 words.',
-    'Never claim the recipe is official. Use "copycat-style" or "inspired-by."',
+    'Titles and descriptions must say "copycat-style" or "inspired-by"; never claim the recipe is official.',
+    'Make Restaurant Copy closest to the restaurant-style version, Budget lower-cost, and Healthy lighter without exact nutrition claims.',
     'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
     `Primary requested mode: ${mode}.`,
     `Food analysis summary: ${JSON.stringify({

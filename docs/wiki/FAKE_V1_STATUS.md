@@ -92,6 +92,7 @@ Setup notes:
 - API scan endpoint uses a mock AI service interface for image analysis, recipe generation, and cost estimation, with schema validation and seeded-data fallback
 - OpenRouter provider adapter can be enabled locally with `.env`, while missing keys, disabled AI, timeouts, invalid JSON, or provider errors fall back to mock data
 - Scan responses include optional development debug metadata for AI source, provider, models, fallback reason, and confidence; the mobile app only shows this as a small `__DEV__` label.
+- AI dish names, ingredients, prices, savings, and recipes are approximate estimates; generated recipes must remain copycat-style or inspired-by, never official restaurant recipes.
 
 ## Known Limitations
 

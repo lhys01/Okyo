@@ -24,6 +24,7 @@ import {
   OpenRouterProviderError,
   type OpenRouterRecipeOutput,
   type OpenRouterRecipeVariant,
+  type OpenRouterVisionOutput,
 } from './openRouterProvider.js';
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
@@ -31,6 +32,9 @@ const difficultySchema = z.enum(['Easy', 'Medium', 'Hard']);
 const confidenceSchema = z.number().min(0).max(1);
 const matchScoreSchema = z.number().min(0).max(10);
 const aiSourceSchema = z.enum(['openrouter_ai', 'mock_ai', 'fallback_ai']);
+const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
+const defaultRestaurantPrice = 18;
+const defaultHomemadeCost = 6.5;
 
 export type AiSource = z.infer<typeof aiSourceSchema>;
 
@@ -121,23 +125,24 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
       mode: input.mode,
     });
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterVisionModel, { stage: 'vision' }));
+    const normalized = normalizeVisionOutput(output);
 
     return foodImageAnalysisSchema.parse({
       candidateScanId: mockScanResults[0].id,
       aiSource: 'openrouter_ai',
-      confidence: clampConfidence(output.confidence),
-      confidenceReason: output.confidenceReason,
-      cuisine: output.cuisine,
-      difficulty: 'Medium',
-      dishName: output.dishName,
-      homemadeCostEstimate: output.homemadeCostEstimate,
-      likelyIngredients: output.likelyIngredients,
-      matchScore: getMatchScoreFromConfidence(output.confidence),
-      modes: ['Restaurant Copy', 'Budget', 'Healthy'],
+      confidence: normalized.confidence,
+      confidenceReason: normalized.confidenceReason,
+      cuisine: normalized.cuisine,
+      difficulty: getDifficultyFromConfidence(normalized.confidence),
+      dishName: normalized.dishName,
+      homemadeCostEstimate: normalized.homemadeCostEstimate,
+      likelyIngredients: normalized.likelyIngredients,
+      matchScore: getMatchScoreFromConfidence(normalized.confidence),
+      modes: recipeModes,
       notes: ['OpenRouter test output; verify before using.'],
-      restaurantPriceEstimate: output.restaurantPriceEstimate,
-      restaurantStyle: output.cuisine,
-      visibleIngredients: output.visibleIngredients,
+      restaurantPriceEstimate: normalized.restaurantPriceEstimate,
+      restaurantStyle: normalized.cuisine,
+      visibleIngredients: normalized.visibleIngredients,
     });
   } catch (error) {
     const fallbackDetails = getFallbackLogDetails(error, config, config.openRouterVisionModel);
@@ -171,10 +176,12 @@ export async function generateRecipeFromDish(
 }
 
 export function estimateIngredientCosts(input: EstimateIngredientCostsInput): IngredientCostEstimate {
+  const restaurantPrice = normalizeRestaurantPrice(input.analysis.restaurantPriceEstimate);
+  const homemadeCost = normalizeHomemadeCost(input.recipe.estimatedHomemadeCost, restaurantPrice);
   const estimate = ingredientCostEstimateSchema.safeParse({
-    restaurantPrice: input.analysis.restaurantPriceEstimate,
-    homemadeCost: input.analysis.homemadeCostEstimate,
-    estimatedSavings: input.analysis.restaurantPriceEstimate - input.analysis.homemadeCostEstimate,
+    restaurantPrice,
+    homemadeCost,
+    estimatedSavings: Math.max(0, restaurantPrice - homemadeCost),
     confidence: Math.min(input.analysis.confidence, 0.82),
     assumptions: [
       'Uses AI-shaped restaurant estimate when available.',
@@ -288,10 +295,11 @@ function generateRecipeFromDishWithMock(
 
 function estimateIngredientCostsWithMock(input: EstimateIngredientCostsInput): IngredientCostEstimate {
   const scan = getScanById(input.analysis.candidateScanId) ?? mockScanResults[0];
+  const homemadeCost = normalizeHomemadeCost(input.recipe.estimatedHomemadeCost, scan.restaurantPrice);
   return ingredientCostEstimateSchema.parse({
     restaurantPrice: scan.restaurantPrice,
-    homemadeCost: input.recipe.estimatedHomemadeCost,
-    estimatedSavings: scan.restaurantPrice - input.recipe.estimatedHomemadeCost,
+    homemadeCost,
+    estimatedSavings: Math.max(0, scan.restaurantPrice - homemadeCost),
     confidence: Math.min(input.analysis.confidence, 0.82),
     assumptions: [
       'Uses seeded restaurant estimate.',
@@ -324,25 +332,28 @@ function createRecipeFromVariant(
   analysis: FoodImageAnalysis,
   mode: RecipeMode,
 ): Recipe {
-  const homemadeCost = analysis.homemadeCostEstimate;
-  const restaurantPrice = analysis.restaurantPriceEstimate;
+  const restaurantPrice = normalizeRestaurantPrice(analysis.restaurantPriceEstimate);
+  const homemadeCost = getModeHomemadeCost(analysis.homemadeCostEstimate, restaurantPrice, mode);
+  const title = getRecipeTitle(variant.title, analysis.dishName, mode);
+  const ingredients = getRecipeIngredients(variant.ingredients, analysis);
+  const steps = getRecipeSteps(variant.steps, analysis.dishName);
 
   return {
     id: `ai-${slugify(analysis.dishName)}-${slugify(mode)}`,
     scanResultId: analysis.candidateScanId,
-    title: ensureCopycatTitle(variant.title),
+    title,
     mode,
-    description: ensureInspiredCopy(variant.description),
+    description: ensureInspiredCopy(getOneSentence(variant.description, `${title} with flexible, home-kitchen ingredients.`)),
     prepTimeMinutes: parseMinutes(variant.prepTime, 15),
     cookTimeMinutes: parseMinutes(variant.cookTime, 25),
     servings: 2,
     difficulty: normalizeDifficulty(variant.difficulty),
     estimatedHomemadeCost: homemadeCost,
-    estimatedSavings: restaurantPrice - homemadeCost,
-    ingredients: variant.ingredients.map(toRecipeIngredient),
-    steps: variant.steps,
-    substitutions: variant.substitutions,
-    pantryNote: variant.pantryNote,
+    estimatedSavings: Math.max(0, restaurantPrice - homemadeCost),
+    ingredients,
+    steps,
+    substitutions: getSafeList(variant.substitutions, getDefaultSubstitutions(mode), 3),
+    pantryNote: getShortText(variant.pantryNote, 'Assumes salt, pepper, and basic oil are on hand.', 90),
     confidenceNote: `AI-assisted testing output. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
   };
 }
@@ -423,6 +434,145 @@ function getRecipeVariant(output: OpenRouterRecipeOutput, mode: RecipeMode) {
   }
 }
 
+function normalizeVisionOutput(output: OpenRouterVisionOutput) {
+  const confidence = normalizeConfidence(output.confidence);
+  const restaurantPriceEstimate = normalizeRestaurantPrice(output.restaurantPriceEstimate);
+  const homemadeCostEstimate = normalizeHomemadeCost(output.homemadeCostEstimate, restaurantPriceEstimate);
+  const visibleIngredients = getSafeList(output.visibleIngredients, [], 6);
+  const likelyIngredients = getSafeList(
+    output.likelyIngredients,
+    visibleIngredients.length > 0 ? visibleIngredients : ['main ingredient', 'sauce', 'seasoning'],
+    6,
+  );
+  const cuisine = getSafeTextValue(output.cuisine, 'Restaurant-style');
+  const dishName = normalizeDishName(output.dishName, cuisine, [...visibleIngredients, ...likelyIngredients]);
+
+  return {
+    confidence,
+    confidenceReason: getShortText(
+      output.confidenceReason,
+      'AI estimate based on visible food cues; verify dish and ingredients.',
+      160,
+    ),
+    cuisine,
+    dishName,
+    homemadeCostEstimate,
+    likelyIngredients,
+    restaurantPriceEstimate,
+    visibleIngredients,
+  };
+}
+
+function normalizeConfidence(value: unknown) {
+  const parsed = getFiniteNumber(value);
+  if (parsed === undefined) {
+    return 0.5;
+  }
+
+  const percent = parsed <= 1 ? parsed * 100 : parsed;
+  return clampNumber(percent, 0, 100) / 100;
+}
+
+function normalizeRestaurantPrice(value: unknown) {
+  const parsed = getFiniteNumber(value);
+  if (parsed === undefined || parsed < 4) {
+    return defaultRestaurantPrice;
+  }
+
+  return roundMoney(clampNumber(parsed, 4, 120));
+}
+
+function normalizeHomemadeCost(value: unknown, restaurantPrice: number) {
+  const parsed = getFiniteNumber(value);
+  const defaultCost = Math.min(defaultHomemadeCost, Math.max(2, restaurantPrice * 0.45));
+  const rawCost = parsed === undefined || parsed < 1 ? defaultCost : parsed;
+  const cappedCost = rawCost >= restaurantPrice ? Math.max(1, restaurantPrice * 0.45) : rawCost;
+
+  return roundMoney(clampNumber(cappedCost, 1, Math.max(1, restaurantPrice - 0.5)));
+}
+
+function getModeHomemadeCost(baseCost: number, restaurantPrice: number, mode: RecipeMode) {
+  const normalizedBase = normalizeHomemadeCost(baseCost, restaurantPrice);
+
+  switch (mode) {
+    case 'Budget':
+      return normalizeHomemadeCost(normalizedBase * 0.82, restaurantPrice);
+    case 'Healthy':
+      return normalizeHomemadeCost(normalizedBase * 1.08, restaurantPrice);
+    case 'Restaurant Copy':
+      return normalizedBase;
+  }
+}
+
+function normalizeDishName(value: unknown, cuisine: string, ingredients: string[]) {
+  const text = getSafeTextValue(value, '');
+  if (text && !isVagueDishName(text)) {
+    return titleCase(text);
+  }
+
+  const ingredientText = ingredients.join(' ').toLowerCase();
+  if (ingredientText.includes('pasta') || ingredientText.includes('rigatoni') || ingredientText.includes('noodle')) {
+    return 'Possible Pasta Dish';
+  }
+  if (ingredientText.includes('rice') || ingredientText.includes('grain') || ingredientText.includes('bowl')) {
+    return 'Possible Grain Bowl';
+  }
+  if (ingredientText.includes('chicken')) {
+    return 'Possible Chicken Dish';
+  }
+  if (ingredientText.includes('salad') || ingredientText.includes('greens')) {
+    return 'Possible Salad';
+  }
+  if (ingredientText.includes('burger') || ingredientText.includes('patty')) {
+    return 'Possible Burger';
+  }
+
+  return cuisine && cuisine !== 'Restaurant-style' ? `Possible ${titleCase(cuisine)} Dish` : 'Possible Restaurant Dish';
+}
+
+function isVagueDishName(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return ['', 'dish', 'food', 'meal', 'plate', 'restaurant dish', 'unknown', 'unknown dish'].includes(normalized);
+}
+
+function getRecipeTitle(value: string, dishName: string, mode: RecipeMode) {
+  const fallbackTitle = mode === 'Budget'
+    ? `Budget ${dishName} Inspired-by`
+    : mode === 'Healthy'
+      ? `Lighter ${dishName} Inspired-by`
+      : `${dishName} Copycat-style`;
+
+  return ensureCopycatTitle(getShortText(value, fallbackTitle, 90));
+}
+
+function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis) {
+  const fallback = analysis.likelyIngredients.length > 0
+    ? analysis.likelyIngredients
+    : ['main ingredient', 'sauce base', 'seasoning'];
+
+  return getSafeList(values, fallback, 6).map(toRecipeIngredient);
+}
+
+function getRecipeSteps(values: string[], dishName: string) {
+  return getSafeList(values, [
+    `Prep ingredients for the ${dishName.toLowerCase()}.`,
+    'Cook aromatics or base ingredients until fragrant.',
+    'Add sauce and main ingredients, then simmer briefly.',
+    'Taste, adjust seasoning, and serve warm.',
+  ], 5);
+}
+
+function getDefaultSubstitutions(mode: RecipeMode) {
+  if (mode === 'Budget') {
+    return ['Use store-brand staples where possible.'];
+  }
+  if (mode === 'Healthy') {
+    return ['Add extra vegetables or use a lighter sauce.'];
+  }
+
+  return ['Use similar pantry ingredients if needed.'];
+}
+
 function normalizeDifficulty(value: string): Difficulty {
   const normalized = value.toLowerCase();
   if (normalized.includes('hard')) {
@@ -441,8 +591,17 @@ function parseMinutes(value: string, fallback: number) {
 }
 
 function toRecipeIngredient(value: string): RecipeIngredient {
+  const cleaned = getShortText(value, 'ingredient', 80);
+  const quantityMatch = cleaned.match(/^([\d./\s]+(?:cup|cups|tbsp|tsp|oz|lb|lbs|g|ml|clove|cloves|slice|slices|can|cans)?)\s+(.+)$/i);
+  if (quantityMatch) {
+    return {
+      name: quantityMatch[2].trim(),
+      quantity: quantityMatch[1].trim(),
+    };
+  }
+
   return {
-    name: value,
+    name: cleaned,
     quantity: 'as needed',
   };
 }
@@ -461,6 +620,59 @@ function ensureInspiredCopy(value: string) {
   }
 
   return `${value} This is a copycat-style estimate, not an official restaurant recipe.`;
+}
+
+function getSafeList(values: string[] | undefined, fallback: string[], maxItems: number) {
+  const cleanValues = (Array.isArray(values) ? values : [])
+    .map((value) => getShortText(value, '', 120))
+    .filter(Boolean);
+  const source = cleanValues.length > 0 ? cleanValues : fallback;
+
+  return [...new Set(source)].slice(0, maxItems);
+}
+
+function getSafeTextValue(value: unknown, fallback: string) {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function getShortText(value: unknown, fallback: string, maxLength: number) {
+  const text = getSafeTextValue(value, fallback);
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}.` : text;
+}
+
+function getOneSentence(value: unknown, fallback: string) {
+  const text = getSafeTextValue(value, fallback);
+  const match = text.match(/^.*?[.!?](?:\s|$)/);
+  return getShortText(match?.[0] ?? text, fallback, 180);
+}
+
+function getFiniteNumber(value: unknown) {
+  const parsed = typeof value === 'string' ? Number(value.replace(/[^0-9.-]/g, '')) : value;
+  return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function titleCase(value: string) {
+  return value
+    .trim()
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function getDifficultyFromConfidence(confidence: number): Difficulty {
+  if (confidence < 0.35) {
+    return 'Medium';
+  }
+
+  return 'Easy';
 }
 
 function slugify(value: string) {
