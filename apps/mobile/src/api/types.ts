@@ -17,6 +17,8 @@ export type ApiResponse<T> =
 export type ScanSource = 'camera' | 'photos' | 'mock';
 
 export type AiSource = 'openrouter_ai' | 'mock_ai' | 'fallback_ai';
+export type ScanStatus = 'success' | 'rejected' | 'failed';
+export type ScanRejectionType = 'not_food' | 'unclear_image' | 'ai_failed';
 
 export type AiDebugMetadata = {
   aiSource: AiSource;
@@ -45,11 +47,16 @@ export type CreateScanRequest = {
 };
 
 export type CreateScanResult = {
-  scan: ScanResult;
+  status?: ScanStatus;
+  scan?: ScanResult;
+  scanId?: string;
   recipe?: Recipe;
   groceryList?: GroceryList;
   shareCard?: ShareCard;
   image?: ScanImageMetadata;
   note?: string;
+  rejectionType?: ScanRejectionType;
+  rejectionReason?: string;
+  uploadedImage?: boolean;
   source: ScanSource;
 } & Partial<AiDebugMetadata>;

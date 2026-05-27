@@ -15,7 +15,12 @@ export type ScanEvaluationLogInput = {
   aiSource: AiSource;
   config: AiConfig;
   fallbackReason?: string;
-  scan: ScanResult;
+  rejectionReason?: string;
+  rejectionType?: string;
+  scan?: ScanResult;
+  scanId?: string;
+  status: string;
+  uploadedImage: boolean;
 };
 
 export async function logScanEvaluation(input: ScanEvaluationLogInput) {
@@ -26,14 +31,18 @@ export async function logScanEvaluation(input: ScanEvaluationLogInput) {
   const entry = {
     event: 'ai_scan_eval',
     loggedAt: new Date().toISOString(),
-    scanId: input.scan.id,
-    dishName: input.scan.dishName,
-    confidence: input.scan.confidence,
-    restaurantPrice: input.scan.restaurantPrice,
-    homemadeCost: input.scan.homemadeCost,
-    savings: input.scan.estimatedSavings,
+    scanId: input.scan?.id ?? input.scanId,
+    dishName: input.scan?.dishName,
+    confidence: input.scan?.confidence,
+    restaurantPrice: input.scan?.restaurantPrice,
+    homemadeCost: input.scan?.homemadeCost,
+    savings: input.scan?.estimatedSavings,
+    status: input.status,
+    uploadedImage: input.uploadedImage,
     aiSource: input.aiSource,
     fallbackReason: input.fallbackReason,
+    rejectionType: input.rejectionType,
+    rejectionReason: input.rejectionReason,
     model: input.config.openRouterVisionModel,
     recipeModel: input.config.openRouterTextModel,
   };

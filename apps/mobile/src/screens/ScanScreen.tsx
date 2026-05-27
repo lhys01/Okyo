@@ -15,28 +15,51 @@ export function ScanScreen() {
   const navigation = useNavigation();
   const selectedMode = useOkyoStore((state) => state.selectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
+  const setLatestScanStatus = useOkyoStore((state) => state.setLatestScanStatus);
+  const setLatestScanFailure = useOkyoStore((state) => state.setLatestScanFailure);
   const setSelectedScanImage = useOkyoStore((state) => state.setSelectedScanImage);
   const setLatestAiDebugMetadata = useOkyoStore((state) => state.setLatestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
 
   const useMockScan = (source: ScanSource, image?: ScanImageMetadata) => {
-    uiLog('ScanScreen', 'mock_scan', { source, hasImage: Boolean(image?.uri), placeholder: image?.placeholder });
+    const uploadedImage = isRealUploadedImage(source, image);
+    uiLog('ScanScreen', 'mock_scan', { source, hasImage: Boolean(image?.uri), placeholder: image?.placeholder, uploadedImage });
     track(analyticsEvents.SCAN_STARTED, { screen: 'ScanScreen', source });
     track(analyticsEvents.PHOTO_UPLOADED, { screen: 'ScanScreen', source });
-    setLatestScanResult(defaultScanResult);
+    setLatestScanResult(uploadedImage ? null : defaultScanResult);
+    setLatestScanStatus('pending');
+    setLatestScanFailure(null);
     setSelectedScanImage(image ?? null);
     setLatestAiDebugMetadata(null);
     navigation.navigate('AnalysisLoadingScreen' as never);
 
     createMockScan({ image, mode: selectedMode, source })
       .then((result) => {
-        setLatestScanResult(result.scan);
+        const status = result.status ?? 'success';
         setSelectedScanImage(result.image ?? image ?? null);
         setLatestAiDebugMetadata(getAiDebugMetadata(result));
-        if (result.recipe?.mode) {
+        if (status === 'success' && result.scan) {
+          setLatestScanStatus('success');
+          setLatestScanFailure(null);
+          setLatestScanResult(result.scan);
+        } else {
+          setLatestScanStatus(status === 'success' ? 'failed' : status);
+          setLatestScanFailure({
+            status: status === 'success' ? 'failed' : status,
+            rejectionType: result.rejectionType ?? 'ai_failed',
+            rejectionReason: getScanFailureReason(result),
+          });
+          setLatestScanResult(null);
+        }
+        if (status === 'success' && result.recipe?.mode) {
           setSelectedMode(getSafeRecipeMode(result.recipe.mode));
         }
-        uiLog('ScanScreen', 'api_scan_success', { scanId: result.scan.id, source });
+        uiLog('ScanScreen', 'api_scan_result', {
+          scanId: result.scan?.id ?? result.scanId,
+          source,
+          status,
+          rejectionType: result.rejectionType,
+        });
       })
       .catch((error) => {
         track(analyticsEvents.RESULT_ERROR, {
@@ -45,7 +68,19 @@ export function ScanScreen() {
           source,
         });
         uiLog('ScanScreen', 'api_scan_fallback', { source });
-        setLatestScanResult(defaultScanResult);
+        if (uploadedImage) {
+          setLatestScanStatus('failed');
+          setLatestScanFailure({
+            status: 'failed',
+            rejectionType: 'ai_failed',
+            rejectionReason: 'Okyo could not analyze this photo. Try uploading a clearer food photo.',
+          });
+          setLatestScanResult(null);
+        } else {
+          setLatestScanStatus('success');
+          setLatestScanFailure(null);
+          setLatestScanResult(defaultScanResult);
+        }
         setSelectedScanImage(image ?? null);
         setLatestAiDebugMetadata({
           aiSource: 'fallback_ai',
@@ -137,6 +172,29 @@ function getAiDebugMetadata(result: CreateScanResult): AiDebugMetadata | null {
     recipeModel: result.recipeModel,
     visionModel: result.visionModel,
   };
+}
+
+function isRealUploadedImage(source: ScanSource, image?: ScanImageMetadata) {
+  return Boolean(
+    image &&
+    !image.placeholder &&
+    source !== 'mock' &&
+    (image.uri || image.fileName || image.width || image.height || image.sizeBytes),
+  );
+}
+
+function getScanFailureReason(result: CreateScanResult) {
+  if (result.rejectionReason) {
+    return result.rejectionReason;
+  }
+  if (result.rejectionType === 'not_food') {
+    return "This doesn't look like a restaurant meal.";
+  }
+  if (result.rejectionType === 'unclear_image') {
+    return 'Try uploading a clearer food photo.';
+  }
+
+  return 'Okyo could not analyze this photo. Try uploading a clearer food photo.';
 }
 
 const styles = StyleSheet.create({

@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { analyticsEvents, track } from '../analytics/track';
-import type { AiDebugMetadata, ScanImageMetadata } from '../api/types';
+import type { AiDebugMetadata, ScanImageMetadata, ScanRejectionType, ScanStatus } from '../api/types';
 import {
   mockLeaderboardEntries,
   type LeaderboardEntry,
@@ -34,10 +34,18 @@ export type CompletedChallenge = {
 
 export type ChallengeRating = 'Nailed it' | 'Pretty close' | 'Needs work' | 'Not close';
 
+export type LatestScanFailure = {
+  status: Exclude<ScanStatus, 'success'>;
+  rejectionType: ScanRejectionType;
+  rejectionReason: string;
+};
+
 type OkyoState = {
   hasCompletedOnboarding: boolean;
   onboardingGoal: OnboardingGoal | null;
   latestScanResult: ScanResult | null;
+  latestScanStatus: ScanStatus | 'pending' | null;
+  latestScanFailure: LatestScanFailure | null;
   selectedScanImage: ScanImageMetadata | null;
   latestAiDebugMetadata: AiDebugMetadata | null;
   selectedMode: RecipeMode;
@@ -54,7 +62,9 @@ type OkyoState = {
   completeOnboarding: () => void;
   resetOnboarding: () => void;
   setGoal: (goal: OnboardingGoal) => void;
-  setLatestScanResult: (scanResult: ScanResult) => void;
+  setLatestScanResult: (scanResult: ScanResult | null) => void;
+  setLatestScanStatus: (status: ScanStatus | 'pending' | null) => void;
+  setLatestScanFailure: (failure: LatestScanFailure | null) => void;
   setSelectedScanImage: (image: ScanImageMetadata | null) => void;
   setLatestAiDebugMetadata: (metadata: AiDebugMetadata | null) => void;
   setSelectedMode: (mode: RecipeMode) => void;
@@ -77,6 +87,8 @@ export const useOkyoStore = create<OkyoState>()(
       hasCompletedOnboarding: false,
       onboardingGoal: null,
       latestScanResult: null,
+      latestScanStatus: null,
+      latestScanFailure: null,
       selectedScanImage: null,
       latestAiDebugMetadata: null,
       selectedMode: 'Restaurant Copy',
@@ -94,6 +106,8 @@ export const useOkyoStore = create<OkyoState>()(
       resetOnboarding: () => set({ hasCompletedOnboarding: false }),
       setGoal: (goal) => set({ onboardingGoal: goal }),
       setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
+      setLatestScanStatus: (status) => set({ latestScanStatus: status }),
+      setLatestScanFailure: (failure) => set({ latestScanFailure: failure }),
       setSelectedScanImage: (image) => set({ selectedScanImage: image }),
       setLatestAiDebugMetadata: (metadata) => set({ latestAiDebugMetadata: metadata }),
       setSelectedMode: (mode) => set({ selectedMode: mode }),
@@ -168,6 +182,9 @@ export const useOkyoStore = create<OkyoState>()(
           unlockedBadges: [],
           recentBadgeUnlock: null,
           awardedXpEvents: [],
+          latestScanFailure: null,
+          latestScanResult: null,
+          latestScanStatus: null,
           selectedScanImage: null,
           latestAiDebugMetadata: null,
         }),
@@ -179,6 +196,8 @@ export const useOkyoStore = create<OkyoState>()(
         hasCompletedOnboarding: state.hasCompletedOnboarding,
         onboardingGoal: state.onboardingGoal,
         latestScanResult: state.latestScanResult,
+        latestScanStatus: state.latestScanStatus,
+        latestScanFailure: state.latestScanFailure,
         selectedScanImage: state.selectedScanImage,
         latestAiDebugMetadata: state.latestAiDebugMetadata,
         selectedMode: state.selectedMode,

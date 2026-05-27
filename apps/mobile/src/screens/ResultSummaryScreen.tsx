@@ -33,10 +33,14 @@ export function ResultSummaryScreen() {
   const selectedModeRaw = useOkyoStore((state) => state.selectedMode);
   const selectedMode = getSafeRecipeMode(selectedModeRaw);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
+  const latestScanStatus = useOkyoStore((state) => state.latestScanStatus);
+  const latestScanFailure = useOkyoStore((state) => state.latestScanFailure);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const latestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
+  const setLatestScanStatus = useOkyoStore((state) => state.setLatestScanStatus);
+  const setLatestScanFailure = useOkyoStore((state) => state.setLatestScanFailure);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
@@ -49,6 +53,8 @@ export function ResultSummaryScreen() {
   const didTrackResultView = useRef(false);
   const firstScanEventId = `first-scan-${scanResult.id}`;
   const aiDebugLabel = getAiDebugLabel(latestAiDebugMetadata);
+  const isScanFailure = latestScanStatus === 'rejected' || latestScanStatus === 'failed';
+  const failureCopy = getScanFailureCopy(latestScanFailure);
 
   useEffect(() => {
     if (didTrackResultView.current) {
@@ -57,7 +63,18 @@ export function ResultSummaryScreen() {
 
     uiLog('ResultSummaryScreen', 'enter', { mode: selectedMode });
 
+    if (latestScanStatus === 'pending') {
+      return;
+    }
+
     didTrackResultView.current = true;
+    if (isScanFailure) {
+      track(analyticsEvents.RESULT_ERROR, {
+        errorMessage: latestScanFailure?.rejectionReason ?? 'Scan was rejected or failed.',
+        screen: 'ResultSummaryScreen',
+      });
+      return;
+    }
     if (!latestScanResult) {
       setLatestScanResult(defaultScanResult);
     }
@@ -77,7 +94,7 @@ export function ResultSummaryScreen() {
       savings: selectedRecipe.estimatedSavings,
       screen: 'ResultSummaryScreen',
     });
-  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, latestScanResult, scanResult.dishName, selectedRecipe.estimatedSavings, selectedMode, selectedModeRaw, setLatestScanResult]);
+  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, isScanFailure, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult.dishName, selectedRecipe.estimatedSavings, selectedMode, selectedModeRaw, setLatestScanResult]);
 
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
@@ -105,6 +122,66 @@ export function ResultSummaryScreen() {
     });
     navigation.navigate('MainTabs');
   };
+
+  const goToScan = () => {
+    setLatestScanFailure(null);
+    setLatestScanResult(null);
+    setLatestScanStatus(null);
+    navigation.navigate('ScanScreen');
+  };
+
+  const goBackToScanTab = () => {
+    setLatestScanFailure(null);
+    setLatestScanResult(null);
+    setLatestScanStatus(null);
+    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+  };
+
+  if (isScanFailure) {
+    return (
+      <ScreenContainer>
+        <Text style={styles.kicker}>Scan issue</Text>
+        <Text style={styles.title}>{failureCopy.title}</Text>
+        <Text style={styles.subtitle}>{failureCopy.body}</Text>
+        {__DEV__ && aiDebugLabel ? (
+          <View style={styles.aiDebugPill}>
+            <Text style={styles.aiDebugText}>{aiDebugLabel}</Text>
+          </View>
+        ) : null}
+
+        {selectedScanImage?.uri ? (
+          <Image source={{ uri: selectedScanImage.uri }} style={styles.scanPreview} />
+        ) : null}
+
+        <View style={styles.failureCard}>
+          <Text style={styles.failureTitle}>Try uploading a clearer food photo.</Text>
+          <Text style={styles.failureBody}>
+            Use a well-lit restaurant meal photo where the main dish is centered and visible.
+          </Text>
+        </View>
+
+        <View style={styles.actions}>
+          <PrimaryButton onPress={goToScan}>Try Another Photo</PrimaryButton>
+          <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
+        </View>
+      </ScreenContainer>
+    );
+  }
+
+  if (latestScanStatus === 'pending' && !latestScanResult) {
+    return (
+      <ScreenContainer>
+        <Text style={styles.kicker}>Analyzing</Text>
+        <Text style={styles.title}>Still checking this photo.</Text>
+        <Text style={styles.subtitle}>
+          Okyo is waiting for a safe scan result before showing recipes or savings.
+        </Text>
+        <View style={styles.actions}>
+          <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
+        </View>
+      </ScreenContainer>
+    );
+  }
 
   return (
     <ScreenContainer>
@@ -286,6 +363,25 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 8,
   },
+  failureCard: {
+    backgroundColor: colors.cream,
+    borderColor: colors.border,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginTop: 18,
+    padding: 18,
+  },
+  failureTitle: {
+    color: colors.charcoal,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  failureBody: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+  },
   actions: {
     gap: 12,
     marginTop: 22,
@@ -321,4 +417,25 @@ function getAiDebugLabel(metadata: AiDebugMetadata | null) {
     default:
       return null;
   }
+}
+
+function getScanFailureCopy(failure: { rejectionType?: string; rejectionReason?: string } | null) {
+  if (failure?.rejectionType === 'not_food') {
+    return {
+      title: "This doesn't look like a restaurant meal.",
+      body: failure.rejectionReason ?? 'Okyo needs a clear food photo to build a useful copycat-style recipe.',
+    };
+  }
+
+  if (failure?.rejectionType === 'unclear_image') {
+    return {
+      title: "Okyo couldn't analyze this photo.",
+      body: failure.rejectionReason ?? 'The dish was too unclear to identify confidently.',
+    };
+  }
+
+  return {
+    title: "Okyo couldn't analyze this photo.",
+    body: failure?.rejectionReason ?? 'The AI scan did not return a safe result.',
+  };
 }

@@ -33,11 +33,16 @@ const difficultySchema = z.enum(['Easy', 'Medium', 'Hard']);
 const confidenceSchema = z.number().min(0).max(1);
 const matchScoreSchema = z.number().min(0).max(10);
 const aiSourceSchema = z.enum(['openrouter_ai', 'mock_ai', 'fallback_ai']);
+const scanStatusSchema = z.enum(['success', 'rejected', 'failed']);
+const scanRejectionTypeSchema = z.enum(['not_food', 'unclear_image', 'ai_failed']);
 const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
 const defaultRestaurantPrice = 18;
 const defaultHomemadeCost = 6.5;
+const uploadedImageConfidenceThreshold = 0.35;
 
 export type AiSource = z.infer<typeof aiSourceSchema>;
+export type ScanStatus = z.infer<typeof scanStatusSchema>;
+export type ScanRejectionType = z.infer<typeof scanRejectionTypeSchema>;
 
 export const foodImageAnalysisSchema = z.object({
   candidateScanId: z.string().min(1),
@@ -47,6 +52,9 @@ export const foodImageAnalysisSchema = z.object({
   restaurantStyle: z.string().min(1),
   confidence: confidenceSchema,
   confidenceReason: z.string().min(1),
+  isFoodImage: z.boolean(),
+  isRestaurantMeal: z.boolean(),
+  rejectionReason: z.string().optional(),
   visibleIngredients: z.array(z.string()).default([]),
   likelyIngredients: z.array(z.string()).default([]),
   restaurantPriceEstimate: z.number().nonnegative(),
@@ -98,7 +106,8 @@ export type EstimateIngredientCostsInput = {
   recipe: Recipe;
 };
 
-export type AiScanResult = {
+export type AiScanSuccessResult = {
+  status: 'success';
   scan: ScanResult;
   recipe?: Recipe;
   groceryList?: GroceryList;
@@ -110,7 +119,25 @@ export type AiScanResult = {
   recipeModel: string;
   fallbackReason?: string;
   confidence: number;
+  uploadedImage: boolean;
 };
+
+export type AiScanRejectedResult = {
+  status: 'rejected' | 'failed';
+  scanId: string;
+  note: string;
+  aiSource: AiSource;
+  aiProvider: 'openrouter';
+  visionModel: string;
+  recipeModel: string;
+  fallbackReason?: string;
+  confidence: number;
+  uploadedImage: boolean;
+  rejectionType: ScanRejectionType;
+  rejectionReason: string;
+};
+
+export type AiScanResult = AiScanSuccessResult | AiScanRejectedResult;
 
 export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<FoodImageAnalysis> {
   const config = getAiConfig();
@@ -137,10 +164,13 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
       difficulty: getDifficultyFromConfidence(normalized.confidence),
       dishName: normalized.dishName,
       homemadeCostEstimate: normalized.homemadeCostEstimate,
+      isFoodImage: normalized.isFoodImage,
+      isRestaurantMeal: normalized.isRestaurantMeal,
       likelyIngredients: normalized.likelyIngredients,
       matchScore: getMatchScoreFromConfidence(normalized.confidence),
       modes: recipeModes,
       notes: ['OpenRouter test output; verify before using.'],
+      rejectionReason: normalized.rejectionReason,
       restaurantPriceEstimate: normalized.restaurantPriceEstimate,
       restaurantStyle: normalized.cuisine,
       visibleIngredients: normalized.visibleIngredients,
@@ -200,30 +230,146 @@ export function estimateIngredientCosts(input: EstimateIngredientCostsInput): In
 
 export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanResult> {
   const config = getAiConfig();
-  const fallback = createFallbackScan(input.mode, config, 'ai_scan_failed');
+  const uploadedImage = hasRealUploadedImage(input);
+
+  if (uploadedImage && !canUseOpenRouter(config)) {
+    const fallbackReason = getUnavailableAiReason(config);
+    const result = createRejectedScan({
+      aiSource: 'mock_ai',
+      confidence: 0,
+      config,
+      fallbackReason,
+      rejectionReason: 'Okyo could not analyze this photo because AI scanning is not available locally.',
+      rejectionType: 'ai_failed',
+      status: 'failed',
+      uploadedImage,
+    });
+
+    logAi('mock_ai', getAiLogDetails(config, config.openRouterVisionModel, {
+      fallbackReason,
+      rejectionType: result.rejectionType,
+      status: result.status,
+      uploadedImage,
+    }));
+    await logScanEvaluationFromResult(result, config);
+    return result;
+  }
+
+  if (uploadedImage && !isProviderVisibleImage(input.image)) {
+    const result = createRejectedScan({
+      aiSource: 'fallback_ai',
+      confidence: 0,
+      config,
+      fallbackReason: 'image_not_available_to_ai',
+      rejectionReason: 'Okyo could not analyze this photo because the uploaded image was not available to the AI scanner.',
+      rejectionType: 'ai_failed',
+      status: 'failed',
+      uploadedImage,
+    });
+
+    logAi('fallback_ai', getAiLogDetails(config, config.openRouterVisionModel, {
+      fallbackReason: result.fallbackReason,
+      rejectionType: result.rejectionType,
+      status: result.status,
+      uploadedImage,
+    }));
+    await logScanEvaluationFromResult(result, config);
+    return result;
+  }
+
+  const fallback = createFallbackScan(input.mode, config, 'ai_scan_failed', uploadedImage);
 
   try {
     const analysis = await analyzeFoodImage(input);
+    const analysisRejection = getAnalysisRejection(analysis, uploadedImage);
+    if (analysisRejection) {
+      const result = createRejectedScan({
+        aiSource: analysis.aiSource,
+        confidence: analysis.confidence,
+        config,
+        fallbackReason: analysis.fallbackReason,
+        rejectionReason: analysisRejection.rejectionReason,
+        rejectionType: analysisRejection.rejectionType,
+        status: analysisRejection.status,
+        uploadedImage,
+      });
+
+      logAi(result.aiSource, getAiLogDetails(config, config.openRouterVisionModel, {
+        fallbackReason: result.fallbackReason,
+        rejectionType: result.rejectionType,
+        status: result.status,
+        uploadedImage,
+      }));
+      await logScanEvaluationFromResult(result, config);
+      return result;
+    }
+
     const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode });
+    const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
+
+    if (uploadedImage && generatedRecipe.aiSource !== 'openrouter_ai') {
+      const result = createRejectedScan({
+        aiSource: getScanAiSource(analysis.aiSource, generatedRecipe.aiSource, recipeFallbackReason),
+        confidence: analysis.confidence,
+        config,
+        fallbackReason: recipeFallbackReason,
+        rejectionReason: 'Okyo recognized the image but could not safely generate a recipe from it. Try another photo.',
+        rejectionType: 'ai_failed',
+        status: 'failed',
+        uploadedImage,
+      });
+
+      logAi(result.aiSource, getAiLogDetails(config, config.openRouterTextModel, {
+        fallbackReason: result.fallbackReason,
+        rejectionType: result.rejectionType,
+        status: result.status,
+        uploadedImage,
+      }));
+      await logScanEvaluationFromResult(result, config);
+      return result;
+    }
+
     const recipe = generatedRecipe.recipe ?? getRecipeById(generatedRecipe.recipeId) ?? fallback.recipe;
 
     if (!recipe) {
       logAi('fallback_ai', { reason: 'recipe_missing' });
-      const fallbackResult = createFallbackScan(input.mode, config, 'recipe_missing');
-      await logScanEvaluation({
-        aiSource: fallbackResult.aiSource,
-        config,
-        fallbackReason: fallbackResult.fallbackReason,
-        scan: fallbackResult.scan,
-      });
+      const fallbackResult = uploadedImage
+        ? createRejectedScan({
+          aiSource: 'fallback_ai',
+          confidence: analysis.confidence,
+          config,
+          fallbackReason: 'recipe_missing',
+          rejectionReason: 'Okyo recognized the image but could not find a safe recipe result. Try another photo.',
+          rejectionType: 'ai_failed',
+          status: 'failed',
+          uploadedImage,
+        })
+        : createFallbackScan(input.mode, config, 'recipe_missing', uploadedImage);
+      await logScanEvaluationFromResult(fallbackResult, config);
 
       return fallbackResult;
     }
 
     const costEstimate = estimateIngredientCosts({ analysis, recipe });
     const seedScan = getScanById(analysis.candidateScanId) ?? fallback.scan;
+    if (!seedScan) {
+      const result = createRejectedScan({
+        aiSource: 'fallback_ai',
+        confidence: analysis.confidence,
+        config,
+        fallbackReason: 'seed_scan_missing',
+        rejectionReason: 'Okyo could not prepare a safe scan result. Try another photo.',
+        rejectionType: 'ai_failed',
+        status: 'failed',
+        uploadedImage,
+      });
+
+      await logScanEvaluationFromResult(result, config);
+      return result;
+    }
+
     const usedOpenRouterAnalysis = analysis.notes.includes('OpenRouter test output; verify before using.');
-    const fallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
+    const fallbackReason = recipeFallbackReason;
     const aiSource = getScanAiSource(analysis.aiSource, generatedRecipe.aiSource, fallbackReason);
     const scan: ScanResult = {
       ...seedScan,
@@ -239,6 +385,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
     };
 
     const result = {
+      status: 'success' as const,
       scan,
       recipe,
       groceryList: getGroceryList(seedScan.groceryListId),
@@ -247,25 +394,28 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
         ? 'AI provider output is for testing only. No image was stored; verify all food, cost, and recipe details.'
         : 'Mock AI service output only. No image was stored and no AI provider was called.',
       ...createAiDebugMetadata(config, aiSource, scan.confidence, fallbackReason),
+      uploadedImage,
     };
 
-    await logScanEvaluation({
-      aiSource: result.aiSource,
-      config,
-      fallbackReason: result.fallbackReason,
-      scan,
-    });
+    await logScanEvaluationFromResult(result, config);
 
     return result;
   } catch {
     logAi('fallback_ai', { reason: 'ai_scan_failed' });
-    const fallbackResult = createFallbackScan(input.mode, config, 'ai_scan_failed');
-    await logScanEvaluation({
-      aiSource: fallbackResult.aiSource,
-      config,
-      fallbackReason: fallbackResult.fallbackReason,
-      scan: fallbackResult.scan,
-    });
+    const fallbackResult = uploadedImage
+      ? createRejectedScan({
+        aiSource: 'fallback_ai',
+        confidence: 0,
+        config,
+        fallbackReason: 'ai_scan_failed',
+        rejectionReason: 'Okyo could not analyze this photo. Try uploading a clearer food photo.',
+        rejectionType: 'ai_failed',
+        status: 'failed',
+        uploadedImage,
+      })
+      : createFallbackScan(input.mode, config, 'ai_scan_failed', uploadedImage);
+
+    await logScanEvaluationFromResult(fallbackResult, config);
 
     return fallbackResult;
   }
@@ -287,6 +437,8 @@ function analyzeFoodImageWithMock(
     restaurantStyle: scan.restaurantStyle,
     confidence: input.image?.placeholder ? Math.min(scan.confidence, 0.72) : scan.confidence,
     confidenceReason: 'Seeded mock analysis for local testing; dish identity is not verified.',
+    isFoodImage: true,
+    isRestaurantMeal: true,
     visibleIngredients: ['pasta', 'tomato sauce', 'cheese'],
     likelyIngredients: ['rigatoni', 'tomato paste', 'cream', 'parmesan', 'red pepper flakes'],
     restaurantPriceEstimate: scan.restaurantPrice,
@@ -388,18 +540,128 @@ function createFallbackScan(
   mode: RecipeMode,
   config: ReturnType<typeof getAiConfig> = getAiConfig(),
   fallbackReason = 'fallback_scan',
-): AiScanResult {
+  uploadedImage = false,
+): AiScanSuccessResult {
   const scan = mockScanResults[0];
   const recipe = getRecipeForScan(scan, mode);
 
   return {
+    status: 'success',
     scan,
     recipe,
     groceryList: getGroceryList(scan.groceryListId),
     shareCard: getShareCard(scan.shareCardId),
     note: 'Fallback mock scan only. AI-shaped output was missing or invalid.',
     ...createAiDebugMetadata(config, 'fallback_ai', scan.confidence, fallbackReason),
+    uploadedImage,
   };
+}
+
+function createRejectedScan(input: {
+  aiSource: AiSource;
+  confidence: number;
+  config: ReturnType<typeof getAiConfig>;
+  fallbackReason?: string;
+  rejectionReason: string;
+  rejectionType: ScanRejectionType;
+  status: 'rejected' | 'failed';
+  uploadedImage: boolean;
+}): AiScanRejectedResult {
+  return {
+    status: input.status,
+    scanId: `scan-${input.status}-${Date.now()}`,
+    note: input.rejectionReason,
+    rejectionType: input.rejectionType,
+    rejectionReason: input.rejectionReason,
+    uploadedImage: input.uploadedImage,
+    ...createAiDebugMetadata(
+      input.config,
+      input.aiSource,
+      clampConfidence(input.confidence),
+      input.fallbackReason,
+    ),
+  };
+}
+
+async function logScanEvaluationFromResult(result: AiScanResult, config: ReturnType<typeof getAiConfig>) {
+  await logScanEvaluation({
+    aiSource: result.aiSource,
+    config,
+    fallbackReason: result.fallbackReason,
+    rejectionReason: result.status === 'success' ? undefined : result.rejectionReason,
+    rejectionType: result.status === 'success' ? undefined : result.rejectionType,
+    scan: result.status === 'success' ? result.scan : undefined,
+    scanId: result.status === 'success' ? result.scan.id : result.scanId,
+    status: result.status,
+    uploadedImage: result.uploadedImage,
+  });
+}
+
+function getAnalysisRejection(
+  analysis: FoodImageAnalysis,
+  uploadedImage: boolean,
+): { rejectionReason: string; rejectionType: ScanRejectionType; status: 'rejected' | 'failed' } | undefined {
+  if (!uploadedImage) {
+    return undefined;
+  }
+
+  if (analysis.aiSource !== 'openrouter_ai') {
+    return {
+      status: 'failed',
+      rejectionType: 'ai_failed',
+      rejectionReason: 'Okyo could not analyze this photo. Try uploading a clearer food photo.',
+    };
+  }
+
+  if (!analysis.isFoodImage || !analysis.isRestaurantMeal) {
+    return {
+      status: 'rejected',
+      rejectionType: 'not_food',
+      rejectionReason: analysis.rejectionReason || "This doesn't look like a restaurant meal.",
+    };
+  }
+
+  if (analysis.confidence < uploadedImageConfidenceThreshold) {
+    return {
+      status: 'rejected',
+      rejectionType: 'unclear_image',
+      rejectionReason: 'Okyo could not identify this meal confidently. Try a clearer, closer food photo.',
+    };
+  }
+
+  return undefined;
+}
+
+function hasRealUploadedImage(input: AnalyzeFoodImageInput) {
+  return Boolean(
+    input.image &&
+    !input.image.placeholder &&
+    input.source !== 'mock' &&
+    (input.image.uri || input.image.fileName || input.image.width || input.image.height || input.image.sizeBytes),
+  );
+}
+
+function isProviderVisibleImage(image: ScanImageMetadata | undefined) {
+  return Boolean(
+    image?.uri &&
+    !image.placeholder &&
+    (
+      image.uri.startsWith('https://') ||
+      image.uri.startsWith('http://') ||
+      image.uri.startsWith('data:image/')
+    ),
+  );
+}
+
+function getUnavailableAiReason(config: ReturnType<typeof getAiConfig>) {
+  if (!config.enabled) {
+    return 'ai_disabled';
+  }
+  if (!config.openRouterApiKey) {
+    return 'openrouter_missing_key';
+  }
+
+  return 'mock_requested';
 }
 
 function getSeedScan(image: ScanImageMetadata | undefined, source: ScanSource) {
@@ -464,6 +726,8 @@ function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const confidence = normalizeConfidence(output.confidence);
   const restaurantPriceEstimate = normalizeRestaurantPrice(output.restaurantPriceEstimate);
   const homemadeCostEstimate = normalizeHomemadeCost(output.homemadeCostEstimate, restaurantPriceEstimate);
+  const isFoodImage = normalizeBoolean(output.isFoodImage, true);
+  const isRestaurantMeal = normalizeBoolean(output.isRestaurantMeal, isFoodImage);
   const visibleIngredients = getSafeList(output.visibleIngredients, [], 6);
   const likelyIngredients = getSafeList(
     output.likelyIngredients,
@@ -483,7 +747,10 @@ function normalizeVisionOutput(output: OpenRouterVisionOutput) {
     cuisine,
     dishName,
     homemadeCostEstimate,
+    isFoodImage,
+    isRestaurantMeal,
     likelyIngredients,
+    rejectionReason: getOptionalShortText(output.rejectionReason, 160),
     restaurantPriceEstimate,
     visibleIngredients,
   };
@@ -497,6 +764,23 @@ function normalizeConfidence(value: unknown) {
 
   const percent = parsed <= 1 ? parsed * 100 : parsed;
   return clampNumber(percent, 0, 100) / 100;
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', 'yes', '1'].includes(normalized)) {
+      return true;
+    }
+    if (['false', 'no', '0'].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return fallback;
 }
 
 function normalizeRestaurantPrice(value: unknown) {
@@ -664,6 +948,10 @@ function getSafeTextValue(value: unknown, fallback: string) {
 function getShortText(value: unknown, fallback: string, maxLength: number) {
   const text = getSafeTextValue(value, fallback);
   return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}.` : text;
+}
+
+function getOptionalShortText(value: unknown, maxLength: number) {
+  return typeof value === 'string' && value.trim() ? getShortText(value, value, maxLength) : undefined;
 }
 
 function getOneSentence(value: unknown, fallback: string) {
