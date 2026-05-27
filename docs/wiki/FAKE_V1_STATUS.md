@@ -91,6 +91,7 @@ Setup notes:
 - Take Photo uses a safe placeholder image payload until real camera capture is connected
 - API scan endpoint uses a mock AI service interface for image analysis, recipe generation, and cost estimation, with schema validation and seeded-data fallback
 - OpenRouter provider adapter can be enabled locally with `.env`, while missing keys, disabled AI, timeouts, invalid JSON, or provider errors fall back to mock data
+- Scan responses include optional development debug metadata for AI source, provider, models, fallback reason, and confidence; the mobile app only shows this as a small `__DEV__` label.
 
 ## Known Limitations
 

@@ -4,7 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
-import type { ScanImageMetadata, ScanSource } from '../api/types';
+import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import { PrimaryButton, SecondaryButton, colors } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
 import { defaultScanResult, getSafeRecipeMode } from '../mocks';
@@ -16,6 +16,7 @@ export function ScanScreen() {
   const selectedMode = useOkyoStore((state) => state.selectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
   const setSelectedScanImage = useOkyoStore((state) => state.setSelectedScanImage);
+  const setLatestAiDebugMetadata = useOkyoStore((state) => state.setLatestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
 
   const useMockScan = (source: ScanSource, image?: ScanImageMetadata) => {
@@ -24,12 +25,14 @@ export function ScanScreen() {
     track(analyticsEvents.PHOTO_UPLOADED, { screen: 'ScanScreen', source });
     setLatestScanResult(defaultScanResult);
     setSelectedScanImage(image ?? null);
+    setLatestAiDebugMetadata(null);
     navigation.navigate('AnalysisLoadingScreen' as never);
 
     createMockScan({ image, mode: selectedMode, source })
       .then((result) => {
         setLatestScanResult(result.scan);
         setSelectedScanImage(result.image ?? image ?? null);
+        setLatestAiDebugMetadata(getAiDebugMetadata(result));
         if (result.recipe?.mode) {
           setSelectedMode(getSafeRecipeMode(result.recipe.mode));
         }
@@ -44,6 +47,11 @@ export function ScanScreen() {
         uiLog('ScanScreen', 'api_scan_fallback', { source });
         setLatestScanResult(defaultScanResult);
         setSelectedScanImage(image ?? null);
+        setLatestAiDebugMetadata({
+          aiSource: 'fallback_ai',
+          fallbackReason: 'mobile_api_unavailable',
+          confidence: defaultScanResult.confidence,
+        });
       });
   };
 
@@ -113,6 +121,21 @@ function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: ScanSourc
     source,
     uri: asset.uri,
     width: asset.width,
+  };
+}
+
+function getAiDebugMetadata(result: CreateScanResult): AiDebugMetadata | null {
+  if (!result.aiSource) {
+    return null;
+  }
+
+  return {
+    aiSource: result.aiSource,
+    aiProvider: result.aiProvider,
+    confidence: result.confidence,
+    fallbackReason: result.fallbackReason,
+    recipeModel: result.recipeModel,
+    visionModel: result.visionModel,
   };
 }
 

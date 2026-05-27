@@ -30,9 +30,13 @@ const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
 const difficultySchema = z.enum(['Easy', 'Medium', 'Hard']);
 const confidenceSchema = z.number().min(0).max(1);
 const matchScoreSchema = z.number().min(0).max(10);
+const aiSourceSchema = z.enum(['openrouter_ai', 'mock_ai', 'fallback_ai']);
+
+export type AiSource = z.infer<typeof aiSourceSchema>;
 
 export const foodImageAnalysisSchema = z.object({
   candidateScanId: z.string().min(1),
+  aiSource: aiSourceSchema,
   dishName: z.string().min(1),
   cuisine: z.string().min(1),
   restaurantStyle: z.string().min(1),
@@ -44,6 +48,7 @@ export const foodImageAnalysisSchema = z.object({
   homemadeCostEstimate: z.number().nonnegative(),
   matchScore: matchScoreSchema,
   difficulty: difficultySchema,
+  fallbackReason: z.string().optional(),
   modes: z.array(recipeModeSchema).min(1),
   notes: z.array(z.string()).default([]),
 });
@@ -52,8 +57,10 @@ export const generatedRecipeOutputSchema = z.object({
   recipeId: z.string().min(1),
   title: z.string().min(1),
   mode: recipeModeSchema,
+  aiSource: aiSourceSchema,
   confidence: confidenceSchema,
   confidenceNote: z.string().min(1),
+  fallbackReason: z.string().optional(),
 });
 
 export const ingredientCostEstimateSchema = z.object({
@@ -92,6 +99,12 @@ export type AiScanResult = {
   groceryList?: GroceryList;
   shareCard?: ShareCard;
   note: string;
+  aiSource: AiSource;
+  aiProvider: 'openrouter';
+  visionModel: string;
+  recipeModel: string;
+  fallbackReason?: string;
+  confidence: number;
 };
 
 export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<FoodImageAnalysis> {
@@ -111,6 +124,7 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
 
     return foodImageAnalysisSchema.parse({
       candidateScanId: mockScanResults[0].id,
+      aiSource: 'openrouter_ai',
       confidence: clampConfidence(output.confidence),
       confidenceReason: output.confidenceReason,
       cuisine: output.cuisine,
@@ -126,8 +140,9 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
       visibleIngredients: output.visibleIngredients,
     });
   } catch (error) {
-    logAi('fallback_ai', getFallbackLogDetails(error, config, config.openRouterVisionModel));
-    return analyzeFoodImageWithMock(input);
+    const fallbackDetails = getFallbackLogDetails(error, config, config.openRouterVisionModel);
+    logAi('fallback_ai', fallbackDetails);
+    return analyzeFoodImageWithMock(input, 'fallback_ai', getFallbackReason(fallbackDetails));
   }
 }
 
@@ -149,8 +164,9 @@ export async function generateRecipeFromDish(
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterTextModel, { stage: 'recipe' }));
     return createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
   } catch (error) {
-    logAi('fallback_ai', getFallbackLogDetails(error, config, config.openRouterTextModel));
-    return generateRecipeFromDishWithMock(input);
+    const fallbackDetails = getFallbackLogDetails(error, config, config.openRouterTextModel);
+    logAi('fallback_ai', fallbackDetails);
+    return generateRecipeFromDishWithMock(input, 'fallback_ai', getFallbackReason(fallbackDetails));
   }
 }
 
@@ -175,7 +191,8 @@ export function estimateIngredientCosts(input: EstimateIngredientCostsInput): In
 }
 
 export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanResult> {
-  const fallback = createFallbackScan(input.mode);
+  const config = getAiConfig();
+  const fallback = createFallbackScan(input.mode, config, 'ai_scan_failed');
 
   try {
     const analysis = await analyzeFoodImage(input);
@@ -184,12 +201,14 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
 
     if (!recipe) {
       logAi('fallback_ai', { reason: 'recipe_missing' });
-      return fallback;
+      return createFallbackScan(input.mode, config, 'recipe_missing');
     }
 
     const costEstimate = estimateIngredientCosts({ analysis, recipe });
     const seedScan = getScanById(analysis.candidateScanId) ?? fallback.scan;
     const usedOpenRouterAnalysis = analysis.notes.includes('OpenRouter test output; verify before using.');
+    const fallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
+    const aiSource = getScanAiSource(analysis.aiSource, generatedRecipe.aiSource, fallbackReason);
     const scan: ScanResult = {
       ...seedScan,
       confidence: getBlendedConfidence(analysis.confidence, generatedRecipe.confidence, costEstimate.confidence),
@@ -211,19 +230,25 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       note: usedOpenRouterAnalysis
         ? 'AI provider output is for testing only. No image was stored; verify all food, cost, and recipe details.'
         : 'Mock AI service output only. No image was stored and no AI provider was called.',
+      ...createAiDebugMetadata(config, aiSource, scan.confidence, fallbackReason),
     };
   } catch {
     logAi('fallback_ai', { reason: 'ai_scan_failed' });
-    return fallback;
+    return createFallbackScan(input.mode, config, 'ai_scan_failed');
   }
 }
 
 export const createMockAiScan = createAiScan;
 
-function analyzeFoodImageWithMock(input: AnalyzeFoodImageInput): FoodImageAnalysis {
+function analyzeFoodImageWithMock(
+  input: AnalyzeFoodImageInput,
+  aiSource: AiSource = 'mock_ai',
+  fallbackReason?: string,
+): FoodImageAnalysis {
   const scan = getSeedScan(input.image, input.source);
   return foodImageAnalysisSchema.parse({
     candidateScanId: scan.id,
+    aiSource,
     dishName: scan.dishName,
     cuisine: scan.restaurantStyle,
     restaurantStyle: scan.restaurantStyle,
@@ -235,6 +260,7 @@ function analyzeFoodImageWithMock(input: AnalyzeFoodImageInput): FoodImageAnalys
     homemadeCostEstimate: scan.homemadeCost,
     matchScore: scan.matchScore,
     difficulty: scan.difficulty,
+    fallbackReason,
     modes: scan.modes,
     notes: [
       input.image?.uri ? 'Local image metadata was received.' : 'No stored image file was used.',
@@ -243,14 +269,20 @@ function analyzeFoodImageWithMock(input: AnalyzeFoodImageInput): FoodImageAnalys
   });
 }
 
-function generateRecipeFromDishWithMock(input: GenerateRecipeFromDishInput): GeneratedRecipeOutput {
+function generateRecipeFromDishWithMock(
+  input: GenerateRecipeFromDishInput,
+  aiSource: AiSource = 'mock_ai',
+  fallbackReason?: string,
+): GeneratedRecipeOutput {
   const recipe = getRecipeForAnalysis(input.analysis, input.mode);
   return generatedRecipeOutputSchema.parse({
     recipeId: recipe.id,
     title: recipe.title,
     mode: recipe.mode,
+    aiSource,
     confidence: Math.min(input.analysis.confidence, 0.86),
     confidenceNote: recipe.confidenceNote,
+    fallbackReason,
   });
 }
 
@@ -277,6 +309,7 @@ function createRecipeFromOpenRouterOutput(
   const recipe = createRecipeFromVariant(variant, analysis, mode);
 
   return {
+    aiSource: 'openrouter_ai',
     confidence: Math.min(analysis.confidence, 0.82),
     confidenceNote: `AI-assisted testing output. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
     mode,
@@ -314,7 +347,11 @@ function createRecipeFromVariant(
   };
 }
 
-function createFallbackScan(mode: RecipeMode): AiScanResult {
+function createFallbackScan(
+  mode: RecipeMode,
+  config: ReturnType<typeof getAiConfig> = getAiConfig(),
+  fallbackReason = 'fallback_scan',
+): AiScanResult {
   const scan = mockScanResults[0];
   const recipe = getRecipeForScan(scan, mode);
 
@@ -324,6 +361,7 @@ function createFallbackScan(mode: RecipeMode): AiScanResult {
     groceryList: getGroceryList(scan.groceryListId),
     shareCard: getShareCard(scan.shareCardId),
     note: 'Fallback mock scan only. AI-shaped output was missing or invalid.',
+    ...createAiDebugMetadata(config, 'fallback_ai', scan.confidence, fallbackReason),
   };
 }
 
@@ -489,4 +527,39 @@ function getFallbackLogDetails(
     openRouterErrorMessage: error instanceof Error ? error.message : 'Unknown OpenRouter error.',
     reason: 'openrouter_unknown_error',
   });
+}
+
+function getFallbackReason(details: Record<string, unknown>) {
+  return typeof details.reason === 'string' ? details.reason : 'openrouter_unknown_error';
+}
+
+function getScanAiSource(
+  analysisSource: AiSource,
+  recipeSource: AiSource,
+  fallbackReason: string | undefined,
+): AiSource {
+  if (fallbackReason || analysisSource === 'fallback_ai' || recipeSource === 'fallback_ai') {
+    return 'fallback_ai';
+  }
+  if (analysisSource === 'openrouter_ai' && recipeSource === 'openrouter_ai') {
+    return 'openrouter_ai';
+  }
+
+  return 'mock_ai';
+}
+
+function createAiDebugMetadata(
+  config: ReturnType<typeof getAiConfig>,
+  aiSource: AiSource,
+  confidence: number,
+  fallbackReason?: string,
+) {
+  return {
+    aiSource,
+    aiProvider: config.provider,
+    visionModel: config.openRouterVisionModel,
+    recipeModel: config.openRouterTextModel,
+    fallbackReason,
+    confidence,
+  };
 }

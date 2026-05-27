@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import type { AiDebugMetadata } from '../api/types';
 import { uiLog } from '../utils/uiDebug';
 import {
   BadgePill,
@@ -33,6 +34,7 @@ export function ResultSummaryScreen() {
   const selectedMode = getSafeRecipeMode(selectedModeRaw);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
+  const latestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
@@ -46,6 +48,7 @@ export function ResultSummaryScreen() {
   const confidencePercent = Math.round(scanResult.confidence * 100);
   const didTrackResultView = useRef(false);
   const firstScanEventId = `first-scan-${scanResult.id}`;
+  const aiDebugLabel = getAiDebugLabel(latestAiDebugMetadata);
 
   useEffect(() => {
     if (didTrackResultView.current) {
@@ -110,6 +113,11 @@ export function ResultSummaryScreen() {
       <Text style={styles.subtitle}>
         {scanResult.restaurantStyle} copycat estimate
       </Text>
+      {__DEV__ && aiDebugLabel ? (
+        <View style={styles.aiDebugPill}>
+          <Text style={styles.aiDebugText}>{aiDebugLabel}</Text>
+        </View>
+      ) : null}
 
       {selectedScanImage?.uri ? (
         <Image source={{ uri: selectedScanImage.uri }} style={styles.scanPreview} />
@@ -285,4 +293,32 @@ const styles = StyleSheet.create({
   secondaryGrid: {
     gap: 10,
   },
+  aiDebugPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#eef3ff',
+    borderColor: '#c7d7ff',
+    borderRadius: 999,
+    borderWidth: 1,
+    marginTop: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  aiDebugText: {
+    color: '#315399',
+    fontSize: 12,
+    fontWeight: '900',
+  },
 });
+
+function getAiDebugLabel(metadata: AiDebugMetadata | null) {
+  switch (metadata?.aiSource) {
+    case 'openrouter_ai':
+      return 'AI: OpenRouter';
+    case 'mock_ai':
+      return 'AI: Mock';
+    case 'fallback_ai':
+      return 'AI: Fallback';
+    default:
+      return null;
+  }
+}

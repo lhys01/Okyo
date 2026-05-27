@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { analyticsEvents, track } from '../analytics/track';
-import type { ScanImageMetadata } from '../api/types';
+import type { AiDebugMetadata, ScanImageMetadata } from '../api/types';
 import {
   mockLeaderboardEntries,
   type LeaderboardEntry,
@@ -39,6 +39,7 @@ type OkyoState = {
   onboardingGoal: OnboardingGoal | null;
   latestScanResult: ScanResult | null;
   selectedScanImage: ScanImageMetadata | null;
+  latestAiDebugMetadata: AiDebugMetadata | null;
   selectedMode: RecipeMode;
   savedRecipes: Recipe[];
   completedChallenges: CompletedChallenge[];
@@ -55,6 +56,7 @@ type OkyoState = {
   setGoal: (goal: OnboardingGoal) => void;
   setLatestScanResult: (scanResult: ScanResult) => void;
   setSelectedScanImage: (image: ScanImageMetadata | null) => void;
+  setLatestAiDebugMetadata: (metadata: AiDebugMetadata | null) => void;
   setSelectedMode: (mode: RecipeMode) => void;
   saveRecipe: (recipe: Recipe) => void;
   removeSavedRecipe: (recipeId: string) => void;
@@ -76,6 +78,7 @@ export const useOkyoStore = create<OkyoState>()(
       onboardingGoal: null,
       latestScanResult: null,
       selectedScanImage: null,
+      latestAiDebugMetadata: null,
       selectedMode: 'Restaurant Copy',
       savedRecipes: [],
       completedChallenges: [],
@@ -92,6 +95,7 @@ export const useOkyoStore = create<OkyoState>()(
       setGoal: (goal) => set({ onboardingGoal: goal }),
       setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
       setSelectedScanImage: (image) => set({ selectedScanImage: image }),
+      setLatestAiDebugMetadata: (metadata) => set({ latestAiDebugMetadata: metadata }),
       setSelectedMode: (mode) => set({ selectedMode: mode }),
       saveRecipe: (recipe) =>
         set((state) => ({
@@ -165,6 +169,7 @@ export const useOkyoStore = create<OkyoState>()(
           recentBadgeUnlock: null,
           awardedXpEvents: [],
           selectedScanImage: null,
+          latestAiDebugMetadata: null,
         }),
     }),
     {
@@ -175,6 +180,7 @@ export const useOkyoStore = create<OkyoState>()(
         onboardingGoal: state.onboardingGoal,
         latestScanResult: state.latestScanResult,
         selectedScanImage: state.selectedScanImage,
+        latestAiDebugMetadata: state.latestAiDebugMetadata,
         selectedMode: state.selectedMode,
         savedRecipes: state.savedRecipes,
         completedChallenges: state.completedChallenges,

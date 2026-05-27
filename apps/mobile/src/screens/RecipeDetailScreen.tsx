@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import type { AiDebugMetadata } from '../api/types';
 import { uiLog } from '../utils/uiDebug';
 import {
   BadgePill,
@@ -39,12 +40,14 @@ export function RecipeDetailScreen() {
   const setStoreSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const latestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const [selectedMode, setSelectedMode] = useState<RecipeMode>(
     getSafeRecipeMode(initialMode ?? storeSelectedMode),
   );
   const recipe = getSafeRecipeForMode(selectedMode);
+  const recipeSourceLabel = getRecipeSourceLabel(latestAiDebugMetadata);
 
   useEffect(() => {
     const safeMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
@@ -97,6 +100,9 @@ export function RecipeDetailScreen() {
 
       <Text style={styles.title}>{recipe.title}</Text>
       <Text style={styles.description}>{recipe.description}</Text>
+      {__DEV__ && recipeSourceLabel ? (
+        <Text style={styles.aiDebugLine}>{recipeSourceLabel}</Text>
+      ) : null}
       {!isRecipeMode(routeMode ?? storeSelectedMode) ? (
         <View style={styles.fallbackNote}>
           <Text style={styles.fallbackNoteText}>
@@ -210,6 +216,12 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     marginTop: 10,
   },
+  aiDebugLine: {
+    color: '#315399',
+    fontSize: 12,
+    fontWeight: '900',
+    marginTop: 8,
+  },
   fallbackNote: {
     backgroundColor: colors.cream,
     borderRadius: 16,
@@ -319,3 +331,18 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
 });
+
+function getRecipeSourceLabel(metadata: AiDebugMetadata | null) {
+  switch (metadata?.aiSource) {
+    case 'openrouter_ai':
+      return 'Recipe source: OpenRouter AI';
+    case 'mock_ai':
+      return 'Recipe source: Mock AI';
+    case 'fallback_ai':
+      return metadata.fallbackReason
+        ? `Recipe source: Fallback (${metadata.fallbackReason})`
+        : 'Recipe source: Fallback';
+    default:
+      return null;
+  }
+}

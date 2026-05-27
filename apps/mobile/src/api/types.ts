@@ -16,6 +16,17 @@ export type ApiResponse<T> =
 
 export type ScanSource = 'camera' | 'photos' | 'mock';
 
+export type AiSource = 'openrouter_ai' | 'mock_ai' | 'fallback_ai';
+
+export type AiDebugMetadata = {
+  aiSource: AiSource;
+  aiProvider?: string;
+  visionModel?: string;
+  recipeModel?: string;
+  fallbackReason?: string;
+  confidence?: number;
+};
+
 export type ScanImageMetadata = {
   uri?: string;
   fileName?: string;
@@ -41,4 +52,4 @@ export type CreateScanResult = {
   image?: ScanImageMetadata;
   note?: string;
   source: ScanSource;
-};
+} & Partial<AiDebugMetadata>;
