@@ -54,7 +54,9 @@ export function ResultSummaryScreen() {
   const firstScanEventId = `first-scan-${scanResult.id}`;
   const aiDebugLabel = getAiDebugLabel(latestAiDebugMetadata);
   const isScanFailure = latestScanStatus === 'rejected' || latestScanStatus === 'failed';
+  const isPartialScan = latestScanStatus === 'partial' && Boolean(latestScanResult);
   const failureCopy = getScanFailureCopy(latestScanFailure);
+  const debugReason = getDebugReason(latestAiDebugMetadata, latestScanFailure);
 
   useEffect(() => {
     if (didTrackResultView.current) {
@@ -68,9 +70,11 @@ export function ResultSummaryScreen() {
     }
 
     didTrackResultView.current = true;
-    if (isScanFailure) {
+    if (isScanFailure || isPartialScan) {
       track(analyticsEvents.RESULT_ERROR, {
-        errorMessage: latestScanFailure?.rejectionReason ?? 'Scan was rejected or failed.',
+        errorMessage: isPartialScan
+          ? 'Scan recognized dish but recipe generation was incomplete.'
+          : latestScanFailure?.rejectionReason ?? 'Scan was rejected or failed.',
         screen: 'ResultSummaryScreen',
       });
       return;
@@ -94,7 +98,7 @@ export function ResultSummaryScreen() {
       savings: selectedRecipe.estimatedSavings,
       screen: 'ResultSummaryScreen',
     });
-  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, isScanFailure, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult.dishName, selectedRecipe.estimatedSavings, selectedMode, selectedModeRaw, setLatestScanResult]);
+  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, isPartialScan, isScanFailure, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult.dishName, selectedRecipe.estimatedSavings, selectedMode, selectedModeRaw, setLatestScanResult]);
 
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
@@ -148,6 +152,9 @@ export function ResultSummaryScreen() {
             <Text style={styles.aiDebugText}>{aiDebugLabel}</Text>
           </View>
         ) : null}
+        {__DEV__ && debugReason ? (
+          <Text style={styles.aiDebugReason}>{debugReason}</Text>
+        ) : null}
 
         {selectedScanImage?.uri ? (
           <Image source={{ uri: selectedScanImage.uri }} style={styles.scanPreview} />
@@ -168,14 +175,53 @@ export function ResultSummaryScreen() {
     );
   }
 
+  if (isPartialScan) {
+    return (
+      <ScreenContainer>
+        <Text style={styles.kicker}>Almost there</Text>
+        <Text style={styles.title}>{scanResult.dishName}</Text>
+        <Text style={styles.subtitle}>
+          Okyo recognized the dish, but the recipe needs one more try.
+        </Text>
+        {__DEV__ && aiDebugLabel ? (
+          <View style={styles.aiDebugPill}>
+            <Text style={styles.aiDebugText}>{aiDebugLabel}</Text>
+          </View>
+        ) : null}
+        {__DEV__ && debugReason ? (
+          <Text style={styles.aiDebugReason}>{debugReason}</Text>
+        ) : null}
+
+        {selectedScanImage?.uri ? (
+          <Image source={{ uri: selectedScanImage.uri }} style={styles.scanPreview} />
+        ) : null}
+
+        <View style={styles.partialCard}>
+          <Text style={styles.failureTitle}>Good scan, recipe hiccup.</Text>
+          <Text style={styles.failureBody}>
+            Try again with the same photo or another angle. Okyo will keep the scan honest and skip fake recipes.
+          </Text>
+        </View>
+
+        <View style={styles.actions}>
+          <PrimaryButton onPress={goToScan}>Try Again</PrimaryButton>
+          <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
+        </View>
+      </ScreenContainer>
+    );
+  }
+
   if (latestScanStatus === 'pending' && !latestScanResult) {
     return (
       <ScreenContainer>
-        <Text style={styles.kicker}>Analyzing</Text>
-        <Text style={styles.title}>Still checking this photo.</Text>
+        <Text style={styles.kicker}>Scanning</Text>
+        <Text style={styles.title}>Okyo is still looking.</Text>
         <Text style={styles.subtitle}>
-          Okyo is waiting for a safe scan result before showing recipes or savings.
+          This can take a few seconds for real food photos. We will only show a result when it is safe to trust.
         </Text>
+        <View style={styles.loadingMiniCard}>
+          <Text style={styles.loadingMiniText}>Building your homemade dupe...</Text>
+        </View>
         <View style={styles.actions}>
           <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
         </View>
@@ -371,6 +417,28 @@ const styles = StyleSheet.create({
     marginTop: 18,
     padding: 18,
   },
+  partialCard: {
+    backgroundColor: '#fff7d8',
+    borderColor: '#eadc91',
+    borderRadius: 20,
+    borderWidth: 1,
+    marginTop: 18,
+    padding: 18,
+  },
+  loadingMiniCard: {
+    backgroundColor: colors.cream,
+    borderColor: colors.border,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginTop: 20,
+    padding: 18,
+  },
+  loadingMiniText: {
+    color: colors.charcoal,
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
   failureTitle: {
     color: colors.charcoal,
     fontSize: 18,
@@ -403,6 +471,13 @@ const styles = StyleSheet.create({
     color: '#315399',
     fontSize: 12,
     fontWeight: '900',
+  },
+  aiDebugReason: {
+    color: '#315399',
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 17,
+    marginTop: 8,
   },
 });
 
@@ -438,4 +513,12 @@ function getScanFailureCopy(failure: { rejectionType?: string; rejectionReason?:
     title: "Okyo couldn't analyze this photo.",
     body: failure?.rejectionReason ?? 'The AI scan did not return a safe result.',
   };
+}
+
+function getDebugReason(
+  metadata: AiDebugMetadata | null,
+  failure: { rejectionReason?: string } | null,
+) {
+  const reason = failure?.rejectionReason ?? metadata?.fallbackReason;
+  return reason ? `Dev reason: ${reason}` : null;
 }

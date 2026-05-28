@@ -239,7 +239,9 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
     'Return JSON only with exactly these fields:',
     '{"dishName": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}',
     'If the image is not food, set isFoodImage false, isRestaurantMeal false, confidence low, and rejectionReason to a short reason.',
-    'If the image is food but not a restaurant-style meal, set isRestaurantMeal false and explain briefly.',
+    'If the image might be food but you are unsure, keep isFoodImage true, use low confidence, and explain uncertainty.',
+    'If the image is food but not clearly restaurant-style, keep isRestaurantMeal true when it could reasonably be a meal.',
+    'Only set isRestaurantMeal false when you are confident the image is not a meal at all.',
     'dishName should be specific but cautious, like "Possible Spicy Rigatoni" if unsure; do not use generic names like "food" or "meal".',
     'confidence may be 0-100. Use lower confidence when the image is unclear.',
     'Price and homemade cost must be realistic US dollar estimates, not exact; homemadeCostEstimate should usually be lower than restaurantPriceEstimate.',
@@ -309,11 +311,15 @@ function parseJsonContent(
 }
 
 function getSafeImageUrl(image: ScanImageMetadata | undefined) {
-  if (!image?.uri || image.placeholder) {
+  if (!image || image.placeholder) {
     return undefined;
   }
 
-  if (image.uri.startsWith('https://') || image.uri.startsWith('http://') || image.uri.startsWith('data:image/')) {
+  if (image.dataUrl?.startsWith('data:image/')) {
+    return image.dataUrl;
+  }
+
+  if (image.uri?.startsWith('https://') || image.uri?.startsWith('http://')) {
     return image.uri;
   }
 
@@ -327,10 +333,13 @@ function getSafeImageMetadata(image: ScanImageMetadata | undefined) {
 
   return {
     fileName: image.fileName,
+    dataUrlSizeBytes: image.dataUrlSizeBytes,
     height: image.height,
+    hasDataUrl: Boolean(image.dataUrl),
     mimeType: image.mimeType,
     placeholder: image.placeholder,
     source: image.source,
+    conversionError: image.conversionError,
     uriKind: getSafeImageUrl(image) ? 'sendable' : image.uri ? 'local_or_private_uri_not_sent' : 'none',
     width: image.width,
   };

@@ -6,13 +6,16 @@ export type ScanSource = 'camera' | 'photos' | 'mock';
 
 export type ScanImageMetadata = {
   uri?: string;
+  dataUrl?: string;
   fileName?: string;
   mimeType?: string;
   width?: number;
   height?: number;
   sizeBytes?: number;
+  dataUrlSizeBytes?: number;
   source?: ScanSource;
   placeholder?: boolean;
+  conversionError?: string;
 };
 
 export type ScanResult = {

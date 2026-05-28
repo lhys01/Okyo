@@ -21,18 +21,28 @@ import type { ApiFailure, ApiResponse } from './types.js';
 
 const port = Number(process.env.PORT ?? 8081);
 const app = express();
+const maxImageDataUrlChars = 2_750_000;
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
 const scanSourceSchema = z.enum(['camera', 'photos', 'mock']);
+const imageDataUrlSchema = z.string()
+  .min(1)
+  .max(maxImageDataUrlChars)
+  .refine((value) => /^data:image\/(?:jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=\r\n]+$/.test(value), {
+    message: 'Image data URL must be a base64 jpeg, png, or webp data URL.',
+  });
 const scanImageMetadataSchema = z.object({
   uri: z.string().min(1).max(2000).optional(),
+  dataUrl: imageDataUrlSchema.optional(),
   fileName: z.string().min(1).max(255).optional(),
-  mimeType: z.string().min(1).max(120).optional(),
+  mimeType: z.string().min(1).max(120).regex(/^image\/(?:jpeg|jpg|png|webp)$/).optional(),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
   sizeBytes: z.number().int().nonnegative().optional(),
+  dataUrlSizeBytes: z.number().int().nonnegative().max(maxImageDataUrlChars).optional(),
   source: scanSourceSchema.optional(),
   placeholder: z.boolean().optional(),
+  conversionError: z.string().min(1).max(120).optional(),
 }).strict();
 const scanRequestSchema = z.object({
   source: scanSourceSchema.optional().default('mock'),
@@ -51,7 +61,7 @@ const xpEventRequestSchema = z.object({
 });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '4mb' }));
 
 app.get('/health', (_request, response) => {
   const aiConfig = getPublicAiConfig();
@@ -81,7 +91,7 @@ app.post('/v1/scans', async (request, response, next) => {
 
     sendOk(response.status(201), {
       ...result,
-      image: body.image,
+      image: getResponseImageMetadata(body.image),
       source: body.source,
     });
   } catch (error) {
@@ -204,4 +214,16 @@ function sendError(response: Response, code: string, message: string, details?: 
     error: { code, message, details },
   };
   response.json(payload);
+}
+
+function getResponseImageMetadata(image: z.infer<typeof scanImageMetadataSchema> | undefined) {
+  if (!image) {
+    return undefined;
+  }
+
+  const { dataUrl: _dataUrl, ...safeImage } = image;
+  return {
+    ...safeImage,
+    hasDataUrl: Boolean(image.dataUrl),
+  };
 }

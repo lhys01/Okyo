@@ -35,7 +35,7 @@ export type CompletedChallenge = {
 export type ChallengeRating = 'Nailed it' | 'Pretty close' | 'Needs work' | 'Not close';
 
 export type LatestScanFailure = {
-  status: Exclude<ScanStatus, 'success'>;
+  status: Exclude<ScanStatus, 'success' | 'partial'>;
   rejectionType: ScanRejectionType;
   rejectionReason: string;
 };

@@ -11,6 +11,8 @@ import { defaultScanResult, getSafeRecipeMode } from '../mocks';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { uiLog } from '../utils/uiDebug';
 
+const maxImageDataUrlBytes = 2_750_000;
+
 export function ScanScreen() {
   const navigation = useNavigation();
   const selectedMode = useOkyoStore((state) => state.selectedMode);
@@ -29,29 +31,30 @@ export function ScanScreen() {
     setLatestScanResult(uploadedImage ? null : defaultScanResult);
     setLatestScanStatus('pending');
     setLatestScanFailure(null);
-    setSelectedScanImage(image ?? null);
+    setSelectedScanImage(getPreviewImageMetadata(image));
     setLatestAiDebugMetadata(null);
     navigation.navigate('AnalysisLoadingScreen' as never);
 
     createMockScan({ image, mode: selectedMode, source })
       .then((result) => {
         const status = result.status ?? 'success';
-        setSelectedScanImage(result.image ?? image ?? null);
+        setSelectedScanImage(getPreviewImageMetadata(result.image ?? image));
         setLatestAiDebugMetadata(getAiDebugMetadata(result));
-        if (status === 'success' && result.scan) {
-          setLatestScanStatus('success');
+        if ((status === 'success' || status === 'partial') && result.scan) {
+          setLatestScanStatus(status);
           setLatestScanFailure(null);
           setLatestScanResult(result.scan);
         } else {
-          setLatestScanStatus(status === 'success' ? 'failed' : status);
+          const failureStatus = status === 'rejected' || status === 'failed' ? status : 'failed';
+          setLatestScanStatus(failureStatus);
           setLatestScanFailure({
-            status: status === 'success' ? 'failed' : status,
+            status: failureStatus,
             rejectionType: result.rejectionType ?? 'ai_failed',
             rejectionReason: getScanFailureReason(result),
           });
           setLatestScanResult(null);
         }
-        if (status === 'success' && result.recipe?.mode) {
+        if ((status === 'success' || status === 'partial') && result.recipe?.mode) {
           setSelectedMode(getSafeRecipeMode(result.recipe.mode));
         }
         uiLog('ScanScreen', 'api_scan_result', {
@@ -81,7 +84,7 @@ export function ScanScreen() {
           setLatestScanFailure(null);
           setLatestScanResult(defaultScanResult);
         }
-        setSelectedScanImage(image ?? null);
+        setSelectedScanImage(getPreviewImageMetadata(image));
         setLatestAiDebugMetadata({
           aiSource: 'fallback_ai',
           fallbackReason: 'mobile_api_unavailable',
@@ -98,8 +101,9 @@ export function ScanScreen() {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: false,
+        base64: true,
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.85,
+        quality: 0.55,
       });
 
       if (result.canceled || result.assets.length === 0) {
@@ -147,15 +151,27 @@ function createPlaceholderImage(source: ScanSource): ScanImageMetadata {
 }
 
 function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: ScanSource): ScanImageMetadata {
+  const mimeType = asset.mimeType ?? getMimeTypeFromFileName(asset.fileName) ?? 'image/jpeg';
+  const dataUrl = getImageDataUrl(asset.base64, mimeType);
+  const dataUrlSizeBytes = dataUrl ? getUtf8SizeBytes(dataUrl) : undefined;
+  const shouldSendDataUrl = dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes;
+
   return {
     fileName: asset.fileName ?? undefined,
     height: asset.height,
-    mimeType: asset.mimeType ?? undefined,
+    mimeType,
     placeholder: false,
     sizeBytes: asset.fileSize ?? undefined,
+    dataUrl: shouldSendDataUrl ? dataUrl : undefined,
+    dataUrlSizeBytes,
     source,
     uri: asset.uri,
     width: asset.width,
+    conversionError: shouldSendDataUrl
+      ? undefined
+      : dataUrl
+        ? 'image_payload_too_large'
+        : 'image_base64_missing',
   };
 }
 
@@ -181,6 +197,43 @@ function isRealUploadedImage(source: ScanSource, image?: ScanImageMetadata) {
     source !== 'mock' &&
     (image.uri || image.fileName || image.width || image.height || image.sizeBytes),
   );
+}
+
+function getImageDataUrl(base64: string | null | undefined, mimeType: string) {
+  const cleanBase64 = typeof base64 === 'string' ? base64.trim() : '';
+  if (!cleanBase64) {
+    return undefined;
+  }
+
+  return `data:${mimeType};base64,${cleanBase64}`;
+}
+
+function getUtf8SizeBytes(value: string) {
+  return value.length;
+}
+
+function getMimeTypeFromFileName(fileName: string | null | undefined) {
+  const normalized = fileName?.toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.endsWith('.png')) {
+    return 'image/png';
+  }
+  if (normalized.endsWith('.webp')) {
+    return 'image/webp';
+  }
+
+  return 'image/jpeg';
+}
+
+function getPreviewImageMetadata(image: ScanImageMetadata | undefined): ScanImageMetadata | null {
+  if (!image) {
+    return null;
+  }
+
+  const { dataUrl: _dataUrl, ...previewImage } = image;
+  return previewImage;
 }
 
 function getScanFailureReason(result: CreateScanResult) {
