@@ -1,6 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
@@ -51,12 +51,14 @@ export function ResultSummaryScreen() {
   const selectedRecipe = getSafeRecipeForMode(selectedMode);
   const confidencePercent = Math.round(scanResult.confidence * 100);
   const didTrackResultView = useRef(false);
+  const [showStarterRecipe, setShowStarterRecipe] = useState(false);
   const firstScanEventId = `first-scan-${scanResult.id}`;
-  const aiDebugLabel = getAiDebugLabel(latestAiDebugMetadata);
   const isScanFailure = latestScanStatus === 'rejected' || latestScanStatus === 'failed';
   const isPartialScan = latestScanStatus === 'partial' && Boolean(latestScanResult);
   const failureCopy = getScanFailureCopy(latestScanFailure);
   const debugReason = getDebugReason(latestAiDebugMetadata, latestScanFailure);
+  const aiDebugLabel = getAiDebugLabel(latestAiDebugMetadata, latestScanStatus);
+  const partialStarterRecipe = isPartialScan ? getStarterRecipe(scanResult.dishName) : null;
 
   useEffect(() => {
     if (didTrackResultView.current) {
@@ -102,6 +104,7 @@ export function ResultSummaryScreen() {
 
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
+    setShowStarterRecipe(false);
     uiLog('ResultSummaryScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
       dishName: scanResult.dishName,
@@ -128,6 +131,7 @@ export function ResultSummaryScreen() {
   };
 
   const goToScan = () => {
+    setShowStarterRecipe(false);
     setLatestScanFailure(null);
     setLatestScanResult(null);
     setLatestScanStatus(null);
@@ -135,6 +139,7 @@ export function ResultSummaryScreen() {
   };
 
   const goBackToScanTab = () => {
+    setShowStarterRecipe(false);
     setLatestScanFailure(null);
     setLatestScanResult(null);
     setLatestScanStatus(null);
@@ -181,7 +186,7 @@ export function ResultSummaryScreen() {
         <Text style={styles.kicker}>Almost there</Text>
         <Text style={styles.title}>{scanResult.dishName}</Text>
         <Text style={styles.subtitle}>
-          Okyo recognized the dish, but the recipe needs one more try.
+          We recognized this as {scanResult.dishName}. Recipe generation had a hiccup.
         </Text>
         {__DEV__ && aiDebugLabel ? (
           <View style={styles.aiDebugPill}>
@@ -197,14 +202,33 @@ export function ResultSummaryScreen() {
         ) : null}
 
         <View style={styles.partialCard}>
-          <Text style={styles.failureTitle}>Good scan, recipe hiccup.</Text>
+          <Text style={styles.failureTitle}>Useful scan, incomplete recipe.</Text>
           <Text style={styles.failureBody}>
-            Try again with the same photo or another angle. Okyo will keep the scan honest and skip fake recipes.
+            Confidence: {confidencePercent}%. Try again, or use a quick starter inspired-by recipe while Okyo keeps the result honest.
           </Text>
         </View>
 
+        {showStarterRecipe && partialStarterRecipe ? (
+          <View style={styles.starterCard}>
+            <Text style={styles.starterLabel}>Starter inspired-by recipe</Text>
+            <Text style={styles.starterTitle}>{partialStarterRecipe.title}</Text>
+            <Text style={styles.starterBody}>{partialStarterRecipe.body}</Text>
+            {partialStarterRecipe.steps.map((step, index) => (
+              <Text key={`${partialStarterRecipe.title}-${step}`} style={styles.starterStep}>
+                {index + 1}. {step}
+              </Text>
+            ))}
+            <Text style={styles.starterNote}>
+              This is a safe starter, not a fully generated AI recipe. Costs and savings are not shown for this partial result.
+            </Text>
+          </View>
+        ) : null}
+
         <View style={styles.actions}>
-          <PrimaryButton onPress={goToScan}>Try Again</PrimaryButton>
+          {partialStarterRecipe ? (
+            <PrimaryButton onPress={() => setShowStarterRecipe(true)}>Use Starter Recipe</PrimaryButton>
+          ) : null}
+          <SecondaryButton onPress={goToScan}>Try Again</SecondaryButton>
           <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
         </View>
       </ScreenContainer>
@@ -425,6 +449,46 @@ const styles = StyleSheet.create({
     marginTop: 18,
     padding: 18,
   },
+  starterCard: {
+    backgroundColor: '#ffffff',
+    borderColor: '#eadc91',
+    borderRadius: 20,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 18,
+  },
+  starterLabel: {
+    color: colors.coral,
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  starterTitle: {
+    color: colors.charcoal,
+    fontSize: 20,
+    fontWeight: '900',
+    marginTop: 6,
+  },
+  starterBody: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+  },
+  starterStep: {
+    color: colors.charcoal,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 21,
+    marginTop: 8,
+  },
+  starterNote: {
+    color: colors.body,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+    marginTop: 12,
+  },
   loadingMiniCard: {
     backgroundColor: colors.cream,
     borderColor: colors.border,
@@ -481,7 +545,11 @@ const styles = StyleSheet.create({
   },
 });
 
-function getAiDebugLabel(metadata: AiDebugMetadata | null) {
+function getAiDebugLabel(metadata: AiDebugMetadata | null, status?: string | null) {
+  if (status === 'partial') {
+    return 'AI: Partial';
+  }
+
   switch (metadata?.aiSource) {
     case 'openrouter_ai':
       return 'AI: OpenRouter';
@@ -521,4 +589,48 @@ function getDebugReason(
 ) {
   const reason = failure?.rejectionReason ?? metadata?.fallbackReason;
   return reason ? `Dev reason: ${reason}` : null;
+}
+
+function getStarterRecipe(dishName: string) {
+  const normalized = dishName.toLowerCase();
+  if (!dishName.trim()) {
+    return null;
+  }
+
+  if (normalized.includes('pizza')) {
+    return {
+      title: `${dishName} starter`,
+      body: 'A simple inspired-by pizza path using store-bought dough or flatbread.',
+      steps: [
+        'Spread tomato sauce over dough or flatbread.',
+        'Add mozzarella and a small drizzle of olive oil.',
+        'Bake until the crust is crisp and the cheese is bubbling.',
+        'Finish with basil, oregano, or chili flakes if you have them.',
+      ],
+    };
+  }
+
+  if (normalized.includes('spaghetti') || normalized.includes('noodle') || normalized.includes('pasta')) {
+    return {
+      title: `${dishName} starter`,
+      body: 'A simple inspired-by pasta path using pantry sauce and a short noodle.',
+      steps: [
+        'Boil pasta until just tender and reserve a little pasta water.',
+        'Warm tomato, cream, or broth-based sauce in a pan.',
+        'Toss pasta with sauce and loosen with pasta water as needed.',
+        'Finish with cheese, herbs, or chili flakes if they fit the dish.',
+      ],
+    };
+  }
+
+  return {
+    title: `${dishName} starter`,
+    body: 'A simple inspired-by cooking path based on the recognized dish name.',
+    steps: [
+      'Identify the main protein, grain, or vegetable base.',
+      'Cook the main ingredient simply with salt, pepper, and oil.',
+      'Add a sauce or seasoning that matches the dish style.',
+      'Taste and adjust before serving.',
+    ],
+  };
 }
