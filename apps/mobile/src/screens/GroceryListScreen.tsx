@@ -22,6 +22,7 @@ import {
   isRecipeMode,
   type Recipe,
   type RecipeIngredient,
+  type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
@@ -104,9 +105,13 @@ export function GroceryListScreen() {
   const route = useRoute<GroceryListRoute>();
   const rawMode = route.params?.mode ?? defaultScanResult.modes[0];
   const selectedMode = getSafeRecipeMode(rawMode);
-  const recipe = getSafeRecipeForMode(selectedMode);
-  const items = useMemo(() => buildItems(recipe), [recipe]);
-  const listText = useMemo(() => buildListText(recipe, items), [items, recipe]);
+  const latestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
+  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
+  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
+  const isDemoScan = isExplicitDemoScan(selectedScanImage);
+  const recipe = getGroceryRecipe(selectedMode, latestScanRecipes, latestScanRecipe, isDemoScan);
+  const items = useMemo(() => (recipe ? buildItems(recipe) : []), [recipe]);
+  const listText = useMemo(() => (recipe ? buildListText(recipe, items) : ''), [items, recipe]);
   const [checkedItemIds, setCheckedItemIds] = useState<string[]>([]);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
@@ -131,11 +136,11 @@ export function GroceryListScreen() {
     }
 
     track(analyticsEvents.GROCERY_LIST_VIEWED, {
-      dishName: recipe.title,
+      dishName: recipe?.title ?? 'Missing recipe',
       mode: selectedMode,
       screen: 'GroceryListScreen',
     });
-  }, [rawMode, recipe.title, selectedMode]);
+  }, [rawMode, recipe?.title, selectedMode]);
 
   const toggleItem = (itemId: string) => {
     uiLog('GroceryListScreen', 'toggle_item', { itemId });
@@ -148,8 +153,8 @@ export function GroceryListScreen() {
 
   const copyList = async () => {
     try {
-      uiLog('GroceryListScreen', 'copy_list', { recipeId: recipe.id });
-      if (items.length === 0) {
+      uiLog('GroceryListScreen', 'copy_list', { recipeId: recipe?.id });
+      if (!recipe || items.length === 0) {
         Alert.alert('List unavailable', 'This recipe does not have grocery items yet.');
         return;
       }
@@ -158,7 +163,7 @@ export function GroceryListScreen() {
       awardXPOnce(`export-grocery-list-${recipe.id}`, 10);
       unlockBadge('grocery-exporter');
       track(analyticsEvents.GROCERY_LIST_EXPORTED, {
-        dishName: recipe.title,
+        dishName: recipe?.title ?? 'Missing recipe',
         mode: selectedMode,
         screen: 'GroceryListScreen',
         source: 'copy',
@@ -171,8 +176,8 @@ export function GroceryListScreen() {
 
   const shareList = async () => {
     try {
-      uiLog('GroceryListScreen', 'share_list', { recipeId: recipe.id });
-      if (items.length === 0) {
+      uiLog('GroceryListScreen', 'share_list', { recipeId: recipe?.id });
+      if (!recipe || items.length === 0) {
         Alert.alert('List unavailable', 'This recipe does not have grocery items yet.');
         return;
       }
@@ -185,7 +190,7 @@ export function GroceryListScreen() {
       awardXPOnce(`export-grocery-list-${recipe.id}`, 10);
       unlockBadge('grocery-exporter');
       track(analyticsEvents.GROCERY_LIST_EXPORTED, {
-        dishName: recipe.title,
+        dishName: recipe?.title ?? 'Missing recipe',
         mode: selectedMode,
         screen: 'GroceryListScreen',
         source: 'share',
@@ -195,12 +200,14 @@ export function GroceryListScreen() {
     }
   };
 
-  if (items.length === 0) {
+  if (!recipe || items.length === 0) {
     return (
       <EmptyState
         eyebrow="Grocery list"
-        title="No ingredients yet"
-        body="Choose a mock recipe first and Okyo will build an estimated grocery list here."
+        title={recipe ? 'No ingredients yet' : 'Recipe needs another try'}
+        body={recipe
+          ? 'This recipe does not have grocery items yet.'
+          : 'Okyo needs a generated recipe before it can build a grocery list for this real scan.'}
         actionLabel="Back to Recipe"
         onAction={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })}
       />
@@ -262,6 +269,22 @@ export function GroceryListScreen() {
       ) : null}
     </ScreenContainer>
   );
+}
+
+
+function getGroceryRecipe(
+  mode: RecipeMode,
+  recipes: Recipe[],
+  fallbackRecipe: Recipe | null,
+  isDemoScan: boolean,
+) {
+  return recipes.find((recipe) => recipe.mode === mode) ??
+    (fallbackRecipe?.mode === mode ? fallbackRecipe : null) ??
+    (isDemoScan ? getSafeRecipeForMode(mode) : null);
+}
+
+function isExplicitDemoScan(image: { placeholder?: boolean; source?: string } | null) {
+  return image?.placeholder === true && image.source === 'mock';
 }
 
 const styles = StyleSheet.create({

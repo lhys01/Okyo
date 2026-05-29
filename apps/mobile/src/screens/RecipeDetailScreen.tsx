@@ -44,7 +44,6 @@ export function RecipeDetailScreen() {
   const latestScanStatus = useOkyoStore((state) => state.latestScanStatus);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const latestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
@@ -53,24 +52,19 @@ export function RecipeDetailScreen() {
   const [selectedMode, setSelectedMode] = useState<RecipeMode>(
     getSafeRecipeMode(initialMode ?? storeSelectedMode),
   );
-<<<<<<< ours
-  const scanResult = latestScanResult ?? defaultScanResult;
-  const latestRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode);
-  const recipe = latestRecipe ?? getSafeRecipeForMode(selectedMode);
-  const availableModes = scanResult.modes.length > 0 ? scanResult.modes : defaultScanResult.modes;
+  const isDemoScan = isExplicitDemoScan(selectedScanImage);
+  const storedRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode, latestScanRecipe);
+  const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
+  const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
+  const recipeSourceLabel = getRecipeSourceLabel(latestAiDebugMetadata);
+  const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
+  const availableModes = scanResult?.modes ?? getAvailableModes(latestScanRecipes, latestScanRecipe, isDemoScan);
   const isGeneratedRecipeMissing = Boolean(
     latestScanStatus === 'success' &&
     latestScanResult &&
     latestAiDebugMetadata?.aiSource === 'openrouter_ai' &&
-    !latestRecipe,
+    !storedRecipe,
   );
-=======
-  const isDemoScan = isExplicitDemoScan(selectedScanImage);
-  const recipe = getDetailRecipe(selectedMode, latestScanRecipe, isDemoScan);
->>>>>>> theirs
-  const recipeSourceLabel = getRecipeSourceLabel(latestAiDebugMetadata);
-  const restaurantPrice = latestScanResult?.restaurantPrice ?? (isDemoScan ? defaultScanResult.restaurantPrice : 0);
-  const availableModes = latestScanResult?.modes ?? defaultScanResult.modes;
 
   useEffect(() => {
     const safeMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
@@ -91,7 +85,7 @@ export function RecipeDetailScreen() {
     setStoreSelectedMode(mode);
     uiLog('RecipeDetailScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
-      dishName: recipe?.title ?? latestScanResult?.dishName ?? 'Missing recipe',
+      dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
       mode,
       screen: 'RecipeDetailScreen',
     });
@@ -110,7 +104,7 @@ export function RecipeDetailScreen() {
     }
     unlockBadge('first-dupe');
     track(analyticsEvents.RECIPE_SAVED, {
-      dishName: recipe?.title ?? latestScanResult?.dishName ?? 'Missing recipe',
+      dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
       mode: recipe.mode,
       savings: recipe.estimatedSavings,
       screen: 'RecipeDetailScreen',
@@ -127,8 +121,8 @@ export function RecipeDetailScreen() {
         </View>
         <Text style={styles.title}>This recipe needs another try.</Text>
         <Text style={styles.description}>
-          {latestScanResult
-            ? `Okyo scanned ${latestScanResult.dishName}, but no safe ${selectedMode} recipe was returned for this real photo.`
+          {scanResult
+            ? `Okyo scanned ${scanResult.dishName}, but no safe ${selectedMode} recipe was returned for this real photo.`
             : 'Okyo needs a completed scan before it can show a real recipe.'}
         </Text>
         <View style={styles.fallbackNote}>
@@ -184,11 +178,7 @@ export function RecipeDetailScreen() {
         <Text style={styles.savingsLabel}>Estimated savings</Text>
         <Text style={styles.savingsValue}>{formatCurrency(recipe.estimatedSavings)}</Text>
         <Text style={styles.savingsNote}>
-<<<<<<< ours
-          Compared with a {formatCurrency(scanResult.restaurantPrice)} restaurant estimate.
-=======
           Compared with a {formatCurrency(restaurantPrice)} restaurant estimate.
->>>>>>> theirs
         </Text>
       </View>
 
@@ -396,14 +386,6 @@ const styles = StyleSheet.create({
   },
 });
 
-function getDetailRecipe(mode: RecipeMode, recipe: Recipe | null, isDemoScan: boolean) {
-  if (recipe?.mode === mode) {
-    return recipe;
-  }
-
-  return isDemoScan ? getSafeRecipeForMode(mode) : null;
-}
-
 function isExplicitDemoScan(image: { placeholder?: boolean; source?: string } | null) {
   return image?.placeholder === true && image.source === 'mock';
 }
@@ -423,6 +405,21 @@ function getRecipeSourceLabel(metadata: AiDebugMetadata | null) {
   }
 }
 
-function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode) {
-  return recipes.find((candidate) => candidate.mode === mode);
+function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode, fallbackRecipe: Recipe | null) {
+  return recipes.find((candidate) => candidate.mode === mode) ??
+    (fallbackRecipe?.mode === mode ? fallbackRecipe : null);
+}
+
+function getAvailableModes(recipes: Recipe[], fallbackRecipe: Recipe | null, isDemoScan: boolean) {
+  const modes = [
+    ...recipes.map((recipe) => recipe.mode),
+    ...(fallbackRecipe ? [fallbackRecipe.mode] : []),
+  ];
+  const uniqueModes = modes.filter((mode, index) => modes.indexOf(mode) === index);
+
+  return uniqueModes.length > 0 || !isDemoScan ? uniqueModes : defaultScanResult.modes;
+}
+
+function getEstimatedRestaurantPrice(recipe: Recipe | null) {
+  return recipe ? recipe.estimatedHomemadeCost + recipe.estimatedSavings : 0;
 }

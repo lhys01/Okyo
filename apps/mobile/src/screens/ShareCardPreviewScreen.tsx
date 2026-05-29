@@ -3,7 +3,7 @@ import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useRef } from 'react';
-import { Alert, Share, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Share, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
@@ -15,6 +15,7 @@ import {
   getSafeRecipeMode,
   mockBadges,
   mockRestaurantPacks,
+  type Recipe,
   type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList, ShareCardType } from '../navigation/types';
@@ -73,13 +74,18 @@ export function ShareCardPreviewScreen() {
   const cardType = getSafeCardType(route.params?.cardType);
   const storeMode = useOkyoStore((state) => state.selectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
+  const latestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
+  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
+  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
   const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const selectedMode = getSafeRecipeMode(route.params?.mode ?? storeMode);
   const scanResult = latestScanResult ?? defaultScanResult;
-  const recipe = getSafeRecipeForMode(selectedMode);
+  const isDemoScan = isExplicitDemoScan(selectedScanImage);
+  const recipe = getShareRecipe(selectedMode, latestScanRecipes, latestScanRecipe, isDemoScan);
+  const cardRecipe = recipe ?? getSafeRecipeForMode(selectedMode);
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
   const latestChallenge = safeCompletedChallenges[safeCompletedChallenges.length - 1];
@@ -107,7 +113,7 @@ export function ShareCardPreviewScreen() {
     selectedPack.dishes[0];
   const fallbackNote = latestScanResult ? undefined : 'Using the default mock scan result.';
   const needsScanResult = cardType === 'scan_result' || cardType === 'challenge_result';
-  const missingScanResult = needsScanResult && !latestScanResult;
+  const missingScanResult = needsScanResult && (!latestScanResult || (cardType === 'scan_result' && !recipe));
 
   const dataByType: Record<ShareCardType, StoryCardData> = {
     scan_result: {
@@ -115,8 +121,8 @@ export function ShareCardPreviewScreen() {
       eyebrow: 'I found a dupe',
       dishName: scanResult.dishName,
       restaurantPrice: scanResult.restaurantPrice,
-      homemadeCost: recipe.estimatedHomemadeCost,
-      estimatedSavings: recipe.estimatedSavings,
+      homemadeCost: cardRecipe.estimatedHomemadeCost,
+      estimatedSavings: cardRecipe.estimatedSavings,
       scoreLabel: `${scanResult.matchScore.toFixed(1)}/10 match`,
       selectedMode,
       caption: '',
@@ -127,8 +133,8 @@ export function ShareCardPreviewScreen() {
       eyebrow: 'Dupe Challenge complete',
       dishName: latestChallenge?.recipeTitle ?? scanResult.dishName,
       restaurantPrice: scanResult.restaurantPrice,
-      homemadeCost: recipe.estimatedHomemadeCost,
-      estimatedSavings: latestChallenge?.moneySaved ?? recipe.estimatedSavings,
+      homemadeCost: cardRecipe.estimatedHomemadeCost,
+      estimatedSavings: latestChallenge?.moneySaved ?? cardRecipe.estimatedSavings,
       scoreLabel: `${(latestChallenge?.matchScore ?? scanResult.matchScore).toFixed(1)}/10 match`,
       selectedMode: latestChallenge?.mode ?? selectedMode,
       caption: '',
@@ -139,8 +145,8 @@ export function ShareCardPreviewScreen() {
       eyebrow: topLeaderboardEntry.category,
       dishName: topLeaderboardEntry.displayName,
       restaurantPrice: scanResult.restaurantPrice,
-      homemadeCost: recipe.estimatedHomemadeCost,
-      estimatedSavings: recipe.estimatedSavings,
+      homemadeCost: cardRecipe.estimatedHomemadeCost,
+      estimatedSavings: cardRecipe.estimatedSavings,
       scoreLabel: `#${topLeaderboardEntry.rank} this week`,
       selectedMode: topLeaderboardEntry.value,
       caption: '',
@@ -150,8 +156,8 @@ export function ShareCardPreviewScreen() {
       eyebrow: unlockedBadge.name,
       dishName: scanResult.dishName,
       restaurantPrice: scanResult.restaurantPrice,
-      homemadeCost: recipe.estimatedHomemadeCost,
-      estimatedSavings: recipe.estimatedSavings,
+      homemadeCost: cardRecipe.estimatedHomemadeCost,
+      estimatedSavings: cardRecipe.estimatedSavings,
       scoreLabel: unlockedBadge.description,
       selectedMode,
       caption: '',
@@ -205,7 +211,7 @@ export function ShareCardPreviewScreen() {
       <EmptyState
         eyebrow="Share preview"
         title="Scan something first"
-        body="Okyo needs a mock scan result before it can build this savings card."
+        body="Okyo needs a completed scan with a generated recipe before it can build this savings card."
         actionLabel="Start a Scan"
         onAction={() => navigation.navigate('ScanScreen')}
       />
@@ -264,10 +270,14 @@ export function ShareCardPreviewScreen() {
       <View style={styles.previewFrame}>
         <View style={styles.storyCard}>
           <View style={styles.imagePlaceholder}>
-            <View style={styles.photoPlate}>
-              <Text style={styles.imageMonogram}>OK</Text>
-              <Text style={styles.imageLabel}>Food photo</Text>
-            </View>
+            {selectedScanImage?.uri ? (
+              <Image source={{ uri: selectedScanImage.uri }} style={styles.scanImage} />
+            ) : (
+              <View style={styles.photoPlate}>
+                <Text style={styles.imageMonogram}>OK</Text>
+                <Text style={styles.imageLabel}>Food photo</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.cardBody}>
@@ -349,6 +359,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.creamDeep,
     flex: 0.42,
     justifyContent: 'center',
+  },
+  scanImage: {
+    height: '100%',
+    width: '100%',
   },
   photoPlate: {
     alignItems: 'center',
@@ -461,3 +475,18 @@ const styles = StyleSheet.create({
     marginTop: 22,
   },
 });
+
+function getShareRecipe(
+  mode: RecipeMode,
+  recipes: Recipe[],
+  fallbackRecipe: Recipe | null,
+  isDemoScan: boolean,
+) {
+  return recipes.find((recipe) => recipe.mode === mode) ??
+    (fallbackRecipe?.mode === mode ? fallbackRecipe : null) ??
+    (isDemoScan ? getSafeRecipeForMode(mode) : null);
+}
+
+function isExplicitDemoScan(image: { placeholder?: boolean; source?: string } | null) {
+  return image?.placeholder === true && image.source === 'mock';
+}

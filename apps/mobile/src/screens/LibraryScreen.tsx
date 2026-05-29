@@ -6,7 +6,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
 import { EmptyState, RecipeCard, ScreenContainer, colors } from '../components/OkyoUI';
-import { getSafeRecipeMode } from '../mocks';
+import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 
@@ -16,6 +16,14 @@ export function LibraryScreen() {
   const navigation = useNavigation<LibraryNavigation>();
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const removeSavedRecipe = useOkyoStore((state) => state.removeSavedRecipe);
+  const setLatestAiDebugMetadata = useOkyoStore((state) => state.setLatestAiDebugMetadata);
+  const setLatestScanFailure = useOkyoStore((state) => state.setLatestScanFailure);
+  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
+  const setLatestScanRecipes = useOkyoStore((state) => state.setLatestScanRecipes);
+  const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
+  const setLatestScanStatus = useOkyoStore((state) => state.setLatestScanStatus);
+  const setSelectedScanImage = useOkyoStore((state) => state.setSelectedScanImage);
+  const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const didTrackMalformedData = useRef(false);
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
   const savedRecipeLabel = safeSavedRecipes.length === 1 ? 'recipe saved' : 'recipes saved';
@@ -34,6 +42,27 @@ export function LibraryScreen() {
       screen: 'LibraryScreen',
     });
   }, [malformedRecipeCount]);
+
+
+  const openSavedRecipe = (recipe: Recipe | null | undefined) => {
+    if (!recipe?.id) {
+      return;
+    }
+
+    const mode = getSafeRecipeMode(recipe.mode);
+    uiLog('LibraryScreen', 'open_saved_recipe', { recipeId: recipe.id });
+    setLatestAiDebugMetadata(null);
+    setLatestScanFailure(null);
+    setLatestScanRecipe(recipe);
+    setLatestScanRecipes([recipe]);
+    setLatestScanResult(null);
+    setLatestScanStatus(null);
+    setSelectedScanImage(null);
+    if (isRecipeMode(recipe.mode)) {
+      setSelectedMode(recipe.mode);
+    }
+    navigation.navigate('RecipeDetailScreen', { mode });
+  };
 
   if (safeSavedRecipes.length === 0) {
     return (
@@ -75,7 +104,7 @@ export function LibraryScreen() {
           <RecipeCard
             key={recipe?.id ?? `saved-recipe-${index}`}
             recipe={recipe}
-            onPress={() => { uiLog('LibraryScreen', 'open_saved_recipe', { recipeId: recipe?.id }); navigation.navigate('RecipeDetailScreen', { mode: getSafeRecipeMode(recipe?.mode) }); }}
+            onPress={() => openSavedRecipe(recipe)}
             onRemove={() => recipe?.id ? (uiLog('LibraryScreen', 'remove_saved_recipe', { recipeId: recipe.id }), removeSavedRecipe(recipe.id)) : undefined}
           />
         ))}

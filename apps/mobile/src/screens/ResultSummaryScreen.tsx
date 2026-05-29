@@ -52,30 +52,25 @@ export function ResultSummaryScreen() {
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
-  const scanResult = latestScanResult ?? defaultScanResult;
-<<<<<<< ours
-  const latestRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode);
-  const selectedRecipe = latestRecipe ?? getSafeRecipeForMode(selectedMode);
-  const isUsingGeneratedRecipe = Boolean(latestRecipe);
+  const isDemoScan = isExplicitDemoScan(selectedScanImage);
+  const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
+  const storedRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode, latestScanRecipe);
+  const selectedRecipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
+  const confidencePercent = Math.round((scanResult?.confidence ?? latestAiDebugMetadata?.confidence ?? 0) * 100);
   const shouldShowRecipeFallbackNote = Boolean(
     latestScanResult &&
     latestAiDebugMetadata?.aiSource === 'openrouter_ai' &&
-    !isUsingGeneratedRecipe,
+    !storedRecipe,
   );
-=======
-  const isDemoScan = isExplicitDemoScan(selectedScanImage);
-  const selectedRecipe = getDisplayRecipe(selectedMode, latestScanRecipe, isDemoScan);
->>>>>>> theirs
-  const confidencePercent = Math.round(scanResult.confidence * 100);
   const didTrackResultView = useRef(false);
   const [showStarterRecipe, setShowStarterRecipe] = useState(false);
-  const firstScanEventId = `first-scan-${scanResult.id}`;
+  const firstScanEventId = `first-scan-${scanResult?.id ?? 'missing-scan'}`;
   const isScanFailure = latestScanStatus === 'rejected' || latestScanStatus === 'failed';
   const isPartialScan = latestScanStatus === 'partial' && Boolean(latestScanResult);
   const failureCopy = getScanFailureCopy(latestScanFailure);
   const debugReason = getDebugReason(latestAiDebugMetadata, latestScanFailure);
   const aiDebugLabel = getAiDebugLabel(latestAiDebugMetadata, latestScanStatus);
-  const partialStarterRecipe = isPartialScan ? getStarterRecipe(scanResult.dishName) : null;
+  const partialStarterRecipe = isPartialScan && scanResult ? getStarterRecipe(scanResult.dishName) : null;
 
   useEffect(() => {
     if (didTrackResultView.current) {
@@ -101,6 +96,9 @@ export function ResultSummaryScreen() {
     if (!latestScanResult && isDemoScan) {
       setLatestScanResult(defaultScanResult);
     }
+    if (!scanResult) {
+      return;
+    }
     if (!isRecipeMode(selectedModeRaw)) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: 'Selected mode was missing or invalid on result view.',
@@ -117,14 +115,14 @@ export function ResultSummaryScreen() {
       savings: selectedRecipe?.estimatedSavings ?? 0,
       screen: 'ResultSummaryScreen',
     });
-  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, isDemoScan, isPartialScan, isScanFailure, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult.dishName, selectedRecipe?.estimatedSavings, selectedMode, selectedModeRaw, setLatestScanResult]);
+  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, isDemoScan, isPartialScan, isScanFailure, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult, selectedRecipe?.estimatedSavings, selectedMode, selectedModeRaw, setLatestScanResult]);
 
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
     setShowStarterRecipe(false);
     uiLog('ResultSummaryScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
-      dishName: scanResult.dishName,
+      dishName: scanResult?.dishName ?? 'Missing scan',
       mode,
       screen: 'ResultSummaryScreen',
     });
@@ -205,7 +203,7 @@ export function ResultSummaryScreen() {
     );
   }
 
-  if (isPartialScan) {
+  if (isPartialScan && scanResult) {
     return (
       <ScreenContainer>
         <Text style={styles.kicker}>Almost there</Text>
@@ -285,7 +283,7 @@ export function ResultSummaryScreen() {
         <Text style={styles.title}>The scan worked, but the recipe needs another try.</Text>
         <Text style={styles.subtitle}>
           {latestScanResult
-            ? `Okyo recognized ${scanResult.dishName}, but no safe ${selectedMode} recipe came back for this real scan.`
+            ? `Okyo recognized ${scanResult?.dishName ?? 'this dish'}, but no safe ${selectedMode} recipe came back for this real scan.`
             : 'Okyo needs a completed scan before it can show a real recipe.'}
         </Text>
         {selectedScanImage?.uri ? (
@@ -305,13 +303,25 @@ export function ResultSummaryScreen() {
     );
   }
 
+  if (!scanResult) {
+    return (
+      <ScreenContainer>
+        <Text style={styles.kicker}>Scan result</Text>
+        <Text style={styles.title}>Scan something first.</Text>
+        <Text style={styles.subtitle}>
+          Okyo needs a completed scan before it can show savings or build a recipe.
+        </Text>
+        <View style={styles.actions}>
+          <PrimaryButton onPress={goToScan}>Start a Scan</PrimaryButton>
+          <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
+        </View>
+      </ScreenContainer>
+    );
+  }
+
   return (
     <ScreenContainer>
-<<<<<<< ours
-      <Text style={styles.kicker}>{latestAiDebugMetadata?.aiSource === 'mock_ai' ? 'Mock result' : 'Scan result'}</Text>
-=======
       <Text style={styles.kicker}>{isDemoScan ? 'Demo result' : 'Scan result'}</Text>
->>>>>>> theirs
       <Text style={styles.title}>{scanResult.dishName}</Text>
       <Text style={styles.subtitle}>
         {scanResult.restaurantStyle} copycat estimate
@@ -623,14 +633,6 @@ const styles = StyleSheet.create({
   },
 });
 
-function getDisplayRecipe(mode: RecipeMode, recipe: Recipe | null, isDemoScan: boolean) {
-  if (recipe?.mode === mode) {
-    return recipe;
-  }
-
-  return isDemoScan ? getSafeRecipeForMode(mode) : null;
-}
-
 function isExplicitDemoScan(image: { placeholder?: boolean; source?: string } | null) {
   return image?.placeholder === true && image.source === 'mock';
 }
@@ -725,6 +727,7 @@ function getStarterRecipe(dishName: string) {
   };
 }
 
-function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode) {
-  return recipes.find((recipe) => recipe.mode === mode);
+function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode, fallbackRecipe: Recipe | null) {
+  return recipes.find((recipe) => recipe.mode === mode) ??
+    (fallbackRecipe?.mode === mode ? fallbackRecipe : null);
 }
