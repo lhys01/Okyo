@@ -44,9 +44,9 @@ export function SavingsDashboardScreen() {
   if (!hasSavingsData) {
     return (
       <EmptyState
-        eyebrow="Savings"
-        title="No savings yet"
-        body="Okyo tracks estimated savings when you save recipes and complete Dupe Challenges. Start with one mock scan to get your first savings estimate."
+        eyebrow="Savings jar"
+        title="Your dupe savings will stack up here."
+        body="Scan a restaurant meal, save a recipe, or finish a Dupe Challenge to start filling your Okyo savings jar with friendly estimates."
         actionLabel="Start a Scan"
         onAction={() => navigation.navigate('ScanScreen')}
       />
@@ -55,15 +55,25 @@ export function SavingsDashboardScreen() {
 
   return (
     <ScreenContainer>
-      <Text style={styles.kicker}>Savings</Text>
-      <Text style={styles.title}>{formatCurrency(totalEstimatedSaved)}</Text>
-      <Text style={styles.description}>Total estimated money saved with Okyo.</Text>
+      <Text style={styles.kicker}>Savings jar</Text>
+      <Text style={styles.title}>You’ve kept {formatCurrency(totalEstimatedSaved)} in your kitchen.</Text>
+      <Text style={styles.description}>
+        A friendly estimate of what your saved recipes and Dupe Challenges may have helped you skip spending.
+      </Text>
 
       <View style={styles.heroCard}>
-        <Text style={styles.heroLabel}>Biggest savings win</Text>
-        <Text style={styles.heroValue}>{formatCurrency(biggestSavingsWin)}</Text>
+        <Text style={styles.heroEmoji}>🥘</Text>
+        <View style={styles.heroCopy}>
+          <Text style={styles.heroLabel}>Biggest single win</Text>
+          <Text style={styles.heroValue}>{formatCurrency(biggestSavingsWin)}</Text>
+          <Text style={styles.heroHint}>Your tastiest restaurant-at-home moment so far.</Text>
+        </View>
       </View>
 
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Savings snapshot</Text>
+        <Text style={styles.sectionBody}>Quick totals from what you’ve saved and cooked.</Text>
+      </View>
       <View style={styles.grid}>
         <StatCard label="This week" value={formatCurrency(savingsThisWeek)} />
         <StatCard label="This month" value={formatCurrency(savingsThisMonth)} />
@@ -72,8 +82,9 @@ export function SavingsDashboardScreen() {
       </View>
 
       <View style={styles.averageCard}>
-        <Text style={styles.averageLabel}>Average savings per dupe</Text>
+        <Text style={styles.averageLabel}>Average per dupe</Text>
         <Text style={styles.averageValue}>{formatCurrency(averageSavings)}</Text>
+        <Text style={styles.averageHint}>Small wins count. Every homemade dupe nudges the jar up.</Text>
       </View>
     </ScreenContainer>
   );
@@ -89,9 +100,9 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.green,
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: '900',
-    lineHeight: 41,
+    lineHeight: 40,
   },
   description: {
     color: colors.body,
@@ -100,10 +111,19 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   heroCard: {
+    alignItems: 'center',
     backgroundColor: colors.greenSoft,
-    borderRadius: 20,
-    marginTop: 22,
+    borderRadius: 22,
+    flexDirection: 'row',
+    gap: 14,
+    marginTop: 24,
     padding: 18,
+  },
+  heroEmoji: {
+    fontSize: 36,
+  },
+  heroCopy: {
+    flex: 1,
   },
   heroLabel: {
     color: colors.green,
@@ -116,16 +136,36 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     marginTop: 4,
   },
+  heroHint: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  sectionHeader: {
+    marginTop: 24,
+  },
+  sectionTitle: {
+    color: colors.charcoal,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  sectionBody: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
+  },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    marginTop: 14,
+    marginTop: 12,
   },
   averageCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     marginTop: 14,
     padding: 18,
@@ -140,5 +180,11 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '900',
     marginTop: 4,
+  },
+  averageHint: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 6,
   },
 });
