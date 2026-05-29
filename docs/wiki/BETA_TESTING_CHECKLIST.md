@@ -2,6 +2,11 @@
 
 Use this checklist for a simple Okyo beta test pass. You do not need to be technical: tap through the app like a normal user, note anything confusing, and screenshot anything that looks wrong.
 
+Related QA docs:
+
+- [AI Scan Testing Checklist](./AI_SCAN_TESTING_CHECKLIST.md)
+- [Known Issues](./KNOWN_ISSUES.md)
+
 The most important beta loop is:
 
 ```text

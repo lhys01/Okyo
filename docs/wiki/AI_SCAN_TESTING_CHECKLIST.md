@@ -4,6 +4,11 @@ Use this checklist when testing Okyo's real food image upload, OpenRouter AI sca
 
 Keep testing safe and honest: real uploaded image failures should never show fake mock pasta, and the mock Spicy Vodka Rigatoni result should only appear in explicit demo/mock mode.
 
+Related QA docs:
+
+- [Beta Testing Checklist](./BETA_TESTING_CHECKLIST.md)
+- [Known Issues](./KNOWN_ISSUES.md)
+
 The main beta loop to prove is:
 
 ```text

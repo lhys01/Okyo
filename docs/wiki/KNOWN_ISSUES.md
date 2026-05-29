@@ -2,6 +2,11 @@
 
 This page tracks current Okyo testing limitations so QA stays realistic and beginner-friendly.
 
+Related QA docs:
+
+- [Beta Testing Checklist](./BETA_TESTING_CHECKLIST.md)
+- [AI Scan Testing Checklist](./AI_SCAN_TESTING_CHECKLIST.md)
+
 ## Local Simulator Setup
 
 - Expo tunnel mode is currently the reliable simulator run method.
