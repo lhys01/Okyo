@@ -46,6 +46,7 @@ type OkyoState = {
   latestScanResult: ScanResult | null;
   latestScanStatus: ScanStatus | 'pending' | null;
   latestScanFailure: LatestScanFailure | null;
+  latestScanRecipe: Recipe | null;
   selectedScanImage: ScanImageMetadata | null;
   latestAiDebugMetadata: AiDebugMetadata | null;
   selectedMode: RecipeMode;
@@ -65,6 +66,7 @@ type OkyoState = {
   setLatestScanResult: (scanResult: ScanResult | null) => void;
   setLatestScanStatus: (status: ScanStatus | 'pending' | null) => void;
   setLatestScanFailure: (failure: LatestScanFailure | null) => void;
+  setLatestScanRecipe: (recipe: Recipe | null) => void;
   setSelectedScanImage: (image: ScanImageMetadata | null) => void;
   setLatestAiDebugMetadata: (metadata: AiDebugMetadata | null) => void;
   setSelectedMode: (mode: RecipeMode) => void;
@@ -89,6 +91,7 @@ export const useOkyoStore = create<OkyoState>()(
       latestScanResult: null,
       latestScanStatus: null,
       latestScanFailure: null,
+      latestScanRecipe: null,
       selectedScanImage: null,
       latestAiDebugMetadata: null,
       selectedMode: 'Restaurant Copy',
@@ -108,6 +111,7 @@ export const useOkyoStore = create<OkyoState>()(
       setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
       setLatestScanStatus: (status) => set({ latestScanStatus: status }),
       setLatestScanFailure: (failure) => set({ latestScanFailure: failure }),
+      setLatestScanRecipe: (recipe) => set({ latestScanRecipe: recipe }),
       setSelectedScanImage: (image) => set({ selectedScanImage: image }),
       setLatestAiDebugMetadata: (metadata) => set({ latestAiDebugMetadata: metadata }),
       setSelectedMode: (mode) => set({ selectedMode: mode }),
@@ -185,6 +189,7 @@ export const useOkyoStore = create<OkyoState>()(
           latestScanFailure: null,
           latestScanResult: null,
           latestScanStatus: null,
+          latestScanRecipe: null,
           selectedScanImage: null,
           latestAiDebugMetadata: null,
         }),
@@ -198,6 +203,7 @@ export const useOkyoStore = create<OkyoState>()(
         latestScanResult: state.latestScanResult,
         latestScanStatus: state.latestScanStatus,
         latestScanFailure: state.latestScanFailure,
+        latestScanRecipe: state.latestScanRecipe,
         selectedScanImage: state.selectedScanImage,
         latestAiDebugMetadata: state.latestAiDebugMetadata,
         selectedMode: state.selectedMode,

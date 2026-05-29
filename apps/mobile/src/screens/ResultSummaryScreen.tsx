@@ -20,6 +20,7 @@ import {
   getSafeRecipeForMode,
   getSafeRecipeMode,
   isRecipeMode,
+  type Recipe,
   type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
@@ -35,12 +36,14 @@ export function ResultSummaryScreen() {
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const latestScanStatus = useOkyoStore((state) => state.latestScanStatus);
   const latestScanFailure = useOkyoStore((state) => state.latestScanFailure);
+  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const latestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
   const setLatestScanStatus = useOkyoStore((state) => state.setLatestScanStatus);
   const setLatestScanFailure = useOkyoStore((state) => state.setLatestScanFailure);
+  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
@@ -48,7 +51,8 @@ export function ResultSummaryScreen() {
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const scanResult = latestScanResult ?? defaultScanResult;
-  const selectedRecipe = getSafeRecipeForMode(selectedMode);
+  const isDemoScan = isExplicitDemoScan(selectedScanImage);
+  const selectedRecipe = getDisplayRecipe(selectedMode, latestScanRecipe, isDemoScan);
   const confidencePercent = Math.round(scanResult.confidence * 100);
   const didTrackResultView = useRef(false);
   const [showStarterRecipe, setShowStarterRecipe] = useState(false);
@@ -81,7 +85,7 @@ export function ResultSummaryScreen() {
       });
       return;
     }
-    if (!latestScanResult) {
+    if (!latestScanResult && isDemoScan) {
       setLatestScanResult(defaultScanResult);
     }
     if (!isRecipeMode(selectedModeRaw)) {
@@ -97,10 +101,10 @@ export function ResultSummaryScreen() {
     track(analyticsEvents.RESULT_VIEWED, {
       dishName: scanResult.dishName,
       mode: selectedMode,
-      savings: selectedRecipe.estimatedSavings,
+      savings: selectedRecipe?.estimatedSavings ?? 0,
       screen: 'ResultSummaryScreen',
     });
-  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, isPartialScan, isScanFailure, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult.dishName, selectedRecipe.estimatedSavings, selectedMode, selectedModeRaw, setLatestScanResult]);
+  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, isDemoScan, isPartialScan, isScanFailure, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult.dishName, selectedRecipe?.estimatedSavings, selectedMode, selectedModeRaw, setLatestScanResult]);
 
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
@@ -114,6 +118,10 @@ export function ResultSummaryScreen() {
   };
 
   const saveSelectedRecipe = () => {
+    if (!selectedRecipe) {
+      return;
+    }
+
     const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === selectedRecipe.id);
     uiLog('ResultSummaryScreen', 'save_recipe', { recipeId: selectedRecipe.id });
     saveRecipe(selectedRecipe);
@@ -124,7 +132,7 @@ export function ResultSummaryScreen() {
     track(analyticsEvents.RECIPE_SAVED, {
       dishName: selectedRecipe.title,
       mode: selectedRecipe.mode,
-      savings: selectedRecipe.estimatedSavings,
+      savings: selectedRecipe?.estimatedSavings ?? 0,
       screen: 'ResultSummaryScreen',
     });
     navigation.navigate('MainTabs');
@@ -135,6 +143,7 @@ export function ResultSummaryScreen() {
     setLatestScanFailure(null);
     setLatestScanResult(null);
     setLatestScanStatus(null);
+    setLatestScanRecipe(null);
     navigation.navigate('ScanScreen');
   };
 
@@ -143,6 +152,7 @@ export function ResultSummaryScreen() {
     setLatestScanFailure(null);
     setLatestScanResult(null);
     setLatestScanStatus(null);
+    setLatestScanRecipe(null);
     navigation.navigate('MainTabs', { screen: 'ScanScreen' });
   };
 
@@ -253,9 +263,36 @@ export function ResultSummaryScreen() {
     );
   }
 
+  if (!selectedRecipe) {
+    return (
+      <ScreenContainer>
+        <Text style={styles.kicker}>Recipe issue</Text>
+        <Text style={styles.title}>The scan worked, but the recipe needs another try.</Text>
+        <Text style={styles.subtitle}>
+          {latestScanResult
+            ? `Okyo recognized ${scanResult.dishName}, but no safe ${selectedMode} recipe came back for this real scan.`
+            : 'Okyo needs a completed scan before it can show a real recipe.'}
+        </Text>
+        {selectedScanImage?.uri ? (
+          <Image source={{ uri: selectedScanImage.uri }} style={styles.scanPreview} />
+        ) : null}
+        <View style={styles.failureCard}>
+          <Text style={styles.failureTitle}>No mock recipe shown.</Text>
+          <Text style={styles.failureBody}>
+            Try again so Okyo can generate a recipe for this photo instead of falling back to demo pasta.
+          </Text>
+        </View>
+        <View style={styles.actions}>
+          <PrimaryButton onPress={goToScan}>Try Another Photo</PrimaryButton>
+          <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
+        </View>
+      </ScreenContainer>
+    );
+  }
+
   return (
     <ScreenContainer>
-      <Text style={styles.kicker}>Mock result</Text>
+      <Text style={styles.kicker}>{isDemoScan ? 'Demo result' : 'Scan result'}</Text>
       <Text style={styles.title}>{scanResult.dishName}</Text>
       <Text style={styles.subtitle}>
         {scanResult.restaurantStyle} copycat estimate
@@ -544,6 +581,18 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
 });
+
+function getDisplayRecipe(mode: RecipeMode, recipe: Recipe | null, isDemoScan: boolean) {
+  if (recipe?.mode === mode) {
+    return recipe;
+  }
+
+  return isDemoScan ? getSafeRecipeForMode(mode) : null;
+}
+
+function isExplicitDemoScan(image: { placeholder?: boolean; source?: string } | null) {
+  return image?.placeholder === true && image.source === 'mock';
+}
 
 function getAiDebugLabel(metadata: AiDebugMetadata | null, status?: string | null) {
   if (status === 'partial') {
