@@ -18,6 +18,7 @@ export function LibraryScreen() {
   const removeSavedRecipe = useOkyoStore((state) => state.removeSavedRecipe);
   const didTrackMalformedData = useRef(false);
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
+  const savedRecipeLabel = safeSavedRecipes.length === 1 ? 'recipe saved' : 'recipes saved';
   const malformedRecipeCount = safeSavedRecipes.filter((recipe) => !recipe?.id || !recipe?.title).length;
 
   useEffect(() => {
@@ -37,10 +38,10 @@ export function LibraryScreen() {
   if (safeSavedRecipes.length === 0) {
     return (
       <EmptyState
-        eyebrow="Library"
-        title="Your saved dupes will appear here."
-        body="Save a recipe from a scan result to build your local Okyo library."
-        actionLabel="Start a Scan"
+        eyebrow="Recipe shelf"
+        title="Your saved dupes will cozy up here."
+        body="Scan a restaurant meal, save the inspired-by recipe you want to remake, and Okyo will start building your little dinner shelf."
+        actionLabel="Scan a Meal"
         onAction={() => navigation.navigate('ScanScreen')}
       />
     );
@@ -48,11 +49,26 @@ export function LibraryScreen() {
 
   return (
     <ScreenContainer>
-      <Text style={styles.kicker}>Library</Text>
-      <Text style={styles.title}>Saved recipes</Text>
-      <Text style={styles.description}>
-        {safeSavedRecipes.length} local {safeSavedRecipes.length === 1 ? 'dupe' : 'dupes'} saved.
-      </Text>
+      <View style={styles.headerCard}>
+        <Text style={styles.kicker}>Recipe shelf</Text>
+        <Text style={styles.title}>Saved recipes worth remaking</Text>
+        <Text style={styles.description}>
+          Your restaurant-at-home favorites, tucked away for low-effort dinner ideas. Tap any recipe to cook it again.
+        </Text>
+
+        <View style={styles.libraryMetaRow}>
+          <View style={styles.libraryMetaPill}>
+            <Text style={styles.libraryMetaValue}>{safeSavedRecipes.length}</Text>
+            <Text style={styles.libraryMetaLabel}>{savedRecipeLabel}</Text>
+          </View>
+          <Text style={styles.libraryNote}>Kept on this device for easy dinner repeats.</Text>
+        </View>
+      </View>
+
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionLabel}>On your shelf</Text>
+        <Text style={styles.sectionBody}>Pick a cozy favorite and bring it back to the table.</Text>
+      </View>
 
       <View style={styles.cardList}>
         {safeSavedRecipes.map((recipe, index) => (
@@ -69,6 +85,18 @@ export function LibraryScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: 22,
+    borderWidth: 1,
+    padding: 20,
+    shadowColor: '#2f231a',
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
+  },
   kicker: {
     color: colors.coral,
     fontSize: 13,
@@ -88,8 +116,56 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     marginTop: 10,
   },
+  libraryMetaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  libraryMetaPill: {
+    alignItems: 'center',
+    backgroundColor: colors.cream,
+    borderRadius: 18,
+    minWidth: 92,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  libraryMetaValue: {
+    color: colors.charcoal,
+    fontSize: 24,
+    fontWeight: '900',
+    lineHeight: 28,
+  },
+  libraryMetaLabel: {
+    color: colors.body,
+    fontSize: 11,
+    fontWeight: '900',
+    marginTop: 2,
+    textTransform: 'uppercase',
+  },
+  libraryNote: {
+    color: colors.muted,
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  sectionHeader: {
+    marginTop: 24,
+  },
+  sectionLabel: {
+    color: colors.charcoal,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  sectionBody: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
+  },
   cardList: {
     gap: 14,
-    marginTop: 22,
+    marginTop: 12,
   },
 });

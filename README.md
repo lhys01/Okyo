@@ -21,7 +21,7 @@ There is also a repo-level executable file named `run` at:
 /Users/rober/Documents/Okyo-1/run
 ```
 
-That file changes into `apps/mobile`, starts Expo on port `8082` if needed, boots the iOS Simulator, and opens the app using the machine LAN IP.
+That file changes into `apps/mobile`, starts Expo on port `8082` if needed, boots the iOS Simulator, and opens the app. For manual simulator testing, use Expo tunnel mode.
 
 ## Source Of Truth
 
@@ -80,9 +80,9 @@ Use this setup:
 The mobile app uses:
 
 - Port `8082`
-- Expo LAN host mode: `expo start -c --host lan --port 8082`
+- Expo tunnel mode: `npx expo start -c --tunnel --port 8082`
 
-LAN mode is intentional. In this local setup, simulator connections through `localhost` or `127.0.0.1` were unreliable.
+Tunnel mode is intentional. In this local setup, simulator connections through `localhost` or `127.0.0.1` were unreliable.
 
 The API uses:
 
@@ -111,18 +111,14 @@ cd /Users/rober/Documents/Okyo-1
 ./run
 ```
 
-Mobile-only path:
+Manual simulator path:
 
 ```bash
 cd /Users/rober/Documents/Okyo-1/apps/mobile
-npm run sim
+npx expo start -c --tunnel --port 8082
 ```
 
-The `sim` script runs:
-
-```bash
-expo start -c --host lan --port 8082
-```
+Then press `i` to open the iOS Simulator.
 
 ## Run The API
 
@@ -155,7 +151,7 @@ The mobile API base URL is configured in:
 apps/mobile/src/api/config.ts
 ```
 
-For the iOS Simulator, this currently points at the Mac LAN IP on port `8081` because `localhost` can refer to the simulator itself.
+For current simulator testing, run the API separately on `localhost:8081` and start the mobile app with Expo tunnel mode.
 
 ## Enable OpenRouter Testing
 

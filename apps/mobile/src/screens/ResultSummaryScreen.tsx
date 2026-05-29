@@ -20,6 +20,7 @@ import {
   getSafeRecipeForMode,
   getSafeRecipeMode,
   isRecipeMode,
+  type Recipe,
   type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
@@ -33,12 +34,14 @@ export function ResultSummaryScreen() {
   const selectedModeRaw = useOkyoStore((state) => state.selectedMode);
   const selectedMode = getSafeRecipeMode(selectedModeRaw);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
+  const latestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
   const latestScanStatus = useOkyoStore((state) => state.latestScanStatus);
   const latestScanFailure = useOkyoStore((state) => state.latestScanFailure);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const latestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
+  const setLatestScanRecipes = useOkyoStore((state) => state.setLatestScanRecipes);
   const setLatestScanStatus = useOkyoStore((state) => state.setLatestScanStatus);
   const setLatestScanFailure = useOkyoStore((state) => state.setLatestScanFailure);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
@@ -48,7 +51,14 @@ export function ResultSummaryScreen() {
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const scanResult = latestScanResult ?? defaultScanResult;
-  const selectedRecipe = getSafeRecipeForMode(selectedMode);
+  const latestRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode);
+  const selectedRecipe = latestRecipe ?? getSafeRecipeForMode(selectedMode);
+  const isUsingGeneratedRecipe = Boolean(latestRecipe);
+  const shouldShowRecipeFallbackNote = Boolean(
+    latestScanResult &&
+    latestAiDebugMetadata?.aiSource === 'openrouter_ai' &&
+    !isUsingGeneratedRecipe,
+  );
   const confidencePercent = Math.round(scanResult.confidence * 100);
   const didTrackResultView = useRef(false);
   const [showStarterRecipe, setShowStarterRecipe] = useState(false);
@@ -134,6 +144,7 @@ export function ResultSummaryScreen() {
     setShowStarterRecipe(false);
     setLatestScanFailure(null);
     setLatestScanResult(null);
+    setLatestScanRecipes([]);
     setLatestScanStatus(null);
     navigation.navigate('ScanScreen');
   };
@@ -142,6 +153,7 @@ export function ResultSummaryScreen() {
     setShowStarterRecipe(false);
     setLatestScanFailure(null);
     setLatestScanResult(null);
+    setLatestScanRecipes([]);
     setLatestScanStatus(null);
     navigation.navigate('MainTabs', { screen: 'ScanScreen' });
   };
@@ -255,7 +267,7 @@ export function ResultSummaryScreen() {
 
   return (
     <ScreenContainer>
-      <Text style={styles.kicker}>Mock result</Text>
+      <Text style={styles.kicker}>{latestAiDebugMetadata?.aiSource === 'mock_ai' ? 'Mock result' : 'Scan result'}</Text>
       <Text style={styles.title}>{scanResult.dishName}</Text>
       <Text style={styles.subtitle}>
         {scanResult.restaurantStyle} copycat estimate
@@ -310,6 +322,14 @@ export function ResultSummaryScreen() {
         </Text>
       </View>
 
+      {shouldShowRecipeFallbackNote ? (
+        <View style={styles.recipeFallbackNote}>
+          <Text style={styles.recipeFallbackNoteText}>
+            Okyo did not receive a generated {selectedMode} recipe for this scan, so this mode is using a local starter fallback.
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.actions}>
         <PrimaryButton onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })}>
           View Recipe
@@ -335,6 +355,20 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     marginBottom: 8,
     textTransform: 'uppercase',
+  },
+  recipeFallbackNote: {
+    backgroundColor: '#fff7d8',
+    borderColor: '#eadc91',
+    borderRadius: 18,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 14,
+  },
+  recipeFallbackNoteText: {
+    color: colors.body,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 19,
   },
   title: {
     color: colors.charcoal,
@@ -633,4 +667,8 @@ function getStarterRecipe(dishName: string) {
       'Taste and adjust before serving.',
     ],
   };
+}
+
+function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode) {
+  return recipes.find((recipe) => recipe.mode === mode);
 }

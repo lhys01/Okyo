@@ -22,6 +22,7 @@ import {
   getSafeRecipeForMode,
   getSafeRecipeMode,
   isRecipeMode,
+  type Recipe,
   type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
@@ -38,6 +39,9 @@ export function RecipeDetailScreen() {
   const initialMode = getSafeRecipeMode(routeMode ?? defaultScanResult.modes[0]);
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
   const setStoreSelectedMode = useOkyoStore((state) => state.setSelectedMode);
+  const latestScanResult = useOkyoStore((state) => state.latestScanResult);
+  const latestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
+  const latestScanStatus = useOkyoStore((state) => state.latestScanStatus);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const latestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
@@ -46,7 +50,16 @@ export function RecipeDetailScreen() {
   const [selectedMode, setSelectedMode] = useState<RecipeMode>(
     getSafeRecipeMode(initialMode ?? storeSelectedMode),
   );
-  const recipe = getSafeRecipeForMode(selectedMode);
+  const scanResult = latestScanResult ?? defaultScanResult;
+  const latestRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode);
+  const recipe = latestRecipe ?? getSafeRecipeForMode(selectedMode);
+  const availableModes = scanResult.modes.length > 0 ? scanResult.modes : defaultScanResult.modes;
+  const isGeneratedRecipeMissing = Boolean(
+    latestScanStatus === 'success' &&
+    latestScanResult &&
+    latestAiDebugMetadata?.aiSource === 'openrouter_ai' &&
+    !latestRecipe,
+  );
   const recipeSourceLabel = getRecipeSourceLabel(latestAiDebugMetadata);
 
   useEffect(() => {
@@ -110,8 +123,15 @@ export function RecipeDetailScreen() {
           </Text>
         </View>
       ) : null}
+      {isGeneratedRecipeMissing ? (
+        <View style={styles.fallbackNote}>
+          <Text style={styles.fallbackNoteText}>
+            Okyo did not receive a generated {selectedMode} recipe for this scan, so this mode is showing a local starter fallback.
+          </Text>
+        </View>
+      ) : null}
 
-      <ModeTabs modes={defaultScanResult.modes} selectedMode={selectedMode} onSelectMode={chooseMode} />
+      <ModeTabs modes={availableModes} selectedMode={selectedMode} onSelectMode={chooseMode} />
 
       <View style={styles.statsGrid}>
         <StatCard label="Prep" value={`${recipe.prepTimeMinutes} min`} />
@@ -124,7 +144,7 @@ export function RecipeDetailScreen() {
         <Text style={styles.savingsLabel}>Estimated savings</Text>
         <Text style={styles.savingsValue}>{formatCurrency(recipe.estimatedSavings)}</Text>
         <Text style={styles.savingsNote}>
-          Compared with a {formatCurrency(defaultScanResult.restaurantPrice)} restaurant estimate.
+          Compared with a {formatCurrency(scanResult.restaurantPrice)} restaurant estimate.
         </Text>
       </View>
 
@@ -345,4 +365,8 @@ function getRecipeSourceLabel(metadata: AiDebugMetadata | null) {
     default:
       return null;
   }
+}
+
+function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode) {
+  return recipes.find((candidate) => candidate.mode === mode);
 }

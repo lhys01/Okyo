@@ -54,6 +54,7 @@ export type CreateScanResult = {
   scan?: ScanResult;
   scanId?: string;
   recipe?: Recipe;
+  recipes?: Recipe[];
   groceryList?: GroceryList;
   shareCard?: ShareCard;
   image?: ScanImageMetadata;

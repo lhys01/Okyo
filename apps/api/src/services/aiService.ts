@@ -88,6 +88,7 @@ export const ingredientCostEstimateSchema = z.object({
 export type FoodImageAnalysis = z.infer<typeof foodImageAnalysisSchema>;
 export type GeneratedRecipeOutput = z.infer<typeof generatedRecipeOutputSchema> & {
   recipe?: Recipe;
+  recipes?: Recipe[];
 };
 export type IngredientCostEstimate = z.infer<typeof ingredientCostEstimateSchema>;
 
@@ -111,6 +112,7 @@ export type AiScanSuccessResult = {
   status: 'success';
   scan: ScanResult;
   recipe?: Recipe;
+  recipes?: Recipe[];
   groceryList?: GroceryList;
   shareCard?: ShareCard;
   note: string;
@@ -353,6 +355,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
     }
 
     const recipe = generatedRecipe.recipe ?? getRecipeById(generatedRecipe.recipeId) ?? fallback.recipe;
+    const recipes = getGeneratedRecipes(generatedRecipe, recipe);
 
     if (!recipe) {
       logAi('fallback_ai', { reason: 'recipe_missing' });
@@ -409,6 +412,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       status: 'success' as const,
       scan,
       recipe,
+      recipes,
       groceryList: getGroceryList(seedScan.groceryListId),
       shareCard: getShareCard(seedScan.shareCardId),
       note: usedOpenRouterAnalysis
@@ -481,7 +485,8 @@ function generateRecipeFromDishWithMock(
   fallbackReason?: string,
 ): GeneratedRecipeOutput {
   const recipe = getRecipeForAnalysis(input.analysis, input.mode);
-  return generatedRecipeOutputSchema.parse({
+  const recipes = getRecipesForAnalysis(input.analysis);
+  const parsed = generatedRecipeOutputSchema.parse({
     recipeId: recipe.id,
     title: recipe.title,
     mode: recipe.mode,
@@ -490,6 +495,12 @@ function generateRecipeFromDishWithMock(
     confidenceNote: recipe.confidenceNote,
     fallbackReason,
   });
+
+  return {
+    ...parsed,
+    recipe,
+    recipes,
+  };
 }
 
 function estimateIngredientCostsWithMock(input: EstimateIngredientCostsInput): IngredientCostEstimate {
@@ -512,8 +523,10 @@ function createRecipeFromOpenRouterOutput(
   analysis: FoodImageAnalysis,
   mode: RecipeMode,
 ): GeneratedRecipeOutput {
-  const variant = getRecipeVariant(output, mode);
-  const recipe = createRecipeFromVariant(variant, analysis, mode);
+  const recipes = recipeModes.map((recipeMode) => (
+    createRecipeFromVariant(getRecipeVariant(output, recipeMode), analysis, recipeMode)
+  ));
+  const recipe = recipes.find((candidate) => candidate.mode === mode) ?? recipes[0];
 
   return {
     aiSource: 'openrouter_ai',
@@ -521,6 +534,7 @@ function createRecipeFromOpenRouterOutput(
     confidenceNote: `AI-assisted testing output. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
     mode,
     recipe,
+    recipes,
     recipeId: recipe.id,
     title: recipe.title,
   };
@@ -565,11 +579,13 @@ function createFallbackScan(
 ): AiScanSuccessResult {
   const scan = mockScanResults[0];
   const recipe = getRecipeForScan(scan, mode);
+  const recipes = getRecipesForScan(scan);
 
   return {
     status: 'success',
     scan,
     recipe,
+    recipes,
     groceryList: getGroceryList(scan.groceryListId),
     shareCard: getShareCard(scan.shareCardId),
     note: 'Fallback mock scan only. AI-shaped output was missing or invalid.',
@@ -581,11 +597,13 @@ function createFallbackScan(
 function createDemoMockScan(mode: RecipeMode, config: ReturnType<typeof getAiConfig>): AiScanSuccessResult {
   const scan = mockScanResults[0];
   const recipe = getRecipeForScan(scan, mode);
+  const recipes = getRecipesForScan(scan);
 
   return {
     status: 'success',
     scan,
     recipe,
+    recipes,
     groceryList: getGroceryList(scan.groceryListId),
     shareCard: getShareCard(scan.shareCardId),
     note: 'Demo mock scan only. No AI provider was called.',
@@ -776,12 +794,30 @@ function getRecipeForAnalysis(analysis: FoodImageAnalysis, mode: RecipeMode) {
   return getRecipeForScan(scan, mode);
 }
 
+function getRecipesForAnalysis(analysis: FoodImageAnalysis) {
+  const scan = getScanById(analysis.candidateScanId) ?? mockScanResults[0];
+  return getRecipesForScan(scan);
+}
+
 function getRecipeForScan(scan: ScanResult, mode: RecipeMode) {
   return (
     mockRecipes.find((recipe) => recipe.scanResultId === scan.id && recipe.mode === mode) ??
     mockRecipes.find((recipe) => recipe.scanResultId === scan.id) ??
     mockRecipes[0]
   );
+}
+
+function getRecipesForScan(scan: ScanResult) {
+  return recipeModes
+    .map((mode) => getRecipeForScan(scan, mode))
+    .filter((recipe, index, recipes) => recipes.findIndex((candidate) => candidate.id === recipe.id) === index);
+}
+
+function getGeneratedRecipes(generatedRecipe: GeneratedRecipeOutput, selectedRecipe?: Recipe) {
+  if (generatedRecipe.recipes && generatedRecipe.recipes.length > 0) {
+    return generatedRecipe.recipes;
+  }
+  return selectedRecipe ? [selectedRecipe] : undefined;
 }
 
 function getScanById(scanId: string) {

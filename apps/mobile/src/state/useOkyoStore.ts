@@ -44,6 +44,7 @@ type OkyoState = {
   hasCompletedOnboarding: boolean;
   onboardingGoal: OnboardingGoal | null;
   latestScanResult: ScanResult | null;
+  latestScanRecipes: Recipe[];
   latestScanStatus: ScanStatus | 'pending' | null;
   latestScanFailure: LatestScanFailure | null;
   selectedScanImage: ScanImageMetadata | null;
@@ -63,6 +64,7 @@ type OkyoState = {
   resetOnboarding: () => void;
   setGoal: (goal: OnboardingGoal) => void;
   setLatestScanResult: (scanResult: ScanResult | null) => void;
+  setLatestScanRecipes: (recipes: Recipe[]) => void;
   setLatestScanStatus: (status: ScanStatus | 'pending' | null) => void;
   setLatestScanFailure: (failure: LatestScanFailure | null) => void;
   setSelectedScanImage: (image: ScanImageMetadata | null) => void;
@@ -87,6 +89,7 @@ export const useOkyoStore = create<OkyoState>()(
       hasCompletedOnboarding: false,
       onboardingGoal: null,
       latestScanResult: null,
+      latestScanRecipes: [],
       latestScanStatus: null,
       latestScanFailure: null,
       selectedScanImage: null,
@@ -106,6 +109,7 @@ export const useOkyoStore = create<OkyoState>()(
       resetOnboarding: () => set({ hasCompletedOnboarding: false }),
       setGoal: (goal) => set({ onboardingGoal: goal }),
       setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
+      setLatestScanRecipes: (recipes) => set({ latestScanRecipes: recipes }),
       setLatestScanStatus: (status) => set({ latestScanStatus: status }),
       setLatestScanFailure: (failure) => set({ latestScanFailure: failure }),
       setSelectedScanImage: (image) => set({ selectedScanImage: image }),
@@ -184,6 +188,7 @@ export const useOkyoStore = create<OkyoState>()(
           awardedXpEvents: [],
           latestScanFailure: null,
           latestScanResult: null,
+          latestScanRecipes: [],
           latestScanStatus: null,
           selectedScanImage: null,
           latestAiDebugMetadata: null,
@@ -196,6 +201,7 @@ export const useOkyoStore = create<OkyoState>()(
         hasCompletedOnboarding: state.hasCompletedOnboarding,
         onboardingGoal: state.onboardingGoal,
         latestScanResult: state.latestScanResult,
+        latestScanRecipes: state.latestScanRecipes,
         latestScanStatus: state.latestScanStatus,
         latestScanFailure: state.latestScanFailure,
         selectedScanImage: state.selectedScanImage,
