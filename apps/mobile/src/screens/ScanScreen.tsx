@@ -7,7 +7,7 @@ import { createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import { PrimaryButton, SecondaryButton, colors } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
-import { defaultScanResult, getSafeRecipeMode } from '../mocks';
+import { defaultScanResult, getSafeRecipeForMode, getSafeRecipeMode } from '../mocks';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { uiLog } from '../utils/uiDebug';
 
@@ -20,6 +20,7 @@ export function ScanScreen() {
   const setLatestScanRecipes = useOkyoStore((state) => state.setLatestScanRecipes);
   const setLatestScanStatus = useOkyoStore((state) => state.setLatestScanStatus);
   const setLatestScanFailure = useOkyoStore((state) => state.setLatestScanFailure);
+  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
   const setSelectedScanImage = useOkyoStore((state) => state.setSelectedScanImage);
   const setLatestAiDebugMetadata = useOkyoStore((state) => state.setLatestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
@@ -33,6 +34,7 @@ export function ScanScreen() {
     setLatestScanRecipes([]);
     setLatestScanStatus('pending');
     setLatestScanFailure(null);
+    setLatestScanRecipe(null);
     setSelectedScanImage(getPreviewImageMetadata(image));
     setLatestAiDebugMetadata(null);
     navigation.navigate('AnalysisLoadingScreen' as never);
@@ -46,7 +48,11 @@ export function ScanScreen() {
           setLatestScanStatus(status);
           setLatestScanFailure(null);
           setLatestScanResult(result.scan);
+<<<<<<< ours
           setLatestScanRecipes(status === 'success' ? getScanRecipes(result) : []);
+=======
+          setLatestScanRecipe(result.recipe ?? null);
+>>>>>>> theirs
         } else {
           const failureStatus = status === 'rejected' || status === 'failed' ? status : 'failed';
           setLatestScanStatus(failureStatus);
@@ -56,7 +62,11 @@ export function ScanScreen() {
             rejectionReason: getScanFailureReason(result),
           });
           setLatestScanResult(null);
+<<<<<<< ours
           setLatestScanRecipes([]);
+=======
+          setLatestScanRecipe(null);
+>>>>>>> theirs
         }
         if ((status === 'success' || status === 'partial') && result.recipe?.mode) {
           setSelectedMode(getSafeRecipeMode(result.recipe.mode));
@@ -83,12 +93,20 @@ export function ScanScreen() {
             rejectionReason: 'Okyo could not analyze this photo. Try uploading a clearer food photo.',
           });
           setLatestScanResult(null);
+<<<<<<< ours
           setLatestScanRecipes([]);
+=======
+          setLatestScanRecipe(null);
+>>>>>>> theirs
         } else {
           setLatestScanStatus('success');
           setLatestScanFailure(null);
           setLatestScanResult(defaultScanResult);
+<<<<<<< ours
           setLatestScanRecipes([]);
+=======
+          setLatestScanRecipe(getSafeRecipeForMode(selectedMode));
+>>>>>>> theirs
         }
         setSelectedScanImage(getPreviewImageMetadata(image));
         setLatestAiDebugMetadata({
@@ -251,7 +269,11 @@ function isRealUploadedImage(source: ScanSource, image?: ScanImageMetadata) {
     image &&
     !image.placeholder &&
     source !== 'mock' &&
+<<<<<<< ours
     (image.uri || image.dataUrl || image.fileName || image.width || image.height || image.sizeBytes),
+=======
+    (image.uri || image.dataUrl || image.fileName || image.width || image.height || image.sizeBytes || image.dataUrlSizeBytes),
+>>>>>>> theirs
   );
 }
 
