@@ -22,6 +22,7 @@ import {
   getSafeRecipeForMode,
   getSafeRecipeMode,
   isRecipeMode,
+  type Recipe,
   type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
@@ -40,14 +41,20 @@ export function RecipeDetailScreen() {
   const setStoreSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const latestScanResult = useOkyoStore((state) => state.latestScanResult);
+  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
+  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const latestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const [selectedMode, setSelectedMode] = useState<RecipeMode>(
     getSafeRecipeMode(initialMode ?? storeSelectedMode),
   );
-  const recipe = getSafeRecipeForMode(selectedMode);
+  const isDemoScan = isExplicitDemoScan(selectedScanImage);
+  const recipe = getDetailRecipe(selectedMode, latestScanRecipe, isDemoScan);
   const recipeSourceLabel = getRecipeSourceLabel(latestAiDebugMetadata);
+  const restaurantPrice = latestScanResult?.restaurantPrice ?? (isDemoScan ? defaultScanResult.restaurantPrice : 0);
+  const availableModes = latestScanResult?.modes ?? defaultScanResult.modes;
 
   useEffect(() => {
     const safeMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
@@ -68,13 +75,17 @@ export function RecipeDetailScreen() {
     setStoreSelectedMode(mode);
     uiLog('RecipeDetailScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
-      dishName: recipe.title,
+      dishName: recipe?.title ?? latestScanResult?.dishName ?? 'Missing recipe',
       mode,
       screen: 'RecipeDetailScreen',
     });
   };
 
   const saveSelectedRecipe = () => {
+    if (!recipe) {
+      return;
+    }
+
     const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
     uiLog('RecipeDetailScreen', 'save_recipe', { recipeId: recipe.id });
     saveRecipe(recipe);
@@ -83,13 +94,39 @@ export function RecipeDetailScreen() {
     }
     unlockBadge('first-dupe');
     track(analyticsEvents.RECIPE_SAVED, {
-      dishName: recipe.title,
+      dishName: recipe?.title ?? latestScanResult?.dishName ?? 'Missing recipe',
       mode: recipe.mode,
       savings: recipe.estimatedSavings,
       screen: 'RecipeDetailScreen',
     });
     Alert.alert('Saved', `${recipe.title} was added to your library.`);
   };
+
+  if (!recipe) {
+    return (
+      <ScreenContainer>
+        <View style={styles.headerRow}>
+          <Text style={styles.kicker}>Recipe issue</Text>
+          <BadgePill tone="dark">{selectedMode}</BadgePill>
+        </View>
+        <Text style={styles.title}>This recipe needs another try.</Text>
+        <Text style={styles.description}>
+          {latestScanResult
+            ? `Okyo scanned ${latestScanResult.dishName}, but no safe ${selectedMode} recipe was returned for this real photo.`
+            : 'Okyo needs a completed scan before it can show a real recipe.'}
+        </Text>
+        <View style={styles.fallbackNote}>
+          <Text style={styles.fallbackNoteText}>
+            No mock pasta recipe is shown for real scan data. Try scanning again or use Try Demo Scan from the scan screen.
+          </Text>
+        </View>
+        <View style={styles.actions}>
+          <PrimaryButton onPress={() => navigation.navigate('ScanScreen')}>Try Another Photo</PrimaryButton>
+          <SecondaryButton onPress={() => navigation.navigate('MainTabs')}>Back Home</SecondaryButton>
+        </View>
+      </ScreenContainer>
+    );
+  }
 
   return (
     <ScreenContainer>
@@ -111,7 +148,7 @@ export function RecipeDetailScreen() {
         </View>
       ) : null}
 
-      <ModeTabs modes={defaultScanResult.modes} selectedMode={selectedMode} onSelectMode={chooseMode} />
+      <ModeTabs modes={availableModes} selectedMode={selectedMode} onSelectMode={chooseMode} />
 
       <View style={styles.statsGrid}>
         <StatCard label="Prep" value={`${recipe.prepTimeMinutes} min`} />
@@ -124,7 +161,7 @@ export function RecipeDetailScreen() {
         <Text style={styles.savingsLabel}>Estimated savings</Text>
         <Text style={styles.savingsValue}>{formatCurrency(recipe.estimatedSavings)}</Text>
         <Text style={styles.savingsNote}>
-          Compared with a {formatCurrency(defaultScanResult.restaurantPrice)} restaurant estimate.
+          Compared with a {formatCurrency(restaurantPrice)} restaurant estimate.
         </Text>
       </View>
 
@@ -138,7 +175,7 @@ export function RecipeDetailScreen() {
           </Text>
           ))
         ) : (
-          <Text style={styles.listItem}>Ingredients are not available for this mock recipe yet.</Text>
+          <Text style={styles.listItem}>Ingredients are not available for this recipe yet.</Text>
         )}
       </View>
 
@@ -331,6 +368,18 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
 });
+
+function getDetailRecipe(mode: RecipeMode, recipe: Recipe | null, isDemoScan: boolean) {
+  if (recipe?.mode === mode) {
+    return recipe;
+  }
+
+  return isDemoScan ? getSafeRecipeForMode(mode) : null;
+}
+
+function isExplicitDemoScan(image: { placeholder?: boolean; source?: string } | null) {
+  return image?.placeholder === true && image.source === 'mock';
+}
 
 function getRecipeSourceLabel(metadata: AiDebugMetadata | null) {
   switch (metadata?.aiSource) {
