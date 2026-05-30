@@ -50,7 +50,7 @@ For real AI testing:
 - Do not upload confidential, private, or sensitive images.
 - Prefer images you are comfortable using for local QA notes.
 - Remember that AI dish names, ingredients, cost estimates, savings estimates, and recipes are approximate.
-- Recipes should be treated as inspired-by or inspired-by, never official restaurant recipes.
+- Recipes should be treated as inspired-by or restaurant-style, never official restaurant recipes.
 
 ## Food Image Categories To Test
 
@@ -76,7 +76,7 @@ Run this once with a clear food image and once with a harder image.
 - [ ] View Recipe opens a recipe that matches the result.
 - [ ] Share opens a share card or native share path with the correct dish/result.
 - [ ] Save adds the recipe to the saved recipe/library state.
-- [ ] Grocery List opens with ingredients from the tested recipe.
+- [ ] Grocery List opens with buyable shopping items from the tested recipe, not raw cooking quantities.
 - [ ] Back navigation keeps the flow understandable.
 - [ ] Any failure or partial state gives a friendly retry path.
 
@@ -135,6 +135,7 @@ A test fails if the app crashes, gets stuck loading, shows the wrong saved/share
 - View Recipe opens a recipe that matches the scan result.
 - Share Card shows the right scan result and image when available.
 - Save and Grocery List use the same recipe from the scan flow.
+- Grocery List translates cooking ingredients into store items, like `1 tomato` instead of `1 cup tomato`.
 
 ### Non-Food Scan Passes When
 

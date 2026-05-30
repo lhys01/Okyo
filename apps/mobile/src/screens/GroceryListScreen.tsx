@@ -20,6 +20,8 @@ import {
   getSafeRecipeForMode,
   getSafeRecipeMode,
   isRecipeMode,
+  type GroceryCategory,
+  type GroceryListItem,
   type Recipe,
   type RecipeIngredient,
   type RecipeMode,
@@ -29,20 +31,8 @@ import { useOkyoStore } from '../state/useOkyoStore';
 
 type GroceryListRoute = RouteProp<RootStackParamList, 'GroceryListScreen'>;
 type GroceryListNavigation = NativeStackNavigationProp<RootStackParamList, 'GroceryListScreen'>;
-type GroceryCategory =
-  | 'Produce'
-  | 'Protein'
-  | 'Bakery / Bread'
-  | 'Dairy'
-  | 'Sauces / Condiments'
-  | 'Noodles / Grains'
-  | 'Garnish'
-  | 'Pantry'
-  | 'Spices'
-  | 'Other';
-type GroceryItem = RecipeIngredient & {
+type GroceryItem = GroceryListItem & {
   id: string;
-  category: GroceryCategory;
 };
 
 const categoryOrder: GroceryCategory[] = [
@@ -67,8 +57,8 @@ const noodleGrainNames = ['pasta', 'rigatoni', 'spaghetti', 'noodle', 'noodles',
 const garnishNames = ['cilantro', 'parsley', 'basil', 'sesame', 'lime', 'lemon', 'herb', 'herbs'];
 const pantryNames = ['tomato paste', 'biscuit mix', 'flour', 'sugar', 'broth'];
 
-function getCategory(ingredient: RecipeIngredient): GroceryCategory {
-  const name = ingredient.name.toLowerCase();
+function getCategory(item: Pick<RecipeIngredient, 'name' | 'pantryItem'> & { pantryStaple?: boolean }): GroceryCategory {
+  const name = item.name.toLowerCase();
 
   if (produceNames.some((keyword) => name.includes(keyword))) {
     return 'Produce';
@@ -94,27 +84,34 @@ function getCategory(ingredient: RecipeIngredient): GroceryCategory {
   if (spiceNames.some((keyword) => name.includes(keyword))) {
     return 'Spices';
   }
-  if (ingredient.pantryItem || pantryNames.some((keyword) => name.includes(keyword))) {
+  if (item.pantryItem || item.pantryStaple || pantryNames.some((keyword) => name.includes(keyword))) {
     return 'Pantry';
   }
 
-  return 'Other';
+  return 'Pantry';
 }
 
 function buildItems(recipe: Recipe): GroceryItem[] {
+  const groceryItems = Array.isArray(recipe.groceryItems) ? recipe.groceryItems : [];
+  if (groceryItems.length > 0) {
+    return groceryItems.map((item) => ({
+      ...item,
+      category: getDisplayCategory(item.category),
+      id: `${recipe.id}-${item.category}-${item.name}`,
+      pantryItem: isPantryItem(item),
+      pantryStaple: item.pantryStaple ?? isPantryItem(item),
+    }));
+  }
+
   const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
 
-  return ingredients.map((ingredient) => ({
-    ...ingredient,
-    category: getCategory(ingredient),
-    id: `${recipe.id}-${ingredient.name}`,
-  }));
+  return ingredients.flatMap((ingredient) => toFallbackGroceryItems(recipe.id, ingredient));
 }
 
 function buildListText(recipe: Recipe, items: GroceryItem[]) {
   const grouped = categoryOrder
     .map((category) => {
-      const categoryItems = items.filter((item) => item.category === category && !item.pantryItem);
+      const categoryItems = items.filter((item) => item.category === category && !isPantryItem(item));
       if (categoryItems.length === 0) {
         return '';
       }
@@ -125,7 +122,7 @@ function buildListText(recipe: Recipe, items: GroceryItem[]) {
       ].join('\n');
     })
     .filter(Boolean);
-  const pantryItems = items.filter((item) => item.pantryItem);
+  const pantryItems = items.filter(isPantryItem);
 
   if (pantryItems.length > 0) {
     grouped.push([
@@ -137,11 +134,111 @@ function buildListText(recipe: Recipe, items: GroceryItem[]) {
   return [`${recipe.title} Grocery List`, ...grouped].join('\n\n');
 }
 
-function formatGroceryItem(item: Pick<RecipeIngredient, 'name' | 'quantity'>) {
+function formatGroceryItem(item: Pick<GroceryListItem, 'name' | 'quantity' | 'shoppingNote'>) {
   const quantity = item.quantity.trim();
   const name = item.name.trim();
+  const note = item.shoppingNote?.trim();
+  const mainText = quantity ? `${quantity} ${name}` : name;
 
-  return quantity ? `${quantity} ${name}` : name;
+  return note ? `${mainText} (${note})` : mainText;
+}
+
+function toFallbackGroceryItems(recipeId: string, ingredient: RecipeIngredient): GroceryItem[] {
+  const name = ingredient.name.toLowerCase();
+  const sourceIngredient = formatSourceIngredient(ingredient);
+
+  if (name.includes('tomato paste')) {
+    return [createFallbackItem(recipeId, ingredient, 'tomato paste', '1 small can or tube', 'Pantry')];
+  }
+  if (name.includes('lettuce') && name.includes('tomato')) {
+    return [
+      createFallbackItem(recipeId, ingredient, 'tomato', '1', 'Produce', 'Slice what you need for the recipe.'),
+      createFallbackItem(recipeId, ingredient, 'romaine or lettuce', '1 small head or 1 bag', 'Produce', 'Use a few leaves for serving.'),
+    ];
+  }
+  if (name.includes('tomato')) {
+    return [createFallbackItem(recipeId, ingredient, 'tomato', '1', 'Produce', 'Slice what you need for the recipe.')];
+  }
+  if (name.includes('lettuce') || name.includes('romaine')) {
+    return [createFallbackItem(recipeId, ingredient, 'romaine or lettuce', '1 small head or 1 bag', 'Produce', 'Use a few leaves for serving.')];
+  }
+  if (name.includes('bun')) {
+    return [createFallbackItem(recipeId, ingredient, 'burger buns', '1 pack', 'Bakery / Bread')];
+  }
+  if (name.includes('ground beef') || name.includes('ground turkey')) {
+    return [createFallbackItem(recipeId, ingredient, ingredient.name, getMeatQuantity(ingredient.quantity), 'Protein')];
+  }
+  if (name.includes('patty') || name.includes('patties')) {
+    return [createFallbackItem(recipeId, ingredient, ingredient.name, '2 patties or 8 oz', 'Protein')];
+  }
+  if (name.includes('cheese slice') || name.includes('cheddar')) {
+    return [createFallbackItem(recipeId, ingredient, 'sliced cheddar or American cheese', '2 slices or 1 small pack', 'Dairy')];
+  }
+  if (['mayo', 'mayonnaise', 'ketchup', 'mustard', 'burger sauce'].some((keyword) => name.includes(keyword))) {
+    return [createFallbackItem(recipeId, ingredient, ingredient.name, '', 'Sauces / Condiments', 'Small jar or bottle if you do not have it.')];
+  }
+  if (name.includes('oil')) {
+    return [createFallbackItem(recipeId, ingredient, ingredient.name, '1 tbsp', 'Pantry')];
+  }
+
+  return [{
+    ...ingredient,
+    category: getCategory(ingredient),
+    id: `${recipeId}-${ingredient.name}`,
+    pantryItem: ingredient.pantryItem,
+    pantryStaple: ingredient.pantryItem,
+    sourceIngredient,
+  }];
+}
+
+function createFallbackItem(
+  recipeId: string,
+  source: RecipeIngredient,
+  name: string,
+  quantity: string,
+  category: GroceryCategory,
+  shoppingNote?: string,
+): GroceryItem {
+  const pantryStaple = source.pantryItem || quantity === 'pantry check' || category === 'Spices';
+
+  return {
+    category,
+    id: `${recipeId}-${category}-${name}`,
+    name,
+    pantryItem: pantryStaple,
+    pantryStaple,
+    quantity,
+    shoppingNote,
+    sourceIngredient: formatSourceIngredient(source),
+  };
+}
+
+function getDisplayCategory(category: GroceryCategory): GroceryCategory {
+  if (category === 'Bakery') {
+    return 'Bakery / Bread';
+  }
+  if (category === 'Beverages' || category === 'Other') {
+    return 'Pantry';
+  }
+
+  return category;
+}
+
+function isPantryItem(item: Pick<GroceryListItem, 'category' | 'pantryItem' | 'pantryStaple'>) {
+  return Boolean(item.pantryStaple || item.pantryItem || item.category === 'Spices');
+}
+
+function getMeatQuantity(quantity: string) {
+  const normalized = quantity.toLowerCase();
+  if (normalized.includes('lb') || normalized.includes('oz')) {
+    return quantity;
+  }
+
+  return '8 oz';
+}
+
+function formatSourceIngredient(ingredient: RecipeIngredient) {
+  return `${ingredient.quantity} ${ingredient.name}`.trim();
 }
 
 export function GroceryListScreen() {
@@ -161,8 +258,8 @@ export function GroceryListScreen() {
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const didTrackView = useRef(false);
 
-  const groceryItems = items.filter((item) => !item.pantryItem);
-  const pantryItems = items.filter((item) => item.pantryItem);
+  const groceryItems = items.filter((item) => !isPantryItem(item));
+  const pantryItems = items.filter(isPantryItem);
 
   useEffect(() => {
     if (didTrackView.current) {

@@ -9,10 +9,14 @@ import {
 } from '../mockData.js';
 import type {
   Difficulty,
+  GroceryCategory,
+  GroceryListItem,
   GroceryList,
   Recipe,
   CookingTerm,
   RecipeIngredient,
+  RecipeIngredientGroup,
+  RecipeStep,
   RecipeMode,
   ScanImageMetadata,
   ScanResult,
@@ -220,7 +224,13 @@ export async function generateRecipeFromDish(
   } catch (error) {
     const fallbackDetails = getFallbackLogDetails(error, config, config.openRouterTextModel);
     logAi('fallback_ai', fallbackDetails);
-    return generateRecipeFromDishWithMock(input, 'fallback_ai', getFallbackReason(fallbackDetails));
+    const fallbackReason = getFallbackReason(fallbackDetails);
+    const starterRecipe = generateRecipeFromDishWithStarterFallback(input, fallbackReason);
+    if (starterRecipe) {
+      return starterRecipe;
+    }
+
+    return generateRecipeFromDishWithMock(input, 'fallback_ai', fallbackReason);
   }
 }
 
@@ -336,7 +346,11 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
     const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode });
     const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
 
-    if (uploadedImage && generatedRecipe.aiSource !== 'openrouter_ai') {
+    if (
+      uploadedImage &&
+      generatedRecipe.aiSource !== 'openrouter_ai' &&
+      !canUseFallbackRecipeForUploadedImage(generatedRecipe)
+    ) {
       const result = createPartialScan({
         analysis,
         aiSource: getScanAiSource(analysis.aiSource, generatedRecipe.aiSource, recipeFallbackReason),
@@ -414,7 +428,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       scan,
       recipe,
       recipes,
-      groceryList: getGroceryList(seedScan.groceryListId),
+      groceryList: getGroceryListForRecipe(recipe, seedScan.groceryListId),
       shareCard: getShareCard(seedScan.shareCardId),
       note: usedOpenRouterAnalysis
         ? 'AI provider output is for testing only. No image was stored; verify all food, cost, and recipe details.'
@@ -504,6 +518,38 @@ function generateRecipeFromDishWithMock(
   };
 }
 
+function generateRecipeFromDishWithStarterFallback(
+  input: GenerateRecipeFromDishInput,
+  fallbackReason?: string,
+): GeneratedRecipeOutput | undefined {
+  if (!getCommonDishKind(input.analysis)) {
+    return undefined;
+  }
+
+  const recipes = recipeModes.map((mode) => (
+    createRecipeFromVariant(createStarterVariant(input.analysis, mode), input.analysis, mode, {
+      idPrefix: 'starter',
+      confidenceNotePrefix: 'Starter recipe generated after the AI recipe response failed.',
+    })
+  ));
+  const recipe = recipes.find((candidate) => candidate.mode === input.mode) ?? recipes[0];
+  const parsed = generatedRecipeOutputSchema.parse({
+    recipeId: recipe.id,
+    title: recipe.title,
+    mode: input.mode,
+    aiSource: 'fallback_ai',
+    confidence: Math.min(input.analysis.confidence, 0.72),
+    confidenceNote: recipe.confidenceNote,
+    fallbackReason,
+  });
+
+  return {
+    ...parsed,
+    recipe,
+    recipes,
+  };
+}
+
 function estimateIngredientCostsWithMock(input: EstimateIngredientCostsInput): IngredientCostEstimate {
   const scan = getScanById(input.analysis.candidateScanId) ?? mockScanResults[0];
   const homemadeCost = normalizeHomemadeCost(input.recipe.estimatedHomemadeCost, scan.restaurantPrice);
@@ -545,32 +591,72 @@ function createRecipeFromVariant(
   variant: OpenRouterRecipeVariant,
   analysis: FoodImageAnalysis,
   mode: RecipeMode,
+  options: {
+    confidenceNotePrefix?: string;
+    idPrefix?: string;
+  } = {},
 ): Recipe {
   const restaurantPrice = normalizeRestaurantPrice(analysis.restaurantPriceEstimate);
   const homemadeCost = getModeHomemadeCost(analysis.homemadeCostEstimate, restaurantPrice, mode);
   const title = getRecipeTitle(variant.title, analysis.dishName, mode);
   const ingredients = getRecipeIngredients(variant.ingredients, analysis, mode);
+  const prepTimeMinutes = parseMinutes(variant.prepTime, 15);
+  const cookTimeMinutes = parseMinutes(variant.cookTime, 25);
+  const totalTimeMinutes = parseMinutes(variant.totalTime, prepTimeMinutes + cookTimeMinutes);
+  const activeTimeMinutes = parseMinutes(variant.activeTime, Math.min(totalTimeMinutes, prepTimeMinutes + 10));
+  const servings = parseServings(variant.servings, 2);
+  const skillLevel = normalizeDifficulty(variant.skillLevel || variant.difficulty);
   const steps = getRecipeSteps(variant.steps, analysis.dishName);
+  const structuredSteps = getStructuredSteps(variant.steps, steps, analysis);
+  const ingredientGroups = getIngredientGroups(variant.ingredientGroups, ingredients, analysis);
   const spicePairings = getSpicePairings(variant.spicePairings, analysis);
   const cookingTerms = getCookingTerms(variant.cookingTerms, steps);
+  const groceryItems = getGroceryItems(ingredients, analysis, mode, variant.groceryItems);
+  const mistakeWarning = cleanRecipeCopy(getShortText(
+    variant.mistakeWarning || variant.avoidMistake,
+    getDefaultAvoidMistake(analysis),
+    140,
+  ));
+  const storage = cleanRecipeCopy(getShortText(
+    variant.storage || variant.storageAndReheating,
+    getDefaultStorageAndReheating(analysis),
+    160,
+  ));
 
   return {
-    id: `ai-${slugify(analysis.dishName)}-${slugify(mode)}`,
+    id: `${options.idPrefix ?? 'ai'}-${slugify(analysis.dishName)}-${slugify(mode)}`,
     scanResultId: analysis.candidateScanId,
     title,
     mode,
     description: ensureInspiredCopy(cleanRecipeCopy(getOneSentence(variant.description, `${title} with flexible, home-kitchen ingredients.`))),
-    prepTimeMinutes: parseMinutes(variant.prepTime, 15),
-    cookTimeMinutes: parseMinutes(variant.cookTime, 25),
-    servings: 2,
-    difficulty: normalizeDifficulty(variant.difficulty),
+    prepTimeMinutes,
+    cookTimeMinutes,
+    totalTimeMinutes,
+    activeTimeMinutes,
+    servings,
+    skillLevel,
+    difficulty: skillLevel,
     estimatedHomemadeCost: homemadeCost,
     estimatedSavings: Math.max(0, restaurantPrice - homemadeCost),
     ingredients,
+    ingredientGroups,
     steps,
+    structuredSteps,
     substitutions: getSafeList(variant.substitutions, getDefaultSubstitutions(mode), 3).map(cleanRecipeCopy),
     pantryNote: cleanRecipeCopy(getShortText(variant.pantryNote, 'Assumes salt, pepper, and basic oil are on hand.', 90)),
-    confidenceNote: `AI-assisted testing output. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
+    confidenceNote: `${options.confidenceNotePrefix ?? 'AI-assisted testing output.'} Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
+    mainIngredientsSummary: cleanRecipeCopy(getShortText(
+      variant.mainIngredientsSummary,
+      getDefaultMainIngredientsSummary(ingredients),
+      140,
+    )),
+    equipment: getSafeList(variant.equipment, getDefaultEquipment(analysis), 5).map(cleanRecipeCopy),
+    bestFor: cleanRecipeCopy(getShortText(variant.bestFor, getDefaultBestFor(mode), 70)),
+    avoidMistake: mistakeWarning,
+    mistakeWarning,
+    storageAndReheating: storage,
+    storage,
+    groceryItems,
     spicePairings,
     cookingTerms,
   };
@@ -825,6 +911,14 @@ function getGeneratedRecipes(generatedRecipe: GeneratedRecipeOutput, selectedRec
   return selectedRecipe ? [selectedRecipe] : undefined;
 }
 
+function canUseFallbackRecipeForUploadedImage(generatedRecipe: GeneratedRecipeOutput) {
+  return Boolean(
+    generatedRecipe.aiSource === 'fallback_ai' &&
+    generatedRecipe.recipe?.id.startsWith('starter-') &&
+    generatedRecipe.recipes?.every((recipe) => recipe.id.startsWith('starter-')),
+  );
+}
+
 function getScanById(scanId: string) {
   return mockScanResults.find((scan) => scan.id === scanId);
 }
@@ -835,6 +929,19 @@ function getRecipeById(recipeId: string) {
 
 function getGroceryList(groceryListId: string) {
   return mockGroceryLists.find((list) => list.id === groceryListId);
+}
+
+function getGroceryListForRecipe(recipe: Recipe, fallbackGroceryListId: string): GroceryList | undefined {
+  if (recipe.groceryItems && recipe.groceryItems.length > 0) {
+    return {
+      id: `grocery-${recipe.id}`,
+      items: recipe.groceryItems,
+      recipeId: recipe.id,
+      title: `${recipe.title} Grocery List`,
+    };
+  }
+
+  return getGroceryList(fallbackGroceryListId);
 }
 
 function getShareCard(shareCardId: string) {
@@ -995,22 +1102,1076 @@ function getRecipeTitle(value: string, dishName: string, mode: RecipeMode) {
   return ensureInspiredTitle(getShortText(value, fallbackTitle, 90));
 }
 
+type CommonDishKind = 'burger' | 'pizza' | 'noodles' | 'pasta' | 'bowl' | 'taco' | 'sandwich';
+
+function getCommonDishKind(analysis: FoodImageAnalysis): CommonDishKind | undefined {
+  const text = getAnalysisText(analysis);
+  if (includesAny(text, ['burger', 'cheeseburger', 'patty'])) {
+    return 'burger';
+  }
+  if (text.includes('pizza')) {
+    return 'pizza';
+  }
+  if (includesAny(text, ['noodle', 'ramen', 'udon', 'lo mein', 'pad thai'])) {
+    return 'noodles';
+  }
+  if (includesAny(text, ['pasta', 'rigatoni', 'spaghetti', 'penne', 'fettuccine'])) {
+    return 'pasta';
+  }
+  if (includesAny(text, ['bowl', 'rice', 'grain', 'salad'])) {
+    return 'bowl';
+  }
+  if (includesAny(text, ['taco', 'burrito', 'quesadilla'])) {
+    return 'taco';
+  }
+  if (includesAny(text, ['sandwich', 'sub', 'wrap'])) {
+    return 'sandwich';
+  }
+
+  return undefined;
+}
+
+function createStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
+  const kind = getCommonDishKind(analysis);
+  switch (kind) {
+    case 'burger':
+      return createBurgerStarterVariant(analysis, mode);
+    case 'pizza':
+      return createPizzaStarterVariant(analysis, mode);
+    case 'noodles':
+      return createNoodleStarterVariant(analysis, mode);
+    case 'pasta':
+      return createPastaStarterVariant(analysis, mode);
+    case 'bowl':
+      return createBowlStarterVariant(analysis, mode);
+    case 'taco':
+      return createTacoStarterVariant(analysis, mode);
+    case 'sandwich':
+      return createSandwichStarterVariant(analysis, mode);
+    default:
+      return createGenericStarterVariant(analysis, mode);
+  }
+}
+
+function createBaseStarterVariant(input: {
+  analysis: FoodImageAnalysis;
+  bestFor: string;
+  cookTime: string;
+  description: string;
+  equipment: string[];
+  groceryItems?: OpenRouterRecipeVariant['groceryItems'];
+  ingredientGroups: OpenRouterRecipeVariant['ingredientGroups'];
+  ingredients: string[];
+  mistake: string;
+  mode: RecipeMode;
+  pantryNote?: string;
+  prepTime: string;
+  spicePairings?: string[];
+  steps: string[];
+  storage: string;
+  substitutions: string[];
+  title: string;
+}) {
+  const prepMinutes = parseMinutes(input.prepTime, 10);
+  const cookMinutes = parseMinutes(input.cookTime, 15);
+
+  return {
+    activeTime: `${Math.min(prepMinutes + cookMinutes, prepMinutes + 12)} min`,
+    avoidMistake: input.mistake,
+    bestFor: input.bestFor,
+    cookTime: input.cookTime,
+    cookingTerms: [],
+    description: input.description,
+    difficulty: 'Easy',
+    equipment: input.equipment.slice(0, 5),
+    groceryItems: (input.groceryItems ?? []).slice(0, 12),
+    ingredientGroups: input.ingredientGroups.slice(0, 4),
+    ingredients: input.ingredients.slice(0, 10),
+    mainIngredientsSummary: input.ingredients.slice(0, 5).join(', '),
+    mistakeWarning: input.mistake,
+    pantryNote: input.pantryNote ?? 'Assumes salt, pepper, and basic oil.',
+    prepTime: input.prepTime,
+    servings: 2,
+    skillLevel: 'Easy',
+    spicePairings: (input.spicePairings ?? []).slice(0, 3),
+    steps: input.steps.slice(0, 7),
+    storage: input.storage,
+    storageAndReheating: input.storage,
+    substitutions: input.substitutions.slice(0, 3),
+    title: getStarterTitle(input.title, input.mode),
+    totalTime: `${prepMinutes + cookMinutes} min`,
+  } satisfies OpenRouterRecipeVariant;
+}
+
+function createBurgerStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
+  const text = getAnalysisText(analysis);
+  const hasCheese = includesAny(text, ['cheese', 'cheeseburger', 'cheddar', 'american']);
+  const protein = mode === 'Healthy' ? '8 oz lean ground turkey or veggie patties' : '8 oz ground beef';
+  const title = hasCheese ? 'Cheeseburger Homemade Version' : 'Burger Homemade Version';
+  const ingredients = [
+    protein,
+    '1/2 tsp salt',
+    '1/4 tsp black pepper',
+    '2 burger buns',
+    ...(hasCheese ? ['2 slices cheddar or American cheese'] : []),
+    '2 tomato slices',
+    '2 lettuce leaves',
+    '2 tbsp mayonnaise',
+    '1 tsp ketchup',
+    '1 tsp mustard',
+  ];
+
+  return createBaseStarterVariant({
+    analysis,
+    bestFor: mode === 'Budget' ? 'cheap weeknight burger night' : 'weeknight dinner',
+    cookTime: '10 min',
+    description: 'A juicy restaurant-style burger with browned edges, cool toppings, and a simple sauce.',
+    equipment: ['skillet or grill pan', 'spatula', 'thermometer', 'small bowl', 'cutting board'],
+    groceryItems: [
+      createStarterGroceryItem('Protein', mode === 'Healthy' ? 'ground turkey or veggie patties' : 'ground beef', '8 oz or 1 small pack'),
+      createStarterGroceryItem('Bakery / Bread', 'burger buns', '1 pack'),
+      ...(hasCheese ? [createStarterGroceryItem('Dairy', 'sliced cheddar or American cheese', '2 slices or 1 small pack')] : []),
+      createStarterGroceryItem('Produce', 'tomato', '1'),
+      createStarterGroceryItem('Produce', 'romaine or lettuce', '1 small head or 1 bag'),
+      createStarterGroceryItem('Sauces / Condiments', 'mayonnaise, ketchup, or mustard', '', 'Small jar or bottle if needed.'),
+      createStarterGroceryItem('Spices', 'salt and black pepper', 'pantry check', undefined, true),
+    ],
+    ingredientGroups: [
+      { component: 'Patty', items: [protein, '1/2 tsp salt', '1/4 tsp black pepper'] },
+      { component: 'Sauce', items: ['2 tbsp mayonnaise', '1 tsp ketchup', '1 tsp mustard'] },
+      { component: 'Toppings', items: [...(hasCheese ? ['2 slices cheddar or American cheese'] : []), '2 tomato slices', '2 lettuce leaves'] },
+      { component: 'Assembly', items: ['2 burger buns'] },
+    ],
+    ingredients,
+    mistake: 'Do not press the patty repeatedly or it will lose juices.',
+    mode,
+    prepTime: '10 min',
+    spicePairings: ['pickle juice', 'smoked paprika', 'extra mustard'],
+    steps: [
+      'Season the meat for 1 minute, then shape 2 loose patties slightly wider than the buns.',
+      'Heat a skillet over medium-high for 2 minutes until a drop of water sizzles.',
+      'Cook patties 3-4 minutes per side until browned and 160°F / 71°C inside.',
+      'Rest patties 1 minute; while they rest, toast buns and stir the sauce.',
+      'Assemble buns with sauce, patty, cheese if using, tomato, lettuce, and extra sauce.',
+      'Taste and add a tiny pinch of salt, pepper, or mustard if the burger tastes flat.',
+    ],
+    storage: 'Store patties separately from buns and toppings. Reheat patties in a skillet and use within 3 days.',
+    substitutions: ['No mayo: use Greek yogurt.', 'No beef: use turkey or veggie patties.', 'No cheddar: use American, Swiss, or pepper jack.'],
+    title,
+  });
+}
+
+function createPizzaStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
+  return createBaseStarterVariant({
+    analysis,
+    bestFor: 'quick pizza night',
+    cookTime: '12 min',
+    description: 'A crisp-edged restaurant-style pizza with melty cheese and simple toppings.',
+    equipment: ['sheet pan', 'oven', 'knife or pizza cutter'],
+    ingredientGroups: [
+      { component: 'Crust', items: ['1 small pizza crust or flatbread'] },
+      { component: 'Sauce', items: ['1/3 cup pizza sauce'] },
+      { component: 'Cheese', items: ['1 cup shredded mozzarella'] },
+      { component: 'Toppings', items: ['1/2 cup visible toppings', '1 tsp olive oil'] },
+    ],
+    ingredients: ['1 small pizza crust or flatbread', '1/3 cup pizza sauce', '1 cup shredded mozzarella', '1/2 cup visible toppings', '1 tsp olive oil'],
+    mistake: 'Do not overload toppings or the crust can turn soggy.',
+    mode,
+    prepTime: '8 min',
+    steps: [
+      'Heat the oven to 450°F for at least 10 minutes so the crust crisps.',
+      'Spread sauce thinly over the crust, leaving a small bare edge.',
+      'Add cheese and toppings in an even layer so each slice cooks evenly.',
+      'Bake 8-12 minutes until the cheese bubbles and the crust edges brown.',
+      'Rest 2 minutes before slicing so the cheese settles.',
+    ],
+    storage: 'Store slices up to 3 days. Reheat in a skillet or oven until the crust crisps.',
+    substitutions: ['Use flatbread instead of dough.', 'Use provolone or parmesan with mozzarella.', 'Use any cooked protein or vegetables.'],
+    title: 'Restaurant-Style Pizza Homemade Version',
+  });
+}
+
+function createNoodleStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
+  return createBaseStarterVariant({
+    analysis,
+    bestFor: 'quick lunch or dinner',
+    cookTime: '12 min',
+    description: 'A glossy restaurant-style noodle bowl with savory sauce and flexible toppings.',
+    equipment: ['pot', 'skillet', 'tongs', 'small bowl'],
+    ingredientGroups: [
+      { component: 'Noodles', items: ['8 oz noodles'] },
+      { component: 'Sauce', items: ['2 tbsp soy sauce', '1 tbsp sauce base', '1 tsp sesame oil'] },
+      { component: 'Protein/veg', items: ['8 oz protein or vegetables'] },
+      { component: 'Garnish', items: ['2 scallions or herbs'] },
+    ],
+    ingredients: ['8 oz noodles', '2 tbsp soy sauce', '1 tbsp sauce base', '1 tsp sesame oil', '8 oz protein or vegetables', '2 scallions or herbs'],
+    mistake: 'Do not overcook the noodles or they will turn mushy in the sauce.',
+    mode,
+    prepTime: '10 min',
+    spicePairings: ['chili crisp', 'lime', 'sesame seeds'],
+    steps: [
+      'Cook noodles until just tender, then reserve 1/2 cup cooking water.',
+      'Stir sauce ingredients in a small bowl for 1 minute until smooth.',
+      'Cook protein or vegetables 4-6 minutes until browned or tender.',
+      'Toss noodles with sauce for 1-2 minutes until glossy and coated.',
+      'Loosen with splashes of cooking water, then finish with garnish.',
+    ],
+    storage: 'Store up to 3 days. Reheat with a splash of water to loosen the sauce.',
+    substitutions: ['Use rice instead of noodles.', 'Use tofu, chicken, or extra vegetables.', 'Use chili crisp for more heat.'],
+    title: 'Restaurant-Style Noodles Homemade Version',
+  });
+}
+
+function createPastaStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
+  const base = createNoodleStarterVariant(analysis, mode);
+  return {
+    ...base,
+    title: getStarterTitle('Restaurant-Style Pasta Homemade Version', mode),
+    description: 'A saucy restaurant-style pasta with a glossy finish and simple pantry-friendly flavor.',
+    ingredientGroups: [
+      { component: 'Pasta', items: ['8 oz pasta'] },
+      { component: 'Sauce', items: ['2 tbsp sauce base', '1/2 cup cream or broth', '1/4 cup cheese'] },
+      { component: 'Protein/veg', items: ['1 cup vegetables or 8 oz protein'] },
+      { component: 'Garnish', items: ['black pepper or herbs'] },
+    ],
+    ingredients: ['8 oz pasta', '2 tbsp sauce base', '1/2 cup cream or broth', '1/4 cup cheese', '1 cup vegetables or 8 oz protein', 'black pepper to taste'],
+    mistakeWarning: 'Do not drain all the pasta water; it helps the sauce cling.',
+    avoidMistake: 'Do not drain all the pasta water; it helps the sauce cling.',
+  };
+}
+
+function createBowlStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
+  return createBaseStarterVariant({
+    analysis,
+    bestFor: 'easy meal prep',
+    cookTime: '10 min',
+    description: 'A balanced restaurant-style bowl with a warm base, toppings, and a punchy sauce.',
+    equipment: ['skillet', 'cutting board', 'small bowl'],
+    ingredientGroups: [
+      { component: 'Base', items: ['2 cups cooked rice or grains'] },
+      { component: 'Protein/veg', items: ['8 oz protein or vegetables'] },
+      { component: 'Sauce', items: ['1/4 cup dressing or sauce'] },
+      { component: 'Garnish', items: ['herbs or crunchy topping'] },
+    ],
+    ingredients: ['2 cups cooked rice or grains', '8 oz protein or vegetables', '1/4 cup dressing or sauce', '1 cup greens or vegetables', 'herbs or crunchy topping'],
+    mistake: 'Do not skip the sauce; it ties the bowl together.',
+    mode,
+    prepTime: '10 min',
+    steps: [
+      'Warm the base for 2 minutes until steamy.',
+      'Cook protein or vegetables 4-6 minutes until browned or tender.',
+      'Stir sauce in a small bowl until smooth.',
+      'Layer base, greens, protein, and toppings in bowls.',
+      'Drizzle sauce and taste before adding extra salt or spice.',
+    ],
+    storage: 'Store components separately up to 3 days. Reheat warm items before assembling.',
+    substitutions: ['Use rice, quinoa, or greens as the base.', 'Use chicken, tofu, falafel, or beans.', 'Use any dressing you like.'],
+    title: 'Restaurant-Style Bowl Homemade Version',
+  });
+}
+
+function createTacoStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
+  return createBaseStarterVariant({
+    analysis,
+    bestFor: 'fast taco night',
+    cookTime: '10 min',
+    description: 'Restaurant-style tacos with seasoned filling, warm tortillas, and fresh toppings.',
+    equipment: ['skillet', 'spatula', 'cutting board'],
+    ingredientGroups: [
+      { component: 'Filling', items: ['8 oz protein or beans', '1 tsp taco seasoning'] },
+      { component: 'Tortillas', items: ['4 small tortillas'] },
+      { component: 'Toppings', items: ['1 cup lettuce or cabbage', '1 tomato or salsa'] },
+      { component: 'Sauce', items: ['2 tbsp crema or hot sauce'] },
+    ],
+    ingredients: ['8 oz protein or beans', '1 tsp taco seasoning', '4 small tortillas', '1 cup lettuce or cabbage', '1 tomato or salsa', '2 tbsp crema or hot sauce'],
+    mistake: 'Do not fill cold tortillas or they may crack.',
+    mode,
+    prepTime: '10 min',
+    steps: [
+      'Cook the filling 5-7 minutes until browned and hot.',
+      'Warm tortillas 30 seconds per side until flexible.',
+      'Prep toppings while the filling finishes cooking.',
+      'Fill each tortilla with filling, toppings, and sauce.',
+      'Taste one bite and add lime, salt, or hot sauce if flat.',
+    ],
+    storage: 'Store filling separately up to 3 days. Reheat before adding to fresh tortillas.',
+    substitutions: ['Use beans instead of meat.', 'Use cabbage instead of lettuce.', 'Use salsa instead of crema.'],
+    title: 'Restaurant-Style Tacos Homemade Version',
+  });
+}
+
+function createSandwichStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
+  return createBaseStarterVariant({
+    analysis,
+    bestFor: 'quick lunch',
+    cookTime: '6 min',
+    description: 'A restaurant-style sandwich with a toasted base, saucy spread, and crisp toppings.',
+    equipment: ['skillet or toaster', 'knife', 'cutting board', 'small bowl'],
+    ingredientGroups: [
+      { component: 'Bread', items: ['2 rolls or 4 bread slices'] },
+      { component: 'Filling', items: ['6-8 oz protein or vegetables'] },
+      { component: 'Sauce', items: ['2 tbsp mayo or dressing'] },
+      { component: 'Toppings', items: ['tomato slices', 'lettuce leaves'] },
+    ],
+    ingredients: ['2 rolls or 4 bread slices', '6-8 oz protein or vegetables', '2 tbsp mayo or dressing', '2 tomato slices', '2 lettuce leaves'],
+    mistake: 'Do not add wet toppings directly to bread without sauce or barrier ingredients.',
+    mode,
+    prepTime: '8 min',
+    steps: [
+      'Toast bread 1-2 minutes until lightly golden.',
+      'Warm or season the filling 3-4 minutes until hot or flavorful.',
+      'Stir sauce in a small bowl until smooth.',
+      'Layer sauce, filling, tomato, and lettuce on the bread.',
+      'Press gently, slice, and serve while the bread is crisp.',
+    ],
+    storage: 'Store filling separately up to 3 days. Assemble sandwiches fresh for best texture.',
+    substitutions: ['Use wraps instead of bread.', 'Use Greek yogurt instead of mayo.', 'Use any crisp lettuce or greens.'],
+    title: 'Restaurant-Style Sandwich Homemade Version',
+  });
+}
+
+function createGenericStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
+  return createBaseStarterVariant({
+    analysis,
+    bestFor: 'weeknight dinner',
+    cookTime: '15 min',
+    description: 'A flexible restaurant-style homemade version based on the visible dish.',
+    equipment: getDefaultEquipment(analysis),
+    ingredientGroups: [
+      { component: 'Main', items: ['8 oz main ingredient'] },
+      { component: 'Sauce', items: ['2 tbsp sauce base'] },
+      { component: 'Toppings', items: ['1 cup vegetables or toppings'] },
+    ],
+    ingredients: ['8 oz main ingredient', '2 tbsp sauce base', '1 cup vegetables or toppings', 'salt and pepper to taste'],
+    mistake: getDefaultAvoidMistake(analysis),
+    mode,
+    prepTime: '10 min',
+    steps: getDefaultRecipeSteps(analysis.dishName),
+    storage: getDefaultStorageAndReheating(analysis),
+    substitutions: getDefaultSubstitutions(mode),
+    title: `${analysis.dishName} Homemade Version`,
+  });
+}
+
+function getStarterTitle(title: string, mode: RecipeMode) {
+  if (mode === 'Budget') {
+    return `Budget ${title}`;
+  }
+  if (mode === 'Healthy') {
+    return `Lighter ${title}`;
+  }
+
+  return title;
+}
+
+function createStarterGroceryItem(
+  category: GroceryCategory,
+  name: string,
+  quantity: string,
+  shoppingNote = '',
+  pantryStaple = false,
+): OpenRouterRecipeVariant['groceryItems'][number] {
+  return {
+    category,
+    name,
+    pantryStaple,
+    quantity,
+    shoppingNote,
+    sourceIngredient: '',
+  };
+}
+
 function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mode: RecipeMode) {
   const fallback = analysis.likelyIngredients.length > 0
     ? analysis.likelyIngredients
     : ['main ingredient', 'sauce base', 'seasoning'];
 
-  const ingredients = getSafeList(values, fallback, 9).map(toRecipeIngredient);
+  const ingredients = getSafeList(values, fallback, 10).map(toRecipeIngredient);
   return ensureCoreIngredients(ingredients, analysis, mode).slice(0, 10);
 }
 
-function getRecipeSteps(values: string[], dishName: string) {
-  return getSafeList(values, [
-    `Prep the ingredients for the ${dishName.toLowerCase()}, keeping sauces and toppings close by.`,
-    'Cook the main ingredient over medium-high heat until browned and cooked through, using visual cues more than exact timing.',
-    'Warm or mix the sauce base until glossy, then combine it with the cooked ingredients.',
+function getRecipeSteps(values: OpenRouterRecipeVariant['steps'], dishName: string) {
+  const fallbackSteps = getDefaultRecipeSteps(dishName);
+  const cleanValues = (Array.isArray(values) ? values : [])
+    .map(getStepText)
+    .filter(Boolean);
+  const steps = getSafeList(cleanValues, fallbackSteps, 7).map(cleanRecipeCopy);
+  const wordCount = steps.join(' ').split(/\s+/).filter(Boolean).length;
+  const shouldUseFallback = steps.length < 5 || wordCount / Math.max(steps.length, 1) < 10;
+
+  return ensureSafetyTemperature(shouldUseFallback ? fallbackSteps : steps, dishName);
+}
+
+function getStructuredSteps(
+  values: OpenRouterRecipeVariant['steps'],
+  steps: string[],
+  analysis: FoodImageAnalysis,
+): RecipeStep[] {
+  const aiSteps = (Array.isArray(values) ? values : [])
+    .map((value, index) => toStructuredStep(value, steps[index], analysis))
+    .filter((step): step is RecipeStep => Boolean(step?.text))
+    .slice(0, 7);
+
+  if (aiSteps.length >= 5) {
+    return ensureStructuredStepFallbacks(aiSteps, analysis);
+  }
+
+  return ensureStructuredStepFallbacks(
+    steps
+      .map((step) => toStructuredStep(step, step, analysis))
+      .filter((step): step is RecipeStep => Boolean(step)),
+    analysis,
+  );
+}
+
+function toStructuredStep(
+  value: OpenRouterRecipeVariant['steps'][number],
+  fallbackText: string | undefined,
+  analysis: FoodImageAnalysis,
+): RecipeStep | undefined {
+  const text = cleanRecipeCopy(getShortText(getStepText(value), fallbackText ?? '', 260));
+  if (!text) {
+    return undefined;
+  }
+
+  if (typeof value === 'object' && value) {
+    const cookingTerm = value.cookingTerm?.term && value.cookingTerm?.meaning
+      ? {
+        term: cleanRecipeCopy(getShortText(value.cookingTerm.term, '', 32)),
+        meaning: cleanRecipeCopy(getShortText(value.cookingTerm.meaning, '', 90)),
+      }
+      : getContextCookingTerm(text);
+
+    return {
+      text,
+      timeEstimate: cleanRecipeCopy(getShortText(value.timeEstimate, getStepTimeEstimate(text), 42)),
+      visualCue: cleanRecipeCopy(getShortText(value.visualCue, getStepVisualCue(text), 110)),
+      whyItMatters: getOptionalStepText(value.whyItMatters, 120),
+      safetyNote: getOptionalStepText(value.safetyNote, 120) ?? getStepSafetyNote(text, analysis),
+      flavorBoost: getOptionalStepText(value.flavorBoost, 120) ?? getStepFlavorBoost(text, analysis),
+      cookingTerm,
+    };
+  }
+
+  return {
+    text,
+    timeEstimate: getStepTimeEstimate(text),
+    visualCue: getStepVisualCue(text),
+    safetyNote: getStepSafetyNote(text, analysis),
+    flavorBoost: getStepFlavorBoost(text, analysis),
+    cookingTerm: getContextCookingTerm(text),
+  };
+}
+
+function ensureStructuredStepFallbacks(steps: RecipeStep[], analysis: FoodImageAnalysis) {
+  return steps.map((step) => ({
+    ...step,
+    timeEstimate: step.timeEstimate || getStepTimeEstimate(step.text),
+    visualCue: step.visualCue || getStepVisualCue(step.text),
+    safetyNote: step.safetyNote || getStepSafetyNote(step.text, analysis),
+    flavorBoost: step.flavorBoost || getStepFlavorBoost(step.text, analysis),
+    cookingTerm: step.cookingTerm ?? getContextCookingTerm(step.text),
+  }));
+}
+
+function getStepText(value: OpenRouterRecipeVariant['steps'][number] | undefined) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    return value.text;
+  }
+
+  return '';
+}
+
+function getOptionalStepText(value: unknown, maxLength: number) {
+  return typeof value === 'string' && value.trim()
+    ? cleanRecipeCopy(getShortText(value, '', maxLength))
+    : undefined;
+}
+
+function getStepTimeEstimate(step: string) {
+  const match = step.match(/\b\d+(?:-\d+)?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/i);
+  return match?.[0] ?? 'about 2-5 minutes';
+}
+
+function getStepVisualCue(step: string) {
+  const normalized = step.toLowerCase();
+  if (includesAny(normalized, ['brown', 'browned', 'golden'])) {
+    return 'Look for deep browning, not gray or pale spots.';
+  }
+  if (includesAny(normalized, ['glossy', 'smooth', 'coats'])) {
+    return 'The sauce should look smooth and cling to the food.';
+  }
+  if (includesAny(normalized, ['sizzle', 'sizzles'])) {
+    return 'The pan should sizzle when food touches it.';
+  }
+  if (includesAny(normalized, ['fragrant', 'smells'])) {
+    return 'It should smell rich and toasted, not burnt.';
+  }
+
+  return 'Use the look, smell, and texture cues in the step.';
+}
+
+function getStepSafetyNote(step: string, analysis: FoodImageAnalysis) {
+  const text = `${step} ${getAnalysisText(analysis)}`.toLowerCase();
+  if (includesAny(text, ['burger', 'ground beef', 'ground turkey', 'patty', 'patties'])) {
+    return text.includes('160') ? undefined : 'Ground beef or turkey should reach 160°F / 71°C inside.';
+  }
+  if (text.includes('chicken')) {
+    return text.includes('165') ? undefined : 'Chicken should reach 165°F / 74°C inside.';
+  }
+
+  return undefined;
+}
+
+function getStepFlavorBoost(step: string, analysis: FoodImageAnalysis) {
+  const text = `${step} ${getAnalysisText(analysis)}`.toLowerCase();
+  if (includesAny(text, ['sauce', 'mayo', 'mayonnaise', 'ketchup', 'mustard'])) {
+    return 'Optional boost: add pickle juice, smoked paprika, or extra mustard for restaurant-style flavor.';
+  }
+  if (includesAny(text, ['pasta', 'noodle', 'rigatoni', 'sauce'])) {
+    return 'Optional boost: finish with black pepper, basil, or a little parmesan.';
+  }
+  if (includesAny(text, ['serve', 'finish', 'garnish'])) {
+    return 'Optional boost: add a fresh herb, citrus squeeze, or tiny pinch of spice.';
+  }
+
+  return undefined;
+}
+
+function getContextCookingTerm(step: string): CookingTerm | undefined {
+  const normalized = step.toLowerCase();
+  if (normalized.includes('sear')) {
+    return { term: 'Sear', meaning: 'Cook over high heat until browned.' };
+  }
+  if (normalized.includes('simmer')) {
+    return { term: 'Simmer', meaning: 'Cook gently with small bubbles.' };
+  }
+  if (normalized.includes('fold')) {
+    return { term: 'Fold', meaning: 'Gently combine without mashing or overmixing.' };
+  }
+  if (normalized.includes('deglaze')) {
+    return { term: 'Deglaze', meaning: 'Add liquid and scrape browned bits into the sauce.' };
+  }
+  if (normalized.includes('rest')) {
+    return { term: 'Rest', meaning: 'Let cooked food sit briefly so juices settle.' };
+  }
+  if (normalized.includes('al dente')) {
+    return { term: 'Al dente', meaning: 'Tender pasta with a slight bite.' };
+  }
+
+  return undefined;
+}
+
+function getDefaultRecipeSteps(dishName: string) {
+  const dishText = dishName.toLowerCase();
+
+  if (dishText.includes('burger')) {
+    return [
+      'Mix the patty seasoning for 1 minute, then shape 2 loose patties slightly wider than the buns so they shrink into the right size.',
+      'Heat a skillet over medium-high heat for 2 minutes until a drop of water sizzles; add 1 tsp oil if the pan is not nonstick.',
+      'Cook the patties for 3-4 minutes per side until deeply browned outside and 160°F inside for ground beef or turkey.',
+      'While the patties rest for 1 minute, toast the buns cut-side down until lightly golden and mix the sauce.',
+      'Build each burger with sauce, patty, cheese if using, tomato slices, lettuce, and pickles or onion so every bite has crunch.',
+      'Taste a tiny bit of sauce or topping, then add a pinch of salt, pepper, or extra mustard if the burger tastes flat.',
+    ];
+  }
+  if (dishText.includes('pasta') || dishText.includes('rigatoni') || dishText.includes('noodle')) {
+    return [
+      'Bring a pot of salted water to a boil, then cook the pasta or noodles until just tender with a small bite, usually 1 minute less than the package says.',
+      'Save 1 cup cooking water before draining; the starch helps the sauce turn glossy instead of watery.',
+      'Warm the sauce base in a skillet for 1-2 minutes until it smells rich and looks slightly darker.',
+      'Stir in dairy, broth, or sauce liquid over low heat until smooth; lower heat keeps creamy sauces from splitting.',
+      'Toss in the noodles for 1-2 minutes, adding splashes of saved water until the sauce coats every piece.',
+      'Finish with garnish or spice, taste, and adjust in small pinches while the noodles are still hot.',
+    ];
+  }
+
+  return [
+    `Prep the ingredients for the ${dishName.toLowerCase()} for 5 minutes, keeping sauces and toppings close by so cooking feels calm.`,
+    'Cook the main ingredient over medium-high heat for 3-5 minutes per side, until browned outside and cooked through.',
+    'Warm or mix the sauce base for 1-2 minutes until glossy, then combine it with the cooked ingredients.',
+    'Use the cooking time to prep toppings, garnish, or serving bowls so the final assembly is quick.',
+    'Let hot meat, sauce, or filling sit for 1 minute if it looks juicy; this keeps the final bite from turning watery.',
     'Taste, adjust salt or spice in small pinches, and serve while warm.',
-  ], 6).map(cleanRecipeCopy);
+  ];
+}
+
+function ensureSafetyTemperature(steps: string[], dishName: string) {
+  const dishText = dishName.toLowerCase();
+  const stepText = steps.join(' ').toLowerCase();
+
+  if (dishText.includes('burger') && !stepText.includes('160')) {
+    return steps.map((step) => (
+      step.toLowerCase().includes('patty') || step.toLowerCase().includes('patties')
+        ? `${step} For ground beef or turkey, check for 160°F inside.`
+        : step
+    ));
+  }
+  if (dishText.includes('chicken') && !stepText.includes('165')) {
+    return steps.map((step) => (
+      step.toLowerCase().includes('chicken')
+        ? `${step} Chicken should reach 165°F inside.`
+        : step
+    ));
+  }
+
+  return steps;
+}
+
+function getIngredientGroups(
+  values: OpenRouterRecipeVariant['ingredientGroups'],
+  ingredients: RecipeIngredient[],
+  analysis: FoodImageAnalysis,
+): RecipeIngredientGroup[] {
+  const aiGroups = (Array.isArray(values) ? values : [])
+    .map((group) => ({
+      component: titleCase(getShortText(group.component, '', 36)),
+      items: getSafeList(group.items, [], 8).map(toRecipeIngredient),
+    }))
+    .filter((group) => group.component && group.items.length > 0)
+    .slice(0, 4);
+
+  if (aiGroups.length > 0) {
+    return aiGroups;
+  }
+
+  return getDefaultIngredientGroups(ingredients, analysis);
+}
+
+function getDefaultIngredientGroups(
+  ingredients: RecipeIngredient[],
+  analysis: FoodImageAnalysis,
+): RecipeIngredientGroup[] {
+  const dishText = getAnalysisText(analysis);
+  const componentNames = getDefaultComponents(dishText);
+  const grouped = componentNames.map((component) => ({
+    component,
+    items: ingredients.filter((ingredient) => getComponentForIngredient(ingredient, dishText) === component),
+  }));
+  const usedNames = new Set(grouped.flatMap((group) => group.items.map((item) => item.name)));
+  const remaining = ingredients.filter((ingredient) => !usedNames.has(ingredient.name));
+
+  if (remaining.length > 0) {
+    grouped.push({ component: 'Finishing', items: remaining });
+  }
+
+  return grouped.filter((group) => group.items.length > 0).slice(0, 4);
+}
+
+function getDefaultComponents(dishText: string) {
+  if (dishText.includes('burger')) {
+    return ['Patty', 'Sauce', 'Toppings', 'Assembly'];
+  }
+  if (dishText.includes('noodle') || dishText.includes('pasta') || dishText.includes('rigatoni')) {
+    return ['Noodles', 'Sauce', 'Protein/veg', 'Garnish'];
+  }
+  if (dishText.includes('pizza')) {
+    return ['Crust', 'Sauce', 'Cheese', 'Toppings'];
+  }
+  if (dishText.includes('bowl') || dishText.includes('salad')) {
+    return ['Base', 'Protein/veg', 'Sauce', 'Garnish'];
+  }
+
+  return ['Main', 'Sauce', 'Toppings', 'Finishing'];
+}
+
+function getComponentForIngredient(ingredient: RecipeIngredient, dishText: string) {
+  const name = ingredient.name.toLowerCase();
+
+  if (dishText.includes('burger')) {
+    if (includesAny(name, ['beef', 'turkey', 'patty', 'patties', 'veggie'])) {
+      return 'Patty';
+    }
+    if (includesAny(name, ['mayo', 'mayonnaise', 'ketchup', 'mustard', 'sauce'])) {
+      return 'Sauce';
+    }
+    if (includesAny(name, ['lettuce', 'tomato', 'onion', 'pickle', 'cheese'])) {
+      return 'Toppings';
+    }
+    return 'Assembly';
+  }
+
+  if (dishText.includes('noodle') || dishText.includes('pasta') || dishText.includes('rigatoni')) {
+    if (includesAny(name, ['noodle', 'pasta', 'rigatoni', 'spaghetti'])) {
+      return 'Noodles';
+    }
+    if (includesAny(name, ['sauce', 'paste', 'cream', 'soy', 'gochujang', 'butter'])) {
+      return 'Sauce';
+    }
+    if (includesAny(name, ['chicken', 'beef', 'tofu', 'spinach', 'mushroom', 'broccoli'])) {
+      return 'Protein/veg';
+    }
+    return 'Garnish';
+  }
+
+  if (dishText.includes('pizza')) {
+    if (includesAny(name, ['dough', 'crust', 'flatbread'])) {
+      return 'Crust';
+    }
+    if (includesAny(name, ['sauce', 'marinara', 'tomato paste'])) {
+      return 'Sauce';
+    }
+    if (includesAny(name, ['cheese', 'mozzarella', 'parmesan'])) {
+      return 'Cheese';
+    }
+    return 'Toppings';
+  }
+
+  if (includesAny(name, ['sauce', 'dressing', 'hummus', 'mayo', 'gochujang'])) {
+    return 'Sauce';
+  }
+  if (includesAny(name, ['cilantro', 'parsley', 'basil', 'sesame', 'lime', 'lemon', 'herb'])) {
+    return 'Garnish';
+  }
+  if (includesAny(name, ['chicken', 'beef', 'tofu', 'falafel', 'greens', 'cucumber', 'tomato'])) {
+    return 'Protein/veg';
+  }
+
+  return 'Main';
+}
+
+function getDefaultMainIngredientsSummary(ingredients: RecipeIngredient[]) {
+  const names = ingredients
+    .filter((ingredient) => !ingredient.pantryItem)
+    .map((ingredient) => ingredient.name)
+    .slice(0, 5);
+
+  return names.length > 0 ? names.join(', ') : 'Flexible home-kitchen ingredients';
+}
+
+function getDefaultEquipment(analysis: FoodImageAnalysis) {
+  const dishText = getAnalysisText(analysis);
+
+  if (dishText.includes('burger')) {
+    return ['skillet or grill pan', 'spatula', 'instant-read thermometer', 'knife and cutting board'];
+  }
+  if (dishText.includes('pasta') || dishText.includes('noodle') || dishText.includes('rigatoni')) {
+    return ['large pot', 'skillet', 'tongs or spoon', 'measuring cup'];
+  }
+  if (dishText.includes('pizza')) {
+    return ['sheet pan', 'oven', 'knife or pizza cutter'];
+  }
+
+  return ['skillet or pot', 'knife and cutting board', 'mixing spoon'];
+}
+
+function getDefaultBestFor(mode: RecipeMode) {
+  if (mode === 'Budget') {
+    return 'saving money on a weeknight';
+  }
+  if (mode === 'Healthy') {
+    return 'a lighter homemade dinner';
+  }
+
+  return 'a restaurant-style night at home';
+}
+
+function getDefaultAvoidMistake(analysis: FoodImageAnalysis) {
+  const dishText = getAnalysisText(analysis);
+
+  if (dishText.includes('burger')) {
+    return 'Do not press the patty hard while it cooks; that squeezes out juices.';
+  }
+  if (dishText.includes('pasta') || dishText.includes('noodle') || dishText.includes('rigatoni')) {
+    return 'Do not drain all the pasta water; a splash helps the sauce cling.';
+  }
+  if (dishText.includes('pizza')) {
+    return 'Do not overload toppings, or the crust can turn soggy.';
+  }
+
+  return 'Do not rush seasoning; taste once before serving and adjust in small pinches.';
+}
+
+function getDefaultStorageAndReheating(analysis: FoodImageAnalysis) {
+  const dishText = getAnalysisText(analysis);
+
+  if (dishText.includes('burger')) {
+    return 'Store cooked patties and toppings separately up to 3 days. Reheat patties in a skillet until hot.';
+  }
+  if (dishText.includes('pasta') || dishText.includes('noodle') || dishText.includes('rigatoni')) {
+    return 'Store up to 3 days. Reheat with a splash of water or milk to loosen the sauce.';
+  }
+
+  return 'Store leftovers in a sealed container up to 3 days. Reheat gently until hot.';
+}
+
+function getGroceryItems(
+  ingredients: RecipeIngredient[],
+  analysis: FoodImageAnalysis,
+  mode: RecipeMode,
+  aiItems: OpenRouterRecipeVariant['groceryItems'] = [],
+): GroceryListItem[] {
+  const dishText = getAnalysisText(analysis);
+  const convertedItems = [
+    ...ingredients.flatMap((ingredient) => toGroceryItems(ingredient)),
+    ...getAiGroceryItems(aiItems),
+  ];
+  const withCoreItems = ensureCoreGroceryItems(convertedItems, dishText, mode);
+
+  return dedupeGroceryItems(withCoreItems).slice(0, 12);
+}
+
+function getAiGroceryItems(values: OpenRouterRecipeVariant['groceryItems']) {
+  return (Array.isArray(values) ? values : [])
+    .map((item): GroceryListItem | undefined => {
+      const name = cleanRecipeCopy(getShortText(item.name, '', 70));
+      if (!name) {
+        return undefined;
+      }
+
+      return {
+        category: normalizeGroceryCategory(item.category, name),
+        name,
+        pantryItem: normalizeBoolean(item.pantryStaple, false),
+        pantryStaple: normalizeBoolean(item.pantryStaple, false),
+        quantity: cleanRecipeCopy(getShortText(item.quantity, '', 60)),
+        shoppingNote: getOptionalShortText(item.shoppingNote, 100),
+        sourceIngredient: getOptionalShortText(item.sourceIngredient, 90),
+      };
+    })
+    .filter((item): item is GroceryListItem => Boolean(item));
+}
+
+function normalizeGroceryCategory(value: string, itemName: string): GroceryCategory {
+  const normalized = value.trim().toLowerCase();
+  const allowed: GroceryCategory[] = [
+    'Produce',
+    'Protein',
+    'Bakery / Bread',
+    'Dairy',
+    'Sauces / Condiments',
+    'Pantry',
+    'Spices',
+    'Noodles / Grains',
+    'Garnish',
+  ];
+  const match = allowed.find((category) => category.toLowerCase() === normalized);
+  if (match) {
+    return match;
+  }
+
+  return getGroceryCategory({ name: itemName, quantity: '' });
+}
+
+function toGroceryItems(ingredient: RecipeIngredient): GroceryListItem[] {
+  const name = ingredient.name.toLowerCase();
+
+  if (name.includes('tomato paste')) {
+    return [createGroceryItem('tomato paste', '1 small can or tube', 'Pantry', ingredient)];
+  }
+  if (name.includes('lettuce') && name.includes('tomato')) {
+    return [
+      createGroceryItem('tomato', '1', 'Produce', ingredient, 'Slice what you need for the burger.'),
+      createGroceryItem('romaine or lettuce', '1 small head or 1 bag', 'Produce', ingredient, 'Use a few leaves for serving.'),
+    ];
+  }
+  if (includesAny(name, ['tomato slice', 'tomato slices', 'tomato'])) {
+    return [createGroceryItem('tomato', '1', 'Produce', ingredient, 'Slice what you need for the recipe.')];
+  }
+  if (includesAny(name, ['lettuce leaf', 'lettuce leaves', 'lettuce', 'romaine'])) {
+    return [createGroceryItem('romaine or lettuce', '1 small head or 1 bag', 'Produce', ingredient, 'Use a few leaves for serving.')];
+  }
+  if (includesAny(name, ['burger bun', 'burger buns', 'brioche bun', 'roll'])) {
+    return [createGroceryItem('burger buns', '1 pack', 'Bakery / Bread', ingredient)];
+  }
+  if (includesAny(name, ['ground beef', 'ground turkey'])) {
+    return [createGroceryItem(name.includes('turkey') ? 'ground turkey' : 'ground beef', getMeatShoppingQuantity(ingredient.quantity), 'Protein', ingredient)];
+  }
+  if (includesAny(name, ['burger patty', 'burger patties', 'veggie burger', 'veggie patties'])) {
+    return [createGroceryItem(ingredient.name, '2 patties or 8 oz', 'Protein', ingredient)];
+  }
+  if (includesAny(name, ['cheese slice', 'cheese slices', 'sliced cheddar', 'american cheese', 'cheddar'])) {
+    return [createGroceryItem('sliced cheddar or American cheese', '2 slices or 1 small pack', 'Dairy', ingredient)];
+  }
+  if (includesAny(name, ['mayonnaise', 'mayo', 'ketchup', 'mustard', 'burger sauce'])) {
+    return [createGroceryItem(ingredient.name, '', 'Sauces / Condiments', ingredient, 'Small jar or bottle if you do not have it.')];
+  }
+  if (includesAny(name, ['salt', 'black pepper', 'red pepper flakes', 'garlic powder', 'paprika', 'seasoning'])) {
+    return [createGroceryItem(ingredient.name, 'pantry check', 'Spices', ingredient)];
+  }
+  if (name.includes('oil')) {
+    return [createGroceryItem(ingredient.name, '1 tbsp', 'Pantry', ingredient)];
+  }
+  if (name.includes('hummus')) {
+    return [createGroceryItem('hummus', '1 small tub', 'Sauces / Condiments', ingredient)];
+  }
+  if (includesAny(name, ['harissa dressing', 'dressing'])) {
+    return [createGroceryItem(ingredient.name, '1 small bottle', 'Sauces / Condiments', ingredient)];
+  }
+  if (includesAny(name, ['greens', 'spinach', 'arugula', 'kale'])) {
+    return [createGroceryItem(ingredient.name, '1 small bag', 'Produce', ingredient)];
+  }
+  if (name.includes('cucumber')) {
+    return [createGroceryItem('cucumber', '1', 'Produce', ingredient)];
+  }
+  if (name.includes('onion')) {
+    return [createGroceryItem('onion', '1 small', 'Produce', ingredient)];
+  }
+  if (name.includes('pickle')) {
+    return [createGroceryItem('pickles', '1 small jar', 'Sauces / Condiments', ingredient)];
+  }
+  if (includesAny(name, ['pasta', 'rigatoni', 'spaghetti', 'noodle', 'noodles', 'rice', 'grain', 'quinoa'])) {
+    return [createGroceryItem(ingredient.name, ingredient.quantity, 'Noodles / Grains', ingredient)];
+  }
+
+  return [createGroceryItem(ingredient.name, ingredient.quantity, getGroceryCategory(ingredient), ingredient)];
+}
+
+function createGroceryItem(
+  name: string,
+  quantity: string,
+  category: GroceryCategory,
+  ingredient: RecipeIngredient,
+  shoppingNote?: string,
+): GroceryListItem {
+  const pantryStaple = ingredient.pantryItem || quantity === 'pantry check' || category === 'Spices';
+
+  return {
+    category,
+    name,
+    pantryItem: pantryStaple,
+    pantryStaple,
+    quantity,
+    shoppingNote,
+    sourceIngredient: formatSourceIngredient(ingredient),
+  };
+}
+
+function ensureCoreGroceryItems(
+  items: GroceryListItem[],
+  dishText: string,
+  mode: RecipeMode,
+) {
+  const result = [...items];
+
+  if (dishText.includes('burger')) {
+    addGroceryItemIfMissing(result, ['bun'], {
+      category: 'Bakery / Bread',
+      name: 'burger buns',
+      quantity: '1 pack',
+    });
+    addGroceryItemIfMissing(result, ['beef', 'turkey', 'patty', 'patties'], {
+      category: 'Protein',
+      name: mode === 'Healthy' ? 'ground turkey or veggie patties' : 'ground beef',
+      quantity: mode === 'Budget' ? '1 lb' : '8 oz or 2 patties',
+    });
+    if (dishText.includes('cheese') || dishText.includes('cheeseburger')) {
+      addGroceryItemIfMissing(result, ['cheese', 'cheddar', 'american'], {
+        category: 'Dairy',
+        name: 'sliced cheddar or American cheese',
+        quantity: '2 slices or 1 small pack',
+      });
+    }
+    addGroceryItemIfMissing(result, ['tomato'], {
+      category: 'Produce',
+      name: 'tomato',
+      quantity: '1',
+    });
+    addGroceryItemIfMissing(result, ['lettuce', 'romaine'], {
+      category: 'Produce',
+      name: 'romaine or lettuce',
+      quantity: '1 small head or 1 bag',
+    });
+    addGroceryItemIfMissing(result, ['mayo', 'mayonnaise', 'ketchup', 'mustard', 'sauce'], {
+      category: 'Sauces / Condiments',
+      name: 'mayo, ketchup, or mustard',
+      quantity: '',
+      shoppingNote: 'Small jar or bottle if you do not have it.',
+    });
+  }
+
+  return result;
+}
+
+function addGroceryItemIfMissing(
+  items: GroceryListItem[],
+  keywords: string[],
+  item: GroceryListItem,
+) {
+  const hasItem = items.some((candidate) => includesAny(candidate.name.toLowerCase(), keywords));
+  if (!hasItem) {
+    items.push(item);
+  }
+}
+
+function dedupeGroceryItems(items: GroceryListItem[]) {
+  const seen = new Set<string>();
+
+  return items.filter((item) => {
+    const key = `${item.category}:${item.name.toLowerCase()}`;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function getMeatShoppingQuantity(quantity: string) {
+  const normalized = quantity.toLowerCase();
+  if (normalized.includes('lb')) {
+    return quantity;
+  }
+  if (normalized.includes('oz')) {
+    return quantity;
+  }
+
+  return '8 oz';
+}
+
+function getGroceryCategory(ingredient: RecipeIngredient): GroceryCategory {
+  const name = ingredient.name.toLowerCase();
+
+  if (includesAny(name, ['lettuce', 'tomato', 'onion', 'pickle', 'spinach', 'kale', 'arugula', 'cucumber', 'greens', 'scallion', 'garlic'])) {
+    return 'Produce';
+  }
+  if (includesAny(name, ['ground beef', 'patty', 'patties', 'turkey', 'beef', 'chicken', 'falafel', 'shrimp', 'tofu', 'pork'])) {
+    return 'Protein';
+  }
+  if (includesAny(name, ['bun', 'buns', 'bread', 'roll', 'dough', 'crust', 'flatbread'])) {
+    return 'Bakery / Bread';
+  }
+  if (includesAny(name, ['cream', 'parmesan', 'milk', 'butter', 'yogurt', 'cheddar', 'cheese', 'mozzarella'])) {
+    return 'Dairy';
+  }
+  if (includesAny(name, ['mayo', 'mayonnaise', 'ketchup', 'mustard', 'sauce', 'condiment', 'dressing', 'gochujang', 'soy sauce', 'harissa', 'hummus'])) {
+    return 'Sauces / Condiments';
+  }
+  if (includesAny(name, ['pasta', 'rigatoni', 'spaghetti', 'noodle', 'noodles', 'rice', 'grain', 'quinoa'])) {
+    return 'Noodles / Grains';
+  }
+  if (includesAny(name, ['cilantro', 'parsley', 'basil', 'sesame', 'lime', 'lemon', 'herb'])) {
+    return 'Garnish';
+  }
+  if (includesAny(name, ['pepper', 'flakes', 'chili', 'gochugaru', 'garlic powder', 'paprika', 'salt', 'seasoning', 'spice'])) {
+    return 'Spices';
+  }
+  if (ingredient.pantryItem || includesAny(name, ['tomato paste', 'biscuit mix', 'flour', 'sugar', 'broth', 'oil'])) {
+    return 'Pantry';
+  }
+
+  return 'Pantry';
+}
+
+function formatSourceIngredient(ingredient: RecipeIngredient) {
+  return `${ingredient.quantity} ${ingredient.name}`.trim();
+}
+
+function getAnalysisText(analysis: FoodImageAnalysis) {
+  return [
+    analysis.dishName,
+    analysis.cuisine,
+    ...analysis.visibleIngredients,
+    ...analysis.likelyIngredients,
+  ].join(' ').toLowerCase();
+}
+
+function includesAny(value: string, keywords: string[]) {
+  return keywords.some((keyword) => value.includes(keyword));
 }
 
 function getDefaultSubstitutions(mode: RecipeMode) {
@@ -1053,9 +2214,13 @@ function ensureCoreIngredients(
       name: mode === 'Healthy' ? 'Greek yogurt burger sauce' : 'burger sauce or mayonnaise',
       quantity: '2 tbsp',
     });
-    addIngredientIfMissing(result, ['lettuce', 'tomato', 'onion', 'pickle'], {
-      name: 'lettuce and tomato',
-      quantity: '1 cup',
+    addIngredientIfMissing(result, ['lettuce', 'romaine'], {
+      name: 'lettuce leaves',
+      quantity: '2',
+    });
+    addIngredientIfMissing(result, ['tomato'], {
+      name: 'tomato slices',
+      quantity: '2',
     });
   }
 
@@ -1120,7 +2285,7 @@ function addIngredientIfMissing(
 
 function getSpicePairings(values: string[], analysis: FoodImageAnalysis) {
   const fallback = getDefaultSpicePairings(analysis);
-  return getSafeList(values, fallback, 4)
+  return getSafeList(values, fallback, 3)
     .map(cleanRecipeCopy)
     .filter((value) => value.length > 0);
 }
@@ -1208,6 +2373,15 @@ function normalizeDifficulty(value: string): Difficulty {
 function parseMinutes(value: string, fallback: number) {
   const match = value.match(/\d+/);
   return match ? Number(match[0]) : fallback;
+}
+
+function parseServings(value: unknown, fallback: number) {
+  const parsed = getFiniteNumber(value);
+  if (parsed === undefined) {
+    return fallback;
+  }
+
+  return Math.round(clampNumber(parsed, 1, 12));
 }
 
 function toRecipeIngredient(value: string): RecipeIngredient {
@@ -1304,6 +2478,12 @@ function getFallbackQuantity(name: string) {
   }
   if (normalized.includes('cheese slice')) {
     return '2 slices';
+  }
+  if (normalized.includes('tomato')) {
+    return '2 slices';
+  }
+  if (normalized.includes('lettuce') || normalized.includes('romaine')) {
+    return '2 leaves';
   }
   if (normalized.includes('cheese') || normalized.includes('parmesan')) {
     return '1/4 cup';

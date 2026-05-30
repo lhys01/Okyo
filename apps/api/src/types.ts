@@ -40,9 +40,48 @@ export type RecipeIngredient = {
   pantryItem?: boolean;
 };
 
+export type RecipeIngredientGroup = {
+  component: string;
+  items: RecipeIngredient[];
+};
+
 export type CookingTerm = {
   term: string;
   meaning: string;
+};
+
+export type RecipeStep = {
+  text: string;
+  timeEstimate?: string;
+  visualCue?: string;
+  whyItMatters?: string;
+  safetyNote?: string;
+  flavorBoost?: string;
+  cookingTerm?: CookingTerm;
+};
+
+export type GroceryCategory =
+  | 'Produce'
+  | 'Protein'
+  | 'Bakery / Bread'
+  | 'Dairy'
+  | 'Sauces / Condiments'
+  | 'Pantry'
+  | 'Spices'
+  | 'Noodles / Grains'
+  | 'Garnish'
+  | 'Other'
+  | 'Bakery'
+  | 'Beverages';
+
+export type GroceryListItem = {
+  name: string;
+  quantity: string;
+  category: GroceryCategory;
+  pantryItem?: boolean;
+  pantryStaple?: boolean;
+  sourceIngredient?: string;
+  shoppingNote?: string;
 };
 
 export type Recipe = {
@@ -53,33 +92,30 @@ export type Recipe = {
   description: string;
   prepTimeMinutes: number;
   cookTimeMinutes: number;
+  totalTimeMinutes?: number;
+  activeTimeMinutes?: number;
   servings: number;
+  skillLevel?: Difficulty;
   difficulty: Difficulty;
   estimatedHomemadeCost: number;
   estimatedSavings: number;
   ingredients: RecipeIngredient[];
+  ingredientGroups?: RecipeIngredientGroup[];
   steps: string[];
+  structuredSteps?: RecipeStep[];
   substitutions: string[];
   pantryNote: string;
   confidenceNote: string;
+  mainIngredientsSummary?: string;
+  equipment?: string[];
+  bestFor?: string;
+  avoidMistake?: string;
+  mistakeWarning?: string;
+  storageAndReheating?: string;
+  storage?: string;
+  groceryItems?: GroceryListItem[];
   spicePairings?: string[];
   cookingTerms?: CookingTerm[];
-};
-
-export type GroceryListItem = RecipeIngredient & {
-  category:
-    | 'Produce'
-    | 'Protein'
-    | 'Bakery / Bread'
-    | 'Dairy'
-    | 'Sauces / Condiments'
-    | 'Noodles / Grains'
-    | 'Garnish'
-    | 'Pantry'
-    | 'Spices'
-    | 'Other'
-    | 'Bakery'
-    | 'Beverages';
 };
 
 export type GroceryList = {

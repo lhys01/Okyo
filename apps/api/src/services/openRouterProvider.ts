@@ -39,6 +39,7 @@ export class OpenRouterProviderError extends Error {
 }
 
 type SafeRecord = Record<string, unknown>;
+const recipeModeOutputSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
 
 export const openRouterVisionOutputSchema = z.object({
   dishName: z.string().optional(),
@@ -54,12 +55,44 @@ export const openRouterVisionOutputSchema = z.object({
   confidenceReason: z.string().optional(),
 });
 
+const recipeStepSchema = z.object({
+  text: z.string().optional().default(''),
+  timeEstimate: z.string().optional().default(''),
+  visualCue: z.string().optional().default(''),
+  whyItMatters: z.string().optional().default(''),
+  safetyNote: z.string().optional().default(''),
+  flavorBoost: z.string().optional().default(''),
+  cookingTerm: z.object({
+    term: z.string().optional().default(''),
+    meaning: z.string().optional().default(''),
+  }).optional(),
+});
+
 const recipeVariantSchema = z.object({
   title: z.string().optional().default(''),
   description: z.string().optional().default(''),
+  mainIngredientsSummary: z.string().optional().default(''),
+  equipment: z.array(z.string()).optional().default([]),
+  bestFor: z.string().optional().default(''),
   ingredients: z.array(z.string()).optional().default([]),
-  steps: z.array(z.string()).optional().default([]),
+  ingredientGroups: z.array(z.object({
+    component: z.string().optional().default(''),
+    items: z.array(z.string()).optional().default([]),
+  })).optional().default([]),
+  steps: z.array(z.union([z.string(), recipeStepSchema])).optional().default([]),
+  avoidMistake: z.string().optional().default(''),
+  mistakeWarning: z.string().optional().default(''),
   substitutions: z.array(z.string()).optional().default([]),
+  storageAndReheating: z.string().optional().default(''),
+  storage: z.string().optional().default(''),
+  groceryItems: z.array(z.object({
+    name: z.string().optional().default(''),
+    quantity: z.string().optional().default(''),
+    category: z.string().optional().default(''),
+    pantryStaple: z.union([z.boolean(), z.string()]).optional(),
+    sourceIngredient: z.string().optional().default(''),
+    shoppingNote: z.string().optional().default(''),
+  })).optional().default([]),
   spicePairings: z.array(z.string()).optional().default([]),
   cookingTerms: z.array(z.object({
     term: z.string().optional().default(''),
@@ -68,10 +101,15 @@ const recipeVariantSchema = z.object({
   pantryNote: z.string().optional().default(''),
   prepTime: z.string().optional().default(''),
   cookTime: z.string().optional().default(''),
+  totalTime: z.string().optional().default(''),
+  activeTime: z.string().optional().default(''),
+  servings: z.union([z.number(), z.string()]).optional(),
+  skillLevel: z.string().optional().default(''),
   difficulty: z.string().optional().default(''),
 });
 
 export const openRouterRecipeOutputSchema = z.object({
+  selectedMode: recipeModeOutputSchema.optional(),
   restaurantCopy: recipeVariantSchema.optional().default({}),
   budget: recipeVariantSchema.optional().default({}),
   healthy: recipeVariantSchema.optional().default({}),
@@ -260,27 +298,20 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
 
 function getRecipePrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
   return [
-    'Create complete, premium-feeling inspired-by homemade recipe options for Okyo based on this uncertain food analysis.',
-    'Return compact valid JSON only. Keep the response short enough to fit. No markdown. No explanation. No reasoning. No extra text.',
-    'Return exactly these top-level fields: restaurantCopy, budget, healthy.',
-    'Each mode must contain: title, description, ingredients, steps, substitutions, pantryNote, prepTime, cookTime, difficulty, spicePairings, cookingTerms.',
-    'Hard limits for each mode: description one polished casual sentence, 7-9 ingredients, 5-6 helpful steps, max 3 substitutions, max 4 spicePairings, max 3 cookingTerms, pantryNote under 12 words.',
+    'Create compact inspired-by homemade recipe JSON for Okyo based on this uncertain food analysis.',
+    'Return valid minified JSON only. No markdown, prose, reasoning, or extra text.',
+    'Top-level fields: selectedMode, restaurantCopy, budget, healthy.',
+    `selectedMode must be "${mode}". Make ONLY selectedMode fully detailed. Other modes should be light: title, description, 5-7 ingredients, prepTime, cookTime, difficulty.`,
+    'Selected mode fields: title, description, mainIngredientsSummary, equipment, bestFor, ingredients, ingredientGroups, steps, avoidMistake, substitutions, storageAndReheating, pantryNote, prepTime, cookTime, totalTime, activeTime, servings, skillLevel, groceryItems, spicePairings, cookingTerms.',
+    'Strict selected limits: ingredientGroups max 4, total ingredients max 10, steps 5-7, substitutions max 3, equipment max 5, groceryItems max 12, cookingTerms max 3, spicePairings max 3.',
+    'All text must be short. description 1 sentence. avoidMistake 1 short sentence. storageAndReheating 1 short sentence. step text max 22 words.',
     'Never use the word copycat. Use inspired-by or restaurant-style instead.',
-    'Titles and descriptions must say "inspired-by", "restaurant-style", "homemade version", or "Okyo-style". Do not use the word official.',
-    'Avoid typos and awkward wording.',
-    'Ingredients must include concise useful quantities, not vague amounts: "8 oz wheat noodles", "1 tbsp gochujang", "2 tsp soy sauce", "1 clove garlic".',
-    'Do not use "as needed" as a default quantity. Use "to taste" only for salt, pepper, spices, garnish, or sauce finishing.',
-    'If unsure about an ingredient amount, choose a reasonable approximate home-cooking amount for 2 servings.',
-    'Recipes must include the core parts needed to cook the dish, not just toppings.',
-    'For burgers or cheeseburgers include buns, patty/protein, sauce or condiment, relevant toppings, and cheese when cheeseburger is likely.',
-    'For noodles or pasta include noodles/pasta, sauce base, aromatics, protein or vegetable if relevant, and garnish/seasoning.',
-    'For pizza include dough/crust, sauce, cheese, toppings, and oil/seasoning only if relevant.',
-    'Steps should say what to do, rough timing, visual cue, and a short beginner note when useful.',
-    'spicePairings should be short flavor boosters like "toasted sesame oil", "gochugaru", or "lime".',
-    'cookingTerms should explain beginner terms used in the steps, like {"term":"simmer","meaning":"cook gently with small bubbles"}.',
-    'Make Restaurant Copy closest to the restaurant-style version, Budget lower-cost, and Healthy lighter without exact nutrition claims.',
-    'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
-    `Primary requested mode: ${mode}.`,
+    'Use exact cooking quantities. No repeated "as needed"; "to taste" only for salt/pepper/spices/garnish/finishing sauce.',
+    'Group ingredients by component. Burger: Patty, Sauce, Toppings, Assembly. Noodles: Noodles, Sauce, Protein/veg, Garnish. Pizza: Crust, Sauce, Cheese, Toppings.',
+    'Steps must start with action verbs and include time plus visual cue. Include 160°F/71°C for ground meat and 165°F/74°C for chicken.',
+    'GroceryItems are buyable store items, not cooking amounts. Burger groceries: 1 tomato, 1 small head romaine or 1 bag lettuce, 1 pack buns, protein, sliced cheese, sauces, pantry-check spices.',
+    'Allowed grocery categories: Produce, Protein, Bakery / Bread, Dairy, Sauces / Condiments, Pantry, Spices, Noodles / Grains, Garnish.',
+    'No exact nutrition claims. No unsafe cooking advice. Never call it official.',
     `Food analysis summary: ${JSON.stringify({
       confidence: analysis.confidence,
       cuisine: analysis.cuisine,

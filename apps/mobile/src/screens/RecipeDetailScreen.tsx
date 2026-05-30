@@ -31,6 +31,15 @@ import { useOkyoStore } from '../state/useOkyoStore';
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 type RecipeDetailNavigation = NativeStackNavigationProp<RootStackParamList, 'RecipeDetailScreen'>;
 type RecipeDetailRoute = RouteProp<RootStackParamList, 'RecipeDetailScreen'>;
+type DisplayRecipeStep = {
+  text: string;
+  timeEstimate?: string;
+  visualCue?: string;
+  whyItMatters?: string;
+  safetyNote?: string;
+  flavorBoost?: string;
+  cookingTerm?: NonNullable<Recipe['cookingTerms']>[number];
+};
 
 export function RecipeDetailScreen() {
   const navigation = useNavigation<RecipeDetailNavigation>();
@@ -61,6 +70,9 @@ export function RecipeDetailScreen() {
   const availableModes = scanResult?.modes ?? getAvailableModes(latestScanRecipes, latestScanRecipe, isDemoScan);
   const spicePairings = getSafeTextList(recipe?.spicePairings);
   const cookingTerms = getSafeCookingTerms(recipe?.cookingTerms);
+  const ingredientGroups = getSafeIngredientGroups(recipe);
+  const equipment = getSafeTextList(recipe?.equipment);
+  const displaySteps = getRecipeDisplaySteps(recipe);
   const isGeneratedRecipeMissing = Boolean(
     latestScanStatus === 'success' &&
     latestScanResult &&
@@ -188,7 +200,12 @@ export function RecipeDetailScreen() {
       <View style={styles.statsGrid}>
         <StatCard label="Prep" value={`${recipe.prepTimeMinutes} min`} />
         <StatCard label="Cook" value={`${recipe.cookTimeMinutes} min`} />
-        <StatCard label="Difficulty" value={recipe.difficulty} />
+        <StatCard label="Total" value={`${recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes} min`} />
+        {recipe.activeTimeMinutes ? (
+          <StatCard label="Active" value={`${recipe.activeTimeMinutes} min`} />
+        ) : null}
+        <StatCard label="Serves" value={`${recipe.servings}`} />
+        <StatCard label="Skill" value={recipe.skillLevel ?? recipe.difficulty} />
         <StatCard label="Cost" value={formatCurrency(recipe.estimatedHomemadeCost)} />
       </View>
 
@@ -201,8 +218,34 @@ export function RecipeDetailScreen() {
       </View>
 
       <View style={styles.section}>
+        <Text style={styles.sectionTitle}>What you're making</Text>
+        <Text style={styles.listItem}>{recipe.description}</Text>
+        {recipe.mainIngredientsSummary ? (
+          <Text style={styles.listItem}>Main ingredients: {recipe.mainIngredientsSummary}</Text>
+        ) : null}
+        {recipe.bestFor ? (
+          <Text style={styles.listItem}>Best for: {recipe.bestFor}</Text>
+        ) : null}
+        {equipment.length > 0 ? (
+          <Text style={styles.listItem}>Equipment: {equipment.join(', ')}</Text>
+        ) : null}
+      </View>
+
+      <View style={styles.section}>
         <Text style={styles.sectionTitle}>Ingredients</Text>
-        {(Array.isArray(recipe.ingredients) ? recipe.ingredients : []).length > 0 ? (
+        {ingredientGroups.length > 0 ? (
+          ingredientGroups.map((group) => (
+            <View key={`${recipe.id}-${group.component}`} style={styles.ingredientGroup}>
+              <Text style={styles.groupTitle}>{group.component}</Text>
+              {group.items.map((ingredient) => (
+                <Text key={`${recipe.id}-${group.component}-${ingredient.name}`} style={styles.listItem}>
+                  {formatIngredient(ingredient)}
+                  {ingredient.pantryItem ? ' (pantry)' : ''}
+                </Text>
+              ))}
+            </View>
+          ))
+        ) : (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).length > 0 ? (
           recipe.ingredients.map((ingredient) => (
           <Text key={`${recipe.id}-${ingredient.name}`} style={styles.listItem}>
             {formatIngredient(ingredient)}
@@ -216,16 +259,31 @@ export function RecipeDetailScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Instructions</Text>
-        {(Array.isArray(recipe.steps) ? recipe.steps : []).length > 0 ? (
-          recipe.steps.map((step, index) => {
-            const stepTerms = getStepCookingTerms(step, cookingTerms);
-            const stepBoosters = getStepBoosters(step, index, recipe.steps.length, spicePairings);
+        {displaySteps.length > 0 ? (
+          displaySteps.map((step, index) => {
+            const stepTerms = step.cookingTerm ? [step.cookingTerm] : getStepCookingTerms(step.text, cookingTerms);
+            const stepBoosters = step.flavorBoost
+              ? [step.flavorBoost]
+              : getStepBoosters(step.text, index, displaySteps.length, spicePairings);
 
             return (
-              <View key={`${recipe.id}-step-${step}`} style={styles.stepBlock}>
+              <View key={`${recipe.id}-step-${step.text}`} style={styles.stepBlock}>
                 <View style={styles.stepRow}>
                   <Text style={styles.stepNumber}>{index + 1}</Text>
-                  <Text style={styles.stepText}>{step}</Text>
+                  <View style={styles.stepContent}>
+                    <Text style={styles.stepText}>{step.text}</Text>
+                    {step.timeEstimate || step.visualCue ? (
+                      <Text style={styles.stepMeta}>
+                        {[step.timeEstimate, step.visualCue].filter(Boolean).join(' • ')}
+                      </Text>
+                    ) : null}
+                    {step.safetyNote ? (
+                      <Text style={styles.stepMeta}>Safety: {step.safetyNote}</Text>
+                    ) : null}
+                    {step.whyItMatters ? (
+                      <Text style={styles.stepMeta}>Why it matters: {step.whyItMatters}</Text>
+                    ) : null}
+                  </View>
                 </View>
                 {stepBoosters.length > 0 ? (
                   <View style={styles.stepBoostCard}>
@@ -251,30 +309,14 @@ export function RecipeDetailScreen() {
         ) : (
           <Text style={styles.listItem}>Steps are not available yet. Try Restaurant Copy mode.</Text>
         )}
-        {getUnmatchedCookingTerms(recipe.steps, cookingTerms).length > 0 ? (
-          <View style={styles.termsInlineSection}>
-            <Text style={styles.stepBoostLabel}>Tap-to-learn terms</Text>
-            {getUnmatchedCookingTerms(recipe.steps, cookingTerms).map((term) => (
-              <View key={`${recipe.id}-term-${term.term}`} style={styles.termTipCard}>
-                <Text style={styles.termName}>{term.term}</Text>
-                <Text style={styles.termMeaning}>{term.meaning}</Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
-        {spicePairings.length > 0 ? (
-          <View style={styles.termsInlineSection}>
-            <Text style={styles.stepBoostLabel}>Flavor boosters</Text>
-            <View style={styles.chipRow}>
-              {spicePairings.map((pairing) => (
-                <Text key={`${recipe.id}-pairing-${pairing}`} style={styles.flavorChip}>
-                  {pairing}
-                </Text>
-              ))}
-            </View>
-          </View>
-        ) : null}
       </View>
+
+      {recipe.avoidMistake ? (
+        <View style={styles.noteCard}>
+          <Text style={styles.noteTitle}>Avoid this mistake</Text>
+          <Text style={styles.noteText}>{recipe.avoidMistake}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Substitutions</Text>
@@ -288,6 +330,13 @@ export function RecipeDetailScreen() {
           <Text style={styles.listItem}>No substitutions listed yet.</Text>
         )}
       </View>
+
+      {recipe.storageAndReheating ? (
+        <View style={styles.noteCard}>
+          <Text style={styles.noteTitle}>Storage and reheating</Text>
+          <Text style={styles.noteText}>{recipe.storageAndReheating}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.noteCard}>
         <Text style={styles.noteTitle}>Pantry note</Text>
@@ -454,6 +503,16 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     marginBottom: 10,
   },
+  ingredientGroup: {
+    marginBottom: 8,
+  },
+  groupTitle: {
+    color: colors.green,
+    fontSize: 14,
+    fontWeight: '900',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
   listItem: {
     color: colors.charcoal,
     fontSize: 15,
@@ -482,9 +541,18 @@ const styles = StyleSheet.create({
   },
   stepText: {
     color: colors.charcoal,
-    flex: 1,
     fontSize: 15,
     lineHeight: 22,
+  },
+  stepContent: {
+    flex: 1,
+  },
+  stepMeta: {
+    color: colors.body,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 19,
+    marginTop: 5,
   },
   noteCard: {
     backgroundColor: colors.cream,
@@ -575,11 +643,6 @@ function getStepCookingTerms(step: string, terms: NonNullable<Recipe['cookingTer
   return terms.filter((term) => normalizedStep.includes(term.term.toLowerCase()));
 }
 
-function getUnmatchedCookingTerms(steps: string[], terms: NonNullable<Recipe['cookingTerms']>) {
-  const stepText = steps.join(' ').toLowerCase();
-  return terms.filter((term) => !stepText.includes(term.term.toLowerCase()));
-}
-
 function getStepBoosters(step: string, index: number, stepCount: number, pairings: string[]) {
   if (pairings.length === 0) {
     return [];
@@ -611,4 +674,44 @@ function formatIngredient(ingredient: Recipe['ingredients'][number]) {
   }
 
   return `${quantity} ${name}`.trim();
+}
+
+function getSafeIngredientGroups(recipe: Recipe | null) {
+  return (Array.isArray(recipe?.ingredientGroups) ? recipe.ingredientGroups : [])
+    .map((group) => ({
+      component: group.component.trim(),
+      items: Array.isArray(group.items) ? group.items : [],
+    }))
+    .filter((group) => group.component && group.items.length > 0)
+    .slice(0, 6);
+}
+
+function getRecipeDisplaySteps(recipe: Recipe | null): DisplayRecipeStep[] {
+  const structuredSteps = (Array.isArray(recipe?.structuredSteps) ? recipe.structuredSteps : [])
+    .map((step) => ({
+      ...step,
+      text: step.text.trim(),
+      timeEstimate: step.timeEstimate?.trim(),
+      visualCue: step.visualCue?.trim(),
+      whyItMatters: step.whyItMatters?.trim(),
+      safetyNote: step.safetyNote?.trim(),
+      flavorBoost: step.flavorBoost?.trim(),
+      cookingTerm: step.cookingTerm && step.cookingTerm.term.trim() && step.cookingTerm.meaning.trim()
+        ? {
+          term: step.cookingTerm.term.trim(),
+          meaning: step.cookingTerm.meaning.trim(),
+        }
+        : undefined,
+    }))
+    .filter((step) => step.text)
+    .slice(0, 8);
+
+  if (structuredSteps.length > 0) {
+    return structuredSteps;
+  }
+
+  return (Array.isArray(recipe?.steps) ? recipe.steps : [])
+    .map((step) => ({ text: step.trim() }))
+    .filter((step) => step.text)
+    .slice(0, 8);
 }
