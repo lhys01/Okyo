@@ -29,33 +29,70 @@ import { useOkyoStore } from '../state/useOkyoStore';
 
 type GroceryListRoute = RouteProp<RootStackParamList, 'GroceryListScreen'>;
 type GroceryListNavigation = NativeStackNavigationProp<RootStackParamList, 'GroceryListScreen'>;
-type GroceryCategory = 'Produce' | 'Dairy' | 'Protein' | 'Pantry' | 'Spices' | 'Other';
+type GroceryCategory =
+  | 'Produce'
+  | 'Protein'
+  | 'Bakery / Bread'
+  | 'Dairy'
+  | 'Sauces / Condiments'
+  | 'Noodles / Grains'
+  | 'Garnish'
+  | 'Pantry'
+  | 'Spices'
+  | 'Other';
 type GroceryItem = RecipeIngredient & {
   id: string;
   category: GroceryCategory;
 };
 
-const categoryOrder: GroceryCategory[] = ['Produce', 'Dairy', 'Protein', 'Pantry', 'Spices', 'Other'];
-const spiceNames = ['pepper', 'flakes', 'chili', 'garlic powder', 'salt', 'seasoning'];
-const dairyNames = ['cream', 'parmesan', 'milk', 'butter', 'yogurt', 'cheddar', 'cheese'];
-const produceNames = ['spinach', 'kale', 'arugula', 'cucumber', 'greens'];
-const proteinNames = ['chicken', 'falafel', 'shrimp'];
-const pantryNames = ['pasta', 'rigatoni', 'tomato paste', 'olive oil', 'biscuit mix', 'grains'];
+const categoryOrder: GroceryCategory[] = [
+  'Produce',
+  'Protein',
+  'Bakery / Bread',
+  'Dairy',
+  'Sauces / Condiments',
+  'Noodles / Grains',
+  'Garnish',
+  'Pantry',
+  'Spices',
+  'Other',
+];
+const spiceNames = ['pepper', 'flakes', 'chili', 'gochugaru', 'garlic powder', 'paprika', 'salt', 'seasoning', 'spice'];
+const dairyNames = ['cream', 'parmesan', 'milk', 'butter', 'yogurt', 'cheddar', 'cheese', 'mozzarella'];
+const produceNames = ['lettuce', 'tomato', 'onion', 'pickle', 'spinach', 'kale', 'arugula', 'cucumber', 'greens', 'scallion'];
+const proteinNames = ['ground beef', 'patty', 'patties', 'turkey', 'beef', 'chicken', 'falafel', 'shrimp', 'tofu', 'pork', 'veggie burger'];
+const breadNames = ['bun', 'buns', 'bread', 'roll', 'rolls', 'dough', 'crust', 'flatbread'];
+const sauceNames = ['mayo', 'mayonnaise', 'ketchup', 'mustard', 'sauce', 'condiment', 'dressing', 'gochujang', 'soy sauce', 'harissa', 'hummus'];
+const noodleGrainNames = ['pasta', 'rigatoni', 'spaghetti', 'noodle', 'noodles', 'rice', 'grain', 'grains', 'quinoa'];
+const garnishNames = ['cilantro', 'parsley', 'basil', 'sesame', 'lime', 'lemon', 'herb', 'herbs'];
+const pantryNames = ['tomato paste', 'biscuit mix', 'flour', 'sugar', 'broth'];
 
 function getCategory(ingredient: RecipeIngredient): GroceryCategory {
   const name = ingredient.name.toLowerCase();
 
-  if (spiceNames.some((keyword) => name.includes(keyword))) {
-    return 'Spices';
-  }
-  if (dairyNames.some((keyword) => name.includes(keyword))) {
-    return 'Dairy';
-  }
   if (produceNames.some((keyword) => name.includes(keyword))) {
     return 'Produce';
   }
   if (proteinNames.some((keyword) => name.includes(keyword))) {
     return 'Protein';
+  }
+  if (breadNames.some((keyword) => name.includes(keyword))) {
+    return 'Bakery / Bread';
+  }
+  if (dairyNames.some((keyword) => name.includes(keyword))) {
+    return 'Dairy';
+  }
+  if (sauceNames.some((keyword) => name.includes(keyword))) {
+    return 'Sauces / Condiments';
+  }
+  if (noodleGrainNames.some((keyword) => name.includes(keyword))) {
+    return 'Noodles / Grains';
+  }
+  if (garnishNames.some((keyword) => name.includes(keyword))) {
+    return 'Garnish';
+  }
+  if (spiceNames.some((keyword) => name.includes(keyword))) {
+    return 'Spices';
   }
   if (ingredient.pantryItem || pantryNames.some((keyword) => name.includes(keyword))) {
     return 'Pantry';
@@ -84,7 +121,7 @@ function buildListText(recipe: Recipe, items: GroceryItem[]) {
 
       return [
         category,
-        ...categoryItems.map((item) => `- ${item.quantity} ${item.name}`),
+        ...categoryItems.map((item) => `- ${formatGroceryItem(item)}`),
       ].join('\n');
     })
     .filter(Boolean);
@@ -93,11 +130,18 @@ function buildListText(recipe: Recipe, items: GroceryItem[]) {
   if (pantryItems.length > 0) {
     grouped.push([
       'Pantry check',
-      ...pantryItems.map((item) => `- ${item.quantity} ${item.name}`),
+      ...pantryItems.map((item) => `- ${formatGroceryItem(item)}`),
     ].join('\n'));
   }
 
   return [`${recipe.title} Grocery List`, ...grouped].join('\n\n');
+}
+
+function formatGroceryItem(item: Pick<RecipeIngredient, 'name' | 'quantity'>) {
+  const quantity = item.quantity.trim();
+  const name = item.name.trim();
+
+  return quantity ? `${quantity} ${name}` : name;
 }
 
 export function GroceryListScreen() {
@@ -243,7 +287,7 @@ export function GroceryListScreen() {
                   <Text style={styles.checkboxText}>{checkedItemIds.includes(item.id) ? '✓' : ''}</Text>
                 </View>
                 <Text style={[styles.itemText, checkedItemIds.includes(item.id) ? styles.itemTextChecked : null]}>
-                  {item.quantity} {item.name}
+                  {formatGroceryItem(item)}
                 </Text>
               </Pressable>
             ))}
@@ -261,7 +305,7 @@ export function GroceryListScreen() {
                 <Text style={styles.checkboxText}>{checkedItemIds.includes(item.id) ? '✓' : ''}</Text>
               </View>
               <Text style={[styles.itemText, checkedItemIds.includes(item.id) ? styles.itemTextChecked : null]}>
-                {item.quantity} {item.name}
+                {formatGroceryItem(item)}
               </Text>
             </Pressable>
           ))}

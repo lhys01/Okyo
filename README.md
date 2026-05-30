@@ -1,6 +1,6 @@
 # Okyo
 
-Okyo is a mobile-first food app prototype that turns restaurant meal photos into homemade copycat recipes with estimated cost savings, grocery lists, Dupe Challenge, rankings, and shareable result cards.
+Okyo is a mobile-first food app prototype that turns restaurant meal photos into homemade inspired-by recipes with estimated cost savings, grocery lists, Dupe Challenge, rankings, and shareable result cards.
 
 The current app is a fake-data V1 prototype. It is useful for product QA and flow testing. It can call the local mock API for scans, but still falls back to local mock data and does not call a real AI provider yet.
 

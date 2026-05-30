@@ -417,7 +417,7 @@ Response data:
   "challenge": {
     "id": "challenge-recipe-spicy-vodka-rigatoni-restaurant-copy-1770000000000",
     "recipeId": "recipe-spicy-vodka-rigatoni-restaurant-copy",
-    "recipeTitle": "Spicy Rigatoni Copycat-Style Pasta",
+    "recipeTitle": "Spicy Rigatoni Inspired-by-Style Pasta",
     "mode": "Restaurant Copy",
     "rating": "Pretty close",
     "completedAt": "2026-05-29T00:00:00.000Z",
@@ -529,5 +529,5 @@ Response data:
 - There is no production database yet.
 - There is no permanent image upload/storage service yet.
 - AI output is for local testing and should be treated as uncertain.
-- Recipe results are copycat-style or inspired-by only. They are not official restaurant recipes.
+- Recipe results are inspired-by or inspired-by only. They are not official restaurant recipes.
 - Nutrition, ingredient, cost, and savings data are estimates and should not be presented as exact.

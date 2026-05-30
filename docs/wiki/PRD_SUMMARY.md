@@ -2,7 +2,7 @@
 
 ## Product
 
-Okyo is a mobile-first AI food app that lets users scan a restaurant meal and generate a homemade copycat-style recipe with estimated cost savings, grocery list, Dupe Challenge, rankings, and shareable result cards.
+Okyo is a mobile-first AI food app that lets users scan a restaurant meal and generate a homemade inspired-by recipe with estimated cost savings, grocery list, Dupe Challenge, rankings, and shareable result cards.
 
 ## One-liner
 

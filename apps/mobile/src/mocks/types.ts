@@ -24,6 +24,11 @@ export type RecipeIngredient = {
   pantryItem?: boolean;
 };
 
+export type CookingTerm = {
+  term: string;
+  meaning: string;
+};
+
 export type Recipe = {
   id: string;
   scanResultId: string;
@@ -41,10 +46,24 @@ export type Recipe = {
   substitutions: string[];
   pantryNote: string;
   confidenceNote: string;
+  spicePairings?: string[];
+  cookingTerms?: CookingTerm[];
 };
 
 export type GroceryListItem = RecipeIngredient & {
-  category: 'Produce' | 'Dairy' | 'Pantry' | 'Protein' | 'Bakery' | 'Beverages';
+  category:
+    | 'Produce'
+    | 'Protein'
+    | 'Bakery / Bread'
+    | 'Dairy'
+    | 'Sauces / Condiments'
+    | 'Noodles / Grains'
+    | 'Garnish'
+    | 'Pantry'
+    | 'Spices'
+    | 'Other'
+    | 'Bakery'
+    | 'Beverages';
 };
 
 export type GroceryList = {

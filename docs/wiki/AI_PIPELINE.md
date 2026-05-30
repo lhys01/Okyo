@@ -16,6 +16,6 @@
 
 - Always include confidence.
 - Never claim official restaurant recipe.
-- Use copycat-style or inspired-by language.
+- Use inspired-by or inspired-by language.
 - Validate model outputs with Zod.
 - Add food safety notes.

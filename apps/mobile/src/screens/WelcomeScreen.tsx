@@ -16,7 +16,7 @@ const onboardingSteps = [
   },
   {
     title: 'Get a homemade dupe',
-    body: 'Okyo gives you a copycat-style recipe with estimated homemade cost and savings.',
+    body: 'Okyo gives you an inspired-by recipe with estimated homemade cost and savings.',
   },
   {
     title: 'Save, cook, share',

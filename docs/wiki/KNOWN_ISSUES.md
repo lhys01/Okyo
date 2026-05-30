@@ -48,7 +48,7 @@ npx expo start -c --tunnel --port 8082
 - Recipe generation can return partial or fallback results.
 - AI food identification, confidence, ingredients, cost, savings, and recipes are approximate.
 - AI estimates are for beta product testing only and should not be treated as nutrition, budget, or restaurant facts.
-- Recipes should be treated as copycat-style or inspired-by, not official restaurant recipes.
+- Recipes should be treated as inspired-by or inspired-by, not official restaurant recipes.
 - Real uploaded image failures should never show mock Spicy Vodka Rigatoni.
 - Mock Spicy Vodka Rigatoni should only appear in explicit demo/mock mode.
 - If a real scan is unclear, an honest unclear/partial state is better than a confident wrong result.

@@ -61,7 +61,7 @@ export const mockRecipes: Recipe[] = [
   {
     id: 'recipe-spicy-vodka-rigatoni-restaurant-copy',
     scanResultId: '001',
-    title: 'Spicy Vodka Rigatoni Copycat',
+    title: 'Spicy Vodka Rigatoni Inspired-by',
     mode: 'Restaurant Copy',
     description: 'A creamy tomato rigatoni with parmesan, gentle heat, and a glossy restaurant-style sauce.',
     prepTimeMinutes: 10,

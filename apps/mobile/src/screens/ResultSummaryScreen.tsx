@@ -340,7 +340,7 @@ export function ResultSummaryScreen() {
       <Text style={styles.kicker}>{isDemoScan ? 'Demo result' : 'Scan result'}</Text>
       <Text style={styles.title}>{scanResult.dishName}</Text>
       <Text style={styles.subtitle}>
-        {scanResult.restaurantStyle} copycat estimate
+        {scanResult.restaurantStyle} restaurant-style estimate
       </Text>
       {__DEV__ && aiDebugLabel ? (
         <View style={styles.aiDebugPill}>
@@ -674,7 +674,7 @@ function getScanFailureCopy(failure: { rejectionType?: string; rejectionReason?:
   if (failure?.rejectionType === 'not_food') {
     return {
       title: "This doesn't look like a restaurant meal.",
-      body: failure.rejectionReason ?? 'Okyo needs a clear food photo to build a useful copycat-style recipe.',
+      body: failure.rejectionReason ?? 'Okyo needs a clear food photo to build a useful inspired-by recipe.',
     };
   }
 

@@ -2,7 +2,7 @@
 
 ## One sentence
 
-Okyo turns any restaurant meal photo into a homemade copycat recipe with estimated cost savings and a shareable dupe card.
+Okyo turns any restaurant meal photo into a homemade inspired-by recipe with estimated cost savings and a shareable dupe card.
 
 ## Main app loop
 

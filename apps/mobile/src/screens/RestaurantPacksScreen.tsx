@@ -13,7 +13,7 @@ type RestaurantPacksNavigation = NativeStackNavigationProp<RootStackParamList>;
 
 function getPackDescription(packName: string) {
   const name = packName.replace('-inspired', '');
-  return `Copycat-style dupes inspired by ${name} favorites.`;
+  return `Restaurant-style dupes inspired by ${name} favorites.`;
 }
 
 function getAverageSavings(pack: RestaurantPack) {
@@ -67,7 +67,7 @@ export function RestaurantPacksScreen() {
       <Text style={styles.kicker}>Packs</Text>
       <Text style={styles.title}>Restaurant-inspired packs</Text>
       <Text style={styles.description}>
-        Browse static inspired-by dupes. These are not official restaurant recipes.
+        Browse static inspired-by dupes made for home kitchens.
       </Text>
 
       <View style={styles.packGrid}>

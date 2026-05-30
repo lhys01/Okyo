@@ -30,7 +30,7 @@ const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 
 function getPackDescription(packName: string) {
   const name = packName.replace('-inspired', '');
-  return `A static pack of copycat-style dupes inspired by ${name} menu favorites.`;
+  return `A static pack of restaurant-style dupes inspired by ${name} menu favorites.`;
 }
 
 function getAverageSavings(pack: RestaurantPack) {
@@ -61,9 +61,9 @@ function makePackRecipe(pack: RestaurantPack, dish: RestaurantPackDish): Recipe 
   return {
     id: `pack-recipe-${dish.id}`,
     scanResultId: dish.id,
-    title: `${dish.dishName} Copycat`,
+    title: `${dish.dishName} Okyo-style`,
     mode,
-    description: `Inspired-by ${pack.name} dupe. Not an official restaurant recipe.`,
+    description: `Inspired-by ${pack.name} dupe made for home kitchens.`,
     prepTimeMinutes: dish.difficulty === 'Easy' ? 10 : 15,
     cookTimeMinutes: dish.difficulty === 'Easy' ? 20 : 30,
     servings: 2,
@@ -172,7 +172,7 @@ export function RestaurantPackDetailScreen() {
     <ScreenContainer>
       <Text style={styles.kicker}>Restaurant Pack</Text>
       <Text style={styles.title}>{pack.name}</Text>
-      <Text style={styles.disclaimer}>Inspired-by recipes. Not official restaurant recipes.</Text>
+      <Text style={styles.disclaimer}>Inspired-by recipes made for home kitchens.</Text>
       <Text style={styles.description}>{getPackDescription(pack.name)}</Text>
 
       <View style={styles.summaryCard}>

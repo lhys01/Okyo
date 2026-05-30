@@ -44,7 +44,7 @@ Use Expo tunnel mode for beta QA. The simulator setup has been unreliable with `
 - [ ] In the simulator, use **Upload From Photos** as the main test path because the camera may not work.
 - [ ] Remember that OpenRouter free model results can be inconsistent.
 - [ ] Treat AI dish names, recipes, prices, savings, and confidence as approximate.
-- [ ] Remember recipes should be copycat-style or inspired-by, never official restaurant recipes.
+- [ ] Remember recipes should be inspired-by or inspired-by, never official restaurant recipes.
 
 ## Test Image Checklist
 
@@ -117,7 +117,7 @@ Fail:
 
 - [ ] View Recipe opens from a scan result.
 - [ ] Recipe matches the scanned dish.
-- [ ] Recipe is labeled or written like a copycat-style/inspired-by recipe, not an official restaurant recipe.
+- [ ] Recipe is labeled or written like a inspired-by/inspired-by recipe, not an official restaurant recipe.
 - [ ] Ingredients are readable and realistic.
 - [ ] Steps are clear enough for a beginner cook.
 - [ ] Prep/cook time and servings feel reasonable.

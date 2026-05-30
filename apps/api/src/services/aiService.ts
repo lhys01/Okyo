@@ -11,6 +11,7 @@ import type {
   Difficulty,
   GroceryList,
   Recipe,
+  CookingTerm,
   RecipeIngredient,
   RecipeMode,
   ScanImageMetadata,
@@ -548,15 +549,17 @@ function createRecipeFromVariant(
   const restaurantPrice = normalizeRestaurantPrice(analysis.restaurantPriceEstimate);
   const homemadeCost = getModeHomemadeCost(analysis.homemadeCostEstimate, restaurantPrice, mode);
   const title = getRecipeTitle(variant.title, analysis.dishName, mode);
-  const ingredients = getRecipeIngredients(variant.ingredients, analysis);
+  const ingredients = getRecipeIngredients(variant.ingredients, analysis, mode);
   const steps = getRecipeSteps(variant.steps, analysis.dishName);
+  const spicePairings = getSpicePairings(variant.spicePairings, analysis);
+  const cookingTerms = getCookingTerms(variant.cookingTerms, steps);
 
   return {
     id: `ai-${slugify(analysis.dishName)}-${slugify(mode)}`,
     scanResultId: analysis.candidateScanId,
     title,
     mode,
-    description: ensureInspiredCopy(getOneSentence(variant.description, `${title} with flexible, home-kitchen ingredients.`)),
+    description: ensureInspiredCopy(cleanRecipeCopy(getOneSentence(variant.description, `${title} with flexible, home-kitchen ingredients.`))),
     prepTimeMinutes: parseMinutes(variant.prepTime, 15),
     cookTimeMinutes: parseMinutes(variant.cookTime, 25),
     servings: 2,
@@ -565,9 +568,11 @@ function createRecipeFromVariant(
     estimatedSavings: Math.max(0, restaurantPrice - homemadeCost),
     ingredients,
     steps,
-    substitutions: getSafeList(variant.substitutions, getDefaultSubstitutions(mode), 3),
-    pantryNote: getShortText(variant.pantryNote, 'Assumes salt, pepper, and basic oil are on hand.', 90),
+    substitutions: getSafeList(variant.substitutions, getDefaultSubstitutions(mode), 3).map(cleanRecipeCopy),
+    pantryNote: cleanRecipeCopy(getShortText(variant.pantryNote, 'Assumes salt, pepper, and basic oil are on hand.', 90)),
     confidenceNote: `AI-assisted testing output. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
+    spicePairings,
+    cookingTerms,
   };
 }
 
@@ -985,26 +990,27 @@ function getRecipeTitle(value: string, dishName: string, mode: RecipeMode) {
     ? `Budget ${dishName} Inspired-by`
     : mode === 'Healthy'
       ? `Lighter ${dishName} Inspired-by`
-      : `${dishName} Copycat-style`;
+      : `${dishName} Inspired-by`;
 
-  return ensureCopycatTitle(getShortText(value, fallbackTitle, 90));
+  return ensureInspiredTitle(getShortText(value, fallbackTitle, 90));
 }
 
-function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis) {
+function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mode: RecipeMode) {
   const fallback = analysis.likelyIngredients.length > 0
     ? analysis.likelyIngredients
     : ['main ingredient', 'sauce base', 'seasoning'];
 
-  return getSafeList(values, fallback, 6).map(toRecipeIngredient);
+  const ingredients = getSafeList(values, fallback, 9).map(toRecipeIngredient);
+  return ensureCoreIngredients(ingredients, analysis, mode).slice(0, 10);
 }
 
 function getRecipeSteps(values: string[], dishName: string) {
   return getSafeList(values, [
-    `Prep ingredients for the ${dishName.toLowerCase()}.`,
-    'Cook aromatics or base ingredients until fragrant.',
-    'Add sauce and main ingredients, then simmer briefly.',
-    'Taste, adjust seasoning, and serve warm.',
-  ], 5);
+    `Prep the ingredients for the ${dishName.toLowerCase()}, keeping sauces and toppings close by.`,
+    'Cook the main ingredient over medium-high heat until browned and cooked through, using visual cues more than exact timing.',
+    'Warm or mix the sauce base until glossy, then combine it with the cooked ingredients.',
+    'Taste, adjust salt or spice in small pinches, and serve while warm.',
+  ], 6).map(cleanRecipeCopy);
 }
 
 function getDefaultSubstitutions(mode: RecipeMode) {
@@ -1016,6 +1022,175 @@ function getDefaultSubstitutions(mode: RecipeMode) {
   }
 
   return ['Use similar pantry ingredients if needed.'];
+}
+
+function ensureCoreIngredients(
+  ingredients: RecipeIngredient[],
+  analysis: FoodImageAnalysis,
+  mode: RecipeMode,
+) {
+  const dishText = [
+    analysis.dishName,
+    analysis.cuisine,
+    ...analysis.visibleIngredients,
+    ...analysis.likelyIngredients,
+  ].join(' ').toLowerCase();
+  const result = [...ingredients];
+
+  if (dishText.includes('burger')) {
+    addIngredientIfMissing(result, ['bun', 'brioche', 'roll'], {
+      name: 'burger buns',
+      quantity: '2',
+    });
+    addIngredientIfMissing(result, ['patty', 'beef', 'turkey', 'veggie patty', 'plant-based'], getBurgerProtein(mode));
+    if (dishText.includes('cheese')) {
+      addIngredientIfMissing(result, ['cheese', 'cheddar', 'american'], {
+        name: 'cheese slices',
+        quantity: '2 slices',
+      });
+    }
+    addIngredientIfMissing(result, ['mayo', 'mayonnaise', 'ketchup', 'mustard', 'burger sauce', 'sauce'], {
+      name: mode === 'Healthy' ? 'Greek yogurt burger sauce' : 'burger sauce or mayonnaise',
+      quantity: '2 tbsp',
+    });
+    addIngredientIfMissing(result, ['lettuce', 'tomato', 'onion', 'pickle'], {
+      name: 'lettuce and tomato',
+      quantity: '1 cup',
+    });
+  }
+
+  if (dishText.includes('pizza')) {
+    addIngredientIfMissing(result, ['dough', 'crust', 'flatbread'], {
+      name: 'pizza dough or crust',
+      quantity: '1 small',
+    });
+    addIngredientIfMissing(result, ['sauce', 'marinara', 'tomato'], {
+      name: 'pizza sauce',
+      quantity: '1/3 cup',
+    });
+    addIngredientIfMissing(result, ['cheese', 'mozzarella'], {
+      name: 'mozzarella',
+      quantity: '1 cup',
+    });
+  }
+
+  if (dishText.includes('noodle') || dishText.includes('pasta') || dishText.includes('rigatoni') || dishText.includes('spaghetti')) {
+    addIngredientIfMissing(result, ['noodle', 'pasta', 'rigatoni', 'spaghetti'], {
+      name: dishText.includes('noodle') ? 'wheat noodles' : 'pasta',
+      quantity: '8 oz',
+    });
+    addIngredientIfMissing(result, ['sauce', 'gochujang', 'tomato paste', 'cream', 'soy sauce'], {
+      name: dishText.includes('korean') || dishText.includes('gochujang') ? 'gochujang sauce base' : 'sauce base',
+      quantity: '2 tbsp',
+    });
+    addIngredientIfMissing(result, ['garlic', 'onion', 'ginger'], {
+      name: 'garlic',
+      quantity: '1 clove',
+      pantryItem: true,
+    });
+  }
+
+  return result;
+}
+
+function getBurgerProtein(mode: RecipeMode): RecipeIngredient {
+  if (mode === 'Healthy') {
+    return { name: 'lean turkey or veggie burger patties', quantity: '2' };
+  }
+  if (mode === 'Budget') {
+    return { name: 'ground beef or turkey', quantity: '1 lb' };
+  }
+
+  return { name: 'ground beef burger patties', quantity: '2' };
+}
+
+function addIngredientIfMissing(
+  ingredients: RecipeIngredient[],
+  keywords: string[],
+  ingredient: RecipeIngredient,
+) {
+  const hasIngredient = ingredients.some((candidate) => (
+    keywords.some((keyword) => candidate.name.toLowerCase().includes(keyword))
+  ));
+
+  if (!hasIngredient) {
+    ingredients.push(ingredient);
+  }
+}
+
+function getSpicePairings(values: string[], analysis: FoodImageAnalysis) {
+  const fallback = getDefaultSpicePairings(analysis);
+  return getSafeList(values, fallback, 4)
+    .map(cleanRecipeCopy)
+    .filter((value) => value.length > 0);
+}
+
+function getDefaultSpicePairings(analysis: FoodImageAnalysis) {
+  const text = [
+    analysis.cuisine,
+    analysis.dishName,
+    ...analysis.visibleIngredients,
+    ...analysis.likelyIngredients,
+  ].join(' ').toLowerCase();
+
+  if (text.includes('korean') || text.includes('gochujang') || text.includes('noodle')) {
+    return ['gochugaru', 'toasted sesame oil', 'scallions', 'rice vinegar'];
+  }
+  if (text.includes('pasta') || text.includes('rigatoni') || text.includes('tomato')) {
+    return ['red pepper flakes', 'basil', 'parmesan', 'black pepper'];
+  }
+  if (text.includes('bowl') || text.includes('grain') || text.includes('mediterranean')) {
+    return ['lemon', 'sumac', 'parsley', 'harissa'];
+  }
+  if (text.includes('chicken')) {
+    return ['garlic', 'paprika', 'lemon', 'fresh herbs'];
+  }
+
+  return ['garlic', 'black pepper', 'fresh herbs', 'chili flakes'];
+}
+
+function getCookingTerms(values: OpenRouterRecipeVariant['cookingTerms'], steps: string[]): CookingTerm[] {
+  const cleanTerms = (Array.isArray(values) ? values : [])
+    .map((value) => ({
+      term: cleanRecipeCopy(getShortText(value.term, '', 32)),
+      meaning: cleanRecipeCopy(getShortText(value.meaning, '', 90)),
+    }))
+    .filter((value) => value.term && value.meaning);
+
+  const fallbackTerms = getDefaultCookingTerms(steps);
+  const merged = [...cleanTerms, ...fallbackTerms];
+  const seenTerms = new Set<string>();
+
+  return merged.filter((value) => {
+    const key = value.term.toLowerCase();
+    if (seenTerms.has(key)) {
+      return false;
+    }
+    seenTerms.add(key);
+    return true;
+  }).slice(0, 3);
+}
+
+function getDefaultCookingTerms(steps: string[]): CookingTerm[] {
+  const stepText = steps.join(' ').toLowerCase();
+  const terms: CookingTerm[] = [];
+
+  if (stepText.includes('simmer')) {
+    terms.push({ term: 'Simmer', meaning: 'Cook gently with small bubbles.' });
+  }
+  if (stepText.includes('bloom')) {
+    terms.push({ term: 'Bloom', meaning: 'Warm spices or paste in oil to deepen flavor.' });
+  }
+  if (stepText.includes('al dente')) {
+    terms.push({ term: 'Al dente', meaning: 'Tender pasta with a slight bite.' });
+  }
+  if (stepText.includes('fold')) {
+    terms.push({ term: 'Fold', meaning: 'Gently combine without mashing or overmixing.' });
+  }
+
+  return terms.length > 0 ? terms : [
+    { term: 'Season to taste', meaning: 'Add small pinches, taste, then adjust.' },
+  ];
 }
 
 function normalizeDifficulty(value: string): Difficulty {
@@ -1036,35 +1211,172 @@ function parseMinutes(value: string, fallback: number) {
 }
 
 function toRecipeIngredient(value: string): RecipeIngredient {
-  const cleaned = getShortText(value, 'ingredient', 80);
-  const quantityMatch = cleaned.match(/^([\d./\s]+(?:cup|cups|tbsp|tsp|oz|lb|lbs|g|ml|clove|cloves|slice|slices|can|cans)?)\s+(.+)$/i);
-  if (quantityMatch) {
+  const cleaned = cleanRecipeCopy(getShortText(value, 'ingredient', 80))
+    .replace(/\s+/g, ' ')
+    .trim();
+  const withoutBadAsNeeded = cleaned.replace(/^(?:as needed\s+)+/i, '').trim();
+  const toTasteMatch = withoutBadAsNeeded.match(/^(.+?)\s+(?:to taste)$/i);
+  if (toTasteMatch && canUseToTaste(toTasteMatch[1])) {
     return {
-      name: quantityMatch[2].trim(),
-      quantity: quantityMatch[1].trim(),
+      name: cleanIngredientName(toTasteMatch[1]),
+      quantity: 'to taste',
+      pantryItem: isPantryIngredient(toTasteMatch[1]),
     };
   }
 
+  const quantityMatch = withoutBadAsNeeded.match(/^((?:\d+(?:\.\d+)?|\d+\/\d+|\d+\s+\d+\/\d+|one|two|three|four|five|six|a|an)\s*(?:cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|ml|clove|cloves|slice|slices|can|cans|bunch|bunches|stalk|stalks|piece|pieces|large|medium|small)?)\s+(.+)$/i);
+  if (quantityMatch) {
+    const name = cleanIngredientName(quantityMatch[2]);
+    return {
+      name,
+      quantity: normalizeQuantity(quantityMatch[1]),
+      pantryItem: isPantryIngredient(name),
+    };
+  }
+
+  const name = cleanIngredientName(withoutBadAsNeeded);
   return {
-    name: cleaned,
-    quantity: 'as needed',
+    name,
+    quantity: getFallbackQuantity(name),
+    pantryItem: isPantryIngredient(name),
   };
 }
 
-function ensureCopycatTitle(value: string) {
-  if (value.toLowerCase().includes('copycat') || value.toLowerCase().includes('inspired')) {
-    return value;
+function cleanIngredientName(value: string) {
+  return cleanRecipeCopy(value)
+    .replace(/\s*\([^)]*\)\s*$/g, '')
+    .replace(/\s*,?\s*(?:to taste|as needed)$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeQuantity(value: string) {
+  return value
+    .replace(/\btablespoons?\b/gi, 'tbsp')
+    .replace(/\bteaspoons?\b/gi, 'tsp')
+    .replace(/\bounces?\b/gi, 'oz')
+    .replace(/\bpounds?\b/gi, 'lb')
+    .replace(/\bgrams?\b/gi, 'g')
+    .replace(/\bone\b/i, '1')
+    .replace(/\btwo\b/i, '2')
+    .replace(/\bthree\b/i, '3')
+    .replace(/\bfour\b/i, '4')
+    .replace(/\bfive\b/i, '5')
+    .replace(/\bsix\b/i, '6')
+    .replace(/\ban?\b/i, '1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getFallbackQuantity(name: string) {
+  const normalized = name.toLowerCase();
+
+  if (canUseToTaste(normalized)) {
+    return 'to taste';
+  }
+  if (normalized.includes('noodle') || normalized.includes('pasta') || normalized.includes('rice')) {
+    return '8 oz';
+  }
+  if (normalized.includes('garlic')) {
+    return '1 clove';
+  }
+  if (normalized.includes('ginger') || normalized.includes('gochujang') || normalized.includes('tomato paste')) {
+    return '1 tbsp';
+  }
+  if (normalized.includes('soy sauce') || normalized.includes('vinegar') || normalized.includes('sesame oil')) {
+    return '2 tsp';
+  }
+  if (normalized.includes('oil') || normalized.includes('butter')) {
+    return '1 tbsp';
+  }
+  if (normalized.includes('mayonnaise') || normalized.includes('mayo') || normalized.includes('ketchup') || normalized.includes('mustard')) {
+    return '2 tbsp';
+  }
+  if (normalized.includes('bun')) {
+    return '2';
+  }
+  if (normalized.includes('patty') || normalized.includes('burger')) {
+    return '2';
+  }
+  if (normalized.includes('sauce') || normalized.includes('broth') || normalized.includes('cream')) {
+    return '1/2 cup';
+  }
+  if (normalized.includes('cheese slice')) {
+    return '2 slices';
+  }
+  if (normalized.includes('cheese') || normalized.includes('parmesan')) {
+    return '1/4 cup';
+  }
+  if (normalized.includes('egg')) {
+    return '1';
+  }
+  if (normalized.includes('chicken') || normalized.includes('beef') || normalized.includes('pork') || normalized.includes('tofu')) {
+    return '8 oz';
+  }
+  if (normalized.includes('scallion') || normalized.includes('green onion')) {
+    return '2';
   }
 
-  return `${value} Copycat-style`;
+  return '1 cup';
+}
+
+function canUseToTaste(value: string) {
+  const normalized = value.toLowerCase();
+  return [
+    'salt',
+    'pepper',
+    'spice',
+    'chili',
+    'gochugaru',
+    'garnish',
+    'herb',
+    'lime',
+    'lemon',
+  ].some((keyword) => normalized.includes(keyword));
+}
+
+function isPantryIngredient(value: string) {
+  const normalized = value.toLowerCase();
+  return [
+    'salt',
+    'pepper',
+    'oil',
+    'spice',
+    'chili',
+    'garlic',
+    'soy sauce',
+    'vinegar',
+    'sugar',
+  ].some((keyword) => normalized.includes(keyword));
+}
+
+function cleanRecipeCopy(value: string) {
+  return value
+    .replace(/\bcipycat\b/gi, 'inspired-by')
+    .replace(/\bcopy\s*cat\b/gi, 'inspired-by')
+    .replace(/\bcopycat(?:-style)?\b/gi, 'inspired-by')
+    .replace(/\bofficial\b/gi, 'restaurant-style')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function ensureInspiredTitle(value: string) {
+  const cleaned = cleanRecipeCopy(value);
+  if (cleaned.toLowerCase().includes('inspired') || cleaned.toLowerCase().includes('restaurant-style')) {
+    return cleaned;
+  }
+
+  return `${cleaned} Inspired-by`;
 }
 
 function ensureInspiredCopy(value: string) {
-  if (value.toLowerCase().includes('copycat') || value.toLowerCase().includes('inspired')) {
-    return value;
+  const cleaned = cleanRecipeCopy(value);
+  if (cleaned.toLowerCase().includes('inspired') || cleaned.toLowerCase().includes('restaurant-style')) {
+    return cleaned;
   }
 
-  return `${value} This is a copycat-style estimate, not an official restaurant recipe.`;
+  return `${cleaned} This is an inspired-by estimate for a home kitchen.`;
 }
 
 function getSafeList(values: string[] | undefined, fallback: string[], maxItems: number) {

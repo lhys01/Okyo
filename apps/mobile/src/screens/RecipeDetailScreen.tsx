@@ -59,6 +59,8 @@ export function RecipeDetailScreen() {
   const recipeSourceLabel = getRecipeSourceLabel(latestAiDebugMetadata);
   const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
   const availableModes = scanResult?.modes ?? getAvailableModes(latestScanRecipes, latestScanRecipe, isDemoScan);
+  const spicePairings = getSafeTextList(recipe?.spicePairings);
+  const cookingTerms = getSafeCookingTerms(recipe?.cookingTerms);
   const isGeneratedRecipeMissing = Boolean(
     latestScanStatus === 'success' &&
     latestScanResult &&
@@ -203,7 +205,7 @@ export function RecipeDetailScreen() {
         {(Array.isArray(recipe.ingredients) ? recipe.ingredients : []).length > 0 ? (
           recipe.ingredients.map((ingredient) => (
           <Text key={`${recipe.id}-${ingredient.name}`} style={styles.listItem}>
-            {ingredient.quantity} {ingredient.name}
+            {formatIngredient(ingredient)}
             {ingredient.pantryItem ? ' (pantry)' : ''}
           </Text>
           ))
@@ -215,15 +217,63 @@ export function RecipeDetailScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Instructions</Text>
         {(Array.isArray(recipe.steps) ? recipe.steps : []).length > 0 ? (
-          recipe.steps.map((step, index) => (
-          <View key={`${recipe.id}-step-${step}`} style={styles.stepRow}>
-            <Text style={styles.stepNumber}>{index + 1}</Text>
-            <Text style={styles.stepText}>{step}</Text>
-          </View>
-          ))
+          recipe.steps.map((step, index) => {
+            const stepTerms = getStepCookingTerms(step, cookingTerms);
+            const stepBoosters = getStepBoosters(step, index, recipe.steps.length, spicePairings);
+
+            return (
+              <View key={`${recipe.id}-step-${step}`} style={styles.stepBlock}>
+                <View style={styles.stepRow}>
+                  <Text style={styles.stepNumber}>{index + 1}</Text>
+                  <Text style={styles.stepText}>{step}</Text>
+                </View>
+                {stepBoosters.length > 0 ? (
+                  <View style={styles.stepBoostCard}>
+                    <Text style={styles.stepBoostLabel}>Optional boost</Text>
+                    <View style={styles.chipRow}>
+                      {stepBoosters.map((pairing) => (
+                        <Text key={`${recipe.id}-step-${index}-pairing-${pairing}`} style={styles.flavorChip}>
+                          {pairing}
+                        </Text>
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
+                {stepTerms.map((term) => (
+                  <View key={`${recipe.id}-step-${index}-term-${term.term}`} style={styles.termTipCard}>
+                    <Text style={styles.termName}>What does {term.term.toLowerCase()} mean?</Text>
+                    <Text style={styles.termMeaning}>{term.meaning}</Text>
+                  </View>
+                ))}
+              </View>
+            );
+          })
         ) : (
           <Text style={styles.listItem}>Steps are not available yet. Try Restaurant Copy mode.</Text>
         )}
+        {getUnmatchedCookingTerms(recipe.steps, cookingTerms).length > 0 ? (
+          <View style={styles.termsInlineSection}>
+            <Text style={styles.stepBoostLabel}>Tap-to-learn terms</Text>
+            {getUnmatchedCookingTerms(recipe.steps, cookingTerms).map((term) => (
+              <View key={`${recipe.id}-term-${term.term}`} style={styles.termTipCard}>
+                <Text style={styles.termName}>{term.term}</Text>
+                <Text style={styles.termMeaning}>{term.meaning}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {spicePairings.length > 0 ? (
+          <View style={styles.termsInlineSection}>
+            <Text style={styles.stepBoostLabel}>Flavor boosters</Text>
+            <View style={styles.chipRow}>
+              {spicePairings.map((pairing) => (
+                <Text key={`${recipe.id}-pairing-${pairing}`} style={styles.flavorChip}>
+                  {pairing}
+                </Text>
+              ))}
+            </View>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.section}>
@@ -336,6 +386,68 @@ const styles = StyleSheet.create({
     marginTop: 14,
     padding: 18,
   },
+  stepBoostCard: {
+    backgroundColor: '#fff7ed',
+    borderColor: '#ffd0b8',
+    borderRadius: 14,
+    borderWidth: 1,
+    marginLeft: 35,
+    marginTop: -2,
+    padding: 12,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  flavorChip: {
+    backgroundColor: '#fffdf8',
+    borderColor: '#ffd0b8',
+    borderRadius: 999,
+    borderWidth: 1,
+    color: colors.charcoal,
+    fontSize: 13,
+    fontWeight: '900',
+    overflow: 'hidden',
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  termsInlineSection: {
+    backgroundColor: '#f4f8f1',
+    borderColor: '#d7e8d0',
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 10,
+    padding: 12,
+  },
+  termTipCard: {
+    backgroundColor: '#fffdf8',
+    borderColor: '#d7e8d0',
+    borderRadius: 14,
+    borderWidth: 1,
+    marginLeft: 35,
+    marginTop: -2,
+    padding: 12,
+  },
+  stepBoostLabel: {
+    color: colors.coral,
+    fontSize: 12,
+    fontWeight: '900',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  termName: {
+    color: colors.green,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  termMeaning: {
+    color: colors.body,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 19,
+    marginTop: 4,
+  },
   sectionTitle: {
     color: colors.charcoal,
     fontSize: 18,
@@ -351,7 +463,10 @@ const styles = StyleSheet.create({
   stepRow: {
     flexDirection: 'row',
     gap: 10,
-    marginBottom: 12,
+  },
+  stepBlock: {
+    gap: 10,
+    marginBottom: 14,
   },
   stepNumber: {
     backgroundColor: colors.coral,
@@ -436,4 +551,64 @@ function getAvailableModes(recipes: Recipe[], fallbackRecipe: Recipe | null, isD
 
 function getEstimatedRestaurantPrice(recipe: Recipe | null) {
   return recipe ? recipe.estimatedHomemadeCost + recipe.estimatedSavings : 0;
+}
+
+function getSafeTextList(values: string[] | undefined) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+function getSafeCookingTerms(recipeTerms: Recipe['cookingTerms']) {
+  return (Array.isArray(recipeTerms) ? recipeTerms : [])
+    .map((term) => ({
+      term: term.term.trim(),
+      meaning: term.meaning.trim(),
+    }))
+    .filter((term) => term.term && term.meaning)
+    .slice(0, 4);
+}
+
+function getStepCookingTerms(step: string, terms: NonNullable<Recipe['cookingTerms']>) {
+  const normalizedStep = step.toLowerCase();
+  return terms.filter((term) => normalizedStep.includes(term.term.toLowerCase()));
+}
+
+function getUnmatchedCookingTerms(steps: string[], terms: NonNullable<Recipe['cookingTerms']>) {
+  const stepText = steps.join(' ').toLowerCase();
+  return terms.filter((term) => !stepText.includes(term.term.toLowerCase()));
+}
+
+function getStepBoosters(step: string, index: number, stepCount: number, pairings: string[]) {
+  if (pairings.length === 0) {
+    return [];
+  }
+
+  const normalizedStep = step.toLowerCase();
+  const isFlavorStep = [
+    'sauce',
+    'season',
+    'taste',
+    'finish',
+    'serve',
+    'garnish',
+  ].some((keyword) => normalizedStep.includes(keyword));
+
+  if (!isFlavorStep && index !== stepCount - 1) {
+    return [];
+  }
+
+  return pairings.slice(0, 2);
+}
+
+function formatIngredient(ingredient: Recipe['ingredients'][number]) {
+  const quantity = ingredient.quantity.trim();
+  const name = ingredient.name.trim();
+
+  if (!quantity) {
+    return name;
+  }
+
+  return `${quantity} ${name}`.trim();
 }

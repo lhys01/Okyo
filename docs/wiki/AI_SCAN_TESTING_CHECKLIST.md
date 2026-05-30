@@ -50,7 +50,7 @@ For real AI testing:
 - Do not upload confidential, private, or sensitive images.
 - Prefer images you are comfortable using for local QA notes.
 - Remember that AI dish names, ingredients, cost estimates, savings estimates, and recipes are approximate.
-- Recipes should be treated as copycat-style or inspired-by, never official restaurant recipes.
+- Recipes should be treated as inspired-by or inspired-by, never official restaurant recipes.
 
 ## Food Image Categories To Test
 

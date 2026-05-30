@@ -16,10 +16,10 @@ Okyo
 
 Okyo turns restaurant meals into homemade dupes.
 
-Take a photo of a dish and Okyo helps you generate a copycat-style recipe, estimated homemade cost, grocery list, and shareable result card.
+Take a photo of a dish and Okyo helps you generate a inspired-by recipe, estimated homemade cost, grocery list, and shareable result card.
 
 Important: Okyo uses AI to estimate dishes, ingredients, costs, and recipes. Results are not exact restaurant recipes and should be treated as helpful cooking suggestions.
 
 ## Keywords
 
-recipe,food scanner,ai recipe,copycat,restaurant,meal,grocery,cooking,cheap meals,dupe
+recipe,food scanner,ai recipe,inspired-by,restaurant,meal,grocery,cooking,cheap meals,dupe

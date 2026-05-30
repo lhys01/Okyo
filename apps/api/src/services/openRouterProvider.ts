@@ -60,6 +60,11 @@ const recipeVariantSchema = z.object({
   ingredients: z.array(z.string()).optional().default([]),
   steps: z.array(z.string()).optional().default([]),
   substitutions: z.array(z.string()).optional().default([]),
+  spicePairings: z.array(z.string()).optional().default([]),
+  cookingTerms: z.array(z.object({
+    term: z.string().optional().default(''),
+    meaning: z.string().optional().default(''),
+  })).optional().default([]),
   pantryNote: z.string().optional().default(''),
   prepTime: z.string().optional().default(''),
   cookTime: z.string().optional().default(''),
@@ -137,7 +142,7 @@ export async function generateRecipeWithOpenRouter(input: {
     messages: [
       {
         role: 'system',
-        content: 'You are Okyo, a cautious copycat-style recipe assistant. Return ONLY valid JSON in the assistant message content. Do not put JSON in reasoning. Do not return markdown. Do not explain.',
+        content: 'You are Okyo, a cautious restaurant-style recipe assistant. Return ONLY valid JSON in the assistant message content. Do not put JSON in reasoning. Do not return markdown. Do not explain.',
       },
       {
         role: 'user',
@@ -255,12 +260,24 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
 
 function getRecipePrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
   return [
-    'Create compact copycat-style homemade recipe options for Okyo based on this uncertain food analysis.',
+    'Create complete, premium-feeling inspired-by homemade recipe options for Okyo based on this uncertain food analysis.',
     'Return compact valid JSON only. Keep the response short enough to fit. No markdown. No explanation. No reasoning. No extra text.',
     'Return exactly these top-level fields: restaurantCopy, budget, healthy.',
-    'Each mode must contain: title, description, ingredients, steps, substitutions, pantryNote, prepTime, cookTime, difficulty.',
-    'Hard limits for each mode: description one sentence, max 6 ingredients, max 5 short steps, max 3 substitutions, pantryNote under 12 words.',
-    'Titles and descriptions must say "copycat-style" or "inspired-by"; never claim the recipe is official.',
+    'Each mode must contain: title, description, ingredients, steps, substitutions, pantryNote, prepTime, cookTime, difficulty, spicePairings, cookingTerms.',
+    'Hard limits for each mode: description one polished casual sentence, 7-9 ingredients, 5-6 helpful steps, max 3 substitutions, max 4 spicePairings, max 3 cookingTerms, pantryNote under 12 words.',
+    'Never use the word copycat. Use inspired-by or restaurant-style instead.',
+    'Titles and descriptions must say "inspired-by", "restaurant-style", "homemade version", or "Okyo-style". Do not use the word official.',
+    'Avoid typos and awkward wording.',
+    'Ingredients must include concise useful quantities, not vague amounts: "8 oz wheat noodles", "1 tbsp gochujang", "2 tsp soy sauce", "1 clove garlic".',
+    'Do not use "as needed" as a default quantity. Use "to taste" only for salt, pepper, spices, garnish, or sauce finishing.',
+    'If unsure about an ingredient amount, choose a reasonable approximate home-cooking amount for 2 servings.',
+    'Recipes must include the core parts needed to cook the dish, not just toppings.',
+    'For burgers or cheeseburgers include buns, patty/protein, sauce or condiment, relevant toppings, and cheese when cheeseburger is likely.',
+    'For noodles or pasta include noodles/pasta, sauce base, aromatics, protein or vegetable if relevant, and garnish/seasoning.',
+    'For pizza include dough/crust, sauce, cheese, toppings, and oil/seasoning only if relevant.',
+    'Steps should say what to do, rough timing, visual cue, and a short beginner note when useful.',
+    'spicePairings should be short flavor boosters like "toasted sesame oil", "gochugaru", or "lime".',
+    'cookingTerms should explain beginner terms used in the steps, like {"term":"simmer","meaning":"cook gently with small bubbles"}.',
     'Make Restaurant Copy closest to the restaurant-style version, Budget lower-cost, and Healthy lighter without exact nutrition claims.',
     'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
     `Primary requested mode: ${mode}.`,
