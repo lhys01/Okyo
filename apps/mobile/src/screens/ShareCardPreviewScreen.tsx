@@ -82,10 +82,25 @@ export function ShareCardPreviewScreen() {
   const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const selectedMode = getSafeRecipeMode(route.params?.mode ?? storeMode);
-  const scanResult = latestScanResult ?? defaultScanResult;
-  const isDemoScan = isExplicitDemoScan(selectedScanImage);
-  const recipe = getShareRecipe(selectedMode, latestScanRecipes, latestScanRecipe, isDemoScan);
+  const scanContext = route.params?.scanContext;
+  const shareImage = scanContext?.image ?? selectedScanImage;
+  const isDemoScan = isExplicitDemoScan(shareImage);
+  const recipe = getShareRecipe(
+    selectedMode,
+    latestScanRecipes,
+    latestScanRecipe,
+    scanContext?.recipe ?? null,
+    isDemoScan,
+  );
   const cardRecipe = recipe ?? getSafeRecipeForMode(selectedMode);
+  const scanResult = scanContext?.scanResult ?? latestScanResult ?? (isDemoScan ? defaultScanResult : null);
+  const fallbackScanResult = scanResult ?? defaultScanResult;
+  const scanDishName = scanResult?.dishName ?? recipe?.title ?? '';
+  const scanRestaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
+  const scanHomemadeCost = recipe?.estimatedHomemadeCost ?? scanResult?.homemadeCost ?? cardRecipe.estimatedHomemadeCost;
+  const scanEstimatedSavings = recipe?.estimatedSavings ?? scanResult?.estimatedSavings ?? cardRecipe.estimatedSavings;
+  const scanScoreLabel = scanResult ? `${scanResult.matchScore.toFixed(1)}/10 match` : 'Generated dupe';
+  const hasScanShareContext = Boolean(recipe && scanDishName && scanRestaurantPrice > 0);
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
   const latestChallenge = safeCompletedChallenges[safeCompletedChallenges.length - 1];
@@ -111,19 +126,24 @@ export function ShareCardPreviewScreen() {
   const packDish =
     selectedPack.dishes.find((dish) => dish.id === route.params?.dishId) ??
     selectedPack.dishes[0];
-  const fallbackNote = latestScanResult ? undefined : 'Using the default mock scan result.';
-  const needsScanResult = cardType === 'scan_result' || cardType === 'challenge_result';
-  const missingScanResult = needsScanResult && (!latestScanResult || (cardType === 'scan_result' && !recipe));
+  const fallbackNote = isDemoScan && !latestScanResult && !scanContext?.scanResult
+    ? 'Using the demo scan result.'
+    : undefined;
+  const missingScanResult = cardType === 'scan_result'
+    ? !hasScanShareContext
+    : cardType === 'challenge_result'
+      ? !latestChallenge && !scanResult && !isDemoScan
+      : false;
 
   const dataByType: Record<ShareCardType, StoryCardData> = {
     scan_result: {
       cardType: 'scan_result',
       eyebrow: 'I found a dupe',
-      dishName: scanResult.dishName,
-      restaurantPrice: scanResult.restaurantPrice,
-      homemadeCost: cardRecipe.estimatedHomemadeCost,
-      estimatedSavings: cardRecipe.estimatedSavings,
-      scoreLabel: `${scanResult.matchScore.toFixed(1)}/10 match`,
+      dishName: scanDishName || cardRecipe.title,
+      restaurantPrice: scanRestaurantPrice,
+      homemadeCost: scanHomemadeCost,
+      estimatedSavings: scanEstimatedSavings,
+      scoreLabel: scanScoreLabel,
       selectedMode,
       caption: '',
       fallbackNote,
@@ -131,11 +151,11 @@ export function ShareCardPreviewScreen() {
     challenge_result: {
       cardType: 'challenge_result',
       eyebrow: 'Dupe Challenge complete',
-      dishName: latestChallenge?.recipeTitle ?? scanResult.dishName,
-      restaurantPrice: scanResult.restaurantPrice,
+      dishName: latestChallenge?.recipeTitle ?? fallbackScanResult.dishName,
+      restaurantPrice: fallbackScanResult.restaurantPrice,
       homemadeCost: cardRecipe.estimatedHomemadeCost,
       estimatedSavings: latestChallenge?.moneySaved ?? cardRecipe.estimatedSavings,
-      scoreLabel: `${(latestChallenge?.matchScore ?? scanResult.matchScore).toFixed(1)}/10 match`,
+      scoreLabel: `${(latestChallenge?.matchScore ?? fallbackScanResult.matchScore).toFixed(1)}/10 match`,
       selectedMode: latestChallenge?.mode ?? selectedMode,
       caption: '',
       fallbackNote,
@@ -144,7 +164,7 @@ export function ShareCardPreviewScreen() {
       cardType: 'ranking',
       eyebrow: topLeaderboardEntry.category,
       dishName: topLeaderboardEntry.displayName,
-      restaurantPrice: scanResult.restaurantPrice,
+      restaurantPrice: fallbackScanResult.restaurantPrice,
       homemadeCost: cardRecipe.estimatedHomemadeCost,
       estimatedSavings: cardRecipe.estimatedSavings,
       scoreLabel: `#${topLeaderboardEntry.rank} this week`,
@@ -154,8 +174,8 @@ export function ShareCardPreviewScreen() {
     badge: {
       cardType: 'badge',
       eyebrow: unlockedBadge.name,
-      dishName: scanResult.dishName,
-      restaurantPrice: scanResult.restaurantPrice,
+      dishName: fallbackScanResult.dishName,
+      restaurantPrice: fallbackScanResult.restaurantPrice,
       homemadeCost: cardRecipe.estimatedHomemadeCost,
       estimatedSavings: cardRecipe.estimatedSavings,
       scoreLabel: unlockedBadge.description,
@@ -270,8 +290,8 @@ export function ShareCardPreviewScreen() {
       <View style={styles.previewFrame}>
         <View style={styles.storyCard}>
           <View style={styles.imagePlaceholder}>
-            {selectedScanImage?.uri ? (
-              <Image source={{ uri: selectedScanImage.uri }} style={styles.scanImage} />
+            {shareImage?.uri ? (
+              <Image source={{ uri: shareImage.uri }} style={styles.scanImage} />
             ) : (
               <View style={styles.photoPlate}>
                 <Text style={styles.imageMonogram}>OK</Text>
@@ -480,13 +500,19 @@ function getShareRecipe(
   mode: RecipeMode,
   recipes: Recipe[],
   fallbackRecipe: Recipe | null,
+  routeRecipe: Recipe | null,
   isDemoScan: boolean,
 ) {
-  return recipes.find((recipe) => recipe.mode === mode) ??
+  return (routeRecipe?.mode === mode ? routeRecipe : null) ??
+    recipes.find((recipe) => recipe.mode === mode) ??
     (fallbackRecipe?.mode === mode ? fallbackRecipe : null) ??
     (isDemoScan ? getSafeRecipeForMode(mode) : null);
 }
 
 function isExplicitDemoScan(image: { placeholder?: boolean; source?: string } | null) {
   return image?.placeholder === true && image.source === 'mock';
+}
+
+function getEstimatedRestaurantPrice(recipe: Recipe | null) {
+  return recipe ? recipe.estimatedHomemadeCost + recipe.estimatedSavings : 0;
 }

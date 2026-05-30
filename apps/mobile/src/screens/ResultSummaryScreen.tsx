@@ -149,6 +149,22 @@ export function ResultSummaryScreen() {
     navigation.navigate('MainTabs');
   };
 
+  const openShareDupe = () => {
+    if (!selectedRecipe) {
+      return;
+    }
+
+    navigation.navigate('ShareCardPreviewScreen', {
+      cardType: 'scan_result',
+      mode: selectedMode,
+      scanContext: {
+        image: selectedScanImage,
+        recipe: selectedRecipe,
+        scanResult,
+      },
+    });
+  };
+
   const goToScan = () => {
     setShowStarterRecipe(false);
     setLatestScanFailure(null);
@@ -389,7 +405,7 @@ export function ResultSummaryScreen() {
           View Recipe
         </PrimaryButton>
         <View style={styles.secondaryGrid}>
-          <SecondaryButton onPress={() => navigation.navigate('ShareCardPreviewScreen', { cardType: 'scan_result', mode: selectedMode })}>
+          <SecondaryButton onPress={openShareDupe}>
             Share Dupe
           </SecondaryButton>
           <SecondaryButton onPress={saveSelectedRecipe}>Save Recipe</SecondaryButton>

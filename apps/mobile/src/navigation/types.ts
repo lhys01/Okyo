@@ -1,5 +1,6 @@
 import type { NavigatorScreenParams } from '@react-navigation/native';
-import type { RecipeMode } from '../mocks';
+import type { ScanImageMetadata } from '../api/types';
+import type { Recipe, RecipeMode, ScanResult } from '../mocks';
 
 export type ShareCardType =
   | 'scan_result'
@@ -7,6 +8,12 @@ export type ShareCardType =
   | 'ranking'
   | 'badge'
   | 'restaurant_pack';
+
+export type ShareScanContext = {
+  image?: ScanImageMetadata | null;
+  recipe?: Recipe | null;
+  scanResult?: ScanResult | null;
+};
 
 export type RootStackParamList = {
   WelcomeScreen: undefined;
@@ -17,7 +24,7 @@ export type RootStackParamList = {
   RecipeDetailScreen: { mode?: RecipeMode } | undefined;
   GroceryListScreen: { mode?: RecipeMode } | undefined;
   ShareCardPreviewScreen:
-    | { cardType?: ShareCardType; mode?: RecipeMode; packId?: string; dishId?: string }
+    | { cardType?: ShareCardType; mode?: RecipeMode; packId?: string; dishId?: string; scanContext?: ShareScanContext }
     | undefined;
   DupeChallengeScreen: { mode?: RecipeMode } | undefined;
   ChallengeCompleteScreen: { challengeId?: string } | undefined;

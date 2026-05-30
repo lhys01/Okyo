@@ -112,6 +112,22 @@ export function RecipeDetailScreen() {
     Alert.alert('Saved', `${recipe.title} was added to your library.`);
   };
 
+  const openShareDupe = () => {
+    if (!recipe) {
+      return;
+    }
+
+    navigation.navigate('ShareCardPreviewScreen', {
+      cardType: 'scan_result',
+      mode: selectedMode,
+      scanContext: {
+        image: selectedScanImage,
+        recipe,
+        scanResult,
+      },
+    });
+  };
+
   if (!recipe) {
     return (
       <ScreenContainer>
@@ -230,15 +246,13 @@ export function RecipeDetailScreen() {
       </View>
 
       <View style={styles.actions}>
-        <PrimaryButton onPress={saveSelectedRecipe}>Save Recipe</PrimaryButton>
+        <PrimaryButton onPress={openShareDupe}>Share Dupe</PrimaryButton>
+        <SecondaryButton onPress={saveSelectedRecipe}>Save Recipe</SecondaryButton>
         <SecondaryButton onPress={() => navigation.navigate('GroceryListScreen', { mode: selectedMode })}>
           Grocery List
         </SecondaryButton>
         <SecondaryButton onPress={() => navigation.navigate('DupeChallengeScreen', { mode: selectedMode })}>
           Start Dupe Challenge
-        </SecondaryButton>
-        <SecondaryButton onPress={() => navigation.navigate('ShareCardPreviewScreen', { cardType: 'scan_result', mode: selectedMode })}>
-          Share Dupe
         </SecondaryButton>
       </View>
     </ScreenContainer>
