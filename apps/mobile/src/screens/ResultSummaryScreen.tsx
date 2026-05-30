@@ -1,19 +1,15 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useEffect, useRef, useState } from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
 import type { AiDebugMetadata } from '../api/types';
 import { uiLog } from '../utils/uiDebug';
 import {
-  BadgePill,
-  ModeTabs,
   PrimaryButton,
-  ScreenContainer,
-  SecondaryButton,
   colors,
-  sharedStyles,
 } from '../components/OkyoUI';
 import {
   defaultScanResult,
@@ -27,6 +23,7 @@ import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
+const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
 type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'ResultSummaryScreen'>;
 
 export function ResultSummaryScreen() {
@@ -71,6 +68,12 @@ export function ResultSummaryScreen() {
   const debugReason = getDebugReason(latestAiDebugMetadata, latestScanFailure);
   const aiDebugLabel = getAiDebugLabel(latestAiDebugMetadata, latestScanStatus);
   const partialStarterRecipe = isPartialScan && scanResult ? getStarterRecipe(scanResult.dishName) : null;
+  const selectedModeUi = getModeUi(selectedMode);
+  const totalTimeMinutes = selectedRecipe
+    ? selectedRecipe.totalTimeMinutes ?? selectedRecipe.prepTimeMinutes + selectedRecipe.cookTimeMinutes
+    : null;
+  const displayDishName = cleanDisplayText(scanResult?.dishName ?? '');
+  const displaySubtitle = getDisplaySubtitle(scanResult?.restaurantStyle, selectedRecipe?.description);
 
   useEffect(() => {
     if (didTrackResultView.current) {
@@ -172,7 +175,7 @@ export function ResultSummaryScreen() {
     setLatestScanRecipes([]);
     setLatestScanStatus(null);
     setLatestScanRecipe(null);
-    navigation.navigate('ScanScreen');
+    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
   };
 
   const goBackToScanTab = () => {
@@ -185,9 +188,13 @@ export function ResultSummaryScreen() {
     navigation.navigate('MainTabs', { screen: 'ScanScreen' });
   };
 
+  const openSettings = () => {
+    navigation.navigate('MainTabs', { screen: 'SettingsScreen' });
+  };
+
   if (isScanFailure) {
     return (
-      <ScreenContainer>
+      <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Scan issue</Text>
         <Text style={styles.title}>{failureCopy.title}</Text>
         <Text style={styles.subtitle}>{failureCopy.body}</Text>
@@ -201,7 +208,7 @@ export function ResultSummaryScreen() {
         ) : null}
 
         {selectedScanImage?.uri ? (
-          <Image source={{ uri: selectedScanImage.uri }} style={styles.scanPreview} />
+          <Image source={{ uri: selectedScanImage.uri }} resizeMode="contain" style={styles.standaloneScanPreview} />
         ) : null}
 
         <View style={styles.failureCard}>
@@ -213,19 +220,19 @@ export function ResultSummaryScreen() {
 
         <View style={styles.actions}>
           <PrimaryButton onPress={goToScan}>Try Another Photo</PrimaryButton>
-          <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
+          <ActionButton label="Back to Scan" onPress={goBackToScanTab} />
         </View>
-      </ScreenContainer>
+      </ResultFrame>
     );
   }
 
   if (isPartialScan && scanResult) {
     return (
-      <ScreenContainer>
+      <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Almost there</Text>
-        <Text style={styles.title}>{scanResult.dishName}</Text>
+        <Text style={styles.title}>{cleanDisplayText(scanResult.dishName)}</Text>
         <Text style={styles.subtitle}>
-          We recognized this as {scanResult.dishName}. Recipe generation had a hiccup.
+          We recognized this as {cleanDisplayText(scanResult.dishName)}. Recipe generation had a hiccup.
         </Text>
         {__DEV__ && aiDebugLabel ? (
           <View style={styles.aiDebugPill}>
@@ -237,7 +244,7 @@ export function ResultSummaryScreen() {
         ) : null}
 
         {selectedScanImage?.uri ? (
-          <Image source={{ uri: selectedScanImage.uri }} style={styles.scanPreview} />
+          <Image source={{ uri: selectedScanImage.uri }} resizeMode="contain" style={styles.standaloneScanPreview} />
         ) : null}
 
         <View style={styles.partialCard}>
@@ -267,16 +274,16 @@ export function ResultSummaryScreen() {
           {partialStarterRecipe ? (
             <PrimaryButton onPress={() => setShowStarterRecipe(true)}>Use Starter Recipe</PrimaryButton>
           ) : null}
-          <SecondaryButton onPress={goToScan}>Try Again</SecondaryButton>
-          <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
+          <ActionButton label="Try Again" onPress={goToScan} />
+          <ActionButton label="Back to Scan" onPress={goBackToScanTab} />
         </View>
-      </ScreenContainer>
+      </ResultFrame>
     );
   }
 
   if (latestScanStatus === 'pending' && !latestScanResult) {
     return (
-      <ScreenContainer>
+      <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Scanning</Text>
         <Text style={styles.title}>Okyo is still looking.</Text>
         <Text style={styles.subtitle}>
@@ -286,24 +293,24 @@ export function ResultSummaryScreen() {
           <Text style={styles.loadingMiniText}>Building your homemade dupe...</Text>
         </View>
         <View style={styles.actions}>
-          <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
+          <ActionButton label="Back to Scan" onPress={goBackToScanTab} />
         </View>
-      </ScreenContainer>
+      </ResultFrame>
     );
   }
 
   if (!selectedRecipe) {
     return (
-      <ScreenContainer>
+      <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Recipe issue</Text>
         <Text style={styles.title}>The scan worked, but the recipe needs another try.</Text>
         <Text style={styles.subtitle}>
           {latestScanResult
-            ? `Okyo recognized ${scanResult?.dishName ?? 'this dish'}, but no safe ${selectedMode} recipe came back for this real scan.`
+            ? `Okyo recognized ${cleanDisplayText(scanResult?.dishName ?? 'this dish')}, but no safe ${selectedModeUi.label} recipe came back for this real scan.`
             : 'Okyo needs a completed scan before it can show a real recipe.'}
         </Text>
         {selectedScanImage?.uri ? (
-          <Image source={{ uri: selectedScanImage.uri }} style={styles.scanPreview} />
+          <Image source={{ uri: selectedScanImage.uri }} resizeMode="contain" style={styles.standaloneScanPreview} />
         ) : null}
         <View style={styles.failureCard}>
           <Text style={styles.failureTitle}>No mock recipe shown.</Text>
@@ -313,15 +320,15 @@ export function ResultSummaryScreen() {
         </View>
         <View style={styles.actions}>
           <PrimaryButton onPress={goToScan}>Try Another Photo</PrimaryButton>
-          <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
+          <ActionButton label="Back to Scan" onPress={goBackToScanTab} />
         </View>
-      </ScreenContainer>
+      </ResultFrame>
     );
   }
 
   if (!scanResult) {
     return (
-      <ScreenContainer>
+      <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Scan result</Text>
         <Text style={styles.title}>Scan something first.</Text>
         <Text style={styles.subtitle}>
@@ -329,102 +336,806 @@ export function ResultSummaryScreen() {
         </Text>
         <View style={styles.actions}>
           <PrimaryButton onPress={goToScan}>Start a Scan</PrimaryButton>
-          <SecondaryButton onPress={goBackToScanTab}>Back to Scan</SecondaryButton>
+          <ActionButton label="Back to Scan" onPress={goBackToScanTab} />
         </View>
-      </ScreenContainer>
+      </ResultFrame>
     );
   }
 
   return (
-    <ScreenContainer>
-      <Text style={styles.kicker}>{isDemoScan ? 'Demo result' : 'Scan result'}</Text>
-      <Text style={styles.title}>{scanResult.dishName}</Text>
-      <Text style={styles.subtitle}>
-        {scanResult.restaurantStyle} restaurant-style estimate
-      </Text>
+    <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
+      <View style={styles.headerSection}>
+        <Text style={styles.kicker}>Scan result</Text>
+        <Text style={styles.title}>{displayDishName}</Text>
+        <Text style={styles.subtitle}>{displaySubtitle}</Text>
+        <View style={styles.aiMatchPill}>
+          <Text style={styles.aiMatchIcon}>+</Text>
+          <Text style={styles.aiMatchText}>
+            {confidencePercent > 0 ? `${confidencePercent}% AI recipe match` : 'AI recipe match'}
+          </Text>
+        </View>
+      </View>
       {__DEV__ && aiDebugLabel ? (
         <View style={styles.aiDebugPill}>
           <Text style={styles.aiDebugText}>{aiDebugLabel}</Text>
         </View>
       ) : null}
 
-      {selectedScanImage?.uri ? (
-        <Image source={{ uri: selectedScanImage.uri }} style={styles.scanPreview} />
-      ) : null}
+      <FoodImageCard
+        dishName={displayDishName}
+        imageUri={selectedScanImage?.uri}
+        isDemoScan={isDemoScan}
+      />
 
       <View style={styles.savingsHero}>
-        <Text style={styles.savingsHeroLabel}>Estimated savings</Text>
-        <Text style={styles.savingsHeroValue}>{formatCurrency(selectedRecipe.estimatedSavings)}</Text>
-        <Text style={styles.savingsHeroBody}>
-          {formatCurrency(scanResult.restaurantPrice)} restaurant estimate to {formatCurrency(selectedRecipe.estimatedHomemadeCost)} at home.
-        </Text>
+        <View style={styles.savingsBadge}>
+          <Text style={styles.savingsBadgeText}>$</Text>
+        </View>
+        <View style={styles.savingsAmountGroup}>
+          <Text style={styles.savingsHeroLabel}>You save</Text>
+          <Text style={styles.savingsHeroValue}>
+            {formatOptionalCurrency(selectedRecipe.estimatedSavings)}
+          </Text>
+        </View>
+        <View style={styles.savingsDivider} />
+        <View style={styles.priceCompare}>
+          <View>
+            <Text style={styles.priceLabel}>Restaurant</Text>
+            <Text style={styles.priceValue}>{formatOptionalCurrency(scanResult.restaurantPrice)}</Text>
+          </View>
+          <View style={styles.priceArrowWrap}>
+            <Text style={styles.priceArrow}>→</Text>
+          </View>
+          <View>
+            <Text style={styles.priceLabel}>Home</Text>
+            <Text style={styles.priceValue}>{formatOptionalCurrency(selectedRecipe.estimatedHomemadeCost)}</Text>
+          </View>
+        </View>
       </View>
 
       <View style={styles.summaryCard}>
-        <View style={styles.metricRow}>
+        <View style={styles.statTile}>
+          <View style={[styles.statIcon, styles.statIconBlue]}>
+            <Text style={styles.statIconText}>✓</Text>
+          </View>
           <Text style={styles.metricLabel}>Confidence</Text>
-          <Text style={styles.metricValue}>{confidencePercent}%</Text>
+          <Text style={styles.metricValue}>{confidencePercent > 0 ? `${confidencePercent}%` : '—'}</Text>
         </View>
-        <View style={styles.metricRow}>
-          <Text style={styles.metricLabel}>Restaurant price</Text>
-          <Text style={styles.metricValue}>{formatCurrency(scanResult.restaurantPrice)}</Text>
-        </View>
-        <View style={styles.metricRow}>
-          <Text style={styles.metricLabel}>Homemade cost</Text>
-          <Text style={styles.metricValue}>{formatCurrency(selectedRecipe.estimatedHomemadeCost)}</Text>
-        </View>
-        <View style={styles.metricRow}>
+        <View style={styles.statDivider} />
+        <View style={styles.statTile}>
+          <View style={[styles.statIcon, styles.statIconGold]}>
+            <Text style={styles.statIconText}>^</Text>
+          </View>
           <Text style={styles.metricLabel}>Difficulty</Text>
-          <Text style={styles.metricValue}>{selectedRecipe.difficulty}</Text>
+          <Text style={styles.metricValue}>{selectedRecipe.difficulty ?? '—'}</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statTile}>
+          <View style={[styles.statIcon, styles.statIconPurple]}>
+            <Text style={styles.statIconText}>○</Text>
+          </View>
+          <Text style={styles.metricLabel}>Time</Text>
+          <Text style={styles.metricValue}>{totalTimeMinutes ? `${totalTimeMinutes} min` : '—'}</Text>
         </View>
       </View>
 
-      <ModeTabs modes={scanResult.modes} selectedMode={selectedMode} onSelectMode={chooseMode} />
+      <ResultModeTabs selectedMode={selectedMode} onSelectMode={chooseMode} />
 
       <View style={styles.matchCard}>
+        <View style={styles.modeBadge}>
+          <Text style={styles.modeBadgeIcon}>{selectedModeUi.icon}</Text>
+          <Text style={styles.modeBadgeText}>{selectedModeUi.label}</Text>
+        </View>
         <View style={styles.matchHeader}>
           <Text style={styles.matchLabel}>Match score</Text>
-          <BadgePill tone="green">{selectedMode}</BadgePill>
         </View>
-        <Text style={styles.matchValue}>{scanResult.matchScore.toFixed(1)}/10</Text>
-        <Text style={styles.matchNote}>
-          {selectedRecipe.title}: {selectedRecipe.description}
+        <Text style={styles.matchValue}>
+          {formatScore(scanResult.matchScore)}
+          <Text style={styles.matchValueDenominator}>/10</Text>
         </Text>
+        <Text style={styles.matchNote}>
+          {cleanDisplayText(selectedRecipe.description)}
+        </Text>
+        <View style={styles.chipRow}>
+          {getModeChips(selectedRecipe).map((chip) => (
+            <View key={chip.label} style={styles.infoChip}>
+              <Text style={styles.infoChipValue}>{chip.value}</Text>
+              <Text style={styles.infoChipLabel}>{chip.label}</Text>
+            </View>
+          ))}
+        </View>
       </View>
 
       {shouldShowRecipeFallbackNote ? (
         <View style={styles.recipeFallbackNote}>
           <Text style={styles.recipeFallbackNoteText}>
-            Okyo did not receive a generated {selectedMode} recipe for this scan, so this mode is using a local starter fallback.
+            Okyo did not receive a generated {selectedModeUi.label} recipe for this scan, so this mode is using a local starter fallback.
           </Text>
         </View>
       ) : null}
 
       <View style={styles.actions}>
         <PrimaryButton onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })}>
-          View Recipe
+          View recipe
         </PrimaryButton>
-        <View style={styles.secondaryGrid}>
-          <SecondaryButton onPress={openShareDupe}>
-            Share Dupe
-          </SecondaryButton>
-          <SecondaryButton onPress={saveSelectedRecipe}>Save Recipe</SecondaryButton>
-          <SecondaryButton onPress={() => navigation.navigate('GroceryListScreen', { mode: selectedMode })}>
-            Grocery List
-          </SecondaryButton>
+        <View style={styles.secondaryRow}>
+          <ActionButton label="Share" onPress={openShareDupe} />
+          <ActionButton label="Save recipe" onPress={saveSelectedRecipe} />
+          <ActionButton
+            label="Groceries"
+            onPress={() => navigation.navigate('GroceryListScreen', { mode: selectedMode })}
+          />
         </View>
       </View>
-    </ScreenContainer>
+    </ResultFrame>
   );
 }
 
+type ResultFrameProps = {
+  children: ReactNode;
+  onScanAgain: () => void;
+  onSettings: () => void;
+};
+
+function ResultFrame({ children, onScanAgain, onSettings }: ResultFrameProps) {
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.topBar}>
+          <Pressable
+            accessibilityLabel="Scan again"
+            accessibilityRole="button"
+            onPress={onScanAgain}
+            style={({ pressed }) => [styles.scanAgainButton, pressed ? styles.pressed : null]}
+          >
+            <Text style={styles.scanAgainArrow}>‹</Text>
+            <Text style={styles.scanAgainText}>Scan again</Text>
+          </Pressable>
+          <Text style={styles.topTitle}>Result</Text>
+          <Pressable
+            accessibilityLabel="Open settings"
+            accessibilityRole="button"
+            onPress={onSettings}
+            style={({ pressed }) => [styles.settingsButton, pressed ? styles.pressed : null]}
+          >
+            <SettingsGlyph />
+          </Pressable>
+        </View>
+        {children}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function SettingsGlyph() {
+  return (
+    <View style={styles.settingsGlyph}>
+      <View style={styles.settingsToothTop} />
+      <View style={styles.settingsToothSide} />
+      <View style={styles.settingsGearOuter}>
+        <View style={styles.settingsGearInner} />
+      </View>
+    </View>
+  );
+}
+
+type FoodImageCardProps = {
+  dishName: string;
+  imageUri?: string;
+  isDemoScan: boolean;
+};
+
+function FoodImageCard({ dishName, imageUri, isDemoScan }: FoodImageCardProps) {
+  if (imageUri) {
+    return (
+      <View style={styles.foodImageCard}>
+        <Image source={{ uri: imageUri }} resizeMode="contain" style={styles.foodImage} />
+      </View>
+    );
+  }
+
+  if (isDemoScan) {
+    return (
+      <View style={styles.foodImageCard}>
+        <Text style={styles.foodFallbackLabel}>{dishName}</Text>
+        <View style={styles.demoPlate}>
+          <View style={styles.demoBunTop} />
+          <View style={styles.demoSauce} />
+          <View style={styles.demoPatty} />
+          <View style={styles.demoBunBottom} />
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.foodImageCard}>
+      <Text style={styles.photoUnavailableTitle}>Food photo unavailable</Text>
+      <Text style={styles.photoUnavailableBody}>Okyo can still show the scan result from the recipe data.</Text>
+    </View>
+  );
+}
+
+type ResultModeTabsProps = {
+  selectedMode: RecipeMode;
+  onSelectMode: (mode: RecipeMode) => void;
+};
+
+function ResultModeTabs({ selectedMode, onSelectMode }: ResultModeTabsProps) {
+  return (
+    <View style={styles.modeTabs}>
+      {recipeModes.map((mode, index) => {
+        const isSelected = selectedMode === mode;
+        const modeUi = getModeUi(mode);
+
+        return (
+          <View key={mode} style={styles.modeTabSlot}>
+            {index > 0 ? <View style={styles.modeDivider} /> : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
+              onPress={() => onSelectMode(mode)}
+              style={({ pressed }) => [
+                styles.modeTab,
+                isSelected ? styles.modeTabSelected : null,
+                pressed ? styles.pressed : null,
+              ]}
+            >
+              <Text style={[styles.modeTabIcon, isSelected ? styles.modeTabIconSelected : null]}>
+                {modeUi.icon}
+              </Text>
+              <Text style={[styles.modeTabText, isSelected ? styles.modeTabTextSelected : null]}>
+                {modeUi.label}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+type ActionButtonProps = {
+  label: string;
+  onPress: () => void;
+};
+
+function ActionButton({ label, onPress }: ActionButtonProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.actionButton, pressed ? styles.pressed : null]}
+    >
+      <Text style={styles.actionButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const modeUiByMode: Record<RecipeMode, { label: string; icon: string }> = {
+  'Restaurant Copy': { label: 'Restaurant Style', icon: 'R' },
+  Budget: { label: 'Budget', icon: '$' },
+  Healthy: { label: 'Lighter', icon: 'L' },
+};
+
+function getModeUi(mode: RecipeMode) {
+  return modeUiByMode[mode];
+}
+
+function getModeChips(recipe: Recipe) {
+  return [
+    { label: 'Est. cost', value: formatOptionalCurrency(recipe.estimatedHomemadeCost) },
+    { label: 'Savings', value: formatOptionalCurrency(recipe.estimatedSavings) },
+    { label: 'Serves', value: String(recipe.servings || '—') },
+  ].filter((chip) => chip.value !== '—');
+}
+
+function getDisplaySubtitle(restaurantStyle?: string, recipeDescription?: string) {
+  const style = cleanDisplayText(restaurantStyle ?? '');
+  if (style) {
+    return `${style} inspired-by homemade swap`;
+  }
+
+  const description = cleanDisplayText(recipeDescription ?? '');
+  return description || 'Inspired-by homemade swap estimate';
+}
+
+function cleanDisplayText(value: string) {
+  const commonTypo = `Amer${'cian'}`;
+  const lowercaseTypo = `amer${'cian'}`;
+
+  return value
+    .replace(new RegExp(`\\b${commonTypo}\\b`, 'g'), 'American')
+    .replace(new RegExp(`\\b${lowercaseTypo}\\b`, 'g'), 'american')
+    .trim();
+}
+
+function formatOptionalCurrency(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? formatCurrency(value) : '—';
+}
+
+function formatScore(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(1) : '—';
+}
+
 const styles = StyleSheet.create({
+  safeArea: {
+    backgroundColor: colors.background,
+    flex: 1,
+  },
+  screenContent: {
+    backgroundColor: colors.background,
+    flexGrow: 1,
+    paddingBottom: 34,
+    paddingHorizontal: 18,
+  },
+  topBar: {
+    alignItems: 'center',
+    height: 54,
+    justifyContent: 'center',
+    marginBottom: 18,
+    position: 'relative',
+  },
+  scanAgainButton: {
+    alignItems: 'center',
+    backgroundColor: '#fffaf3',
+    borderColor: colors.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    left: 0,
+    minHeight: 42,
+    paddingHorizontal: 14,
+    position: 'absolute',
+    top: 6,
+  },
+  scanAgainArrow: {
+    color: colors.charcoal,
+    fontSize: 32,
+    fontWeight: '900',
+    lineHeight: 32,
+  },
+  scanAgainText: {
+    color: colors.charcoal,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  topTitle: {
+    color: colors.charcoal,
+    fontSize: 22,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  settingsButton: {
+    alignItems: 'center',
+    backgroundColor: '#fffaf3',
+    borderColor: colors.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 42,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 0,
+    top: 6,
+    width: 42,
+  },
+  settingsGlyph: {
+    alignItems: 'center',
+    height: 20,
+    justifyContent: 'center',
+    width: 20,
+  },
+  settingsGearOuter: {
+    alignItems: 'center',
+    backgroundColor: colors.charcoal,
+    borderRadius: 999,
+    height: 18,
+    justifyContent: 'center',
+    width: 18,
+  },
+  settingsGearInner: {
+    backgroundColor: '#fffaf3',
+    borderRadius: 999,
+    height: 7,
+    width: 7,
+  },
+  settingsToothTop: {
+    backgroundColor: colors.charcoal,
+    borderRadius: 2,
+    height: 22,
+    position: 'absolute',
+    width: 5,
+  },
+  settingsToothSide: {
+    backgroundColor: colors.charcoal,
+    borderRadius: 2,
+    height: 5,
+    position: 'absolute',
+    width: 22,
+  },
+  headerSection: {
+    marginBottom: 14,
+  },
   kicker: {
     color: colors.coral,
     fontSize: 13,
     fontWeight: '900',
-    marginBottom: 8,
+    marginBottom: 10,
     textTransform: 'uppercase',
+  },
+  title: {
+    color: colors.charcoal,
+    fontSize: 38,
+    fontWeight: '900',
+    lineHeight: 42,
+  },
+  subtitle: {
+    color: colors.body,
+    fontSize: 18,
+    lineHeight: 24,
+    marginTop: 8,
+  },
+  aiMatchPill: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#eef4ff',
+    borderColor: '#bad0ff',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  aiMatchIcon: {
+    color: '#3967c3',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  aiMatchText: {
+    color: '#315aaa',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  foodImageCard: {
+    alignItems: 'center',
+    aspectRatio: 1.35,
+    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    borderRadius: 28,
+    borderWidth: 1,
+    justifyContent: 'center',
+    maxHeight: 280,
+    minHeight: 210,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  foodImage: {
+    height: '100%',
+    width: '100%',
+  },
+  foodFallbackLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '900',
+    left: 18,
+    position: 'absolute',
+    textTransform: 'uppercase',
+    top: 16,
+  },
+  demoPlate: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+    width: '82%',
+  },
+  demoBunTop: {
+    backgroundColor: '#d89037',
+    borderRadius: 80,
+    height: 62,
+    width: '84%',
+  },
+  demoSauce: {
+    backgroundColor: '#f6b936',
+    height: 24,
+    marginTop: -6,
+    transform: [{ rotate: '-2deg' }],
+    width: '78%',
+  },
+  demoPatty: {
+    backgroundColor: '#6f321b',
+    borderRadius: 24,
+    height: 46,
+    marginTop: -5,
+    width: '82%',
+  },
+  demoBunBottom: {
+    backgroundColor: '#bf7633',
+    borderBottomLeftRadius: 40,
+    borderBottomRightRadius: 40,
+    height: 32,
+    marginTop: -2,
+    width: '76%',
+  },
+  photoUnavailableTitle: {
+    color: colors.charcoal,
+    fontSize: 18,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  photoUnavailableBody: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+    maxWidth: 260,
+    textAlign: 'center',
+  },
+  savingsHero: {
+    alignItems: 'center',
+    backgroundColor: '#edf8ef',
+    borderColor: '#bfe4ca',
+    borderRadius: 24,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 14,
+    marginTop: 16,
+    padding: 16,
+  },
+  savingsBadge: {
+    alignItems: 'center',
+    backgroundColor: '#f8fff9',
+    borderRadius: 999,
+    height: 58,
+    justifyContent: 'center',
+    width: 58,
+  },
+  savingsBadgeText: {
+    color: colors.green,
+    fontSize: 28,
+    fontWeight: '900',
+  },
+  savingsAmountGroup: {
+    minWidth: 100,
+  },
+  savingsHeroLabel: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  savingsHeroValue: {
+    color: colors.green,
+    fontSize: 36,
+    fontWeight: '900',
+    lineHeight: 40,
+    marginTop: 2,
+  },
+  savingsDivider: {
+    backgroundColor: '#c7e5d0',
+    height: 72,
+    width: 1,
+  },
+  priceCompare: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  priceLabel: {
+    color: colors.body,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  priceValue: {
+    color: colors.charcoal,
+    fontSize: 18,
+    fontWeight: '900',
+    marginTop: 5,
+  },
+  priceArrowWrap: {
+    alignItems: 'center',
+    backgroundColor: '#d8f0df',
+    borderRadius: 999,
+    height: 34,
+    justifyContent: 'center',
+    marginHorizontal: 4,
+    width: 34,
+  },
+  priceArrow: {
+    color: colors.green,
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  summaryCard: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    borderRadius: 24,
+    borderWidth: 1,
+    flexDirection: 'row',
+    marginTop: 16,
+    paddingHorizontal: 8,
+    paddingVertical: 18,
+  },
+  statTile: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 94,
+  },
+  statDivider: {
+    backgroundColor: colors.border,
+    height: 76,
+    width: 1,
+  },
+  statIcon: {
+    alignItems: 'center',
+    borderRadius: 999,
+    height: 42,
+    justifyContent: 'center',
+    marginBottom: 10,
+    width: 42,
+  },
+  statIconBlue: {
+    backgroundColor: '#e8efff',
+  },
+  statIconGold: {
+    backgroundColor: '#fff1ce',
+  },
+  statIconPurple: {
+    backgroundColor: '#f1e1ff',
+  },
+  statIconText: {
+    color: colors.charcoal,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  metricLabel: {
+    color: colors.body,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  metricValue: {
+    color: colors.charcoal,
+    fontSize: 21,
+    fontWeight: '900',
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  modeTabs: {
+    alignItems: 'center',
+    backgroundColor: '#fff8ed',
+    borderColor: colors.border,
+    borderRadius: 22,
+    borderWidth: 1,
+    flexDirection: 'row',
+    marginTop: 18,
+    padding: 5,
+  },
+  modeTabSlot: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+  },
+  modeDivider: {
+    backgroundColor: colors.border,
+    height: 34,
+    width: 1,
+  },
+  modeTab: {
+    alignItems: 'center',
+    borderRadius: 18,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 7,
+    justifyContent: 'center',
+    minHeight: 50,
+    paddingHorizontal: 6,
+  },
+  modeTabSelected: {
+    backgroundColor: colors.charcoal,
+  },
+  modeTabIcon: {
+    color: colors.charcoal,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  modeTabIconSelected: {
+    color: '#bfeecb',
+  },
+  modeTabText: {
+    color: colors.charcoal,
+    fontSize: 13,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  modeTabTextSelected: {
+    color: '#fffdf8',
+  },
+  matchCard: {
+    backgroundColor: '#fffaf3',
+    borderColor: colors.border,
+    borderRadius: 26,
+    borderWidth: 1,
+    marginTop: 18,
+    padding: 22,
+  },
+  modeBadge: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#dff2e5',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  modeBadgeIcon: {
+    color: colors.green,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  modeBadgeText: {
+    color: colors.green,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  matchHeader: {
+    marginTop: 26,
+  },
+  matchLabel: {
+    color: colors.body,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  matchValue: {
+    color: colors.charcoal,
+    fontSize: 62,
+    fontWeight: '900',
+    lineHeight: 72,
+    marginTop: 2,
+  },
+  matchValueDenominator: {
+    color: colors.green,
+    fontSize: 42,
+    fontWeight: '900',
+  },
+  matchNote: {
+    color: colors.body,
+    fontSize: 18,
+    lineHeight: 26,
+    marginTop: 12,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 24,
+  },
+  infoChip: {
+    backgroundColor: '#fffdf8',
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 72,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+  },
+  infoChipValue: {
+    color: colors.charcoal,
+    fontSize: 20,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  infoChipLabel: {
+    color: colors.body,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 3,
+    textAlign: 'center',
   },
   recipeFallbackNote: {
     backgroundColor: '#fff7d8',
@@ -440,102 +1151,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 19,
   },
-  title: {
-    color: colors.charcoal,
-    fontSize: 34,
-    fontWeight: '900',
-    lineHeight: 39,
-  },
-  subtitle: {
-    color: colors.body,
-    fontSize: 16,
-    lineHeight: 22,
-    marginTop: 8,
-  },
-  savingsHero: {
-    backgroundColor: colors.greenSoft,
-    borderColor: '#c7e8d1',
+  standaloneScanPreview: {
+    backgroundColor: '#fffaf3',
+    borderColor: colors.border,
     borderRadius: 20,
     borderWidth: 1,
-    marginTop: 22,
-    padding: 20,
-  },
-  scanPreview: {
-    backgroundColor: colors.cream,
-    borderRadius: 18,
-    height: 190,
+    height: 210,
     marginTop: 18,
     width: '100%',
-  },
-  savingsHeroLabel: {
-    color: colors.green,
-    fontSize: 13,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  savingsHeroValue: {
-    color: colors.green,
-    fontSize: 46,
-    fontWeight: '900',
-    lineHeight: 52,
-    marginTop: 3,
-  },
-  savingsHeroBody: {
-    color: '#356b4c',
-    fontSize: 14,
-    fontWeight: '700',
-    lineHeight: 20,
-    marginTop: 8,
-  },
-  summaryCard: {
-    ...sharedStyles.card,
-    marginTop: 14,
-    padding: 18,
-  },
-  metricRow: {
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-  },
-  metricLabel: {
-    color: colors.body,
-    fontSize: 15,
-  },
-  metricValue: {
-    color: colors.charcoal,
-    fontSize: 16,
-    fontWeight: '900',
-  },
-  matchCard: {
-    backgroundColor: colors.cream,
-    borderRadius: 20,
-    marginTop: 18,
-    padding: 18,
-  },
-  matchHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  matchLabel: {
-    color: colors.body,
-    fontSize: 14,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  matchValue: {
-    color: colors.charcoal,
-    fontSize: 30,
-    fontWeight: '900',
-    marginTop: 2,
-  },
-  matchNote: {
-    color: colors.body,
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 8,
   },
   failureCard: {
     backgroundColor: colors.cream,
@@ -622,8 +1245,26 @@ const styles = StyleSheet.create({
     gap: 12,
     marginTop: 22,
   },
-  secondaryGrid: {
+  secondaryRow: {
+    flexDirection: 'row',
     gap: 10,
+  },
+  actionButton: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 58,
+    paddingHorizontal: 8,
+  },
+  actionButtonText: {
+    color: colors.charcoal,
+    fontSize: 14,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   aiDebugPill: {
     alignSelf: 'flex-start',
@@ -646,6 +1287,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 17,
     marginTop: 8,
+  },
+  pressed: {
+    opacity: 0.78,
+    transform: [{ scale: 0.99 }],
   },
 });
 
