@@ -83,12 +83,12 @@ export function AppNavigator() {
       <Stack.Screen
         name="RecipeDetailScreen"
         component={RecipeDetailScreen}
-        options={{ title: 'Recipe' }}
+        options={{ headerShown: false, title: 'Recipe' }}
       />
       <Stack.Screen
         name="GroceryListScreen"
         component={GroceryListScreen}
-        options={{ title: 'Grocery List' }}
+        options={{ headerShown: false, title: 'Grocery List' }}
       />
       <Stack.Screen
         name="ShareCardPreviewScreen"
