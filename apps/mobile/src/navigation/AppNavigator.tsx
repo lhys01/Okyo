@@ -60,6 +60,8 @@ export function AppNavigator() {
       initialRouteName="MainTabs"
       screenOptions={{
         contentStyle: { backgroundColor: colors.background },
+        headerBackButtonDisplayMode: 'generic',
+        headerBackTitle: 'Back',
         headerShadowVisible: false,
         headerStyle: { backgroundColor: colors.background },
         headerTintColor: colors.charcoal,
@@ -67,16 +69,16 @@ export function AppNavigator() {
     >
       <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} options={{ title: 'Okyo' }} />
       <Stack.Screen name="GoalScreen" component={GoalScreen} options={{ title: 'Goal' }} />
-      <Stack.Screen name="ScanScreen" component={ScanScreen} options={{ title: 'Scan' }} />
+      <Stack.Screen name="ScanScreen" component={ScanScreen} options={{ headerShown: false, title: 'Scan' }} />
       <Stack.Screen
         name="AnalysisLoadingScreen"
         component={AnalysisLoadingScreen}
-        options={{ title: 'Analyzing' }}
+        options={{ headerShown: false, title: 'Analyzing' }}
       />
       <Stack.Screen
         name="ResultSummaryScreen"
         component={ResultSummaryScreen}
-        options={{ headerShown: false }}
+        options={{ headerShown: false, title: 'Result' }}
       />
       <Stack.Screen
         name="RecipeDetailScreen"
@@ -109,7 +111,7 @@ export function AppNavigator() {
         options={{ title: 'Pack Detail' }}
       />
       <Stack.Screen name="PaywallScreen" component={PaywallScreen} options={{ title: 'Okyo Plus' }} />
-      <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
+      <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false, title: 'Okyo' }} />
     </Stack.Navigator>
   );
 }

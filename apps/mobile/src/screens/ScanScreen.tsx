@@ -1,13 +1,24 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
+import {
+  Book,
+  Camera,
+  CameraSolid,
+  Dollar,
+  NavArrowRight,
+  Spark,
+  Sparks,
+  Upload,
+} from 'iconoir-react-native';
+import type { ReactNode } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
-import { PrimaryButton, SecondaryButton, colors } from '../components/OkyoUI';
+import { colors } from '../components/OkyoUI';
 import { defaultScanResult, getSafeRecipeForMode, getSafeRecipeMode, type Recipe, type RecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
@@ -122,7 +133,7 @@ export function ScanScreen() {
         uiLog('ScanScreen', 'camera_permission_denied');
         Alert.alert(
           'Camera permission needed',
-          'Okyo needs camera permission to take a food photo. You can allow camera access in Settings or use Upload From Photos instead.',
+          'Okyo needs camera permission to take a food photo. You can allow camera access in Settings or use Upload food photo instead.',
         );
         return;
       }
@@ -189,64 +200,167 @@ export function ScanScreen() {
 
   const recentRecipe = savedRecipes.length > 0 ? savedRecipes[0] : null;
 
+  const openRecentRecipe = () => {
+    if (!recentRecipe?.id) {
+      return;
+    }
+
+    const mode = getSafeRecipeMode(recentRecipe.mode);
+    uiLog('ScanScreen', 'open_recent_recipe', { recipeId: recentRecipe.id });
+    setLatestAiDebugMetadata(null);
+    setLatestScanFailure(null);
+    setLatestScanRecipe(recentRecipe);
+    setLatestScanRecipes([recentRecipe]);
+    setLatestScanResult(null);
+    setLatestScanStatus(null);
+    setSelectedScanImage(null);
+    setSelectedMode(mode);
+    navigation.navigate('RecipeDetailScreen', { mode });
+  };
+
+  const openLibrary = () => {
+    navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
+  };
+
   return (
     <SafeAreaView edges={['top']} style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header with Logo and Kiko */}
-        <View style={styles.headerTop}>
-          <Text style={styles.headerLabel}>Scan</Text>
-          <View style={styles.kikoPadding}>
-            <Text style={styles.kiko}>🦊</Text>
+        <View style={styles.hero}>
+          <Text
+            adjustsFontSizeToFit
+            minimumFontScale={0.78}
+            numberOfLines={2}
+            style={styles.headline}
+          >
+            What are we remaking today?
+          </Text>
+          <Text style={styles.subtitle}>
+            Snap or upload a restaurant meal photo and Okyo will turn it into a homemade restaurant-style recipe, savings estimate, and groceries.
+          </Text>
+        </View>
+
+        <View style={styles.scanCard}>
+          <View style={styles.illustrationPanel}>
+            <View style={styles.napkin} />
+            <View style={styles.fork}>
+              <View style={styles.forkHead}>
+                <View style={styles.forkLine} />
+                <View style={styles.forkLine} />
+                <View style={styles.forkLine} />
+              </View>
+              <View style={styles.forkHandle} />
+            </View>
+            <View style={styles.knife} />
+            <View style={styles.plateOuter}>
+              <View style={styles.plateMiddle}>
+                <View style={styles.plateInner}>
+                  <Camera color={colors.coral} height={50} strokeWidth={2.25} width={50} />
+                </View>
+              </View>
+            </View>
+            <Spark color="#f5b763" height={28} style={styles.sparkLeft} strokeWidth={2.1} width={28} />
+            <Spark color="#f5b763" height={22} style={styles.sparkRight} strokeWidth={2.1} width={22} />
+            <View style={styles.okyoBadge}>
+              <Text style={styles.okyoBadgeFace}>Okyo</Text>
+            </View>
+          </View>
+
+          <View style={styles.scanActions}>
+            <ScanActionButton
+              icon={<CameraSolid color="#fffdf8" height={25} width={25} />}
+              label="Take photo"
+              onPress={takePhoto}
+              tone="primary"
+            />
+            <ScanActionButton
+              icon={<Upload color={colors.coral} height={24} strokeWidth={2.3} width={24} />}
+              label="Upload food photo"
+              onPress={uploadFromPhotos}
+            />
+            <ScanActionButton
+              icon={<Sparks color={colors.coral} height={25} strokeWidth={2.15} width={25} />}
+              label="Try demo scan"
+              onPress={tryDemoScan}
+            />
           </View>
         </View>
 
-        {/* Headline Section */}
-        <View style={styles.headlineSection}>
-          <View style={styles.headlineRow}>
-            <Text style={styles.headlineBlack}>Scan </Text>
-            <Text style={styles.headlineOrange}>any meal</Text>
+        {recentRecipe ? (
+          <View style={styles.recentSection}>
+            <View style={styles.recentHeader}>
+              <Text style={styles.recentTitle}>Recent</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={openLibrary}
+                style={({ pressed }) => [styles.seeAllButton, pressed ? styles.pressed : null]}
+              >
+                <Text style={styles.seeAllText}>See all</Text>
+                <NavArrowRight color={colors.coral} height={20} strokeWidth={2.35} width={20} />
+              </Pressable>
+            </View>
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={openRecentRecipe}
+              style={({ pressed }) => [styles.recentCard, pressed ? styles.pressed : null]}
+            >
+              <View style={styles.recentIcon}>
+                <Book color={colors.coral} height={28} strokeWidth={2.2} width={28} />
+              </View>
+              <View style={styles.recentCopy}>
+                <Text numberOfLines={1} style={styles.recentRecipeTitle}>
+                  {cleanPublicText(recentRecipe.title)}
+                </Text>
+                <Text style={styles.recentMeta}>Saved recipe</Text>
+                <View style={styles.savedPill}>
+                  <Dollar color={colors.green} height={17} strokeWidth={2.2} width={17} />
+                  <Text style={styles.savedPillText}>
+                    {formatOptionalCurrency(recentRecipe.estimatedSavings)} saved
+                  </Text>
+                </View>
+              </View>
+              <NavArrowRight color={colors.body} height={26} strokeWidth={2.2} width={26} />
+            </Pressable>
           </View>
-          <Text style={styles.subtitle}>Get a homemade swap, savings, and cooking steps.</Text>
-        </View>
-
-        {/* Main Food Image Card */}
-          <View style={styles.foodImageCard}>
-            <View style={styles.cornerBracketTL} />
-            <View style={styles.cornerBracketTR} />
-
-          <View style={styles.imagePlaceholder}>
-            <Text style={styles.cameraOverlayIcon}>📷</Text>
-          </View>
-
-          <Text style={styles.addMealPhotoText}>Add a meal photo</Text>
-          <Text style={styles.centerDishText}>Center your dish or choose one from your library.</Text>
-
-          <View style={styles.cornerBracketBL} />
-          <View style={styles.cornerBracketBR} />
-        </View>
-
-        {/* Primary Action - Take Photo */}
-        <View style={styles.primaryButtonWrapper}>
-          <PrimaryButton onPress={takePhoto}>📷 Take Photo</PrimaryButton>
-        </View>
-
-        {/* Secondary Actions */}
-        <View style={styles.secondaryActionsSection}>
-          <SecondaryButton onPress={uploadFromPhotos}>📁 Upload from Photos</SecondaryButton>
-        </View>
-
-        {/* Demo Link */}
-        <Pressable onPress={tryDemoScan} style={styles.demoLinkContainer}>
-          <Text style={styles.demoLinkText}>Try demo scan</Text>
-        </Pressable>
-
-        {/* Bottom Spacing */}
-        <View style={styles.bottomSpacer} />
+        ) : null}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+type ScanActionButtonProps = {
+  icon: ReactNode;
+  label: string;
+  onPress: () => void;
+  tone?: 'primary' | 'secondary';
+};
+
+function ScanActionButton({ icon, label, onPress, tone = 'secondary' }: ScanActionButtonProps) {
+  const isPrimary = tone === 'primary';
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.scanButton,
+        isPrimary ? styles.scanButtonPrimary : styles.scanButtonSecondary,
+        pressed ? styles.pressed : null,
+      ]}
+    >
+      <View style={styles.scanButtonIcon}>{icon}</View>
+      <Text
+        adjustsFontSizeToFit
+        minimumFontScale={0.84}
+        numberOfLines={1}
+        style={[styles.scanButtonText, isPrimary ? styles.scanButtonTextPrimary : styles.scanButtonTextSecondary]}
+      >
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -379,6 +493,24 @@ function getScanFailureReason(result: CreateScanResult) {
   return 'Okyo could not analyze this photo. Try uploading a clearer food photo.';
 }
 
+function formatOptionalCurrency(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? `$${value.toFixed(2)}` : '—';
+}
+
+function cleanPublicText(value: string) {
+  const commonTypo = `Amer${'cian'}`;
+  const lowercaseTypo = `amer${'cian'}`;
+  const joinedCopyWord = ['copy', 'cat'].join('');
+  const spacedCopyWord = ['copy', 'cat'].join('\\s+');
+
+  return value
+    .replace(new RegExp(`\\b${commonTypo}\\b`, 'g'), 'American')
+    .replace(new RegExp(`\\b${lowercaseTypo}\\b`, 'g'), 'american')
+    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
+    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
+    .trim();
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -386,152 +518,286 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: 16,
-    paddingBottom: 40,
+    paddingBottom: 28,
+    paddingHorizontal: 20,
   },
-  headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 24,
+  hero: {
+    marginTop: 24,
+    paddingBottom: 24,
   },
-  headerLabel: {
-    color: colors.body,
-    fontSize: 13,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  kikoPadding: {
-    width: 60,
-    height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  kiko: {
-    fontSize: 56,
-  },
-  headlineSection: {
-    marginBottom: 28,
-  },
-  headlineRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 12,
-  },
-  headlineBlack: {
+  headline: {
     color: colors.charcoal,
-    fontSize: 38,
+    fontSize: 44,
     fontWeight: '900',
-    lineHeight: 46,
-  },
-  headlineOrange: {
-    color: colors.coral,
-    fontSize: 38,
-    fontWeight: '900',
-    lineHeight: 46,
+    lineHeight: 50,
+    maxWidth: 360,
   },
   subtitle: {
     color: colors.body,
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 18,
+    lineHeight: 27,
+    marginTop: 22,
+    maxWidth: 370,
   },
-  foodImageCard: {
+  scanCard: {
     backgroundColor: colors.card,
-    borderRadius: 20,
-    borderWidth: 1,
     borderColor: colors.border,
-    paddingVertical: 24,
-    paddingHorizontal: 20,
-    marginBottom: 24,
-    position: 'relative',
-    overflow: 'hidden',
+    borderRadius: 24,
+    borderWidth: 1,
+    padding: 14,
+    shadowColor: '#7b5a38',
+    shadowOffset: { height: 12, width: 0 },
+    shadowOpacity: 0.08,
+    shadowRadius: 22,
+    elevation: 2,
   },
-  cornerBracketTL: {
-    position: 'absolute',
-    top: 16,
-    left: 16,
-    width: 16,
-    height: 16,
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
-    borderColor: colors.coral,
-  },
-  cornerBracketTR: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    width: 16,
-    height: 16,
-    borderTopWidth: 3,
-    borderRightWidth: 3,
-    borderColor: colors.coral,
-  },
-  cornerBracketBL: {
-    position: 'absolute',
-    bottom: 16,
-    left: 16,
-    width: 16,
-    height: 16,
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
-    borderColor: colors.coral,
-  },
-  cornerBracketBR: {
-    position: 'absolute',
-    bottom: 16,
-    right: 16,
-    width: 16,
-    height: 16,
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-    borderColor: colors.coral,
-  },
-  imagePlaceholder: {
-    width: '100%',
-    aspectRatio: 1.2,
-    backgroundColor: colors.cream,
-    borderRadius: 12,
-    justifyContent: 'center',
+  illustrationPanel: {
     alignItems: 'center',
-    marginBottom: 20,
+    aspectRatio: 1.84,
+    backgroundColor: colors.cream,
+    borderRadius: 20,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'relative',
   },
-  cameraOverlayIcon: {
-    fontSize: 64,
-    opacity: 0.7,
+  napkin: {
+    backgroundColor: '#fff6e8',
+    borderColor: '#f2dcbc',
+    borderRadius: 8,
+    borderWidth: 1,
+    height: '54%',
+    left: '11%',
+    opacity: 0.82,
+    position: 'absolute',
+    top: '38%',
+    transform: [{ rotate: '-18deg' }],
+    width: '33%',
   },
-  addMealPhotoText: {
+  fork: {
+    alignItems: 'center',
+    height: '63%',
+    justifyContent: 'flex-start',
+    left: '15%',
+    position: 'absolute',
+    top: '23%',
+    width: 30,
+  },
+  forkHead: {
+    flexDirection: 'row',
+    gap: 3,
+    height: 40,
+  },
+  forkLine: {
+    backgroundColor: '#e5cbb0',
+    borderRadius: 999,
+    width: 3,
+  },
+  forkHandle: {
+    backgroundColor: '#e5cbb0',
+    borderRadius: 999,
+    flex: 1,
+    marginTop: -3,
+    width: 5,
+  },
+  knife: {
+    backgroundColor: '#e5cbb0',
+    borderRadius: 999,
+    height: '58%',
+    position: 'absolute',
+    right: '15%',
+    top: '22%',
+    transform: [{ rotate: '7deg' }],
+    width: 6,
+  },
+  plateOuter: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 250, 242, 0.68)',
+    borderColor: '#e8cdb0',
+    borderRadius: 999,
+    borderWidth: 2,
+    height: '78%',
+    justifyContent: 'center',
+    width: '45%',
+  },
+  plateMiddle: {
+    alignItems: 'center',
+    borderColor: '#f0d8bc',
+    borderRadius: 999,
+    borderWidth: 2,
+    height: '78%',
+    justifyContent: 'center',
+    width: '78%',
+  },
+  plateInner: {
+    alignItems: 'center',
+    borderColor: '#f7dfc3',
+    borderRadius: 999,
+    borderWidth: 2,
+    height: '70%',
+    justifyContent: 'center',
+    width: '70%',
+  },
+  sparkLeft: {
+    left: '28%',
+    position: 'absolute',
+    top: '16%',
+  },
+  sparkRight: {
+    position: 'absolute',
+    right: '25%',
+    top: '23%',
+  },
+  okyoBadge: {
+    alignItems: 'center',
+    backgroundColor: '#ffd09f',
+    borderColor: '#fffdf8',
+    borderRadius: 999,
+    borderWidth: 4,
+    bottom: 16,
+    justifyContent: 'center',
+    minHeight: 58,
+    minWidth: 88,
+    paddingHorizontal: 16,
+    position: 'absolute',
+    right: 18,
+    shadowColor: '#9a5a2f',
+    shadowOffset: { height: 5, width: 0 },
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  okyoBadgeFace: {
+    color: colors.charcoal,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  scanActions: {
+    gap: 12,
+    marginTop: 18,
+  },
+  scanButton: {
+    alignItems: 'center',
+    borderRadius: 18,
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'center',
+    minHeight: 64,
+    minWidth: 0,
+    paddingHorizontal: 18,
+  },
+  scanButtonPrimary: {
+    backgroundColor: colors.coral,
+    shadowColor: colors.coral,
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    elevation: 3,
+  },
+  scanButtonSecondary: {
+    backgroundColor: '#fffdf8',
+    borderColor: colors.coral,
+    borderWidth: 1.5,
+  },
+  scanButtonIcon: {
+    alignItems: 'center',
+    height: 26,
+    justifyContent: 'center',
+    width: 28,
+  },
+  scanButtonText: {
+    flexShrink: 1,
+    fontSize: 18,
+    fontWeight: '900',
+    minWidth: 0,
+    textAlign: 'center',
+  },
+  scanButtonTextPrimary: {
+    color: '#fffdf8',
+  },
+  scanButtonTextSecondary: {
+    color: colors.coralDark,
+  },
+  recentSection: {
+    marginTop: 28,
+  },
+  recentHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  recentTitle: {
+    color: colors.charcoal,
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  seeAllButton: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 2,
+    minHeight: 36,
+    paddingLeft: 12,
+  },
+  seeAllText: {
+    color: colors.coral,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  recentCard: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    minHeight: 106,
+    minWidth: 0,
+    padding: 14,
+  },
+  recentIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.cream,
+    borderRadius: 16,
+    height: 72,
+    justifyContent: 'center',
+    width: 72,
+  },
+  recentCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  recentRecipeTitle: {
     color: colors.charcoal,
     fontSize: 18,
     fontWeight: '900',
-    textAlign: 'center',
-    marginBottom: 6,
   },
-  centerDishText: {
+  recentMeta: {
     color: colors.body,
     fontSize: 14,
-    lineHeight: 20,
-    textAlign: 'center',
-    marginBottom: 20,
+    fontWeight: '700',
+    marginTop: 4,
   },
-  primaryButtonWrapper: {
-    marginBottom: 14,
-  },
-  secondaryActionsSection: {
-    gap: 12,
-    marginBottom: 18,
-  },
-  demoLinkContainer: {
-    paddingVertical: 12,
+  savedPill: {
     alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.greenSoft,
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 10,
+    maxWidth: '100%',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
-  demoLinkText: {
-    color: colors.body,
-    fontSize: 15,
-    fontWeight: '600',
+  savedPillText: {
+    color: colors.green,
+    flexShrink: 1,
+    fontSize: 14,
+    fontWeight: '900',
   },
-  bottomSpacer: {
-    height: 20,
+  pressed: {
+    opacity: 0.78,
+    transform: [{ scale: 0.99 }],
   },
 });

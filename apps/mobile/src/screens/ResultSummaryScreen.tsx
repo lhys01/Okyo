@@ -4,18 +4,21 @@ import {
   Bookmark,
   Camera,
   Cart,
+  CheckCircle,
   Clock,
   Cutlery,
-  Dollar,
+  Leaf,
   NavArrowLeft,
+  OpenBook,
   PlusCircle,
   Settings,
   ShareAndroid,
   ShieldCheck,
-  Star,
+  Sparks,
+  ArrowRight,
 } from 'iconoir-react-native';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
@@ -283,7 +286,7 @@ export function ResultSummaryScreen() {
           This can take a few seconds for real food photos. We will only show a result when it is safe to trust.
         </Text>
         <View style={styles.loadingMiniCard}>
-          <Text style={styles.loadingMiniText}>Building your homemade dupe...</Text>
+          <Text style={styles.loadingMiniText}>Building your homemade swap...</Text>
         </View>
         <View style={styles.actions}>
           <ActionButton label="Back to Scan" onPress={goBackToScanTab} />
@@ -306,9 +309,9 @@ export function ResultSummaryScreen() {
           <Image source={{ uri: selectedScanImage.uri }} resizeMode="contain" style={styles.standaloneScanPreview} />
         ) : null}
         <View style={styles.failureCard}>
-          <Text style={styles.failureTitle}>No mock recipe shown.</Text>
+          <Text style={styles.failureTitle}>No unrelated recipe shown.</Text>
           <Text style={styles.failureBody}>
-            Try again so Okyo can generate a recipe for this photo instead of falling back to demo pasta.
+            Try again so Okyo can generate a recipe for this photo instead of showing a different dish.
           </Text>
         </View>
         <View style={styles.actions}>
@@ -350,6 +353,7 @@ export function ResultSummaryScreen() {
         <Text style={styles.subtitle}>{displaySubtitle}</Text>
         {matchPercent !== null ? (
           <View style={styles.matchPill}>
+            <CheckCircle color={colors.green} height={20} strokeWidth={2.25} width={20} />
             <Text style={styles.matchPillText}>{formatPercent(matchPercent)} match</Text>
           </View>
         ) : null}
@@ -362,58 +366,64 @@ export function ResultSummaryScreen() {
       />
 
       <View style={styles.savingsHero}>
-        <View style={styles.savingsBadge}>
-          <Dollar color={colors.green} height={28} strokeWidth={2.3} width={28} />
+        <View style={styles.savingsTopRow}>
+          <View style={styles.savingsBadge}>
+            <Leaf color={colors.green} height={28} strokeWidth={2.3} width={28} />
+          </View>
+          <View style={styles.savingsAmountGroup}>
+            <Text style={styles.savingsHeroLabel}>YOU SAVE</Text>
+            <Text
+              adjustsFontSizeToFit
+              minimumFontScale={0.78}
+              numberOfLines={1}
+              style={styles.savingsHeroValue}
+            >
+              {formatOptionalCurrency(selectedRecipe.estimatedSavings)}
+            </Text>
+          </View>
         </View>
-        <View style={styles.savingsAmountGroup}>
-          <Text style={styles.savingsHeroLabel}>You save</Text>
-          <Text
-            adjustsFontSizeToFit
-            minimumFontScale={0.78}
-            numberOfLines={1}
-            style={styles.savingsHeroValue}
-          >
-            {formatOptionalCurrency(selectedRecipe.estimatedSavings)}
-          </Text>
-        </View>
-        <View style={styles.priceCompare}>
-          <Text
-            adjustsFontSizeToFit
-            minimumFontScale={0.82}
-            numberOfLines={1}
-            style={styles.priceCompareLine}
-          >
-            Restaurant {formatOptionalCurrency(scanResult.restaurantPrice)} →
-          </Text>
-          <Text
-            adjustsFontSizeToFit
-            minimumFontScale={0.82}
-            numberOfLines={1}
-            style={styles.priceCompareLineHome}
-          >
-            Home {formatOptionalCurrency(selectedRecipe.estimatedHomemadeCost)}
-          </Text>
+        <View style={styles.priceCompareRow}>
+          <View style={styles.priceColumn}>
+            <Text numberOfLines={1} style={styles.priceLabel}>Restaurant</Text>
+            <Text
+              adjustsFontSizeToFit
+              minimumFontScale={0.82}
+              numberOfLines={1}
+              style={styles.priceValue}
+            >
+              {formatOptionalCurrency(scanResult.restaurantPrice)}
+            </Text>
+          </View>
+          <ArrowRight color={colors.green} height={28} strokeWidth={2.6} width={28} />
+          <View style={styles.priceColumn}>
+            <Text numberOfLines={1} style={styles.priceLabel}>Home</Text>
+            <Text
+              adjustsFontSizeToFit
+              minimumFontScale={0.82}
+              numberOfLines={1}
+              style={styles.priceValue}
+            >
+              {formatOptionalCurrency(selectedRecipe.estimatedHomemadeCost)}
+            </Text>
+          </View>
         </View>
       </View>
 
       <View style={styles.summaryCard}>
         <StatBlock
-          icon={<ShieldCheck color="#12629a" height={21} strokeWidth={2.2} width={21} />}
-          iconStyle={styles.statIconBlue}
+          icon={<ShieldCheck color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
           label="Confidence"
           value={formatPercent(confidencePercent)}
         />
         <View style={styles.statDivider} />
         <StatBlock
-          icon={<Cutlery color="#a85f08" height={21} strokeWidth={2.2} width={21} />}
-          iconStyle={styles.statIconGold}
+          icon={<Cutlery color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
           label="Difficulty"
           value={selectedRecipe.difficulty ?? '—'}
         />
         <View style={styles.statDivider} />
         <StatBlock
-          icon={<Clock color="#7b2fc8" height={21} strokeWidth={2.2} width={21} />}
-          iconStyle={styles.statIconPurple}
+          icon={<Clock color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
           label="Time"
           value={totalTimeMinutes ? `${totalTimeMinutes} min` : '—'}
         />
@@ -426,25 +436,21 @@ export function ResultSummaryScreen() {
           <View style={styles.modeBadge}>
             <Text style={styles.modeBadgeText}>{selectedModeUi.label}</Text>
           </View>
-          {formatScore(scanResult.matchScore) !== '—' ? (
-            <Text style={styles.matchTopScore}>{formatScore(scanResult.matchScore)}/10</Text>
-          ) : null}
         </View>
         <View style={styles.matchBodyRow}>
           <View style={styles.matchCopy}>
-            <Text style={styles.matchLabel}>Match score</Text>
-            <Text style={styles.matchValue}>
-              {formatScore(scanResult.matchScore)}
-              {formatScore(scanResult.matchScore) !== '—' ? (
-                <Text style={styles.matchValueDenominator}>/10</Text>
-              ) : null}
-            </Text>
+            <Text style={styles.matchTitle}>{getModeCardTitle(selectedMode)}</Text>
+            {formatScore(scanResult.matchScore) !== '—' ? (
+              <Text style={styles.matchScoreLine}>
+                {formatScore(scanResult.matchScore)}/10 <Text style={styles.matchScoreSuffix}>match</Text>
+              </Text>
+            ) : null}
             <Text style={styles.matchNote}>
               {getModeSummary(selectedRecipe, selectedMode)}
             </Text>
           </View>
           <View style={styles.matchAward}>
-            <Star color={colors.green} height={33} strokeWidth={2.2} width={33} />
+            <Sparks color={colors.coral} height={36} strokeWidth={2.05} width={36} />
           </View>
         </View>
         <View style={styles.chipRow}>
@@ -454,11 +460,10 @@ export function ResultSummaryScreen() {
                 adjustsFontSizeToFit
                 minimumFontScale={0.78}
                 numberOfLines={1}
-                style={styles.infoChipValue}
+                style={styles.infoChipText}
               >
-                {chip.value}
+                {chip.label}
               </Text>
-              <Text numberOfLines={1} style={styles.infoChipLabel}>{chip.label}</Text>
             </View>
           ))}
         </View>
@@ -466,7 +471,8 @@ export function ResultSummaryScreen() {
 
       <View style={styles.actions}>
         <ResultPrimaryButton onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })}>
-          View recipe
+          <OpenBook color="#fffdf8" height={25} strokeWidth={2.15} width={25} />
+          <Text style={styles.resultPrimaryButtonText}>View recipe</Text>
         </ResultPrimaryButton>
         <View style={styles.secondaryRow}>
           <ActionButton
@@ -507,11 +513,25 @@ function ResultFrame({ children, onScanAgain, onSettings }: ResultFrameProps) {
             onPress={onScanAgain}
             style={({ pressed }) => [styles.scanAgainButton, pressed ? styles.pressed : null]}
           >
-            <NavArrowLeft color={colors.charcoal} height={21} strokeWidth={2.35} width={21} />
-            <Text style={styles.scanAgainText}>Scan again</Text>
+            <NavArrowLeft color={colors.coral} height={21} strokeWidth={2.35} width={21} />
+            <Text
+              adjustsFontSizeToFit
+              minimumFontScale={0.82}
+              numberOfLines={1}
+              style={styles.scanAgainText}
+            >
+              Scan again
+            </Text>
           </Pressable>
           <View pointerEvents="none" style={styles.topTitleWrap}>
-            <Text style={styles.topTitle}>Result</Text>
+            <Text
+              adjustsFontSizeToFit
+              minimumFontScale={0.82}
+              numberOfLines={1}
+              style={styles.topTitle}
+            >
+              Result
+            </Text>
           </View>
           <Pressable
             accessibilityLabel="Open settings"
@@ -572,15 +592,14 @@ function FoodImageCard({ dishName, imageUri, isDemoScan }: FoodImageCardProps) {
 
 type StatBlockProps = {
   icon: ReactNode;
-  iconStyle: StyleProp<ViewStyle>;
   label: string;
   value: string;
 };
 
-function StatBlock({ icon, iconStyle, label, value }: StatBlockProps) {
+function StatBlock({ icon, label, value }: StatBlockProps) {
   return (
     <View style={styles.statTile}>
-      <View style={[styles.statIcon, iconStyle]}>
+      <View style={styles.statIcon}>
         {icon}
       </View>
       <View style={styles.statTextGroup}>
@@ -684,7 +703,7 @@ function ResultPrimaryButton({ children, onPress }: ResultPrimaryButtonProps) {
       onPress={onPress}
       style={({ pressed }) => [styles.resultPrimaryButton, pressed ? styles.pressed : null]}
     >
-      <Text style={styles.resultPrimaryButtonText}>{children}</Text>
+      {children}
     </Pressable>
   );
 }
@@ -701,28 +720,40 @@ function getModeUi(mode: RecipeMode) {
 
 function getModeChips(recipe: Recipe) {
   return [
-    { label: 'Est. cost', value: formatOptionalCurrency(recipe.estimatedHomemadeCost) },
-    { label: 'Savings', value: formatOptionalCurrency(recipe.estimatedSavings) },
-    { label: 'Serves', value: String(recipe.servings || '—') },
-  ].filter((chip) => chip.value !== '—');
+    { label: `${formatOptionalCurrency(recipe.estimatedHomemadeCost)} est. cost` },
+    { label: `${formatOptionalCurrency(recipe.estimatedSavings)} savings` },
+    { label: recipe.servings ? `Serves ${recipe.servings}` : 'Serves —' },
+  ].filter((chip) => !chip.label.includes('—'));
 }
 
 function getDisplaySubtitle(restaurantStyle?: string, recipeDescription?: string) {
   const style = cleanDisplayText(restaurantStyle ?? '');
-  if (style) {
-    return `${style} homemade version`;
-  }
-
   const description = cleanDisplayText(recipeDescription ?? '');
   if (description.toLowerCase().includes('lighter')) {
-    return 'A lighter weeknight version of your scan';
+    return 'Lighter homemade restaurant-style swap';
   }
 
   if (description.toLowerCase().includes('budget') || description.toLowerCase().includes('lower-cost')) {
-    return 'A budget-friendly version of your scan';
+    return 'Budget-friendly homemade swap';
   }
 
-  return 'Inspired-by homemade version';
+  if (style) {
+    return 'Homemade restaurant-style swap';
+  }
+
+  return 'Okyo-style homemade swap';
+}
+
+function getModeCardTitle(mode: RecipeMode) {
+  switch (mode) {
+    case 'Budget':
+      return 'Budget pick for your scan';
+    case 'Healthy':
+      return 'Lighter pick for your scan';
+    case 'Restaurant Copy':
+    default:
+      return 'Best match for your scan';
+  }
 }
 
 function getModeSummary(recipe: Recipe, mode: RecipeMode) {
@@ -786,14 +817,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     flexGrow: 1,
     paddingBottom: 28,
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
+    paddingTop: 8,
   },
   topBar: {
     alignItems: 'center',
-    height: 58,
+    height: 60,
     justifyContent: 'center',
-    marginBottom: 18,
-    marginTop: 4,
+    marginBottom: 16,
+    marginTop: 8,
     position: 'relative',
   },
   scanAgainButton: {
@@ -803,33 +835,33 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     flexDirection: 'row',
-    gap: 7,
+    gap: 5,
     left: 0,
-    maxWidth: 148,
+    maxWidth: 118,
     minHeight: 44,
-    paddingHorizontal: 14,
+    paddingHorizontal: 11,
     position: 'absolute',
-    top: 7,
+    top: 8,
     zIndex: 2,
   },
   scanAgainText: {
-    color: colors.charcoal,
+    color: colors.coral,
     flexShrink: 1,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '900',
   },
   topTitleWrap: {
     alignItems: 'center',
     bottom: 0,
     justifyContent: 'center',
-    left: 72,
+    left: 118,
     position: 'absolute',
-    right: 72,
+    right: 118,
     top: 0,
   },
   topTitle: {
     color: colors.charcoal,
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '900',
     textAlign: 'center',
   },
@@ -837,13 +869,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#fffdf8',
     borderColor: colors.border,
-    borderRadius: 16,
+    borderRadius: 999,
     borderWidth: 1,
     height: 44,
     justifyContent: 'center',
     position: 'absolute',
-    right: 0,
-    top: 7,
+    right: 10,
+    top: 8,
     width: 44,
     zIndex: 2,
   },
@@ -860,33 +892,34 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.charcoal,
-    fontSize: 39,
+    fontSize: 37,
     fontWeight: '900',
-    lineHeight: 45,
+    lineHeight: 42,
     minWidth: 0,
   },
   subtitle: {
     color: colors.body,
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
-    lineHeight: 24,
+    lineHeight: 23,
     marginTop: 4,
     minWidth: 0,
   },
   matchPill: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: '#fff0e8',
-    borderColor: '#ffe0d2',
+    backgroundColor: colors.greenSoft,
+    borderColor: '#bfdcc8',
     borderRadius: 999,
     borderWidth: 1,
     flexDirection: 'row',
-    marginTop: 12,
-    paddingHorizontal: 13,
-    paddingVertical: 8,
+    gap: 8,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
   matchPillText: {
-    color: colors.coralDark,
+    color: colors.green,
     fontSize: 15,
     fontWeight: '900',
   },
@@ -895,11 +928,11 @@ const styles = StyleSheet.create({
     aspectRatio: 1.73,
     backgroundColor: '#ffffff',
     borderColor: colors.border,
-    borderRadius: 20,
+    borderRadius: 18,
     borderWidth: 1,
     justifyContent: 'center',
-    maxHeight: 240,
-    minHeight: 188,
+    maxHeight: 220,
+    minHeight: 170,
     overflow: 'hidden',
     width: '100%',
     shadowColor: '#7b5a38',
@@ -941,65 +974,75 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   savingsHero: {
-    alignItems: 'center',
+    alignItems: 'stretch',
     backgroundColor: '#eef8ee',
     borderColor: '#bee1c5',
     borderRadius: 18,
     borderWidth: 1,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 12,
-    marginTop: 16,
+    marginTop: 14,
     minWidth: 0,
-    paddingHorizontal: 14,
-    paddingVertical: 16,
+    padding: 14,
+  },
+  savingsTopRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    minWidth: 0,
   },
   savingsBadge: {
     alignItems: 'center',
     backgroundColor: '#d9efd9',
     borderRadius: 999,
-    height: 56,
+    height: 50,
     justifyContent: 'center',
-    width: 56,
+    width: 50,
   },
   savingsAmountGroup: {
-    flexGrow: 1,
-    flexShrink: 0,
-    minWidth: 128,
+    flex: 1,
+    minWidth: 0,
   },
   savingsHeroLabel: {
     color: colors.green,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900',
     textTransform: 'uppercase',
   },
   savingsHeroValue: {
-    color: colors.charcoal,
-    fontSize: 34,
+    color: colors.green,
+    fontSize: 33,
     fontWeight: '900',
     includeFontPadding: false,
-    lineHeight: 39,
+    lineHeight: 36,
     marginTop: 2,
   },
-  priceCompare: {
-    alignItems: 'flex-start',
-    flexBasis: 128,
-    flexGrow: 1,
-    flexShrink: 1,
-    minWidth: 128,
+  priceCompareRow: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 253, 248, 0.72)',
+    borderColor: '#d5eadb',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    minWidth: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
   },
-  priceCompareLine: {
+  priceColumn: {
+    flex: 1,
+    minWidth: 88,
+  },
+  priceLabel: {
     color: colors.body,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    width: '100%',
   },
-  priceCompareLineHome: {
-    color: colors.green,
-    fontSize: 14,
+  priceValue: {
+    color: colors.charcoal,
+    fontSize: 17,
     fontWeight: '900',
     marginTop: 4,
-    width: '100%',
   },
   summaryCard: {
     alignItems: 'center',
@@ -1008,41 +1051,31 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     flexDirection: 'row',
-    marginTop: 16,
+    marginTop: 14,
     minWidth: 0,
     paddingHorizontal: 8,
-    paddingVertical: 13,
+    paddingVertical: 12,
   },
   statTile: {
     alignItems: 'center',
     flex: 1,
-    flexDirection: 'row',
     gap: 8,
     justifyContent: 'center',
-    minHeight: 50,
+    minHeight: 62,
     minWidth: 0,
     paddingHorizontal: 4,
   },
   statDivider: {
     backgroundColor: colors.border,
-    height: 46,
+    height: 56,
     width: 1,
   },
   statIcon: {
     alignItems: 'center',
     borderRadius: 999,
-    height: 38,
+    height: 28,
     justifyContent: 'center',
-    width: 38,
-  },
-  statIconBlue: {
-    backgroundColor: '#e8efff',
-  },
-  statIconGold: {
-    backgroundColor: '#fff1ce',
-  },
-  statIconPurple: {
-    backgroundColor: '#f1e1ff',
+    width: 28,
   },
   statTextGroup: {
     flexShrink: 1,
@@ -1052,6 +1085,7 @@ const styles = StyleSheet.create({
     color: colors.body,
     fontSize: 13,
     fontWeight: '700',
+    textAlign: 'center',
   },
   metricValue: {
     color: colors.charcoal,
@@ -1059,6 +1093,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     lineHeight: 22,
     marginTop: 1,
+    textAlign: 'center',
   },
   modeTabs: {
     alignItems: 'center',
@@ -1067,9 +1102,9 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     flexDirection: 'row',
-    marginTop: 14,
+    marginTop: 12,
     minWidth: 0,
-    padding: 6,
+    padding: 5,
   },
   modeTabSlot: {
     alignItems: 'center',
@@ -1087,17 +1122,19 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
-    minHeight: 46,
+    minHeight: 42,
     minWidth: 0,
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
   },
   modeTabSelected: {
-    backgroundColor: '#fff0e8',
+    backgroundColor: '#fffdf8',
+    borderColor: '#ffb39a',
+    borderWidth: 1,
   },
   modeTabText: {
     color: colors.body,
     flexShrink: 1,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '900',
     minWidth: 0,
     textAlign: 'center',
@@ -1110,7 +1147,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 18,
     borderWidth: 1,
-    marginTop: 14,
+    marginTop: 12,
     minWidth: 0,
     padding: 14,
     shadowColor: '#7b5a38',
@@ -1123,103 +1160,92 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    minHeight: 38,
+    minHeight: 32,
     minWidth: 0,
   },
   modeBadge: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: '#dff2e5',
+    backgroundColor: '#fff5ef',
+    borderColor: '#ffcab9',
     borderRadius: 999,
+    borderWidth: 1,
     maxWidth: '74%',
-    paddingHorizontal: 13,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
   modeBadgeText: {
-    color: colors.green,
+    color: colors.coral,
     flexShrink: 1,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900',
-  },
-  matchTopScore: {
-    color: colors.green,
-    fontSize: 14,
-    fontWeight: '900',
-    marginLeft: 8,
   },
   matchBodyRow: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flexDirection: 'row',
     gap: 12,
-    marginTop: 14,
+    marginTop: 10,
     minWidth: 0,
   },
   matchCopy: {
     flex: 1,
     minWidth: 0,
   },
-  matchLabel: {
-    color: colors.body,
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  matchValue: {
+  matchTitle: {
     color: colors.charcoal,
-    fontSize: 54,
+    fontSize: 20,
     fontWeight: '900',
-    lineHeight: 60,
-    marginTop: 2,
+    lineHeight: 25,
   },
-  matchValueDenominator: {
-    color: colors.green,
-    fontSize: 30,
+  matchScoreLine: {
+    color: colors.coral,
+    fontSize: 19,
     fontWeight: '900',
+    lineHeight: 24,
+    marginTop: 6,
+  },
+  matchScoreSuffix: {
+    fontSize: 15,
   },
   matchNote: {
     color: colors.body,
-    fontSize: 15,
-    lineHeight: 21,
-    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 7,
   },
   matchAward: {
     alignItems: 'center',
-    backgroundColor: '#e7f4e7',
+    backgroundColor: '#fff5ef',
     borderRadius: 999,
-    height: 76,
+    height: 60,
     justifyContent: 'center',
-    width: 76,
+    marginTop: 10,
+    width: 60,
   },
   chipRow: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 16,
+    marginTop: 14,
     minWidth: 0,
   },
   infoChip: {
     backgroundColor: '#fffdf8',
     borderColor: colors.border,
-    borderRadius: 14,
+    borderRadius: 999,
     borderWidth: 1,
     flex: 1,
     justifyContent: 'center',
-    minHeight: 62,
+    minHeight: 42,
     minWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
-  infoChipValue: {
-    color: colors.charcoal,
-    fontSize: 17,
+  infoChipText: {
+    color: colors.green,
+    fontSize: 13,
     fontWeight: '900',
     includeFontPadding: false,
-    lineHeight: 21,
-    textAlign: 'center',
-  },
-  infoChipLabel: {
-    color: colors.body,
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 4,
+    lineHeight: 18,
     textAlign: 'center',
   },
   standaloneScanPreview: {
@@ -1314,7 +1340,7 @@ const styles = StyleSheet.create({
   },
   actions: {
     gap: 12,
-    marginTop: 16,
+    marginTop: 14,
   },
   secondaryRow: {
     flexDirection: 'row',
@@ -1331,7 +1357,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 6,
     justifyContent: 'center',
-    minHeight: 52,
+    minHeight: 50,
     minWidth: 0,
     paddingHorizontal: 7,
   },
@@ -1344,7 +1370,7 @@ const styles = StyleSheet.create({
   actionButtonText: {
     color: colors.charcoal,
     flexShrink: 1,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900',
     minWidth: 0,
     textAlign: 'center',
@@ -1353,8 +1379,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.coral,
     borderRadius: 20,
+    flexDirection: 'row',
+    gap: 12,
     justifyContent: 'center',
-    minHeight: 64,
+    minHeight: 60,
     paddingHorizontal: 18,
     shadowColor: colors.coral,
     shadowOffset: { height: 8, width: 0 },
@@ -1364,7 +1392,7 @@ const styles = StyleSheet.create({
   },
   resultPrimaryButtonText: {
     color: '#fffdf8',
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '900',
   },
   pressed: {
