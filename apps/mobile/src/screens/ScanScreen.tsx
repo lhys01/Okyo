@@ -1,20 +1,24 @@
 import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import { PrimaryButton, SecondaryButton, colors } from '../components/OkyoUI';
-import { ScreenScaffold } from '../components/ScreenScaffold';
 import { defaultScanResult, getSafeRecipeForMode, getSafeRecipeMode, type Recipe, type RecipeMode } from '../mocks';
+import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { uiLog } from '../utils/uiDebug';
+
+type ScanNavigation = NativeStackNavigationProp<RootStackParamList, 'ScanScreen'>;
 
 const maxImageDataUrlBytes = 2_750_000;
 
 export function ScanScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<ScanNavigation>();
   const selectedMode = useOkyoStore((state) => state.selectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
   const setLatestScanRecipes = useOkyoStore((state) => state.setLatestScanRecipes);
@@ -24,6 +28,7 @@ export function ScanScreen() {
   const setSelectedScanImage = useOkyoStore((state) => state.setSelectedScanImage);
   const setLatestAiDebugMetadata = useOkyoStore((state) => state.setLatestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
+  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
 
   const startScan = (source: ScanSource, image?: ScanImageMetadata) => {
     const uploadedImage = isRealUploadedImage(source, image);
@@ -182,21 +187,66 @@ export function ScanScreen() {
     }
   };
 
+  const recentRecipe = savedRecipes.length > 0 ? savedRecipes[0] : null;
+
   return (
-    <ScreenScaffold
-      title="Scan a meal"
-      body="Take a photo or choose one from your library. Okyo will estimate the homemade dupe and savings."
-    >
-      <View style={styles.cameraCard}>
-        <Text style={styles.cameraIcon}>OK</Text>
-        <Text style={styles.cameraText}>Ready for a real meal photo</Text>
-      </View>
-      <View style={styles.actions}>
-        <PrimaryButton onPress={takePhoto}>Take Photo</PrimaryButton>
-        <SecondaryButton onPress={uploadFromPhotos}>Upload From Photos</SecondaryButton>
-        <SecondaryButton onPress={tryDemoScan}>Try Demo Scan</SecondaryButton>
-      </View>
-    </ScreenScaffold>
+    <SafeAreaView edges={['top']} style={styles.container}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header with Logo and Kiko */}
+        <View style={styles.headerTop}>
+          <Text style={styles.headerLabel}>Scan</Text>
+          <View style={styles.kikoPadding}>
+            <Text style={styles.kiko}>🦊</Text>
+          </View>
+        </View>
+
+        {/* Headline Section */}
+        <View style={styles.headlineSection}>
+          <View style={styles.headlineRow}>
+            <Text style={styles.headlineBlack}>Scan </Text>
+            <Text style={styles.headlineOrange}>any meal</Text>
+          </View>
+          <Text style={styles.subtitle}>Get a homemade swap, savings, and cooking steps.</Text>
+        </View>
+
+        {/* Main Food Image Card */}
+          <View style={styles.foodImageCard}>
+            <View style={styles.cornerBracketTL} />
+            <View style={styles.cornerBracketTR} />
+
+          <View style={styles.imagePlaceholder}>
+            <Text style={styles.cameraOverlayIcon}>📷</Text>
+          </View>
+
+          <Text style={styles.addMealPhotoText}>Add a meal photo</Text>
+          <Text style={styles.centerDishText}>Center your dish or choose one from your library.</Text>
+
+          <View style={styles.cornerBracketBL} />
+          <View style={styles.cornerBracketBR} />
+        </View>
+
+        {/* Primary Action - Take Photo */}
+        <View style={styles.primaryButtonWrapper}>
+          <PrimaryButton onPress={takePhoto}>📷 Take Photo</PrimaryButton>
+        </View>
+
+        {/* Secondary Actions */}
+        <View style={styles.secondaryActionsSection}>
+          <SecondaryButton onPress={uploadFromPhotos}>📁 Upload from Photos</SecondaryButton>
+        </View>
+
+        {/* Demo Link */}
+        <Pressable onPress={tryDemoScan} style={styles.demoLinkContainer}>
+          <Text style={styles.demoLinkText}>Try demo scan</Text>
+        </Pressable>
+
+        {/* Bottom Spacing */}
+        <View style={styles.bottomSpacer} />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -330,28 +380,158 @@ function getScanFailureReason(result: CreateScanResult) {
 }
 
 const styles = StyleSheet.create({
-  actions: {
-    gap: 12,
-    marginTop: 20,
+  container: {
+    flex: 1,
+    backgroundColor: colors.background,
   },
-  cameraCard: {
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 16,
+    paddingBottom: 40,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: colors.cream,
-    borderRadius: 18,
-    height: 150,
-    justifyContent: 'center',
-    marginTop: 20,
+    marginTop: 8,
+    marginBottom: 24,
   },
-  cameraIcon: {
-    color: colors.coral,
-    fontSize: 44,
-    fontWeight: '900',
-  },
-  cameraText: {
+  headerLabel: {
     color: colors.body,
     fontSize: 13,
-    fontWeight: '900',
-    marginTop: 6,
+    fontWeight: '600',
     textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  kikoPadding: {
+    width: 60,
+    height: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  kiko: {
+    fontSize: 56,
+  },
+  headlineSection: {
+    marginBottom: 28,
+  },
+  headlineRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 12,
+  },
+  headlineBlack: {
+    color: colors.charcoal,
+    fontSize: 38,
+    fontWeight: '900',
+    lineHeight: 46,
+  },
+  headlineOrange: {
+    color: colors.coral,
+    fontSize: 38,
+    fontWeight: '900',
+    lineHeight: 46,
+  },
+  subtitle: {
+    color: colors.body,
+    fontSize: 16,
+    lineHeight: 24,
+  },
+  foodImageCard: {
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    marginBottom: 24,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  cornerBracketTL: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    width: 16,
+    height: 16,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+    borderColor: colors.coral,
+  },
+  cornerBracketTR: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    width: 16,
+    height: 16,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderColor: colors.coral,
+  },
+  cornerBracketBL: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    width: 16,
+    height: 16,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+    borderColor: colors.coral,
+  },
+  cornerBracketBR: {
+    position: 'absolute',
+    bottom: 16,
+    right: 16,
+    width: 16,
+    height: 16,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+    borderColor: colors.coral,
+  },
+  imagePlaceholder: {
+    width: '100%',
+    aspectRatio: 1.2,
+    backgroundColor: colors.cream,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  cameraOverlayIcon: {
+    fontSize: 64,
+    opacity: 0.7,
+  },
+  addMealPhotoText: {
+    color: colors.charcoal,
+    fontSize: 18,
+    fontWeight: '900',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  centerDishText: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  primaryButtonWrapper: {
+    marginBottom: 14,
+  },
+  secondaryActionsSection: {
+    gap: 12,
+    marginBottom: 18,
+  },
+  demoLinkContainer: {
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  demoLinkText: {
+    color: colors.body,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  bottomSpacer: {
+    height: 20,
   },
 });

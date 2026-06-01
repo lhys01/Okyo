@@ -76,7 +76,7 @@ export function AppNavigator() {
       <Stack.Screen
         name="ResultSummaryScreen"
         component={ResultSummaryScreen}
-        options={{ title: 'Result' }}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="RecipeDetailScreen"
