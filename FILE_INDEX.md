@@ -5,6 +5,12 @@
 - `AGENTS.md`
 - `README.md`
 - `docs/OKYO_SCREEN_IMAGE_PROMPT.md`
+- `docs/generated/okyo-screen-batch-01/01-splash-screen.png`
+- `docs/generated/okyo-screen-batch-01/02-onboarding-welcome.png`
+- `docs/generated/okyo-screen-batch-01/06-scan-home-screen.png`
+- `docs/generated/okyo-screen-batch-01/09-scan-result-screen.png`
+- `docs/generated/okyo-screen-batch-01/10-recipe-overview-screen.png`
+- `docs/generated/okyo-screen-batch-01/14-viral-share-card-export.png`
 - `docs/generated/okyo-screen-batch-01/README.md`
 - `docs/seed/APP_STORE_COPY.md`
 - `docs/seed/CODEX_PROMPTS.md`
