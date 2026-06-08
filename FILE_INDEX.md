@@ -4,6 +4,8 @@
 - `.gitignore`
 - `AGENTS.md`
 - `README.md`
+- `docs/OKYO_SCREEN_IMAGE_PROMPT.md`
+- `docs/generated/okyo-screen-batch-01/README.md`
 - `docs/seed/APP_STORE_COPY.md`
 - `docs/seed/CODEX_PROMPTS.md`
 - `docs/seed/MOCK_SCAN_RESULTS.json`
