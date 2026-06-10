@@ -25,14 +25,17 @@ That file changes into `apps/mobile`, starts Expo on port `8082` if needed, boot
 
 ## Source Of Truth
 
-New developers and Codex sessions should read these first:
+New developers and Claude Code sessions should read these first:
 
-1. `AGENTS.md`
+1. `CLAUDE.md`
 2. `README.md`
-3. `docs/wiki/BUILD_FROM_ZERO.md`
-4. `docs/wiki/FAKE_V1_STATUS.md`
-5. `docs/wiki/PRD_SUMMARY.md`
-6. `docs/seed/OKYO_MASTER_ONE_NOTE.md`
+3. `.claude/skills/`
+4. `docs/wiki/BUILD_FROM_ZERO_CLAUDE.md`
+5. `docs/wiki/FAKE_V1_STATUS.md`
+6. `docs/wiki/PRD_SUMMARY.md`
+7. `docs/seed/OKYO_MASTER_ONE_NOTE.md`
+
+Codex sessions can still use `AGENTS.md`; it is kept as the Codex-specific version of the repo instructions.
 
 The app name is **Okyo**.
 
