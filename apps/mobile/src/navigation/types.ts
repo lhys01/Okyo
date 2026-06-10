@@ -19,8 +19,8 @@ export type RootStackParamList = {
   WelcomeScreen: undefined;
   GoalScreen: undefined;
   ScanScreen: undefined;
-  AnalysisLoadingScreen: undefined;
-  ResultSummaryScreen: undefined;
+  AnalysisLoadingScreen: { scanSessionId?: string } | undefined;
+  ResultSummaryScreen: { scanSessionId?: string } | undefined;
   RecipeDetailScreen: { mode?: RecipeMode } | undefined;
   GroceryListScreen: { mode?: RecipeMode } | undefined;
   ShareCardPreviewScreen:

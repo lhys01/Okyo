@@ -1,4 +1,5 @@
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Bookmark,
@@ -18,8 +19,8 @@ import {
   ArrowRight,
 } from 'iconoir-react-native';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
@@ -34,40 +35,53 @@ import {
   isRecipeMode,
   type Recipe,
   type RecipeMode,
+  type ScanResult,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { isUsableScan } from '../utils/scanDecision';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
 type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'ResultSummaryScreen'>;
+type ResultSummaryRoute = RouteProp<RootStackParamList, 'ResultSummaryScreen'>;
 
 export function ResultSummaryScreen() {
   const navigation = useNavigation<ResultSummaryNavigation>();
+  const route = useRoute<ResultSummaryRoute>();
   const selectedModeRaw = useOkyoStore((state) => state.selectedMode);
   const selectedMode = getSafeRecipeMode(selectedModeRaw);
-  const latestScanResult = useOkyoStore((state) => state.latestScanResult);
-  const latestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
-  const latestScanStatus = useOkyoStore((state) => state.latestScanStatus);
-  const latestScanFailure = useOkyoStore((state) => state.latestScanFailure);
-  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
-  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const latestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
+  const scanSessionId = useOkyoStore((state) => state.scanSessionId);
+  const latestScanSession = useOkyoStore((state) => state.latestScanSession);
+  const storedLatestScanResult = useOkyoStore((state) => state.latestScanResult);
+  const storedLatestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
+  const storedLatestScanStatus = useOkyoStore((state) => state.latestScanStatus);
+  const storedLatestScanFailure = useOkyoStore((state) => state.latestScanFailure);
+  const storedLatestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
+  const storedSelectedScanImage = useOkyoStore((state) => state.selectedScanImage);
+  const storedLatestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
-  const setLatestScanRecipes = useOkyoStore((state) => state.setLatestScanRecipes);
-  const setLatestScanStatus = useOkyoStore((state) => state.setLatestScanStatus);
-  const setLatestScanFailure = useOkyoStore((state) => state.setLatestScanFailure);
-  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
+  const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
+  const routeScanSessionId = route.params?.scanSessionId;
+  const stateSource = latestScanSession ? 'latest_scan_session' : 'legacy_latest_scan_fields';
+  const latestScanResult = latestScanSession?.latestScanResult ?? storedLatestScanResult;
+  const latestScanRecipes = latestScanSession?.latestScanRecipes ?? storedLatestScanRecipes;
+  const latestScanStatus = latestScanSession?.latestScanStatus ?? storedLatestScanStatus;
+  const latestScanFailure = latestScanSession?.latestScanFailure ?? storedLatestScanFailure;
+  const latestScanRecipe = latestScanSession?.latestScanRecipe ?? storedLatestScanRecipe;
+  const selectedScanImage = latestScanSession?.selectedScanImage ?? storedSelectedScanImage;
+  const latestAiDebugMetadata = latestScanSession?.latestAiDebugMetadata ?? storedLatestAiDebugMetadata;
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
-  const storedRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode, latestScanRecipe);
+  const hasSuccessfulScanSession = latestScanStatus === 'success' && Boolean(scanResult);
+  const storedRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode, latestScanRecipe, hasSuccessfulScanSession);
   const selectedRecipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
   const confidencePercent = getPercentValue(scanResult?.confidence ?? latestAiDebugMetadata?.confidence);
   const matchPercent = confidencePercent ?? getPercentValue(
@@ -75,17 +89,107 @@ export function ResultSummaryScreen() {
   );
   const didTrackResultView = useRef(false);
   const [showStarterRecipe, setShowStarterRecipe] = useState(false);
+  const [dishNameOverride, setDishNameOverride] = useState('');
+  const [isEditingDishName, setIsEditingDishName] = useState(false);
+  const [dishGuessConfirmed, setDishGuessConfirmed] = useState(false);
+  const [restaurantPriceInput, setRestaurantPriceInput] = useState('');
   const firstScanEventId = `first-scan-${scanResult?.id ?? 'missing-scan'}`;
   const isScanFailure = latestScanStatus === 'rejected' || latestScanStatus === 'failed';
   const isPartialScan = latestScanStatus === 'partial' && Boolean(latestScanResult);
+  const hasUsableScan = isUsableScan({
+    latestScanRecipe,
+    recipes: latestScanRecipes,
+    scan: scanResult,
+    status: latestScanStatus === 'pending' ? null : latestScanStatus,
+  });
+  const shouldShowFailure = isScanFailure && !hasUsableScan;
+  const shouldShowPartial = isPartialScan && !hasUsableScan;
+  const isRealScan = !isDemoScan;
   const failureCopy = getScanFailureCopy(latestScanFailure);
-  const partialStarterRecipe = isPartialScan && scanResult ? getStarterRecipe(scanResult.dishName) : null;
+  const partialStarterRecipe = shouldShowPartial && scanResult ? getStarterRecipe(scanResult.dishName) : null;
   const selectedModeUi = getModeUi(selectedMode);
   const totalTimeMinutes = selectedRecipe
     ? selectedRecipe.totalTimeMinutes ?? selectedRecipe.prepTimeMinutes + selectedRecipe.cookTimeMinutes
     : null;
-  const displayDishName = cleanDisplayText(scanResult?.dishName ?? '');
+  const isUncertainResult = isUncertainScan(scanResult, latestScanStatus, confidencePercent);
+  const displayDishName = cleanDisplayText(dishNameOverride.trim() || scanResult?.dishName || '');
+  const possibleDishNames = getPossibleDishNames(scanResult, displayDishName);
+  const shouldShowDishConfirmation = Boolean(isRealScan && scanResult && isUncertainResult);
+  const userRestaurantPrice = parseRestaurantPrice(restaurantPriceInput);
+  const homemadeEstimate = selectedRecipe?.estimatedHomemadeCost ?? scanResult?.homemadeCost ?? null;
+  const canShowSavings = isDemoScan || userRestaurantPrice !== null;
+  const estimatedSavings = isDemoScan
+    ? selectedRecipe?.estimatedSavings ?? 0
+    : userRestaurantPrice !== null && homemadeEstimate !== null
+      ? Math.max(0, userRestaurantPrice - homemadeEstimate)
+      : null;
   const displaySubtitle = getDisplaySubtitle(scanResult?.restaurantStyle, selectedRecipe?.description);
+  const bestGuessNote = getBestGuessResultNote(scanResult);
+
+  useEffect(() => {
+    setDishNameOverride('');
+    setDishGuessConfirmed(false);
+    setIsEditingDishName(false);
+    setRestaurantPriceInput('');
+  }, [scanResult?.id]);
+
+  useEffect(() => {
+    logResultStateSource({
+      activeScanSessionId: scanSessionId,
+      legacyRecipesLength: storedLatestScanRecipes.length,
+      legacyStatus: storedLatestScanStatus,
+      routeScanSessionId,
+      sessionExists: Boolean(latestScanSession),
+      sessionRecipesLength: latestScanSession?.latestScanRecipes.length ?? 0,
+      sessionStatus: latestScanSession?.latestScanStatus,
+      stateSource,
+    });
+    if (
+      latestScanSession?.latestScanStatus === 'success' &&
+      (!storedLatestScanStatus || storedLatestScanRecipes.length === 0)
+    ) {
+      logPreserveSuccessState({
+        legacyRecipesLength: storedLatestScanRecipes.length,
+        legacyStatus: storedLatestScanStatus,
+        scanSessionId: latestScanSession.scanSessionId,
+        sessionRecipesLength: latestScanSession.latestScanRecipes.length,
+      });
+    }
+    logResultDecision({
+      hasSuccessfulScanSession,
+      isDemoScan,
+      isPartialScan: shouldShowPartial,
+      isScanFailure: shouldShowFailure,
+      latestScanRecipesLength: latestScanRecipes.length,
+      latestScanStatus,
+      route: getResultDecisionRoute({
+        hasSuccessfulScanSession,
+        isPartialScan: shouldShowPartial,
+        isScanFailure: shouldShowFailure,
+        latestScanStatus,
+        scanResultExists: Boolean(scanResult),
+        selectedRecipeExists: Boolean(selectedRecipe),
+      }),
+      scanState: scanResult?.scanState,
+      selectedRecipeExists: Boolean(selectedRecipe),
+      stateSource,
+    });
+  }, [
+    hasSuccessfulScanSession,
+    isDemoScan,
+    latestScanRecipes.length,
+    latestScanSession,
+    latestScanStatus,
+    routeScanSessionId,
+    scanResult,
+    scanSessionId,
+    selectedRecipe,
+    shouldShowFailure,
+    shouldShowPartial,
+    stateSource,
+    storedLatestScanRecipes.length,
+    storedLatestScanStatus,
+  ]);
 
   useEffect(() => {
     if (didTrackResultView.current) {
@@ -99,9 +203,9 @@ export function ResultSummaryScreen() {
     }
 
     didTrackResultView.current = true;
-    if (isScanFailure || isPartialScan) {
+    if (shouldShowFailure || shouldShowPartial) {
       track(analyticsEvents.RESULT_ERROR, {
-        errorMessage: isPartialScan
+        errorMessage: shouldShowPartial
           ? 'Scan recognized dish but recipe generation was incomplete.'
           : latestScanFailure?.rejectionReason ?? 'Scan was rejected or failed.',
         screen: 'ResultSummaryScreen',
@@ -127,10 +231,10 @@ export function ResultSummaryScreen() {
     track(analyticsEvents.RESULT_VIEWED, {
       dishName: scanResult.dishName,
       mode: selectedMode,
-      savings: selectedRecipe?.estimatedSavings ?? 0,
+      savings: estimatedSavings ?? 0,
       screen: 'ResultSummaryScreen',
     });
-  }, [awardXPOnce, awardedXpEvents, firstScanEventId, incrementWeeklyScanCount, isDemoScan, isPartialScan, isScanFailure, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult, selectedRecipe?.estimatedSavings, selectedMode, selectedModeRaw, setLatestScanResult]);
+  }, [awardXPOnce, awardedXpEvents, estimatedSavings, firstScanEventId, incrementWeeklyScanCount, isDemoScan, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult, selectedMode, selectedModeRaw, setLatestScanResult, shouldShowFailure, shouldShowPartial]);
 
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
@@ -158,7 +262,7 @@ export function ResultSummaryScreen() {
     track(analyticsEvents.RECIPE_SAVED, {
       dishName: selectedRecipe.title,
       mode: selectedRecipe.mode,
-      savings: selectedRecipe?.estimatedSavings ?? 0,
+      savings: estimatedSavings ?? 0,
       screen: 'ResultSummaryScreen',
     });
     navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
@@ -182,21 +286,19 @@ export function ResultSummaryScreen() {
 
   const goToScan = () => {
     setShowStarterRecipe(false);
-    setLatestScanFailure(null);
-    setLatestScanResult(null);
-    setLatestScanRecipes([]);
-    setLatestScanStatus(null);
-    setLatestScanRecipe(null);
+    clearLatestScan({
+      reason: 'user_tapped_scan_again',
+      source: 'ResultSummaryScreen.goToScan',
+    });
     navigation.navigate('MainTabs', { screen: 'ScanScreen' });
   };
 
   const goBackToScanTab = () => {
     setShowStarterRecipe(false);
-    setLatestScanFailure(null);
-    setLatestScanResult(null);
-    setLatestScanRecipes([]);
-    setLatestScanStatus(null);
-    setLatestScanRecipe(null);
+    clearLatestScan({
+      reason: 'user_tapped_back_to_scan',
+      source: 'ResultSummaryScreen.goBackToScanTab',
+    });
     navigation.navigate('MainTabs', { screen: 'ScanScreen' });
   };
 
@@ -204,11 +306,11 @@ export function ResultSummaryScreen() {
     navigation.navigate('MainTabs', { screen: 'SettingsScreen' });
   };
 
-  if (isScanFailure) {
+  if (shouldShowFailure) {
     return (
       <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Scan issue</Text>
-        <Text style={styles.title}>{failureCopy.title}</Text>
+        <Text style={styles.failureHeadline}>{failureCopy.title}</Text>
         <Text style={styles.subtitle}>{failureCopy.body}</Text>
 
         {selectedScanImage?.uri ? (
@@ -230,11 +332,11 @@ export function ResultSummaryScreen() {
     );
   }
 
-  if (isPartialScan && scanResult) {
+  if (shouldShowPartial && scanResult) {
     return (
       <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Almost there</Text>
-        <Text style={styles.title}>{cleanDisplayText(scanResult.dishName)}</Text>
+        <Text style={styles.failureHeadline}>{cleanDisplayText(scanResult.dishName)}</Text>
         <Text style={styles.subtitle}>
           We recognized this as {cleanDisplayText(scanResult.dishName)}. Recipe generation had a hiccup.
         </Text>
@@ -281,7 +383,7 @@ export function ResultSummaryScreen() {
     return (
       <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Scanning</Text>
-        <Text style={styles.title}>Okyo is still looking.</Text>
+        <Text style={styles.failureHeadline}>Okyo is still looking.</Text>
         <Text style={styles.subtitle}>
           This can take a few seconds for real food photos. We will only show a result when it is safe to trust.
         </Text>
@@ -299,7 +401,7 @@ export function ResultSummaryScreen() {
     return (
       <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Recipe issue</Text>
-        <Text style={styles.title}>The scan worked, but the recipe needs another try.</Text>
+        <Text style={styles.failureHeadline}>The scan worked, but the recipe needs another try.</Text>
         <Text style={styles.subtitle}>
           {latestScanResult
             ? `Okyo recognized ${cleanDisplayText(scanResult?.dishName ?? 'this dish')}, but no safe ${selectedModeUi.label} recipe came back for this real scan.`
@@ -354,8 +456,13 @@ export function ResultSummaryScreen() {
         {matchPercent !== null ? (
           <View style={styles.matchPill}>
             <CheckCircle color={colors.green} height={20} strokeWidth={2.25} width={20} />
-            <Text style={styles.matchPillText}>{formatPercent(matchPercent)} match</Text>
+            <Text style={styles.matchPillText}>
+              {isUncertainResult ? `Best guess · ${formatPercent(matchPercent)} confidence` : `${formatPercent(matchPercent)} confidence`}
+            </Text>
           </View>
+        ) : null}
+        {bestGuessNote ? (
+          <Text style={styles.bestGuessNote}>{bestGuessNote}</Text>
         ) : null}
       </View>
 
@@ -365,48 +472,151 @@ export function ResultSummaryScreen() {
         isDemoScan={isDemoScan}
       />
 
+      {shouldShowDishConfirmation && scanResult ? (
+        <View style={styles.confirmCard}>
+          <Text style={styles.confirmLabel}>Best guess based on the photo.</Text>
+          <Text style={styles.confirmTitle}>Does this look right?</Text>
+          <Text style={styles.confirmDishName}>{displayDishName || cleanDisplayText(scanResult.dishName)}</Text>
+
+          {possibleDishNames.length > 0 ? (
+            <View style={styles.alternativeRow}>
+              {possibleDishNames.map((name) => (
+                <Pressable
+                  accessibilityRole="button"
+                  key={name}
+                  onPress={() => {
+                    setDishNameOverride(name);
+                    setDishGuessConfirmed(false);
+                  }}
+                  style={({ pressed }) => [styles.alternativeChip, pressed ? styles.pressed : null]}
+                >
+                  <Text style={styles.alternativeChipText}>{name}</Text>
+                </Pressable>
+              ))}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setIsEditingDishName(true);
+                  setDishGuessConfirmed(false);
+                }}
+                style={({ pressed }) => [styles.alternativeChip, pressed ? styles.pressed : null]}
+              >
+                <Text style={styles.alternativeChipText}>Something else</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {isEditingDishName ? (
+            <TextInput
+              accessibilityLabel="Edit dish name"
+              autoCapitalize="words"
+              onChangeText={(value) => {
+                // TODO: Regenerate the recipe from this edited dish name when the API supports scan revision.
+                setDishNameOverride(value);
+                setDishGuessConfirmed(false);
+              }}
+              placeholder="Enter dish name"
+              placeholderTextColor={colors.muted}
+              style={styles.dishNameInput}
+              value={dishNameOverride}
+            />
+          ) : null}
+
+          <View style={styles.confirmActions}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setDishGuessConfirmed(true);
+                setIsEditingDishName(false);
+              }}
+              style={({ pressed }) => [styles.confirmPrimary, pressed ? styles.pressed : null]}
+            >
+              <Text style={styles.confirmPrimaryText}>Keep this guess</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setIsEditingDishName(true);
+                setDishGuessConfirmed(false);
+              }}
+              style={({ pressed }) => [styles.confirmSecondary, pressed ? styles.pressed : null]}
+            >
+              <Text style={styles.confirmSecondaryText}>Edit dish name</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.confirmNote}>
+            {dishGuessConfirmed
+              ? 'Using this guess for the recipe shown below.'
+              : 'You can edit this if it’s off. Recipe regeneration from edits is next.'}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.savingsHero}>
         <View style={styles.savingsTopRow}>
           <View style={styles.savingsBadge}>
             <Leaf color={colors.green} height={28} strokeWidth={2.3} width={28} />
           </View>
           <View style={styles.savingsAmountGroup}>
-            <Text style={styles.savingsHeroLabel}>YOU SAVE</Text>
+            <Text style={styles.savingsHeroLabel}>
+              {canShowSavings ? (isDemoScan ? 'DEMO SAVINGS' : 'ESTIMATED SAVINGS') : 'HOMEMADE ESTIMATE'}
+            </Text>
             <Text
               adjustsFontSizeToFit
               minimumFontScale={0.78}
               numberOfLines={1}
               style={styles.savingsHeroValue}
             >
-              {formatOptionalCurrency(selectedRecipe.estimatedSavings)}
+              {canShowSavings
+                ? formatOptionalCurrency(estimatedSavings)
+                : formatHomemadeEstimateRange(homemadeEstimate)}
             </Text>
           </View>
         </View>
-        <View style={styles.priceCompareRow}>
-          <View style={styles.priceColumn}>
-            <Text numberOfLines={1} style={styles.priceLabel}>Restaurant</Text>
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.82}
-              numberOfLines={1}
-              style={styles.priceValue}
-            >
-              {formatOptionalCurrency(scanResult.restaurantPrice)}
-            </Text>
+        {isDemoScan ? (
+          <View style={styles.priceCompareRow}>
+            <View style={styles.priceColumn}>
+              <Text numberOfLines={1} style={styles.priceLabel}>Demo restaurant</Text>
+              <Text
+                adjustsFontSizeToFit
+                minimumFontScale={0.82}
+                numberOfLines={1}
+                style={styles.priceValue}
+              >
+                {formatOptionalCurrency(scanResult.restaurantPrice)}
+              </Text>
+            </View>
+            <ArrowRight color={colors.green} height={28} strokeWidth={2.6} width={28} />
+            <View style={styles.priceColumn}>
+              <Text numberOfLines={1} style={styles.priceLabel}>Demo home</Text>
+              <Text
+                adjustsFontSizeToFit
+                minimumFontScale={0.82}
+                numberOfLines={1}
+                style={styles.priceValue}
+              >
+                {formatOptionalCurrency(selectedRecipe.estimatedHomemadeCost)}
+              </Text>
+            </View>
           </View>
-          <ArrowRight color={colors.green} height={28} strokeWidth={2.6} width={28} />
-          <View style={styles.priceColumn}>
-            <Text numberOfLines={1} style={styles.priceLabel}>Home</Text>
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.82}
-              numberOfLines={1}
-              style={styles.priceValue}
-            >
-              {formatOptionalCurrency(selectedRecipe.estimatedHomemadeCost)}
-            </Text>
+        ) : (
+          <View style={styles.priceCompareRow}>
+            <View style={styles.priceColumn}>
+              <Text style={styles.priceLabel}>Estimated grocery cost</Text>
+              <Text style={styles.priceValue}>{formatHomemadeEstimateRange(homemadeEstimate)}</Text>
+              <Text style={styles.priceHint}>Add what you paid to estimate savings.</Text>
+            </View>
+            <TextInput
+              accessibilityLabel="Restaurant price paid"
+              keyboardType="decimal-pad"
+              onChangeText={setRestaurantPriceInput}
+              placeholder="$ paid"
+              placeholderTextColor={colors.muted}
+              style={styles.priceInput}
+              value={restaurantPriceInput}
+            />
           </View>
-        </View>
+        )}
       </View>
 
       <View style={styles.summaryCard}>
@@ -454,7 +664,10 @@ export function ResultSummaryScreen() {
           </View>
         </View>
         <View style={styles.chipRow}>
-          {getModeChips(selectedRecipe).map((chip) => (
+          {getModeChips(selectedRecipe, {
+            estimatedSavings,
+            showSavings: canShowSavings,
+          }).map((chip) => (
             <View key={chip.label} style={styles.infoChip}>
               <Text
                 adjustsFontSizeToFit
@@ -503,9 +716,14 @@ type ResultFrameProps = {
 };
 
 function ResultFrame({ children, onScanAgain, onSettings }: ResultFrameProps) {
+  const insets = useSafeAreaInsets();
+
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[styles.screenContent, { paddingBottom: 220 + insets.bottom }]}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.topBar}>
           <Pressable
             accessibilityLabel="Scan again"
@@ -708,6 +926,70 @@ function ResultPrimaryButton({ children, onPress }: ResultPrimaryButtonProps) {
   );
 }
 
+function getResultDecisionRoute(input: {
+  hasSuccessfulScanSession: boolean;
+  isPartialScan: boolean;
+  isScanFailure: boolean;
+  latestScanStatus: string | null;
+  scanResultExists: boolean;
+  selectedRecipeExists: boolean;
+}) {
+  if (input.isScanFailure) {
+    return 'result_failure_path';
+  }
+  if (input.isPartialScan) {
+    return 'result_partial_path';
+  }
+  if (input.latestScanStatus === 'pending' && !input.scanResultExists) {
+    return 'result_pending_path';
+  }
+  if (!input.scanResultExists) {
+    return 'result_missing_scan_path';
+  }
+  if (!input.selectedRecipeExists) {
+    return input.hasSuccessfulScanSession ? 'result_success_path' : 'result_missing_recipe_path';
+  }
+
+  return 'result_success_path';
+}
+
+function logResultStateSource(details: Record<string, unknown>) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log('okyo_result_state_source', {
+    screen: 'ResultSummaryScreen',
+    ...details,
+  });
+}
+
+function logPreserveSuccessState(details: Record<string, unknown>) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log('okyo_result_preserve_success_state', {
+    screen: 'ResultSummaryScreen',
+    ...details,
+  });
+}
+
+function logResultDecision(details: Record<string, unknown>) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log('okyo_scan_route_decision', {
+    screen: 'ResultSummaryScreen',
+    ...details,
+  });
+  console.log('okyo_scan_failure_reason', {
+    screen: 'ResultSummaryScreen',
+    route: details.route,
+  });
+}
+
 const modeUiByMode: Record<RecipeMode, { label: string }> = {
   'Restaurant Copy': { label: 'Restaurant Style' },
   Budget: { label: 'Budget' },
@@ -718,30 +1000,37 @@ function getModeUi(mode: RecipeMode) {
   return modeUiByMode[mode];
 }
 
-function getModeChips(recipe: Recipe) {
+function getModeChips(
+  recipe: Recipe,
+  options: {
+    estimatedSavings: number | null;
+    showSavings: boolean;
+  },
+) {
   return [
-    { label: `${formatOptionalCurrency(recipe.estimatedHomemadeCost)} est. cost` },
-    { label: `${formatOptionalCurrency(recipe.estimatedSavings)} savings` },
+    { label: `${formatOptionalCurrency(recipe.estimatedHomemadeCost)} homemade est.` },
+    options.showSavings ? { label: `${formatOptionalCurrency(options.estimatedSavings)} savings` } : null,
     { label: recipe.servings ? `Serves ${recipe.servings}` : 'Serves —' },
-  ].filter((chip) => !chip.label.includes('—'));
+  ].filter((chip): chip is { label: string } => Boolean(chip))
+    .filter((chip) => !chip.label.includes('—'));
 }
 
 function getDisplaySubtitle(restaurantStyle?: string, recipeDescription?: string) {
   const style = cleanDisplayText(restaurantStyle ?? '');
   const description = cleanDisplayText(recipeDescription ?? '');
   if (description.toLowerCase().includes('lighter')) {
-    return 'Lighter homemade restaurant-style swap';
+    return 'Lighter homemade recipe from what Okyo can see';
   }
 
   if (description.toLowerCase().includes('budget') || description.toLowerCase().includes('lower-cost')) {
-    return 'Budget-friendly homemade swap';
+    return 'Budget-friendly homemade recipe from the photo';
   }
 
   if (style) {
-    return 'Homemade restaurant-style swap';
+    return 'Homemade recipe based on what’s visible';
   }
 
-  return 'Okyo-style homemade swap';
+  return 'Homemade recipe from the photo';
 }
 
 function getModeCardTitle(mode: RecipeMode) {
@@ -791,6 +1080,78 @@ function formatOptionalCurrency(value: number | null | undefined) {
   return typeof value === 'number' && Number.isFinite(value) ? formatCurrency(value) : '—';
 }
 
+function parseRestaurantPrice(value: string) {
+  const parsed = Number(value.replace(/[^0-9.]/g, ''));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatHomemadeEstimateRange(value: number | null | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return 'Add recipe items';
+  }
+
+  const low = Math.max(1, value * 0.85);
+  const high = Math.max(low, value * 1.15);
+  return `about ${formatCurrency(low)}–${formatCurrency(high)}`;
+}
+
+function isUncertainScan(
+  scanResult: ScanResult | null,
+  status: string | null,
+  confidencePercent: number | null,
+) {
+  return Boolean(
+    status === 'partial' ||
+    scanResult?.scanState === 'food_present_uncertain_dish' ||
+    scanResult?.scanState === 'partial_food' ||
+    scanResult?.scanState === 'too_unclear' ||
+    (typeof confidencePercent === 'number' && confidencePercent < 82),
+  );
+}
+
+function getPossibleDishNames(scanResult: ScanResult | null, displayDishName: string) {
+  if (!scanResult) {
+    return [];
+  }
+
+  const fallbackNames = getFallbackDishAlternatives(scanResult);
+  const names = [
+    ...(scanResult.possibleDishNames ?? []),
+    ...fallbackNames,
+  ];
+  const seen = new Set<string>([displayDishName.toLowerCase()]);
+
+  return names
+    .map(cleanDisplayText)
+    .filter((name) => {
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 4);
+}
+
+function getFallbackDishAlternatives(scanResult: ScanResult) {
+  const text = `${scanResult.dishName} ${scanResult.restaurantStyle}`.toLowerCase();
+  if (text.includes('grill') || text.includes('meat') || text.includes('char')) {
+    return ['Mixed Restaurant Plate', 'Grilled Meat Plate', 'Restaurant-Style Food Plate'];
+  }
+  if (text.includes('rice') || text.includes('bowl')) {
+    return ['Saucy Rice Bowl', 'Mixed Restaurant Plate', 'Stir-Fry Plate'];
+  }
+  if (text.includes('noodle') || text.includes('pasta')) {
+    return ['Noodle Bowl', 'Pasta Bowl', 'Saucy Noodles'];
+  }
+  if (text.includes('burger') || text.includes('sandwich')) {
+    return ['Loaded Sandwich', 'Loaded Burger', 'Restaurant-Style Food Plate'];
+  }
+
+  return ['Mixed Restaurant Plate', 'Saucy Rice Bowl', 'Loaded Sandwich'];
+}
+
 function getPercentValue(value: number | null | undefined) {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return null;
@@ -816,7 +1177,6 @@ const styles = StyleSheet.create({
   screenContent: {
     backgroundColor: colors.background,
     flexGrow: 1,
-    paddingBottom: 28,
     paddingHorizontal: 18,
     paddingTop: 8,
   },
@@ -897,6 +1257,13 @@ const styles = StyleSheet.create({
     lineHeight: 42,
     minWidth: 0,
   },
+  failureHeadline: {
+    color: colors.charcoal,
+    fontSize: 29,
+    fontWeight: '900',
+    lineHeight: 34,
+    minWidth: 0,
+  },
   subtitle: {
     color: colors.body,
     fontSize: 17,
@@ -922,6 +1289,13 @@ const styles = StyleSheet.create({
     color: colors.green,
     fontSize: 15,
     fontWeight: '900',
+  },
+  bestGuessNote: {
+    color: colors.body,
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 20,
+    marginTop: 10,
   },
   foodImageCard: {
     alignItems: 'center',
@@ -972,6 +1346,108 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     maxWidth: 260,
     textAlign: 'center',
+  },
+  confirmCard: {
+    backgroundColor: '#fffdf8',
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 16,
+  },
+  confirmLabel: {
+    color: colors.coral,
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  confirmTitle: {
+    color: colors.charcoal,
+    fontSize: 19,
+    fontWeight: '900',
+    marginTop: 6,
+  },
+  confirmDishName: {
+    color: colors.charcoal,
+    fontSize: 24,
+    fontWeight: '900',
+    lineHeight: 29,
+    marginTop: 8,
+  },
+  alternativeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  alternativeChip: {
+    backgroundColor: '#fff5ef',
+    borderColor: '#ffcab9',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  alternativeChipText: {
+    color: colors.coral,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  dishNameInput: {
+    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    color: colors.charcoal,
+    fontSize: 17,
+    fontWeight: '800',
+    marginTop: 12,
+    minHeight: 50,
+    paddingHorizontal: 14,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  confirmPrimary: {
+    alignItems: 'center',
+    backgroundColor: colors.coral,
+    borderRadius: 14,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 10,
+  },
+  confirmPrimaryText: {
+    color: '#fffdf8',
+    fontSize: 13,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  confirmSecondary: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 10,
+  },
+  confirmSecondaryText: {
+    color: colors.charcoal,
+    fontSize: 13,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  confirmNote: {
+    color: colors.body,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 19,
+    marginTop: 10,
   },
   savingsHero: {
     alignItems: 'stretch',
@@ -1043,6 +1519,26 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '900',
     marginTop: 4,
+  },
+  priceHint: {
+    color: colors.body,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 17,
+    marginTop: 5,
+  },
+  priceInput: {
+    backgroundColor: '#ffffff',
+    borderColor: colors.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    color: colors.charcoal,
+    fontSize: 17,
+    fontWeight: '900',
+    minHeight: 50,
+    minWidth: 94,
+    paddingHorizontal: 12,
+    textAlign: 'center',
   },
   summaryCard: {
     alignItems: 'center',
@@ -1253,8 +1749,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 18,
     borderWidth: 1,
-    height: 210,
-    marginTop: 18,
+    height: 170,
+    marginTop: 14,
     width: '100%',
   },
   failureCard: {
@@ -1262,16 +1758,16 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 18,
     borderWidth: 1,
-    marginTop: 18,
-    padding: 18,
+    marginTop: 14,
+    padding: 16,
   },
   partialCard: {
     backgroundColor: '#fff7d8',
     borderColor: '#eadc91',
     borderRadius: 18,
     borderWidth: 1,
-    marginTop: 18,
-    padding: 18,
+    marginTop: 14,
+    padding: 16,
   },
   starterCard: {
     backgroundColor: '#ffffff',
@@ -1340,7 +1836,7 @@ const styles = StyleSheet.create({
   },
   actions: {
     gap: 12,
-    marginTop: 14,
+    marginTop: 16,
   },
   secondaryRow: {
     flexDirection: 'row',
@@ -1406,26 +1902,66 @@ function isExplicitDemoScan(image: { source?: string; [key: string]: unknown } |
   return image?.[demoFlagKey] === true && image.source === 'mock';
 }
 
+function getBestGuessResultNote(scanResult: ScanResult | null) {
+  if (!scanResult) {
+    return null;
+  }
+
+  if (scanResult.scanState === 'food_present_uncertain_dish') {
+    return getPublicBestGuessNote(scanResult.bestGuessNote) ?? 'Best guess based on the photo. You can edit or retry if this is off.';
+  }
+
+  if (scanResult.scanState === 'partial_food') {
+    return getPublicBestGuessNote(scanResult.bestGuessNote) ?? 'Best guess from what is visible in the photo.';
+  }
+
+  return null;
+}
+
+function getPublicBestGuessNote(note: string | null | undefined) {
+  const cleanedNote = getPublicFailureReason(note);
+  if (!cleanedNote) {
+    return null;
+  }
+
+  return cleanedNote.replace(/\bAI\b/g, 'Okyo');
+}
+
 function getScanFailureCopy(failure: { rejectionType?: string; rejectionReason?: string } | null) {
   const friendlyReason = getPublicFailureReason(failure?.rejectionReason);
+  const reasonText = friendlyReason?.toLowerCase() ?? '';
+
+  if (reasonText.includes('too large')) {
+    return {
+      title: 'This photo was too large to scan.',
+      body: 'Try a smaller image.',
+    };
+  }
+
+  if (reasonText.includes('trouble scanning') || reasonText.includes('reach the scanner') || reasonText.includes('try again in a second')) {
+    return {
+      title: 'Okyo had trouble scanning this photo.',
+      body: 'Try again in a second.',
+    };
+  }
 
   if (failure?.rejectionType === 'not_food') {
     return {
-      title: "This doesn't look like a restaurant meal.",
+      title: 'Try a food photo.',
       body: friendlyReason ?? 'Okyo needs a clear food photo to build a useful inspired-by recipe.',
     };
   }
 
   if (failure?.rejectionType === 'unclear_image') {
     return {
-      title: "Okyo couldn't analyze this photo.",
-      body: friendlyReason ?? 'The dish was too unclear to identify confidently.',
+      title: 'This photo is too unclear.',
+      body: friendlyReason ?? 'Try a brighter or closer food photo.',
     };
   }
 
   return {
-    title: "Okyo couldn't analyze this photo.",
-    body: friendlyReason ?? 'The scan did not return a safe result.',
+    title: 'Okyo had trouble scanning this photo.',
+    body: friendlyReason ?? 'Try again in a second.',
   };
 }
 
@@ -1490,7 +2026,13 @@ function getStarterRecipe(dishName: string) {
   };
 }
 
-function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode, fallbackRecipe: Recipe | null) {
+function getStoredRecipeForMode(
+  recipes: Recipe[],
+  mode: RecipeMode,
+  fallbackRecipe: Recipe | null,
+  shouldPreserveSuccessfulScan = false,
+) {
   return recipes.find((recipe) => recipe.mode === mode) ??
-    (fallbackRecipe?.mode === mode ? fallbackRecipe : null);
+    (fallbackRecipe?.mode === mode ? fallbackRecipe : null) ??
+    (shouldPreserveSuccessfulScan ? fallbackRecipe ?? recipes[0] ?? null : null);
 }

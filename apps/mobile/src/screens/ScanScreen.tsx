@@ -1,88 +1,140 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import {
   Book,
-  Camera,
   CameraSolid,
   Dollar,
   NavArrowRight,
-  Spark,
   Sparks,
   Upload,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
+import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import { defaultScanResult, getSafeRecipeForMode, getSafeRecipeMode, type Recipe, type RecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
-import { useOkyoStore } from '../state/useOkyoStore';
+import { useOkyoStore, type LatestScanFailure } from '../state/useOkyoStore';
+import { hasFoodEvidence, isFoodScanState, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
 import { uiLog } from '../utils/uiDebug';
 
 type ScanNavigation = NativeStackNavigationProp<RootStackParamList, 'ScanScreen'>;
 
-const maxImageDataUrlBytes = 2_750_000;
+const maxImageDataUrlBytes = 12_000_000;
+const maxProcessedImageWidth = 1400;
+const tabBarSafePadding = 260;
 
 export function ScanScreen() {
   const navigation = useNavigation<ScanNavigation>();
+  const insets = useSafeAreaInsets();
   const selectedMode = useOkyoStore((state) => state.selectedMode);
-  const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
-  const setLatestScanRecipes = useOkyoStore((state) => state.setLatestScanRecipes);
-  const setLatestScanStatus = useOkyoStore((state) => state.setLatestScanStatus);
-  const setLatestScanFailure = useOkyoStore((state) => state.setLatestScanFailure);
-  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
-  const setSelectedScanImage = useOkyoStore((state) => state.setSelectedScanImage);
-  const setLatestAiDebugMetadata = useOkyoStore((state) => state.setLatestAiDebugMetadata);
+  const beginLatestScanSession = useOkyoStore((state) => state.beginLatestScanSession);
+  const writeLatestScanSession = useOkyoStore((state) => state.writeLatestScanSession);
+  const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
 
   const startScan = (source: ScanSource, image?: ScanImageMetadata) => {
     const uploadedImage = isRealUploadedImage(source, image);
+    const scanSessionId = createScanSessionId(source);
+    const previewImage = getPreviewImageMetadata(image);
+    logDev('okyo_scan_start', {
+      hasImage: Boolean(image),
+      mode: selectedMode,
+      scanSessionId,
+      source: getPublicScanSource(source),
+      timestamp: new Date().toISOString(),
+      uploadedImage,
+    });
     uiLog('ScanScreen', 'scan_started', { source, hasImage: Boolean(image?.uri), placeholder: image?.placeholder, uploadedImage });
+    logSelectedImage(source, image);
     track(analyticsEvents.SCAN_STARTED, { screen: 'ScanScreen', source });
     track(analyticsEvents.PHOTO_UPLOADED, { screen: 'ScanScreen', source });
-    setLatestScanResult(uploadedImage ? null : defaultScanResult);
-    setLatestScanRecipes([]);
-    setLatestScanStatus('pending');
-    setLatestScanFailure(null);
-    setLatestScanRecipe(null);
-    setSelectedScanImage(getPreviewImageMetadata(image));
-    setLatestAiDebugMetadata(null);
-    navigation.navigate('AnalysisLoadingScreen' as never);
+    beginLatestScanSession({
+      scanSessionId,
+      latestScanStatus: 'pending',
+      latestScanFailure: null,
+      latestScanResult: null,
+      latestScanRecipes: [],
+      latestScanRecipe: null,
+      selectedScanImage: previewImage,
+      latestAiDebugMetadata: null,
+      source,
+      reason: 'ScanScreen.startScan',
+    });
+    navigation.navigate('AnalysisLoadingScreen', { scanSessionId });
 
     createMockScan({ image, mode: selectedMode, source })
       .then((result) => {
+        if (!isActiveScanSession(scanSessionId)) {
+          logIgnoredScanSessionWrite(scanSessionId, 'ScanScreen.api_response_stale');
+          return;
+        }
+
         const status = result.status ?? 'success';
-        setSelectedScanImage(getPreviewImageMetadata(result.image ?? image));
-        setLatestAiDebugMetadata(getAiDebugMetadata(result));
-        if ((status === 'success' || status === 'partial') && result.scan) {
-          const scanRecipes = status === 'success' ? getScanRecipes(result) : [];
-          const selectedRecipe = status === 'success'
-            ? getScanRecipeForMode(scanRecipes, selectedMode, result.recipe)
-            : null;
-          setLatestScanStatus(status);
-          setLatestScanFailure(null);
-          setLatestScanResult(result.scan);
-          setLatestScanRecipes(scanRecipes);
-          setLatestScanRecipe(selectedRecipe);
+        const responseImage = getPreviewImageMetadata(result.image ?? image);
+        const aiDebugMetadata = getAiDebugMetadata(result);
+        logScanResponse(result, image);
+        const foodEvidence = hasFoodEvidence({ result, status });
+        const initialRecipes = getScanRecipes(result);
+        const scanRecipes = result.scan && foodEvidence && initialRecipes.length === 0
+          ? createStarterRecipesFromScan(result.scan)
+          : initialRecipes;
+        const shouldUseSuccessPath = Boolean(
+          result.scan &&
+          isUsableScan({
+            recipes: scanRecipes,
+            result,
+            scan: result.scan,
+            status,
+          }),
+        );
+        if (shouldUseSuccessPath && result.scan) {
+          const selectedRecipe = getScanRecipeForMode(scanRecipes, selectedMode, result.recipe);
+          const storedStatus = selectedRecipe || foodEvidence ? 'success' : status;
+          writeLatestScanSession({
+            scanSessionId,
+            latestScanStatus: storedStatus,
+            latestScanFailure: null,
+            latestScanResult: result.scan,
+            latestScanRecipes: scanRecipes,
+            latestScanRecipe: selectedRecipe,
+            selectedScanImage: responseImage,
+            latestAiDebugMetadata: aiDebugMetadata,
+            source,
+            reason: 'ScanScreen.api_success',
+          });
+          logStoreAfterResponse(storedStatus, result.scan, selectedRecipe, scanRecipes, result.image ?? image, scanSessionId);
         } else {
-          const failureStatus = status === 'rejected' || status === 'failed' ? status : 'failed';
-          setLatestScanStatus(failureStatus);
-          setLatestScanFailure({
+          const failureStatus = shouldRejectScan({ result, status }) ? 'rejected' : 'failed';
+          const failure = {
             status: failureStatus,
             rejectionType: result.rejectionType ?? 'ai_failed',
             rejectionReason: getScanFailureReason(result),
+          } satisfies LatestScanFailure;
+          writeLatestScanSession({
+            scanSessionId,
+            latestScanStatus: failureStatus,
+            latestScanFailure: failure,
+            latestScanResult: null,
+            latestScanRecipes: [],
+            latestScanRecipe: null,
+            selectedScanImage: responseImage,
+            latestAiDebugMetadata: aiDebugMetadata,
+            source,
+            reason: 'ScanScreen.api_failure',
           });
-          setLatestScanResult(null);
-          setLatestScanRecipes([]);
-          setLatestScanRecipe(null);
+          logStoreAfterResponse(failureStatus, null, null, [], result.image ?? image, scanSessionId);
         }
-        if ((status === 'success' || status === 'partial') && result.recipe?.mode) {
+        logScanRouteDecision(status, result, shouldUseSuccessPath ? 'result_success_path' : failureStatusToRoute(status, result));
+        if (isActiveScanSession(scanSessionId) && (status === 'success' || status === 'partial') && result.recipe?.mode) {
           setSelectedMode(getSafeRecipeMode(result.recipe.mode));
         }
         uiLog('ScanScreen', 'api_scan_result', {
@@ -93,6 +145,11 @@ export function ScanScreen() {
         });
       })
       .catch((error) => {
+        if (!isActiveScanSession(scanSessionId)) {
+          logIgnoredScanSessionWrite(scanSessionId, 'ScanScreen.api_error_stale');
+          return;
+        }
+
         track(analyticsEvents.RESULT_ERROR, {
           errorMessage: error instanceof Error ? error.message : 'Mock API scan failed.',
           screen: 'ScanScreen',
@@ -100,29 +157,55 @@ export function ScanScreen() {
         });
         uiLog('ScanScreen', 'api_scan_fallback', { source });
         if (uploadedImage) {
-          setLatestScanStatus('failed');
-          setLatestScanFailure({
+          const failureReason = getUploadFailureReasonFromError(error);
+          const failure = {
             status: 'failed',
             rejectionType: 'ai_failed',
-            rejectionReason: 'Okyo could not analyze this photo. Try uploading a clearer food photo.',
+            rejectionReason: failureReason,
+          } as const;
+          writeLatestScanSession({
+            scanSessionId,
+            latestScanStatus: 'failed',
+            latestScanFailure: failure,
+            latestScanResult: null,
+            latestScanRecipes: [],
+            latestScanRecipe: null,
+            selectedScanImage: getPreviewImageMetadata(image),
+            latestAiDebugMetadata: {
+              aiSource: 'fallback_ai',
+              fallbackReason: 'mobile_api_unavailable',
+              confidence: 0,
+            },
+            source,
+            reason: 'ScanScreen.api_error_uploaded_image',
           });
-          setLatestScanResult(null);
-          setLatestScanRecipes([]);
-          setLatestScanRecipe(null);
+          logStoreAfterResponse('failed', null, null, [], image, scanSessionId);
         } else {
           const demoRecipes = getDemoRecipes();
-          setLatestScanStatus('success');
-          setLatestScanFailure(null);
-          setLatestScanResult(defaultScanResult);
-          setLatestScanRecipes(demoRecipes);
-          setLatestScanRecipe(getScanRecipeForMode(demoRecipes, selectedMode));
+          const demoRecipe = getScanRecipeForMode(demoRecipes, selectedMode);
+          writeLatestScanSession({
+            scanSessionId,
+            latestScanStatus: 'success',
+            latestScanFailure: null,
+            latestScanResult: defaultScanResult,
+            latestScanRecipes: demoRecipes,
+            latestScanRecipe: demoRecipe,
+            selectedScanImage: getPreviewImageMetadata(image),
+            latestAiDebugMetadata: {
+              aiSource: 'fallback_ai',
+              fallbackReason: 'mobile_api_unavailable',
+              confidence: defaultScanResult.confidence,
+            },
+            source,
+            reason: 'ScanScreen.api_error_demo_fallback',
+          });
+          logStoreAfterResponse('success', defaultScanResult, demoRecipe, demoRecipes, image, scanSessionId);
         }
-        setSelectedScanImage(getPreviewImageMetadata(image));
-        setLatestAiDebugMetadata({
-          aiSource: 'fallback_ai',
-          fallbackReason: 'mobile_api_unavailable',
-          confidence: defaultScanResult.confidence,
-        });
+        logScanRouteDecision('failed', {
+          rejectionReason: uploadedImage ? getUploadFailureReasonFromError(error) : 'Demo scan API unavailable.',
+          rejectionType: 'ai_failed',
+          status: 'failed',
+        }, uploadedImage ? 'api_error_path' : 'result_success_path');
       });
   };
 
@@ -140,9 +223,9 @@ export function ScanScreen() {
 
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: false,
-        base64: true,
+        base64: false,
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.55,
+        quality: 1,
       });
 
       if (result.canceled || result.assets.length === 0) {
@@ -150,7 +233,7 @@ export function ScanScreen() {
         return;
       }
 
-      startScan('camera', getImageMetadata(result.assets[0], 'camera'));
+      startScan('camera', await getImageMetadata(result.assets[0], 'camera'));
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Camera unavailable.',
@@ -173,9 +256,9 @@ export function ScanScreen() {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: false,
-        base64: true,
+        base64: false,
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.55,
+        quality: 1,
       });
 
       if (result.canceled || result.assets.length === 0) {
@@ -183,7 +266,7 @@ export function ScanScreen() {
         return;
       }
 
-      startScan('photos', getImageMetadata(result.assets[0], 'photos'));
+      startScan('photos', await getImageMetadata(result.assets[0], 'photos'));
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Image picker failed.',
@@ -207,13 +290,11 @@ export function ScanScreen() {
 
     const mode = getSafeRecipeMode(recentRecipe.mode);
     uiLog('ScanScreen', 'open_recent_recipe', { recipeId: recentRecipe.id });
-    setLatestAiDebugMetadata(null);
-    setLatestScanFailure(null);
-    setLatestScanRecipe(recentRecipe);
-    setLatestScanRecipes([recentRecipe]);
-    setLatestScanResult(null);
-    setLatestScanStatus(null);
-    setSelectedScanImage(null);
+    writeSavedRecipeContext({
+      recipe: recentRecipe,
+      reason: 'open_recent_recipe',
+      source: 'ScanScreen.openRecentRecipe',
+    });
     setSelectedMode(mode);
     navigation.navigate('RecipeDetailScreen', { mode });
   };
@@ -225,7 +306,7 @@ export function ScanScreen() {
   return (
     <SafeAreaView edges={['top']} style={styles.container}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarSafePadding + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.hero}>
@@ -235,37 +316,16 @@ export function ScanScreen() {
             numberOfLines={2}
             style={styles.headline}
           >
-            What are we remaking today?
+            Turn a food photo into a homemade recipe.
           </Text>
           <Text style={styles.subtitle}>
-            Snap or upload a restaurant meal photo and Okyo will turn it into a homemade restaurant-style recipe, savings estimate, and groceries.
+            Upload a food photo. Okyo makes a best-guess recipe from what it can see, then you can edit it if it’s off.
           </Text>
         </View>
 
         <View style={styles.scanCard}>
           <View style={styles.illustrationPanel}>
-            <View style={styles.napkin} />
-            <View style={styles.fork}>
-              <View style={styles.forkHead}>
-                <View style={styles.forkLine} />
-                <View style={styles.forkLine} />
-                <View style={styles.forkLine} />
-              </View>
-              <View style={styles.forkHandle} />
-            </View>
-            <View style={styles.knife} />
-            <View style={styles.plateOuter}>
-              <View style={styles.plateMiddle}>
-                <View style={styles.plateInner}>
-                  <Camera color={colors.coral} height={50} strokeWidth={2.25} width={50} />
-                </View>
-              </View>
-            </View>
-            <Spark color="#f5b763" height={28} style={styles.sparkLeft} strokeWidth={2.1} width={28} />
-            <Spark color="#f5b763" height={22} style={styles.sparkRight} strokeWidth={2.1} width={22} />
-            <View style={styles.okyoBadge}>
-              <Text style={styles.okyoBadgeFace}>Okyo</Text>
-            </View>
+            <KikoMascot pose="scanning" size={190} style={styles.scanMascot} />
           </View>
 
           <View style={styles.scanActions}>
@@ -317,9 +377,7 @@ export function ScanScreen() {
                 <Text style={styles.recentMeta}>Saved recipe</Text>
                 <View style={styles.savedPill}>
                   <Dollar color={colors.green} height={17} strokeWidth={2.2} width={17} />
-                  <Text style={styles.savedPillText}>
-                    {formatOptionalCurrency(recentRecipe.estimatedSavings)} saved
-                  </Text>
+                  <Text style={styles.savedPillText}>Saved recipe</Text>
                 </View>
               </View>
               <NavArrowRight color={colors.body} height={26} strokeWidth={2.2} width={26} />
@@ -373,29 +431,132 @@ function createPlaceholderImage(source: ScanSource): ScanImageMetadata {
   };
 }
 
-function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: ScanSource): ScanImageMetadata {
-  const mimeType = asset.mimeType ?? getMimeTypeFromFileName(asset.fileName) ?? 'image/jpeg';
-  const dataUrl = getImageDataUrl(asset.base64, mimeType);
+async function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: ScanSource): Promise<ScanImageMetadata> {
+  const processed = await getProcessedImage(asset);
+  const dataUrl = getImageDataUrl(processed.base64, processed.mimeType);
   const dataUrlSizeBytes = dataUrl ? getUtf8SizeBytes(dataUrl) : undefined;
-  const shouldSendDataUrl = dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes;
+  const shouldSendDataUrl = Boolean(dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes);
+  logDev('okyo_scan_data_url_exists', { exists: Boolean(dataUrl) });
+  logDev('okyo_scan_data_url_length', { length: dataUrl?.length ?? 0, sizeBytes: dataUrlSizeBytes ?? 0 });
+  logDev('okyo_scan_conversion_error', {
+    conversionError: shouldSendDataUrl
+      ? null
+      : dataUrl
+        ? 'image_payload_too_large'
+        : processed.conversionError ?? 'image_base64_missing',
+  });
 
   return {
-    fileName: asset.fileName ?? undefined,
-    height: asset.height,
-    mimeType,
+    fileName: getProcessedFileName(asset.fileName),
+    height: processed.height ?? asset.height,
+    mimeType: processed.mimeType,
     placeholder: false,
     sizeBytes: asset.fileSize ?? undefined,
     dataUrl: shouldSendDataUrl ? dataUrl : undefined,
     dataUrlSizeBytes,
     source,
-    uri: asset.uri,
-    width: asset.width,
+    uri: processed.uri ?? asset.uri,
+    width: processed.width ?? asset.width,
     conversionError: shouldSendDataUrl
       ? undefined
       : dataUrl
         ? 'image_payload_too_large'
-        : 'image_base64_missing',
+        : processed.conversionError ?? 'image_base64_missing',
   };
+}
+
+async function getProcessedImage(asset: ImagePicker.ImagePickerAsset) {
+  const attempts = [
+    { compress: 0.78, maxWidth: maxProcessedImageWidth },
+    { compress: 0.64, maxWidth: 1200 },
+    { compress: 0.52, maxWidth: 1000 },
+  ];
+  let latestResult: {
+    base64?: string;
+    height?: number;
+    mimeType: string;
+    uri?: string;
+    width?: number;
+    conversionError?: string;
+  } | null = null;
+
+  for (const attempt of attempts) {
+    try {
+      const actions: ImageManipulator.Action[] = asset.width > attempt.maxWidth
+        ? [{ resize: { width: attempt.maxWidth } }]
+        : [];
+      logDev('okyo_scan_image_resize_start', {
+        compress: attempt.compress,
+        compressionQuality: attempt.compress,
+        maxWidth: attempt.maxWidth,
+        originalHeight: asset.height,
+        originalUriExists: Boolean(asset.uri),
+        originalUriPrefix: getValuePrefix(asset.uri),
+        originalWidth: asset.width,
+        resizing: actions.length > 0,
+        targetMaxWidth: attempt.maxWidth,
+      });
+      const result = await ImageManipulator.manipulateAsync(asset.uri, actions, {
+        base64: true,
+        compress: attempt.compress,
+        format: ImageManipulator.SaveFormat.JPEG,
+      });
+      const dataUrl = getImageDataUrl(result.base64, 'image/jpeg');
+      const dataUrlSizeBytes = dataUrl ? getUtf8SizeBytes(dataUrl) : undefined;
+      logDev('okyo_scan_image_resize_success', {
+        base64Exists: Boolean(result.base64),
+        base64Length: result.base64?.length ?? 0,
+        compress: attempt.compress,
+        dataUrlLength: dataUrl?.length ?? 0,
+        height: result.height,
+        maxWidth: attempt.maxWidth,
+        resizedUriExists: Boolean(result.uri),
+        resizedUriPrefix: getValuePrefix(result.uri),
+        width: result.width,
+      });
+
+      latestResult = {
+        base64: result.base64 ?? undefined,
+        height: result.height,
+        mimeType: 'image/jpeg',
+        uri: result.uri,
+        width: result.width,
+        conversionError: dataUrl ? undefined : 'image_base64_missing',
+      };
+
+      if (dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes) {
+        logProcessedImageAttempt(attempt.maxWidth, attempt.compress, result.width, result.height, dataUrlSizeBytes, true);
+        return latestResult;
+      }
+
+      logProcessedImageAttempt(attempt.maxWidth, attempt.compress, result.width, result.height, dataUrlSizeBytes, false);
+    } catch (error) {
+      latestResult = {
+        height: asset.height,
+        mimeType: asset.mimeType ?? getMimeTypeFromFileName(asset.fileName) ?? 'image/jpeg',
+        uri: asset.uri,
+        width: asset.width,
+        conversionError: 'image_processing_failed',
+      };
+      logImageProcessingError(error, attempt.maxWidth, attempt.compress);
+    }
+  }
+
+  return latestResult ?? {
+    height: asset.height,
+    mimeType: asset.mimeType ?? getMimeTypeFromFileName(asset.fileName) ?? 'image/jpeg',
+    uri: asset.uri,
+    width: asset.width,
+    conversionError: 'image_processing_failed',
+  };
+}
+
+function getProcessedFileName(fileName: string | null | undefined) {
+  if (!fileName) {
+    return 'okyo-scan-upload.jpg';
+  }
+
+  return fileName.replace(/\.[a-z0-9]+$/i, '.jpg') || 'okyo-scan-upload.jpg';
 }
 
 function getAiDebugMetadata(result: CreateScanResult): AiDebugMetadata | null {
@@ -425,12 +586,344 @@ function getDemoRecipes() {
   return defaultScanResult.modes.map((mode) => getSafeRecipeForMode(mode));
 }
 
+function createStarterRecipesFromScan(scan: NonNullable<CreateScanResult['scan']>) {
+  const modes: RecipeMode[] = scan.modes?.length ? scan.modes : ['Restaurant Copy', 'Budget', 'Healthy'];
+  return modes.map((mode) => createStarterRecipeFromScan(scan, mode));
+}
+
+function createStarterRecipeFromScan(scan: NonNullable<CreateScanResult['scan']>, mode: RecipeMode): Recipe {
+  const dishName = cleanPublicText(scan.dishName || scan.bestGuessDishName || 'Restaurant-Style Food Plate');
+  const titlePrefix = mode === 'Budget'
+    ? 'Budget'
+    : mode === 'Healthy'
+      ? 'Lighter'
+      : 'Restaurant-Style';
+  const ingredientName = getStarterIngredientName(dishName);
+  const homemadeCost = getModeStarterCost(scan.homemadeCost, scan.restaurantPrice, mode);
+
+  return {
+    id: `scan-starter-${slugify(dishName)}-${slugify(mode)}`,
+    scanResultId: scan.id,
+    title: `${titlePrefix} ${dishName}`,
+    mode,
+    description: `A flexible inspired-by starter recipe based on the visible food in your photo.`,
+    prepTimeMinutes: 10,
+    cookTimeMinutes: 18,
+    totalTimeMinutes: 28,
+    activeTimeMinutes: 20,
+    servings: 2,
+    skillLevel: 'Easy',
+    difficulty: 'Easy',
+    estimatedHomemadeCost: homemadeCost,
+    estimatedSavings: Math.max(0, scan.restaurantPrice - homemadeCost),
+    ingredients: [
+      { name: ingredientName, quantity: '2 servings' },
+      { name: 'matching sauce or dressing', quantity: '1/4 cup' },
+      { name: 'fresh garnish or vegetables', quantity: '1 cup' },
+      { name: 'salt, pepper, and cooking oil', quantity: 'pantry check', pantryItem: true },
+    ],
+    ingredientGroups: [
+      { component: 'Main', items: [{ name: ingredientName, quantity: '2 servings' }] },
+      { component: 'Sauce', items: [{ name: 'matching sauce or dressing', quantity: '1/4 cup' }] },
+      { component: 'Finish', items: [{ name: 'fresh garnish or vegetables', quantity: '1 cup' }] },
+    ],
+    steps: [
+      `Prep the visible main ingredients for ${dishName}.`,
+      'Cook the main ingredient with oil, salt, and pepper until hot and browned where appropriate.',
+      'Warm or stir together the sauce so it can coat the food evenly.',
+      'Combine the base, sauce, and toppings, then taste and adjust seasoning.',
+      'Serve right away with garnish or a bright squeeze of lemon if it fits.',
+    ],
+    structuredSteps: [
+      {
+        text: `Prep the visible main ingredients for ${dishName}.`,
+        timeEstimate: '5 min',
+        visualCue: 'Ingredients are cut or portioned.',
+        whyItMatters: 'A flexible starter keeps the result useful without pretending to know the exact restaurant recipe.',
+      },
+      {
+        text: 'Cook the main ingredient with oil, salt, and pepper until hot and browned where appropriate.',
+        timeEstimate: '8-12 min',
+        visualCue: 'Food is hot, browned, or tender.',
+      },
+      {
+        text: 'Combine with sauce and toppings, then taste before serving.',
+        timeEstimate: '3 min',
+        visualCue: 'Everything is coated and seasoned.',
+      },
+    ],
+    substitutions: [
+      'Use any matching protein, vegetable, or grain you already have.',
+      'Use bottled sauce, dressing, or a simple pan sauce.',
+      'Swap garnish for herbs, scallions, sesame seeds, or cheese if they fit.',
+    ],
+    pantryNote: 'Assumes salt, pepper, and basic cooking oil are on hand.',
+    confidenceNote: 'Starter recipe based on visible food evidence from the scan, not an official restaurant recipe.',
+    mainIngredientsSummary: ingredientName,
+    equipment: ['skillet or sheet pan', 'knife', 'cutting board', 'mixing bowl'],
+    bestFor: 'a quick best-guess homemade version',
+    avoidMistake: 'Do not treat this as the exact restaurant recipe; adjust based on what you can see.',
+    mistakeWarning: 'Do not overcook the main ingredient while recreating the visible dish.',
+    storageAndReheating: 'Store leftovers up to 3 days and reheat gently.',
+    storage: 'Store leftovers up to 3 days and reheat gently.',
+    groceryItems: [
+      { category: 'Protein', name: ingredientName, quantity: '2 servings', sourceIngredient: ingredientName },
+      { category: 'Sauces / Condiments', name: 'matching sauce or dressing', quantity: '1 small bottle' },
+      { category: 'Produce', name: 'fresh garnish or vegetables', quantity: '1 small bunch or bag' },
+      { category: 'Pantry', name: 'salt, pepper, and cooking oil', quantity: 'pantry check', pantryStaple: true },
+    ],
+    spicePairings: ['black pepper', 'chili flakes', 'garlic powder'],
+    cookingTerms: [
+      { term: 'Best guess', meaning: 'A useful recipe direction based on visible food evidence.' },
+    ],
+  };
+}
+
 function getScanRecipeForMode(
   recipes: Recipe[],
   mode: RecipeMode,
   fallbackRecipe: Recipe | null | undefined = null,
 ) {
   return recipes.find((recipe) => recipe.mode === mode) ?? fallbackRecipe ?? null;
+}
+
+function getStarterIngredientName(dishName: string) {
+  const normalized = dishName.toLowerCase();
+  if (normalized.includes('pizza')) {
+    return 'pizza crust, sauce, and cheese';
+  }
+  if (normalized.includes('rice') || normalized.includes('bowl')) {
+    return 'cooked rice or grain base';
+  }
+  if (normalized.includes('noodle') || normalized.includes('pasta')) {
+    return 'noodles or pasta';
+  }
+  if (normalized.includes('burger') || normalized.includes('sandwich')) {
+    return 'bun, filling, and toppings';
+  }
+  if (normalized.includes('salad')) {
+    return 'greens, toppings, and dressing';
+  }
+
+  return 'visible main ingredient';
+}
+
+function getModeStarterCost(homemadeCost: number, restaurantPrice: number, mode: RecipeMode) {
+  const baseCost = Number.isFinite(homemadeCost) && homemadeCost > 0
+    ? homemadeCost
+    : Math.max(3, restaurantPrice * 0.45);
+  const multiplier = mode === 'Budget' ? 0.82 : mode === 'Healthy' ? 1.08 : 1;
+  return Number(Math.max(2, baseCost * multiplier).toFixed(2));
+}
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') || 'food';
+}
+
+function logScanResponse(result: CreateScanResult, image?: ScanImageMetadata) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log('okyo_scan_api_response_status', { status: result.status ?? 'success' });
+  console.log('okyo_scan_api_response_scan_state', { scanState: result.scan?.scanState ?? result.scanState });
+  console.log('okyo_scan_api_response_food_detected', {
+    foodDetected: hasFoodEvidence({ result, status: result.status ?? 'success' }),
+  });
+  console.log('okyo_scan_api_response_dish_name', { dishName: result.scan?.dishName });
+  console.log('okyo_scan_api_response_recipes_length', { recipesLength: result.recipes?.length ?? 0 });
+  console.log('okyo_scan_response', {
+    status: result.status,
+    scanState: result.scan?.scanState ?? result.scanState,
+    dishName: result.scan?.dishName,
+    bestGuessDishName: result.scan?.bestGuessDishName,
+    recipesLength: result.recipes?.length ?? 0,
+    hasRecipe: Boolean(result.recipe),
+    rejectionType: result.rejectionType,
+    rejectionReason: result.rejectionReason,
+    fallbackReason: result.fallbackReason,
+    image: {
+      conversionError: image?.conversionError,
+      dataUrlSizeBytes: image?.dataUrlSizeBytes,
+      hasDataUrl: Boolean(image?.dataUrl),
+      height: image?.height,
+      source: image?.source,
+      width: image?.width,
+    },
+  });
+}
+
+function logSelectedImage(source: ScanSource, image?: ScanImageMetadata) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log('okyo_scan_selected_image_uri', {
+    fileSize: image?.sizeBytes,
+    height: image?.height,
+    source: getPublicScanSource(source),
+    uriExists: Boolean(image?.uri),
+    uriPrefix: getValuePrefix(image?.uri),
+    width: image?.width,
+  });
+  console.log('okyo_scan_selected_image', {
+    source,
+    uriExists: Boolean(image?.uri),
+    uriPrefix: getValuePrefix(image?.uri),
+    mimeType: image?.mimeType,
+    width: image?.width,
+    height: image?.height,
+    dataUrlExists: Boolean(image?.dataUrl),
+    dataUrlLength: image?.dataUrl?.length ?? 0,
+    dataUrlSizeBytes: image?.dataUrlSizeBytes,
+    conversionError: image?.conversionError,
+  });
+}
+
+function logScanRouteDecision(status: string, result: Partial<CreateScanResult>, route: string) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  const reason = getRouteReason(status, result, route);
+  console.log('okyo_scan_failure_reason', {
+    reason: route === 'result_success_path' ? null : reason,
+    fallbackReason: result.fallbackReason,
+    rejectionReason: result.rejectionReason,
+    rejectionType: result.rejectionType,
+  });
+  console.log('okyo_scan_route_decision', {
+    route,
+    reason,
+    status,
+    scanState: result.scan?.scanState ?? result.scanState,
+    foodDetected: isFoodScanState(result.scan?.scanState ?? result.scanState),
+    dishName: result.scan?.dishName,
+    recipesLength: result.recipes?.length ?? 0,
+    hasRecipe: Boolean(result.recipe),
+    rejectionType: result.rejectionType,
+    rejectionReason: result.rejectionReason,
+  });
+}
+
+function logStoreAfterResponse(
+  latestScanStatus: string,
+  latestScanResult: CreateScanResult['scan'] | null,
+  latestScanRecipe: Recipe | null,
+  latestScanRecipes: Recipe[],
+  selectedScanImage: ScanImageMetadata | undefined,
+  scanSessionId: string,
+) {
+  logDev('okyo_scan_store_after_response', {
+    latestScanRecipeExists: Boolean(latestScanRecipe),
+    latestScanRecipesLength: latestScanRecipes.length,
+    latestScanResultExists: Boolean(latestScanResult),
+    latestScanStatus,
+    scanSessionId,
+    selectedScanImageExists: Boolean(selectedScanImage),
+  });
+}
+
+function failureStatusToRoute(status: string, result: Partial<CreateScanResult>) {
+  if (shouldRejectScan({ result, status: status as CreateScanResult['status'] })) {
+    return 'rejection_path';
+  }
+
+  return 'failure_path';
+}
+
+function getRouteReason(status: string, result: Partial<CreateScanResult>, route: string) {
+  if (route === 'result_success_path') {
+    if (status === 'partial') {
+      return 'food_evidence_or_recipe_present';
+    }
+    return 'success_status_or_usable_scan';
+  }
+  if (route === 'rejection_path') {
+    return result.rejectionReason ?? 'not_food_without_food_evidence';
+  }
+  if (route === 'api_error_path') {
+    return result.rejectionReason ?? 'api_or_network_error';
+  }
+
+  return result.rejectionReason ?? result.fallbackReason ?? 'no_usable_food_result';
+}
+
+function getPublicScanSource(source: ScanSource) {
+  if (source === 'photos') {
+    return 'upload';
+  }
+  if (source === 'mock') {
+    return 'demo';
+  }
+
+  return 'camera';
+}
+
+function createScanSessionId(source: ScanSource) {
+  return `scan-${source}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isActiveScanSession(scanSessionId: string) {
+  return useOkyoStore.getState().scanSessionId === scanSessionId;
+}
+
+function logIgnoredScanSessionWrite(scanSessionId: string, reason: string) {
+  logDev('okyo_scan_state_write', {
+    activeScanSessionId: useOkyoStore.getState().scanSessionId,
+    ignored: true,
+    reason,
+    scanSessionId,
+  });
+}
+
+function getValuePrefix(value: string | null | undefined, length = 30) {
+  return typeof value === 'string' && value.length > 0 ? value.slice(0, length) : null;
+}
+
+function logDev(label: string, details: Record<string, unknown>) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log(label, details);
+}
+
+function logProcessedImageAttempt(
+  maxWidth: number,
+  compress: number,
+  width: number,
+  height: number,
+  dataUrlSizeBytes: number | undefined,
+  accepted: boolean,
+) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log('okyo_scan_image_processed', {
+    accepted,
+    compress,
+    dataUrlLength: dataUrlSizeBytes ?? 0,
+    height,
+    maxWidth,
+    width,
+  });
+}
+
+function logImageProcessingError(error: unknown, maxWidth: number, compress: number) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log('okyo_scan_image_processing_error', {
+    compress,
+    maxWidth,
+    message: error instanceof Error ? error.message : 'Unknown image processing error.',
+  });
 }
 
 function isRealUploadedImage(source: ScanSource, image?: ScanImageMetadata) {
@@ -470,6 +963,23 @@ function getMimeTypeFromFileName(fileName: string | null | undefined) {
   return 'image/jpeg';
 }
 
+function getUploadFailureReasonFromError(error: unknown) {
+  const message = error instanceof Error ? error.message : '';
+  if (message.toLowerCase().includes('too large')) {
+    return 'This photo was too large to scan. Try a smaller image.';
+  }
+  if (
+    message.toLowerCase().includes('network') ||
+    message.toLowerCase().includes('abort') ||
+    message.toLowerCase().includes('fetch') ||
+    message.toLowerCase().includes('failed to fetch')
+  ) {
+    return 'Okyo could not reach the scanner. Check the API server and try again.';
+  }
+
+  return 'Okyo had trouble scanning this photo. Try again in a second.';
+}
+
 function getPreviewImageMetadata(image: ScanImageMetadata | undefined): ScanImageMetadata | null {
   if (!image) {
     return null;
@@ -480,6 +990,13 @@ function getPreviewImageMetadata(image: ScanImageMetadata | undefined): ScanImag
 }
 
 function getScanFailureReason(result: CreateScanResult) {
+  if (
+    result.fallbackReason === 'image_not_available_to_ai' ||
+    result.image?.conversionError === 'image_payload_too_large' ||
+    result.rejectionReason?.toLowerCase().includes('too large')
+  ) {
+    return 'This photo was too large to scan. Try a smaller image.';
+  }
   if (result.rejectionReason) {
     return result.rejectionReason;
   }
@@ -490,7 +1007,7 @@ function getScanFailureReason(result: CreateScanResult) {
     return 'Try uploading a clearer food photo.';
   }
 
-  return 'Okyo could not analyze this photo. Try uploading a clearer food photo.';
+  return 'Okyo had trouble scanning this photo. Try again in a second.';
 }
 
 function formatOptionalCurrency(value: number | null | undefined) {
@@ -518,12 +1035,11 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 28,
     paddingHorizontal: 20,
   },
   hero: {
-    marginTop: 24,
-    paddingBottom: 24,
+    marginTop: 18,
+    paddingBottom: 18,
   },
   headline: {
     color: colors.charcoal,
@@ -536,7 +1052,7 @@ const styles = StyleSheet.create({
     color: colors.body,
     fontSize: 18,
     lineHeight: 27,
-    marginTop: 22,
+    marginTop: 16,
     maxWidth: 370,
   },
   scanCard: {
@@ -560,116 +1076,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  napkin: {
-    backgroundColor: '#fff6e8',
-    borderColor: '#f2dcbc',
-    borderRadius: 8,
-    borderWidth: 1,
-    height: '54%',
-    left: '11%',
-    opacity: 0.82,
-    position: 'absolute',
-    top: '38%',
-    transform: [{ rotate: '-18deg' }],
-    width: '33%',
-  },
-  fork: {
-    alignItems: 'center',
-    height: '63%',
-    justifyContent: 'flex-start',
-    left: '15%',
-    position: 'absolute',
-    top: '23%',
-    width: 30,
-  },
-  forkHead: {
-    flexDirection: 'row',
-    gap: 3,
-    height: 40,
-  },
-  forkLine: {
-    backgroundColor: '#e5cbb0',
-    borderRadius: 999,
-    width: 3,
-  },
-  forkHandle: {
-    backgroundColor: '#e5cbb0',
-    borderRadius: 999,
-    flex: 1,
-    marginTop: -3,
-    width: 5,
-  },
-  knife: {
-    backgroundColor: '#e5cbb0',
-    borderRadius: 999,
-    height: '58%',
-    position: 'absolute',
-    right: '15%',
-    top: '22%',
-    transform: [{ rotate: '7deg' }],
-    width: 6,
-  },
-  plateOuter: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 250, 242, 0.68)',
-    borderColor: '#e8cdb0',
-    borderRadius: 999,
-    borderWidth: 2,
-    height: '78%',
-    justifyContent: 'center',
-    width: '45%',
-  },
-  plateMiddle: {
-    alignItems: 'center',
-    borderColor: '#f0d8bc',
-    borderRadius: 999,
-    borderWidth: 2,
-    height: '78%',
-    justifyContent: 'center',
-    width: '78%',
-  },
-  plateInner: {
-    alignItems: 'center',
-    borderColor: '#f7dfc3',
-    borderRadius: 999,
-    borderWidth: 2,
-    height: '70%',
-    justifyContent: 'center',
-    width: '70%',
-  },
-  sparkLeft: {
-    left: '28%',
-    position: 'absolute',
-    top: '16%',
-  },
-  sparkRight: {
-    position: 'absolute',
-    right: '25%',
-    top: '23%',
-  },
-  okyoBadge: {
-    alignItems: 'center',
-    backgroundColor: '#ffd09f',
-    borderColor: '#fffdf8',
-    borderRadius: 999,
-    borderWidth: 4,
-    bottom: 16,
-    justifyContent: 'center',
-    minHeight: 58,
-    minWidth: 88,
-    paddingHorizontal: 16,
-    position: 'absolute',
-    right: 18,
-    shadowColor: '#9a5a2f',
-    shadowOffset: { height: 5, width: 0 },
-    shadowOpacity: 0.16,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  okyoBadgeFace: {
-    color: colors.charcoal,
-    fontSize: 16,
-    fontWeight: '900',
+  scanMascot: {
+    marginTop: 4,
   },
   scanActions: {
     gap: 12,
@@ -718,7 +1126,7 @@ const styles = StyleSheet.create({
     color: colors.coralDark,
   },
   recentSection: {
-    marginTop: 28,
+    marginTop: 22,
   },
   recentHeader: {
     alignItems: 'center',

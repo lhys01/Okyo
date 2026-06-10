@@ -1,33 +1,33 @@
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Camera, NavArrowLeft, Spark, Sparks } from 'iconoir-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { uiLog } from '../utils/uiDebug';
 
 type AnalysisNavigation = NativeStackNavigationProp<RootStackParamList, 'AnalysisLoadingScreen'>;
+type AnalysisRoute = RouteProp<RootStackParamList, 'AnalysisLoadingScreen'>;
 
 const progressBars = Array.from({ length: 8 }, (_, index) => index);
 
 export function AnalysisLoadingScreen() {
   const navigation = useNavigation<AnalysisNavigation>();
+  const route = useRoute<AnalysisRoute>();
+  const insets = useSafeAreaInsets();
+  const scanSessionId = useOkyoStore((state) => state.scanSessionId);
   const latestScanStatus = useOkyoStore((state) => state.latestScanStatus);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const latestScanFailure = useOkyoStore((state) => state.latestScanFailure);
-  const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
-  const setLatestScanRecipes = useOkyoStore((state) => state.setLatestScanRecipes);
-  const setLatestScanStatus = useOkyoStore((state) => state.setLatestScanStatus);
-  const setLatestScanFailure = useOkyoStore((state) => state.setLatestScanFailure);
-  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
-  const setSelectedScanImage = useOkyoStore((state) => state.setSelectedScanImage);
-  const setLatestAiDebugMetadata = useOkyoStore((state) => state.setLatestAiDebugMetadata);
+  const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const [pulseIndex, setPulseIndex] = useState(0);
   const didNavigate = useRef(false);
   const didTrackCompletion = useRef(false);
@@ -79,11 +79,11 @@ export function AnalysisLoadingScreen() {
     const finish = setTimeout(() => {
       didNavigate.current = true;
       uiLog('AnalysisLoadingScreen', 'navigate_result', { status: latestScanStatus });
-      navigation.navigate('ResultSummaryScreen');
+      navigation.navigate('ResultSummaryScreen', { scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined });
     }, 750);
 
     return () => clearTimeout(finish);
-  }, [latestScanStatus, navigation]);
+  }, [latestScanStatus, navigation, route.params?.scanSessionId, scanSessionId]);
 
   useEffect(() => {
     const fallback = setTimeout(() => {
@@ -93,27 +93,27 @@ export function AnalysisLoadingScreen() {
 
       didNavigate.current = true;
       uiLog('AnalysisLoadingScreen', 'navigate_result_waiting');
-      navigation.navigate('ResultSummaryScreen');
+      navigation.navigate('ResultSummaryScreen', { scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined });
     }, 5200);
 
     return () => clearTimeout(fallback);
-  }, [navigation]);
+  }, [navigation, route.params?.scanSessionId, scanSessionId]);
 
   const goBackToScan = () => {
     didNavigate.current = true;
-    setLatestScanFailure(null);
-    setLatestScanResult(null);
-    setLatestScanRecipes([]);
-    setLatestScanStatus(null);
-    setLatestScanRecipe(null);
-    setSelectedScanImage(null);
-    setLatestAiDebugMetadata(null);
+    clearLatestScan({
+      reason: 'user_aborted_scan_from_loading',
+      source: 'AnalysisLoadingScreen.goBackToScan',
+    });
     navigation.navigate('MainTabs', { screen: 'ScanScreen' });
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[styles.screenContent, { paddingBottom: 220 + insets.bottom }]}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.topBar}>
           <Pressable
             accessibilityLabel="Back to scan"
@@ -130,6 +130,7 @@ export function AnalysisLoadingScreen() {
         </View>
 
         <View style={styles.hero}>
+          <KikoMascot pose="scanning" size={150} style={styles.heroMascot} />
           <Text style={styles.kicker}>SCANNING</Text>
           <Text style={styles.title}>Okyo is building your homemade swap.</Text>
           <Text style={styles.subtitle}>
@@ -157,7 +158,7 @@ export function AnalysisLoadingScreen() {
             </View>
             <View style={styles.progressFooter}>
               <ActivityIndicator color={colors.coral} size="small" />
-              <Text style={styles.progressHint}>Checking the dish, savings, and recipe fit.</Text>
+              <Text style={styles.progressHint}>Checking the dish, homemade cost, and recipe fit.</Text>
             </View>
           </View>
         </View>
@@ -184,7 +185,6 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     flexGrow: 1,
-    paddingBottom: 28,
     paddingHorizontal: 22,
   },
   topBar: {
@@ -229,7 +229,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   hero: {
-    marginTop: 96,
+    alignItems: 'flex-start',
+    marginTop: 72,
+  },
+  heroMascot: {
+    alignSelf: 'center',
+    marginBottom: 18,
   },
   kicker: {
     color: colors.coral,
@@ -252,7 +257,7 @@ const styles = StyleSheet.create({
     marginTop: 18,
   },
   progressCardWrap: {
-    marginTop: 54,
+    marginTop: 40,
   },
   progressCard: {
     backgroundColor: colors.card,

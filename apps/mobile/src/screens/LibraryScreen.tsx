@@ -1,33 +1,61 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useEffect, useRef } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import {
+  Bookmark,
+  Camera,
+  Cart,
+  Clock,
+  Cutlery,
+  MoneySquare,
+  Search,
+  ThreePointsCircle,
+} from 'iconoir-react-native';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { uiLog } from '../utils/uiDebug';
-import { EmptyState, RecipeCard, ScreenContainer, colors } from '../components/OkyoUI';
-import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
+import { KikoMascot } from '../components/KikoMascot';
+import { colors } from '../components/OkyoUI';
+import { getSafeRecipeMode, isRecipeMode, type Recipe, type RecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { uiLog } from '../utils/uiDebug';
 
 type LibraryNavigation = NativeStackNavigationProp<RootStackParamList>;
+type LibraryFilter = 'recent' | 'restaurant' | 'budget' | 'lighter' | 'fast';
+
+const filters: Array<{ id: LibraryFilter; label: string }> = [
+  { id: 'recent', label: 'Recent' },
+  { id: 'restaurant', label: 'Restaurant Style' },
+  { id: 'budget', label: 'Budget' },
+  { id: 'lighter', label: 'Lighter' },
+  { id: 'fast', label: 'Fast meals' },
+];
+
+const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 
 export function LibraryScreen() {
   const navigation = useNavigation<LibraryNavigation>();
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const removeSavedRecipe = useOkyoStore((state) => state.removeSavedRecipe);
-  const setLatestAiDebugMetadata = useOkyoStore((state) => state.setLatestAiDebugMetadata);
-  const setLatestScanFailure = useOkyoStore((state) => state.setLatestScanFailure);
-  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
-  const setLatestScanRecipes = useOkyoStore((state) => state.setLatestScanRecipes);
-  const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
-  const setLatestScanStatus = useOkyoStore((state) => state.setLatestScanStatus);
-  const setSelectedScanImage = useOkyoStore((state) => state.setSelectedScanImage);
+  const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState<LibraryFilter>('recent');
   const didTrackMalformedData = useRef(false);
-  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
-  const savedRecipeLabel = safeSavedRecipes.length === 1 ? 'recipe saved' : 'recipes saved';
-  const malformedRecipeCount = safeSavedRecipes.filter((recipe) => !recipe?.id || !recipe?.title).length;
+
+  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [];
+  const malformedRecipeCount = Array.isArray(savedRecipes)
+    ? savedRecipes.filter((recipe) => !recipe?.id || !recipe?.title).length
+    : 0;
+  const sortedRecipes = useMemo(() => sortSavedRecipes(safeSavedRecipes), [safeSavedRecipes]);
+  const filteredRecipes = useMemo(
+    () => filterRecipes(sortedRecipes, activeFilter, searchQuery),
+    [activeFilter, searchQuery, sortedRecipes],
+  );
+  const totalHomemadeEstimate = safeSavedRecipes.reduce((total, recipe) => total + getFiniteNumber(recipe.estimatedHomemadeCost), 0);
+  const easyMeals = safeSavedRecipes.filter((recipe) => getDifficulty(recipe) === 'Easy').length;
 
   useEffect(() => {
     if (didTrackMalformedData.current || malformedRecipeCount === 0) {
@@ -35,7 +63,6 @@ export function LibraryScreen() {
     }
 
     uiLog('LibraryScreen', 'enter', { malformedRecipeCount });
-
     didTrackMalformedData.current = true;
     track(analyticsEvents.RESULT_ERROR, {
       errorMessage: 'Saved recipe data was missing fields.',
@@ -43,158 +70,789 @@ export function LibraryScreen() {
     });
   }, [malformedRecipeCount]);
 
+  const prepareRecipeContext = (recipe: Recipe) => {
+    const mode = getSafeRecipeMode(recipe.mode);
+    writeSavedRecipeContext({
+      recipe,
+      reason: 'open_saved_recipe',
+      source: 'LibraryScreen.prepareRecipeContext',
+    });
+    if (isRecipeMode(recipe.mode)) {
+      setSelectedMode(recipe.mode);
+    }
+    return mode;
+  };
 
   const openSavedRecipe = (recipe: Recipe | null | undefined) => {
     if (!recipe?.id) {
       return;
     }
 
-    const mode = getSafeRecipeMode(recipe.mode);
-    uiLog('LibraryScreen', 'open_saved_recipe', { recipeId: recipe.id });
-    setLatestAiDebugMetadata(null);
-    setLatestScanFailure(null);
-    setLatestScanRecipe(recipe);
-    setLatestScanRecipes([recipe]);
-    setLatestScanResult(null);
-    setLatestScanStatus(null);
-    setSelectedScanImage(null);
-    if (isRecipeMode(recipe.mode)) {
-      setSelectedMode(recipe.mode);
-    }
+    const mode = prepareRecipeContext(recipe);
+    uiLog('LibraryScreen', 'cook_again', { recipeId: recipe.id });
     navigation.navigate('RecipeDetailScreen', { mode });
+  };
+
+  const openGroceries = (recipe: Recipe | null | undefined) => {
+    if (!recipe?.id) {
+      return;
+    }
+
+    const mode = prepareRecipeContext(recipe);
+    uiLog('LibraryScreen', 'open_groceries', { recipeId: recipe.id });
+    navigation.navigate('GroceryListScreen', { mode });
+  };
+
+  const goToScan = () => {
+    uiLog('LibraryScreen', 'empty_scan_cta');
+    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+  };
+
+  const confirmRemove = (recipe: Recipe) => {
+    Alert.alert(
+      'Remove from Library?',
+      `${cleanDisplayText(recipe.title)} will leave your saved meals.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            uiLog('LibraryScreen', 'remove_saved_recipe', { recipeId: recipe.id });
+            removeSavedRecipe(recipe.id);
+          },
+        },
+      ],
+    );
   };
 
   if (safeSavedRecipes.length === 0) {
     return (
-      <EmptyState
-        eyebrow="Recipe shelf"
-        title="Your saved dupes will cozy up here."
-        body="Scan a restaurant meal, save the inspired-by recipe you want to remake, and Okyo will start building your little dinner shelf."
-        actionLabel="Scan a Meal"
-        onAction={() => navigation.navigate('ScanScreen')}
-      />
+      <LibraryFrame>
+        <TopBar title="Library" />
+        <View style={styles.emptyCard}>
+          <KikoMascot pose="wave" size={118} style={styles.emptyMascot} />
+          <Text style={styles.emptyTitle}>Saved meals worth remaking will live here.</Text>
+          <Text style={styles.emptyBody}>
+            Scan a craving, save the homemade version, and Okyo will build your dinner shelf.
+          </Text>
+          <PrimaryAction icon={<Camera color="#fffdf8" height={20} strokeWidth={2.2} width={20} />} label="Scan a meal" onPress={goToScan} />
+        </View>
+      </LibraryFrame>
     );
   }
 
   return (
-    <ScreenContainer>
-      <View style={styles.headerCard}>
-        <Text style={styles.kicker}>Recipe shelf</Text>
-        <Text style={styles.title}>Saved recipes worth remaking</Text>
-        <Text style={styles.description}>
-          Your restaurant-at-home favorites, tucked away for low-effort dinner ideas. Tap any recipe to cook it again.
-        </Text>
+    <LibraryFrame>
+      <TopBar title="Library" />
 
-        <View style={styles.libraryMetaRow}>
-          <View style={styles.libraryMetaPill}>
-            <Text style={styles.libraryMetaValue}>{safeSavedRecipes.length}</Text>
-            <Text style={styles.libraryMetaLabel}>{savedRecipeLabel}</Text>
-          </View>
-          <Text style={styles.libraryNote}>Kept on this device for easy dinner repeats.</Text>
+      <View style={styles.heroCard}>
+        <View style={styles.heroCopy}>
+          <Text style={styles.heroKicker}>Recipe shelf</Text>
+          <Text style={styles.heroTitle}>
+            Saved meals worth <Text style={styles.heroAccent}>remaking</Text>
+          </Text>
+          <Text style={styles.heroBody}>
+            Your favorite restaurant-style recipes, ready for an easy dinner repeat.
+          </Text>
+        </View>
+        <View style={styles.recipeMascotCard}>
+          <KikoMascot pose="recipe" size={76} />
+        </View>
+        <View style={styles.heroStats}>
+          <HeroStat icon={<Bookmark color={colors.coral} height={18} strokeWidth={2} width={18} />} value={safeSavedRecipes.length.toString()} label="saved" />
+          <HeroStat icon={<MoneySquare color={colors.green} height={18} strokeWidth={2} width={18} />} value={formatCurrency(totalHomemadeEstimate)} label="home est." />
+          <HeroStat icon={<Clock color="#d8800b" height={18} strokeWidth={2} width={18} />} value={easyMeals.toString()} label="easy" />
         </View>
       </View>
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionLabel}>On your shelf</Text>
-        <Text style={styles.sectionBody}>Pick a cozy favorite and bring it back to the table.</Text>
+      <View style={styles.searchRow}>
+        <View style={styles.searchBox}>
+          <Search color="#a89a8a" height={22} strokeWidth={2} width={22} />
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            clearButtonMode="while-editing"
+            onChangeText={setSearchQuery}
+            placeholder="Search saved recipes"
+            placeholderTextColor="#978b80"
+            returnKeyType="search"
+            style={styles.searchInput}
+            value={searchQuery}
+          />
+        </View>
       </View>
 
-      <View style={styles.cardList}>
-        {safeSavedRecipes.map((recipe, index) => (
-          <RecipeCard
-            key={recipe?.id ?? `saved-recipe-${index}`}
-            recipe={recipe}
-            onPress={() => openSavedRecipe(recipe)}
-            onRemove={() => recipe?.id ? (uiLog('LibraryScreen', 'remove_saved_recipe', { recipeId: recipe.id }), removeSavedRecipe(recipe.id)) : undefined}
-          />
-        ))}
+      <View style={styles.filterList}>
+        {filters.map((filter) => {
+          const selected = activeFilter === filter.id;
+
+          return (
+            <Pressable
+              key={filter.id}
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.filterChip,
+                selected ? styles.filterChipSelected : null,
+                pressed ? styles.pressed : null,
+              ]}
+              onPress={() => {
+                uiLog('LibraryScreen', 'select_filter', { filter: filter.id });
+                setActiveFilter(filter.id);
+              }}
+            >
+              <Text style={[styles.filterText, selected ? styles.filterTextSelected : null]}>{filter.label}</Text>
+            </Pressable>
+          );
+        })}
       </View>
-    </ScreenContainer>
+
+      <View style={styles.recipeList}>
+        {filteredRecipes.length > 0 ? (
+          filteredRecipes.map((recipe) => (
+            <SavedRecipeCard
+              key={recipe.id}
+              recipe={recipe}
+              onCook={() => openSavedRecipe(recipe)}
+              onGroceries={() => openGroceries(recipe)}
+              onRemove={() => confirmRemove(recipe)}
+            />
+          ))
+        ) : (
+          <View style={styles.noMatchesCard}>
+            <Text style={styles.noMatchesTitle}>No saved meals match that yet.</Text>
+            <Text style={styles.noMatchesBody}>Try another search or switch filters to see more of your recipe shelf.</Text>
+          </View>
+        )}
+      </View>
+    </LibraryFrame>
   );
 }
 
+function LibraryFrame({ children }: { children: ReactNode }) {
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
+        {children}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function TopBar({ title }: { title: string }) {
+  return (
+    <View style={styles.topBar}>
+      <View style={styles.topSpacer} />
+      <Text style={styles.topTitle}>{title}</Text>
+      <View style={styles.topSpacer} />
+    </View>
+  );
+}
+
+function HeroStat({ icon, value, label }: { icon: ReactNode; value: string; label: string }) {
+  return (
+    <View style={styles.heroStat}>
+      <View style={styles.heroStatIcon}>{icon}</View>
+      <View style={styles.heroStatCopy}>
+        <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.heroStatValue}>{value}</Text>
+        <Text numberOfLines={1} style={styles.heroStatLabel}>{label}</Text>
+      </View>
+    </View>
+  );
+}
+
+function SavedRecipeCard({
+  recipe,
+  onCook,
+  onGroceries,
+  onRemove,
+}: {
+  recipe: Recipe;
+  onCook: () => void;
+  onGroceries: () => void;
+  onRemove: () => void;
+}) {
+  const imageUri = getRecipeImageUri(recipe);
+  const modeLabel = getModeLabel(getSafeRecipeMode(recipe.mode));
+
+  return (
+    <View style={styles.recipeCard}>
+      <View style={styles.recipeTop}>
+        <RecipeThumb recipe={recipe} uri={imageUri} />
+        <View style={styles.recipeContent}>
+          <View style={styles.cardTopRow}>
+            <View style={styles.modePill}>
+              <Cutlery color={colors.coral} height={13} strokeWidth={2.2} width={13} />
+              <Text numberOfLines={1} style={styles.modePillText}>{modeLabel}</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.moreButton, pressed ? styles.pressed : null]}
+              onPress={onRemove}
+            >
+              <ThreePointsCircle color={colors.body} height={20} strokeWidth={2.2} width={20} />
+            </Pressable>
+          </View>
+          <Text numberOfLines={2} style={styles.recipeTitle}>{cleanDisplayText(recipe.title)}</Text>
+          <Text numberOfLines={1} style={styles.recipeSubtitle}>Inspired-by homemade version</Text>
+          <View style={styles.recipeMetaRow}>
+            <MetaChip icon={<Clock color={colors.charcoal} height={15} strokeWidth={2} width={15} />} label={`${getTotalTime(recipe)} min`} />
+            <MetaChip icon={<Cutlery color={colors.charcoal} height={15} strokeWidth={2} width={15} />} label={getDifficulty(recipe)} />
+            <MetaChip icon={<MoneySquare color={colors.green} height={15} strokeWidth={2} width={15} />} label={`Home est. ${formatCurrency(getFiniteNumber(recipe.estimatedHomemadeCost))}`} tone="green" />
+          </View>
+        </View>
+      </View>
+      <View style={styles.cardActions}>
+        <Pressable
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.cookButton, pressed ? styles.pressed : null]}
+          onPress={onCook}
+        >
+          <Text style={styles.cookButtonText}>Cook again</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.groceryButton, pressed ? styles.pressed : null]}
+          onPress={onGroceries}
+        >
+          <Cart color={colors.coral} height={16} strokeWidth={2.1} width={16} />
+          <Text style={styles.groceryButtonText}>Groceries</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function RecipeThumb({ recipe, uri }: { recipe: Recipe; uri?: string | null }) {
+  if (uri) {
+    return <Image source={{ uri }} style={styles.recipeImage} />;
+  }
+
+  return (
+    <View style={styles.recipeArt}>
+      <Cutlery color={colors.coral} height={24} strokeWidth={1.9} width={24} />
+      <Text style={styles.recipeArtText}>Saved meal</Text>
+      <View style={styles.recipeArtDot} />
+    </View>
+  );
+}
+
+function MetaChip({ icon, label, tone = 'default' }: { icon: ReactNode; label: string; tone?: 'default' | 'green' }) {
+  return (
+    <View style={styles.metaChip}>
+      {icon}
+      <Text numberOfLines={1} style={[styles.metaText, tone === 'green' ? styles.metaTextGreen : null]}>{label}</Text>
+    </View>
+  );
+}
+
+function PrimaryAction({ icon, label, onPress }: { icon: ReactNode; label: string; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      style={({ pressed }) => [styles.primaryAction, pressed ? styles.pressed : null]}
+      onPress={onPress}
+    >
+      {icon}
+      <Text style={styles.primaryActionText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function filterRecipes(recipes: Recipe[], activeFilter: LibraryFilter, searchQuery: string) {
+  const query = searchQuery.trim().toLowerCase();
+
+  return recipes.filter((recipe) => {
+    const matchesSearch = query.length === 0 || getSearchText(recipe).includes(query);
+    if (!matchesSearch) {
+      return false;
+    }
+
+    switch (activeFilter) {
+      case 'restaurant':
+        return recipe.mode === 'Restaurant Copy';
+      case 'budget':
+        return recipe.mode === 'Budget';
+      case 'lighter':
+        return recipe.mode === 'Healthy';
+      case 'fast':
+        return getTotalTime(recipe) <= 30;
+      case 'recent':
+      default:
+        return true;
+    }
+  });
+}
+
+function sortSavedRecipes(recipes: Recipe[]) {
+  return recipes.slice().sort((a, b) => {
+    const aTime = getSavedTime(a);
+    const bTime = getSavedTime(b);
+    if (aTime || bTime) {
+      return bTime - aTime;
+    }
+
+    return recipes.indexOf(b) - recipes.indexOf(a);
+  });
+}
+
+function getSavedTime(recipe: Recipe) {
+  const maybeSavedAt = (recipe as Recipe & { savedAt?: unknown; createdAt?: unknown }).savedAt ??
+    (recipe as Recipe & { savedAt?: unknown; createdAt?: unknown }).createdAt;
+
+  if (typeof maybeSavedAt !== 'string') {
+    return 0;
+  }
+
+  const date = new Date(maybeSavedAt);
+  return Number.isFinite(date.getTime()) ? date.getTime() : 0;
+}
+
+function getRecipeImageUri(recipe: Recipe) {
+  const recipeWithImage = recipe as Recipe & { imageUri?: unknown; image?: { uri?: unknown } };
+  const uri = recipeWithImage.imageUri ?? recipeWithImage.image?.uri;
+  return typeof uri === 'string' && uri.trim().length > 0 ? uri : null;
+}
+
+function getSearchText(recipe: Recipe) {
+  const ingredientText = recipe.ingredients?.map((ingredient) => ingredient.name).join(' ') ?? '';
+  return `${recipe.title} ${recipe.description} ${recipe.mode} ${ingredientText}`.toLowerCase();
+}
+
+function getTotalTime(recipe: Recipe) {
+  const total = getFiniteNumber(recipe.totalTimeMinutes);
+  return total > 0 ? total : getFiniteNumber(recipe.prepTimeMinutes) + getFiniteNumber(recipe.cookTimeMinutes);
+}
+
+function getDifficulty(recipe: Recipe) {
+  return recipe.skillLevel ?? recipe.difficulty ?? 'Easy';
+}
+
+function getFiniteNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function getModeLabel(mode: RecipeMode) {
+  switch (mode) {
+    case 'Budget':
+      return 'Budget';
+    case 'Healthy':
+      return 'Lighter';
+    case 'Restaurant Copy':
+    default:
+      return 'Restaurant Style';
+  }
+}
+
+function cleanDisplayText(value: string) {
+  const copyWord = `copy${'cat'}`;
+  const copyStyle = `${copyWord}-style`;
+
+  return value
+    .replace(new RegExp(`\\b${copyStyle}\\b`, 'gi'), 'restaurant-style')
+    .replace(new RegExp(`\\b${copyWord}\\b`, 'gi'), 'restaurant-style')
+    .replace(/\bdupes?\b/gi, 'swaps')
+    .replace(/\bmock\b/gi, 'demo')
+    .trim();
+}
+
 const styles = StyleSheet.create({
-  headerCard: {
+  safeArea: {
+    backgroundColor: colors.background,
+    flex: 1,
+  },
+  screenContent: {
+    gap: 12,
+    padding: 16,
+    paddingBottom: 220,
+  },
+  topBar: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: 44,
+  },
+  topTitle: {
+    color: colors.charcoal,
+    flex: 1,
+    fontSize: 26,
+    fontWeight: '900',
+    letterSpacing: 0,
+    textAlign: 'center',
+  },
+  topSpacer: {
+    width: 48,
+  },
+  heroCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderRadius: 22,
     borderWidth: 1,
-    padding: 20,
-    shadowColor: '#2f231a',
+    minHeight: 142,
+    overflow: 'hidden',
+    padding: 14,
+    shadowColor: '#3b2f20',
+    shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.06,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
+    shadowRadius: 18,
   },
-  kicker: {
+  heroCopy: {
+    paddingRight: 66,
+  },
+  heroKicker: {
     color: colors.coral,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '900',
-    marginBottom: 8,
+    letterSpacing: 0.4,
+    marginBottom: 6,
     textTransform: 'uppercase',
   },
-  title: {
+  heroTitle: {
     color: colors.charcoal,
-    fontSize: 32,
+    fontSize: 23,
     fontWeight: '900',
-    lineHeight: 37,
+    letterSpacing: 0,
+    lineHeight: 27,
   },
-  description: {
+  heroAccent: {
+    color: colors.coral,
+  },
+  heroBody: {
     color: colors.body,
-    fontSize: 16,
-    lineHeight: 23,
-    marginTop: 10,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 17,
+    marginTop: 6,
   },
-  libraryMetaRow: {
+  recipeMascotCard: {
+    alignItems: 'center',
+    backgroundColor: '#fff1df',
+    borderColor: '#f4d6b0',
+    borderRadius: 20,
+    borderWidth: 1,
+    justifyContent: 'center',
+    height: 82,
+    padding: 3,
+    position: 'absolute',
+    right: 12,
+    top: 18,
+    width: 82,
+  },
+  heroStats: {
+    alignItems: 'stretch',
+    borderTopColor: '#efe3d6',
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: 4,
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 10,
+  },
+  heroStat: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 3,
+    minWidth: 0,
+  },
+  heroStatIcon: {
+    alignItems: 'center',
+    backgroundColor: '#fff1df',
+    borderRadius: 12,
+    height: 28,
+    justifyContent: 'center',
+    width: 28,
+  },
+  heroStatCopy: {
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    minWidth: 0,
+  },
+  heroStatValue: {
+    color: colors.coral,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  heroStatLabel: {
+    color: colors.body,
+    fontSize: 9,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  searchRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 12,
-    marginTop: 20,
   },
-  libraryMetaPill: {
+  searchBox: {
     alignItems: 'center',
-    backgroundColor: colors.cream,
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderRadius: 18,
-    minWidth: 92,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 10,
+    minHeight: 50,
     paddingHorizontal: 14,
-    paddingVertical: 12,
   },
-  libraryMetaValue: {
+  searchInput: {
     color: colors.charcoal,
-    fontSize: 24,
-    fontWeight: '900',
-    lineHeight: 28,
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+    minWidth: 0,
+    paddingVertical: 0,
   },
-  libraryMetaLabel: {
-    color: colors.body,
-    fontSize: 11,
+  filterList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filterChip: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: 14,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 36,
+    paddingHorizontal: 12,
+  },
+  filterChipSelected: {
+    backgroundColor: '#fff2e8',
+    borderColor: '#ffb293',
+  },
+  filterText: {
+    color: colors.charcoal,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  filterTextSelected: {
+    color: colors.coral,
+  },
+  recipeList: {
+    gap: 12,
+  },
+  recipeCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 9,
+    padding: 8,
+    shadowColor: '#3b2f20',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+  },
+  recipeTop: {
+    flexDirection: 'row',
+    gap: 10,
+    minWidth: 0,
+  },
+  recipeImage: {
+    backgroundColor: colors.cream,
+    borderRadius: 14,
+    height: 82,
+    width: 74,
+  },
+  recipeArt: {
+    alignItems: 'center',
+    backgroundColor: '#fff1df',
+    borderColor: '#f3d6b0',
+    borderRadius: 14,
+    borderWidth: 1,
+    height: 82,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    width: 74,
+  },
+  recipeArtText: {
+    color: colors.coral,
+    fontSize: 8,
     fontWeight: '900',
-    marginTop: 2,
+    marginTop: 4,
+    textAlign: 'center',
     textTransform: 'uppercase',
   },
-  libraryNote: {
-    color: colors.muted,
+  recipeArtDot: {
+    backgroundColor: '#ffd5aa',
+    borderRadius: 999,
+    height: 42,
+    opacity: 0.55,
+    position: 'absolute',
+    right: -18,
+    top: -12,
+    width: 42,
+  },
+  recipeContent: {
     flex: 1,
-    fontSize: 13,
-    fontWeight: '700',
-    lineHeight: 18,
+    minWidth: 0,
+    paddingVertical: 2,
   },
-  sectionHeader: {
-    marginTop: 24,
+  cardTopRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
   },
-  sectionLabel: {
-    color: colors.charcoal,
-    fontSize: 18,
+  modePill: {
+    alignItems: 'center',
+    backgroundColor: '#fff1df',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 5,
+    maxWidth: '82%',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  modePillText: {
+    color: colors.coral,
+    flexShrink: 1,
+    fontSize: 10,
     fontWeight: '900',
   },
-  sectionBody: {
+  moreButton: {
+    alignItems: 'center',
+    height: 28,
+    justifyContent: 'center',
+    width: 28,
+  },
+  recipeTitle: {
+    color: colors.charcoal,
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0,
+    lineHeight: 20,
+    marginTop: 5,
+  },
+  recipeSubtitle: {
+    color: colors.body,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 3,
+  },
+  recipeMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    marginTop: 6,
+  },
+  metaChip: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 5,
+    maxWidth: '100%',
+  },
+  metaText: {
+    color: colors.charcoal,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  metaTextGreen: {
+    color: colors.green,
+    fontWeight: '900',
+  },
+  cardActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 0,
+  },
+  cookButton: {
+    alignItems: 'center',
+    backgroundColor: colors.coral,
+    borderRadius: 12,
+    justifyContent: 'center',
+    flex: 1,
+    minHeight: 38,
+    minWidth: 0,
+    paddingHorizontal: 12,
+  },
+  cookButtonText: {
+    color: '#fffdf8',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  groceryButton: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: 12,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 6,
+    justifyContent: 'center',
+    minHeight: 38,
+    minWidth: 0,
+    paddingHorizontal: 8,
+  },
+  groceryButtonText: {
+    color: colors.coral,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  noMatchesCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 20,
+  },
+  noMatchesTitle: {
+    color: colors.charcoal,
+    fontSize: 19,
+    fontWeight: '900',
+  },
+  noMatchesBody: {
     color: colors.body,
     fontSize: 14,
     lineHeight: 20,
-    marginTop: 4,
+    marginTop: 6,
   },
-  cardList: {
+  emptyCard: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: 26,
+    borderWidth: 1,
     gap: 14,
-    marginTop: 12,
+    marginTop: 24,
+    padding: 24,
+  },
+  emptyMascot: {
+    marginBottom: 2,
+  },
+  emptyTitle: {
+    color: colors.charcoal,
+    fontSize: 26,
+    fontWeight: '900',
+    lineHeight: 31,
+    textAlign: 'center',
+  },
+  emptyBody: {
+    color: colors.body,
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
+  },
+  primaryAction: {
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    backgroundColor: colors.coral,
+    borderRadius: 16,
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'center',
+    minHeight: 54,
+    paddingHorizontal: 16,
+  },
+  primaryActionText: {
+    color: '#fffdf8',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  pressed: {
+    opacity: 0.72,
   },
 });

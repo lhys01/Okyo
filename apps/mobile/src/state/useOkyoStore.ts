@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { analyticsEvents, track } from '../analytics/track';
-import type { AiDebugMetadata, ScanImageMetadata, ScanRejectionType, ScanStatus } from '../api/types';
+import type { AiDebugMetadata, ScanImageMetadata, ScanRejectionType, ScanSource, ScanStatus } from '../api/types';
 import {
   mockLeaderboardEntries,
   type LeaderboardEntry,
@@ -40,9 +40,39 @@ export type LatestScanFailure = {
   rejectionReason: string;
 };
 
+export type LatestScanSession = {
+  scanSessionId: string;
+  latestScanStatus: ScanStatus | 'pending';
+  latestScanResult: ScanResult | null;
+  latestScanRecipes: Recipe[];
+  latestScanFailure: LatestScanFailure | null;
+  latestScanRecipe: Recipe | null;
+  selectedScanImage: ScanImageMetadata | null;
+  latestAiDebugMetadata: AiDebugMetadata | null;
+  source: ScanSource;
+  updatedAt: string;
+};
+
+type LatestScanSessionWrite = Omit<LatestScanSession, 'updatedAt'> & {
+  reason: string;
+};
+
+type LatestScanClear = {
+  reason: string;
+  source: string;
+};
+
+type SavedRecipeContextWrite = {
+  recipe: Recipe;
+  reason: string;
+  source: string;
+};
+
 type OkyoState = {
   hasCompletedOnboarding: boolean;
   onboardingGoal: OnboardingGoal | null;
+  scanSessionId: string | null;
+  latestScanSession: LatestScanSession | null;
   latestScanResult: ScanResult | null;
   latestScanRecipes: Recipe[];
   latestScanStatus: ScanStatus | 'pending' | null;
@@ -64,6 +94,10 @@ type OkyoState = {
   completeOnboarding: () => void;
   resetOnboarding: () => void;
   setGoal: (goal: OnboardingGoal) => void;
+  beginLatestScanSession: (scanSession: LatestScanSessionWrite) => void;
+  writeLatestScanSession: (scanSession: LatestScanSessionWrite) => void;
+  clearLatestScan: (clear: LatestScanClear) => void;
+  writeSavedRecipeContext: (context: SavedRecipeContextWrite) => void;
   setLatestScanResult: (scanResult: ScanResult | null) => void;
   setLatestScanRecipes: (recipes: Recipe[]) => void;
   setLatestScanStatus: (status: ScanStatus | 'pending' | null) => void;
@@ -90,6 +124,8 @@ export const useOkyoStore = create<OkyoState>()(
     (set) => ({
       hasCompletedOnboarding: false,
       onboardingGoal: null,
+      scanSessionId: null,
+      latestScanSession: null,
       latestScanResult: null,
       latestScanRecipes: [],
       latestScanStatus: null,
@@ -111,6 +147,91 @@ export const useOkyoStore = create<OkyoState>()(
       completeOnboarding: () => set({ hasCompletedOnboarding: true }),
       resetOnboarding: () => set({ hasCompletedOnboarding: false }),
       setGoal: (goal) => set({ onboardingGoal: goal }),
+      beginLatestScanSession: (scanSession) =>
+        set((state) => {
+          if (hasAnyLatestScanState(state)) {
+            logScanStateClear({
+              previousScanSessionId: state.scanSessionId,
+              previousStatus: state.latestScanStatus,
+              reason: scanSession.reason,
+              source: 'beginLatestScanSession',
+            });
+          }
+
+          const latestScanSession = createLatestScanSession(scanSession);
+          logScanStateWrite({ ...getLatestScanSessionSummary(latestScanSession), reason: scanSession.reason });
+
+          return {
+            ...getLatestScanSessionState(latestScanSession),
+          };
+        }),
+      writeLatestScanSession: (scanSession) =>
+        set((state) => {
+          if (state.scanSessionId && state.scanSessionId !== scanSession.scanSessionId) {
+            logScanStateWrite({
+              ignored: true,
+              reason: scanSession.reason,
+              scanSessionId: scanSession.scanSessionId,
+              activeScanSessionId: state.scanSessionId,
+              status: scanSession.latestScanStatus,
+            });
+            return state;
+          }
+          if (
+            state.latestScanSession?.scanSessionId === scanSession.scanSessionId &&
+            state.latestScanSession.latestScanStatus === 'success' &&
+            scanSession.latestScanStatus === 'pending'
+          ) {
+            logScanStateWrite({
+              ignored: true,
+              reason: scanSession.reason,
+              scanSessionId: scanSession.scanSessionId,
+              activeScanSessionId: state.scanSessionId,
+              status: scanSession.latestScanStatus,
+              previousStatus: state.latestScanSession.latestScanStatus,
+            });
+            return state;
+          }
+
+          const latestScanSession = createLatestScanSession(scanSession);
+          logScanStateWrite({ ...getLatestScanSessionSummary(latestScanSession), reason: scanSession.reason });
+
+          return {
+            ...getLatestScanSessionState(latestScanSession),
+          };
+        }),
+      clearLatestScan: (clear) =>
+        set((state) => {
+          logScanStateClear({
+            previousScanSessionId: state.scanSessionId,
+            previousStatus: state.latestScanStatus,
+            reason: clear.reason,
+            source: clear.source,
+          });
+
+          return getClearedLatestScanState();
+        }),
+      writeSavedRecipeContext: (context) =>
+        set((state) => {
+          logScanStateClear({
+            previousScanSessionId: state.scanSessionId,
+            previousStatus: state.latestScanStatus,
+            preservedScanSessionId: state.latestScanSession?.scanSessionId ?? null,
+            reason: context.reason,
+            scope: 'legacy_saved_recipe_context',
+            source: context.source,
+          });
+
+          return {
+            latestAiDebugMetadata: null,
+            latestScanFailure: null,
+            latestScanRecipe: context.recipe,
+            latestScanRecipes: [context.recipe],
+            latestScanResult: null,
+            latestScanStatus: null,
+            selectedScanImage: null,
+          };
+        }),
       setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
       setLatestScanRecipes: (recipes) => set({ latestScanRecipes: recipes }),
       setLatestScanStatus: (status) => set({ latestScanStatus: status }),
@@ -182,21 +303,24 @@ export const useOkyoStore = create<OkyoState>()(
       clearRecentBadgeUnlock: () => set({ recentBadgeUnlock: null }),
       setPremium: (isPremium) => set({ isPremium }),
       clearSavedData: () =>
-        set({
-          savedRecipes: [],
-          completedChallenges: [],
-          totalMoneySaved: 0,
-          xp: 0,
-          unlockedBadges: [],
-          recentBadgeUnlock: null,
-          awardedXpEvents: [],
-          latestScanFailure: null,
-          latestScanResult: null,
-          latestScanRecipes: [],
-          latestScanStatus: null,
-          latestScanRecipe: null,
-          selectedScanImage: null,
-          latestAiDebugMetadata: null,
+        set((state) => {
+          logScanStateClear({
+            previousScanSessionId: state.scanSessionId,
+            previousStatus: state.latestScanStatus,
+            reason: 'clear_saved_data',
+            source: 'useOkyoStore.clearSavedData',
+          });
+
+          return {
+            savedRecipes: [],
+            completedChallenges: [],
+            totalMoneySaved: 0,
+            xp: 0,
+            unlockedBadges: [],
+            recentBadgeUnlock: null,
+            awardedXpEvents: [],
+            ...getClearedLatestScanState(),
+          };
         }),
     }),
     {
@@ -205,6 +329,8 @@ export const useOkyoStore = create<OkyoState>()(
       partialize: (state) => ({
         hasCompletedOnboarding: state.hasCompletedOnboarding,
         onboardingGoal: state.onboardingGoal,
+        scanSessionId: state.scanSessionId,
+        latestScanSession: state.latestScanSession,
         latestScanResult: state.latestScanResult,
         latestScanRecipes: state.latestScanRecipes,
         latestScanStatus: state.latestScanStatus,
@@ -226,3 +352,94 @@ export const useOkyoStore = create<OkyoState>()(
     },
   ),
 );
+
+function createLatestScanSession(scanSession: LatestScanSessionWrite): LatestScanSession {
+  return {
+    ...scanSession,
+    latestScanRecipes: Array.isArray(scanSession.latestScanRecipes) ? scanSession.latestScanRecipes : [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function getLatestScanSessionState(latestScanSession: LatestScanSession) {
+  return {
+    scanSessionId: latestScanSession.scanSessionId,
+    latestScanSession,
+    latestScanResult: latestScanSession.latestScanResult,
+    latestScanRecipes: latestScanSession.latestScanRecipes,
+    latestScanStatus: latestScanSession.latestScanStatus,
+    latestScanFailure: latestScanSession.latestScanFailure,
+    latestScanRecipe: latestScanSession.latestScanRecipe,
+    selectedScanImage: latestScanSession.selectedScanImage,
+    latestAiDebugMetadata: latestScanSession.latestAiDebugMetadata,
+  };
+}
+
+function getClearedLatestScanState() {
+  return {
+    scanSessionId: null,
+    latestScanSession: null,
+    latestScanFailure: null,
+    latestScanResult: null,
+    latestScanRecipes: [],
+    latestScanStatus: null,
+    latestScanRecipe: null,
+    selectedScanImage: null,
+    latestAiDebugMetadata: null,
+  };
+}
+
+function hasAnyLatestScanState(state: Pick<
+  OkyoState,
+  | 'scanSessionId'
+  | 'latestScanSession'
+  | 'latestScanResult'
+  | 'latestScanRecipes'
+  | 'latestScanStatus'
+  | 'latestScanRecipe'
+  | 'selectedScanImage'
+>) {
+  return Boolean(
+    state.scanSessionId ||
+    state.latestScanSession ||
+    state.latestScanResult ||
+    state.latestScanRecipes.length > 0 ||
+    state.latestScanStatus ||
+    state.latestScanRecipe ||
+    state.selectedScanImage
+  );
+}
+
+function getLatestScanSessionSummary(scanSession: LatestScanSession) {
+  return {
+    scanSessionId: scanSession.scanSessionId,
+    status: scanSession.latestScanStatus,
+    scanResultExists: Boolean(scanSession.latestScanResult),
+    recipeExists: Boolean(scanSession.latestScanRecipe),
+    recipesLength: scanSession.latestScanRecipes.length,
+    selectedScanImageExists: Boolean(scanSession.selectedScanImage),
+    source: scanSession.source,
+  };
+}
+
+function logScanStateWrite(details: Record<string, unknown>) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log('okyo_scan_state_write', details);
+}
+
+function logScanStateClear(details: Record<string, unknown>) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log('okyo_scan_state_clear', details);
+  console.log('okyo_scan_state_clear_reason', {
+    reason: details.reason,
+    source: details.source,
+    previousScanSessionId: details.previousScanSessionId,
+    previousStatus: details.previousStatus,
+  });
+}
