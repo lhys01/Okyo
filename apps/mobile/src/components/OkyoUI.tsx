@@ -198,7 +198,7 @@ const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 export function RecipeCard({ recipe, onPress, onRemove }: RecipeCardProps) {
   const title = getSafeText(recipe?.title, 'Saved Okyo dupe');
   const mode = isRecipeMode(recipe?.mode) ? recipe.mode : 'Restaurant Copy';
-  const estimatedSavings = getSafeNumber(recipe?.estimatedSavings);
+  const estimatedHomemadeCost = getSafeNumber(recipe?.estimatedHomemadeCost);
   const difficulty = getSafeText(recipe?.difficulty, 'Easy');
 
   return (
@@ -210,8 +210,8 @@ export function RecipeCard({ recipe, onPress, onRemove }: RecipeCardProps) {
         </View>
         <View style={styles.cardMetaRow}>
           <View>
-            <Text style={styles.statLabel}>Estimated savings</Text>
-            <Text style={styles.savingsText}>{formatCurrency(estimatedSavings)}</Text>
+            <Text style={styles.statLabel}>Homemade estimate</Text>
+            <Text style={styles.savingsText}>{formatCurrency(estimatedHomemadeCost)}</Text>
           </View>
           <View style={styles.cardMetaRight}>
             <Text style={styles.statLabel}>Difficulty</Text>
@@ -288,7 +288,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     flexGrow: 1,
     padding: spacing.screen,
-    paddingBottom: 44,
+    paddingBottom: 220,
   },
   centeredContent: {
     justifyContent: 'center',

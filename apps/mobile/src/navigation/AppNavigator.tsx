@@ -93,7 +93,7 @@ export function AppNavigator() {
       <Stack.Screen
         name="ShareCardPreviewScreen"
         component={ShareCardPreviewScreen}
-        options={{ title: 'Share Preview' }}
+        options={{ headerShown: false, title: 'Share Preview' }}
       />
       <Stack.Screen
         name="DupeChallengeScreen"

@@ -78,6 +78,7 @@ export function RecipeDetailScreen() {
   const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
   const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
+  const canShowSavings = restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
   const availableModes = scanResult?.modes ?? getAvailableModes(latestScanRecipes, latestScanRecipe, isDemoScan);
   const spicePairings = getSafeTextList(recipe?.spicePairings);
   const cookingTerms = getSafeCookingTerms(recipe?.cookingTerms);
@@ -143,7 +144,7 @@ export function RecipeDetailScreen() {
     track(analyticsEvents.RECIPE_SAVED, {
       dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
       mode: recipe.mode,
-      savings: recipe.estimatedSavings,
+      savings: canShowSavings ? recipe.estimatedSavings : 0,
       screen: 'RecipeDetailScreen',
     });
     Alert.alert('Saved', `${cleanDisplayText(recipe.title)} was added to your library.`);
@@ -254,7 +255,11 @@ export function RecipeDetailScreen() {
             </Text>
             <View style={styles.savingsMiniPill}>
               <Leaf color={colors.green} height={15} strokeWidth={2.2} width={15} />
-              <Text style={styles.savingsMiniText}>You save {formatCurrency(recipe.estimatedSavings)}</Text>
+              <Text style={styles.savingsMiniText}>
+                {canShowSavings
+                  ? `You save ${formatCurrency(recipe.estimatedSavings)}`
+                  : `Home est. ${formatCurrency(recipe.estimatedHomemadeCost)}`}
+              </Text>
             </View>
 
             <View style={styles.quickStatsRow}>
@@ -317,17 +322,21 @@ export function RecipeDetailScreen() {
 
             <View style={styles.savingsCard}>
               <View style={styles.savingsCopy}>
-                <Text style={styles.savingsLabel}>Estimated savings</Text>
-                <Text style={styles.savingsSubLabel}>You save</Text>
+                <Text style={styles.savingsLabel}>{canShowSavings ? 'Estimated savings' : 'Homemade estimate'}</Text>
+                <Text style={styles.savingsSubLabel}>{canShowSavings ? 'You save' : 'Estimated grocery cost'}</Text>
                 <Text
                   adjustsFontSizeToFit
                   minimumFontScale={0.75}
                   numberOfLines={1}
                   style={styles.savingsValue}
                 >
-                  {formatCurrency(recipe.estimatedSavings)}
+                  {formatCurrency(canShowSavings ? recipe.estimatedSavings : recipe.estimatedHomemadeCost)}
                 </Text>
-                <Text style={styles.savingsNote}>vs. restaurant {formatCurrency(restaurantPrice)}</Text>
+                <Text style={styles.savingsNote}>
+                  {canShowSavings
+                    ? `vs. restaurant ${formatCurrency(restaurantPrice)}`
+                    : 'Add what you paid from the result screen to estimate savings.'}
+                </Text>
               </View>
               <View style={styles.savingsIconBubble}>
                 <MoneySquare color={colors.green} height={42} strokeWidth={1.9} width={42} />

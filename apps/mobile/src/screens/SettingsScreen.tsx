@@ -114,7 +114,7 @@ const styles = StyleSheet.create({
   container: {
     backgroundColor: colors.background,
     padding: 24,
-    paddingBottom: 44,
+    paddingBottom: 220,
   },
   kicker: {
     color: colors.coral,

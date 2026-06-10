@@ -5,7 +5,6 @@ import * as Clipboard from 'expo-clipboard';
 import {
   Bag,
   Check,
-  CheckCircle,
   Leaf,
   NavArrowLeft,
   PasteClipboard,
@@ -18,6 +17,7 @@ import { Alert, Pressable, Share, ScrollView, StyleSheet, Text, View } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import {
   defaultScanResult,
@@ -281,7 +281,7 @@ export function GroceryListScreen() {
         ))
       ) : (
         <View style={styles.emptyTabCard}>
-          <CheckCircle color={colors.green} height={34} strokeWidth={2.1} width={34} />
+          <KikoMascot pose="groceryList" size={94} style={styles.emptyTabMascot} />
           <Text style={styles.emptyTabTitle}>{activeTab === 'buy' ? 'No shopping items' : 'No pantry checks'}</Text>
           <Text style={styles.emptyTabBody}>
             {activeTab === 'buy'
@@ -841,6 +841,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginTop: 16,
     padding: 20,
+  },
+  emptyTabMascot: {
+    marginBottom: 2,
   },
   emptyTabTitle: {
     color: colors.charcoal,
