@@ -4,6 +4,13 @@ export type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
 export type ScanSource = 'camera' | 'photos' | 'mock';
 
+export type ScanState =
+  | 'clear_food'
+  | 'food_present_uncertain_dish'
+  | 'partial_food'
+  | 'not_food'
+  | 'too_unclear';
+
 export type ScanImageMetadata = {
   uri?: string;
   dataUrl?: string;
@@ -21,6 +28,10 @@ export type ScanImageMetadata = {
 export type ScanResult = {
   id: string;
   dishName: string;
+  bestGuessDishName?: string;
+  bestGuessNote?: string;
+  possibleDishNames?: string[];
+  scanState?: ScanState;
   restaurantStyle: string;
   restaurantPrice: number;
   homemadeCost: number;

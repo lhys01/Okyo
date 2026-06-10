@@ -4,6 +4,9 @@ export const mockScanResults: ScanResult[] = [
   {
     id: '001',
     dishName: 'Spicy Vodka Rigatoni',
+    bestGuessDishName: 'Spicy Vodka Rigatoni',
+    bestGuessNote: 'Clear demo food scan.',
+    scanState: 'clear_food',
     restaurantStyle: 'Italian-American',
     restaurantPrice: 38,
     homemadeCost: 6.4,
@@ -19,6 +22,9 @@ export const mockScanResults: ScanResult[] = [
   {
     id: '002',
     dishName: 'Cheddar-style Biscuits',
+    bestGuessDishName: 'Cheddar-style Biscuits',
+    bestGuessNote: 'Clear demo food scan.',
+    scanState: 'clear_food',
     restaurantStyle: 'Seafood chain inspired',
     restaurantPrice: 12,
     homemadeCost: 2.5,
@@ -34,6 +40,9 @@ export const mockScanResults: ScanResult[] = [
   {
     id: '003',
     dishName: 'Cava-style Grain Bowl',
+    bestGuessDishName: 'Cava-style Grain Bowl',
+    bestGuessNote: 'Clear demo food scan.',
+    scanState: 'clear_food',
     restaurantStyle: 'Mediterranean',
     restaurantPrice: 17,
     homemadeCost: 5.8,

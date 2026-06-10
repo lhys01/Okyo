@@ -43,13 +43,26 @@ const recipeModeOutputSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
 
 export const openRouterVisionOutputSchema = z.object({
   dishName: z.string().optional(),
+  scanState: z.string().optional(),
+  broadDishCategory: z.string().optional(),
+  dishCategory: z.string().optional(),
   cuisine: z.string().optional(),
   confidence: z.union([z.number(), z.string()]).optional(),
   isFoodImage: z.union([z.boolean(), z.string()]).optional(),
+  foodDetected: z.union([z.boolean(), z.string()]).optional(),
   isRestaurantMeal: z.union([z.boolean(), z.string()]).optional(),
   rejectionReason: z.string().optional(),
   visibleIngredients: z.array(z.string()).default([]),
   likelyIngredients: z.array(z.string()).default([]),
+  possibleDishNames: z.array(z.string()).optional().default([]),
+  visibleComponents: z.object({
+    protein: z.string().optional().default(''),
+    sauce: z.string().optional().default(''),
+    baseStarch: z.string().optional().default(''),
+    vegetables: z.string().optional().default(''),
+    toppingsGarnish: z.string().optional().default(''),
+    cookingMethod: z.string().optional().default(''),
+  }).optional().default({}),
   restaurantPriceEstimate: z.union([z.number(), z.string()]).optional(),
   homemadeCostEstimate: z.union([z.number(), z.string()]).optional(),
   confidenceReason: z.string().optional(),
@@ -115,7 +128,7 @@ export const openRouterRecipeOutputSchema = z.object({
   healthy: recipeVariantSchema.optional().default({}),
 });
 
-export type OpenRouterVisionOutput = z.infer<typeof openRouterVisionOutputSchema>;
+export type OpenRouterVisionOutput = z.input<typeof openRouterVisionOutputSchema>;
 export type OpenRouterRecipeOutput = z.infer<typeof openRouterRecipeOutputSchema>;
 export type OpenRouterRecipeVariant = z.infer<typeof recipeVariantSchema>;
 
@@ -143,6 +156,18 @@ export async function analyzeFoodImageWithOpenRouter(input: {
   if (imageUrl) {
     content.push({ type: 'image_url', image_url: { url: imageUrl } });
   }
+  logOpenRouterDebug('api_openrouter_has_image_payload', {
+    contentItemTypes: content.map((part) => part.type),
+    hasImagePayload: Boolean(imageUrl),
+    imagePayloadLength: imageUrl?.length ?? 0,
+  });
+  logOpenRouterDebug('openrouter_vision_payload', {
+    contentPartTypes: content.map((part) => part.type),
+    imagePayloadAttached: Boolean(imageUrl),
+    imagePayloadLength: imageUrl?.length ?? 0,
+    imageUriKind: getSafeImageUrl(input.image) ? 'provider_visible' : input.image?.uri ? 'local_or_private_uri_not_sent' : 'none',
+    model: input.config.openRouterVisionModel,
+  });
 
   const json = await callOpenRouterJson({
     config: input.config,
@@ -166,6 +191,14 @@ export async function analyzeFoodImageWithOpenRouter(input: {
       openRouterErrorMessage: getSchemaErrorMessage(output.error),
     });
   }
+
+  logOpenRouterDebug('openrouter_vision_output', {
+    broadDishCategory: output.data.broadDishCategory ?? output.data.dishCategory,
+    confidence: output.data.confidence,
+    dishName: output.data.dishName,
+    foodDetected: output.data.foodDetected ?? output.data.isFoodImage,
+    scanState: output.data.scanState,
+  });
 
   return output.data;
 }
@@ -235,6 +268,11 @@ async function callOpenRouterJson(input: {
       signal: controller.signal,
     });
 
+    logOpenRouterDebug('api_openrouter_response_status', {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+    });
     if (!response.ok) {
       throw createOpenRouterError(input.config, input.model, 'openrouter_http_error', {
         httpStatus: response.status,
@@ -243,7 +281,12 @@ async function callOpenRouterJson(input: {
     }
 
     const responseJson = await parseResponseJson(response, input.config, input.model);
+    logOpenRouterDebug('openrouter_response_shape', getOpenRouterResponseShape(responseJson));
     const assistantText = extractAssistantTextFromOpenRouterResponse(responseJson, input.config, input.model);
+    logOpenRouterDebug('api_openrouter_response_text_preview', {
+      length: assistantText.length,
+      preview: assistantText.slice(0, 300),
+    });
     return parseJsonContent(
       assistantText,
       input.config,
@@ -277,17 +320,33 @@ async function callOpenRouterJson(input: {
 
 function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode) {
   return [
-    'Analyze this restaurant meal for a testing-only Okyo prototype.',
+    'Analyze this real-world restaurant or takeout food photo for a testing-only Okyo prototype.',
     'Return ONLY valid JSON in the assistant message content. Do not put JSON in reasoning. Do not return markdown. Do not explain.',
     'Return JSON only with exactly these fields:',
-    '{"dishName": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}',
-    'If the image is not food, set isFoodImage false, isRestaurantMeal false, confidence low, and rejectionReason to a short reason.',
-    'If the image might be food but you are unsure, keep isFoodImage true, use low confidence, and explain uncertainty.',
-    'If the image is food but not clearly restaurant-style, keep isRestaurantMeal true when it could reasonably be a meal.',
-    'Only set isRestaurantMeal false when you are confident the image is not a meal at all.',
-    'dishName should be specific but cautious, like "Possible Spicy Rigatoni" if unsure; do not use generic names like "food" or "meal".',
-    'confidence may be 0-100. Use lower confidence when the image is unclear.',
-    'Price and homemade cost must be realistic US dollar estimates, not exact; homemadeCostEstimate should usually be lower than restaurantPriceEstimate.',
+    '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}',
+    'First decide whether real edible food is visible. If any visible food exists, do not hard reject. Ignore table clutter, plates, utensils, hands, cups, napkins, packaging, captions, UI chrome, and restaurant background unless they help identify the food.',
+    'Real restaurant photos are allowed to be messy: dim lighting, busy tables, multiple items, dark or charred food, shiny sauce, garnish, angled phone photos, partial plates, takeout containers, screenshots of food posts, hands, cups, napkins, menus, utensils, and cluttered backgrounds are normal.',
+    'Ignore plates, utensils, table surfaces, cups, napkins, hands, menus, packaging, captions, UI chrome, and background unless they help identify the food. Focus on edible food.',
+    'If multiple dishes are visible, choose the largest or most central edible item. Identify the central plate or central food pile; do not reject because side plates or clutter are present.',
+    'If the exact dish is uncertain, identify a broad useful food category and give a lower-confidence best guess. Use broad category names instead of failure.',
+    'Do not reject just because food is dark, charred, saucy, cluttered, garnished, partially visible, cropped, or photographed at an angle. Return lower confidence instead.',
+    'Examples: messy grilled meat platter -> Grilled Meat Plate or Mixed Restaurant Plate; saucy bowl -> Saucy Rice Bowl or Noodle Bowl; cluttered table with central plate -> identify the central dish; partial sandwich or burger -> Loaded Sandwich or Loaded Burger; unclear pasta/noodles -> Pasta Bowl or Noodle Bowl; charred or dark food -> Grilled or Charred Plate, not rejection.',
+    'Set broadDishCategory to one of: pizza, pasta/noodles, rice bowl, burger/sandwich, tacos/wrap, grilled meat, fried food, seafood, salad, soup/stew, dessert, breakfast item, mixed platter, unknown food dish.',
+    'Identify cuisine only when there are strong visual clues. Otherwise use "Restaurant-style".',
+    'Use visibleComponents to describe visible protein, sauce, base/starch, vegetables, toppings/garnish, and cooking method. Empty string is okay when not visible.',
+    'Return a best-guess dishName even if the exact restaurant dish name is unknown. Use broad useful names like "Mixed Restaurant Plate", "Grilled Meat Plate", "Charred Grill Plate", "Saucy Rice Bowl", "Noodle Bowl", "Pasta Bowl", "Loaded Sandwich", "Loaded Burger", "Pizza", "Stir-Fry Plate", "Restaurant-Style Food Plate", "Creamy Tomato Pasta", "Spicy Noodle Bowl", or "Grilled Chicken Rice Bowl". Do not invent exact menu names.',
+    'When uncertain, include 2-4 possibleDishNames using broad safe guesses such as Mixed Restaurant Plate, Grilled Meat Plate, Saucy Rice Bowl, Noodle Bowl, Pasta Bowl, Loaded Sandwich, Pizza, or Stir-Fry Plate.',
+    'scanState rules: clear_food means food and dish are clear; food_present_uncertain_dish means food is clear but exact dish/cuisine is uncertain; partial_food means food is visible but partial/low-quality/ambiguous; not_food means clearly no food; too_unclear means too blurry/dark/blocked to identify food safely.',
+    'Confidence score rules: 80-95 clear dish, 60-79 food clear but exact dish uncertain, 40-59 food visible but ambiguous or partial, below 40 retry/clarification needed. If food is visible and confidence is 40-79, keep isFoodImage true and use scanState food_present_uncertain_dish or partial_food.',
+    'Only reject when food is clearly absent or the image is too unclear to identify any visible food. Do not reject just because the exact dish name is uncertain.',
+    'Only use not_food when no food is visible. If food is visible, not_food is wrong.',
+    'Only use too_unclear when food cannot reasonably be identified at all because the image is truly blurry, blocked, or unreadable. If food is visible but the exact dish is unclear, use partial_food or food_present_uncertain_dish instead.',
+    'If the image is not food, set scanState not_food, isFoodImage false, isRestaurantMeal false, and rejectionReason to a short user-friendly reason.',
+    'If the image is too blurry/dark/blocked to know whether food is visible, set scanState too_unclear, isFoodImage false, confidence below 40, and rejectionReason to ask for a clearer food photo.',
+    'If food is visible but uncertain, do NOT say "could not recognize" or "failed"; provide a broad best guess with lower confidence instead of failure.',
+    'confidence may be 0-100. Use lower confidence when the image is unclear, partial, or screenshot-like.',
+    'Do not invent exact restaurant menu prices from a photo. Set restaurantPriceEstimate to 0 unless a menu, receipt, visible price, or user-provided price is available in metadata.',
+    'homemadeCostEstimate may be a cautious grocery-cost estimate for making a similar recipe at home.',
     'Use cautious estimates. Never present food identification, cost, or ingredients as exact.',
     'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
     'If no actual image is available, return a cautious low-confidence result based only on metadata.',
@@ -297,6 +356,8 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
 }
 
 function getRecipePrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
+  const isUncertainFood = analysis.scanState === 'food_present_uncertain_dish' || analysis.scanState === 'partial_food';
+
   return [
     'Create compact inspired-by homemade recipe JSON for Okyo based on this uncertain food analysis.',
     'Return valid minified JSON only. No markdown, prose, reasoning, or extra text.',
@@ -312,11 +373,19 @@ function getRecipePrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
     'GroceryItems are buyable store items, not cooking amounts. Burger groceries: 1 tomato, 1 small head romaine or 1 bag lettuce, 1 pack buns, protein, sliced cheese, sauces, pantry-check spices.',
     'Allowed grocery categories: Produce, Protein, Bakery / Bread, Dairy, Sauces / Condiments, Pantry, Spices, Noodles / Grains, Garnish.',
     'No exact nutrition claims. No unsafe cooking advice. Never call it official.',
+    'For food_present_uncertain_dish or partial_food, create a flexible homemade inspired-by version based only on visible components and likely cooking method. Do not pretend it is the exact restaurant recipe.',
+    isUncertainFood
+      ? 'Because this scan is uncertain, description or pantryNote should gently signal it is a best guess based on what is visible.'
+      : 'Because this scan is clearer, keep wording confident but still honest and inspired-by.',
     `Food analysis summary: ${JSON.stringify({
+      broadDishCategory: analysis.broadDishCategory,
       confidence: analysis.confidence,
+      confidenceReason: analysis.confidenceReason,
       cuisine: analysis.cuisine,
       dishName: analysis.dishName,
       likelyIngredients: analysis.likelyIngredients.slice(0, 6),
+      scanState: analysis.scanState,
+      visibleComponents: analysis.visibleComponents,
       visibleIngredients: analysis.visibleIngredients.slice(0, 6),
     })}`,
   ].join('\n');
@@ -395,7 +464,7 @@ function getSafeImageMetadata(image: ScanImageMetadata | undefined) {
 
 function extractAssistantTextFromOpenRouterResponse(response: unknown, config: AiConfig, model: string) {
   const shape = getOpenRouterResponseShape(response);
-  console.log('openrouter_response_shape', shape);
+  logOpenRouterDebug('openrouter_assistant_content_shape', shape);
 
   const firstChoice = getFirstChoice(response);
   const message = getRecord(firstChoice?.message);
@@ -643,6 +712,14 @@ function getSafeErrorMessage(error: unknown) {
   }
 
   return 'Unknown OpenRouter error.';
+}
+
+function logOpenRouterDebug(event: string, details: Record<string, unknown>) {
+  if (process.env.NODE_ENV === 'production') {
+    return;
+  }
+
+  console.log(event, details);
 }
 
 function isAbortError(error: unknown) {

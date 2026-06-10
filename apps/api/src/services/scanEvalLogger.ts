@@ -19,6 +19,7 @@ export type ScanEvaluationLogInput = {
   rejectionType?: string;
   scan?: ScanResult;
   scanId?: string;
+  scanState?: string;
   status: string;
   uploadedImage: boolean;
 };
@@ -33,6 +34,7 @@ export async function logScanEvaluation(input: ScanEvaluationLogInput) {
     loggedAt: new Date().toISOString(),
     scanId: input.scan?.id ?? input.scanId,
     dishName: input.scan?.dishName,
+    scanState: input.scan?.scanState ?? input.scanState,
     confidence: input.scan?.confidence,
     restaurantPrice: input.scan?.restaurantPrice,
     homemadeCost: input.scan?.homemadeCost,

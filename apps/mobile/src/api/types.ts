@@ -1,4 +1,4 @@
-import type { GroceryList, Recipe, RecipeMode, ScanResult, ShareCard } from '../mocks';
+import type { GroceryList, Recipe, RecipeMode, ScanResult, ScanState, ShareCard } from '../mocks';
 
 export type ApiResponse<T> =
   | {
@@ -62,6 +62,7 @@ export type CreateScanResult = {
   rejectionType?: ScanRejectionType;
   rejectionReason?: string;
   partialReason?: string;
+  scanState?: ScanState;
   uploadedImage?: boolean;
   source: ScanSource;
 } & Partial<AiDebugMetadata>;

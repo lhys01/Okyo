@@ -27,6 +27,7 @@ export type {
   RestaurantPack,
   RestaurantPackDish,
   ScanResult,
+  ScanState,
   ShareCard,
   XpEvent,
 } from './types';

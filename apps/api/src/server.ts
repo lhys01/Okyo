@@ -21,7 +21,8 @@ import type { ApiFailure, ApiResponse } from './types.js';
 
 const port = Number(process.env.PORT ?? 8081);
 const app = express();
-const maxImageDataUrlChars = 2_750_000;
+const maxImageDataUrlChars = 12_000_000;
+const jsonBodyLimit = '16mb';
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
 const scanSourceSchema = z.enum(['camera', 'photos', 'mock']);
@@ -61,7 +62,7 @@ const xpEventRequestSchema = z.object({
 });
 
 app.use(cors());
-app.use(express.json({ limit: '4mb' }));
+app.use(express.json({ limit: jsonBodyLimit }));
 
 app.get('/health', (_request, response) => {
   const aiConfig = getPublicAiConfig();
@@ -82,7 +83,8 @@ app.get('/debug/ai-config', (_request, response) => {
 
 app.post('/v1/scans', async (request, response, next) => {
   try {
-    const body = parseRequest(scanRequestSchema, request.body);
+    const body = parseRequest(scanRequestSchema, normalizeScanRequestInput(request.body));
+    logScanRequest(body, request.get('content-type'));
     const result = await createAiScan({
       image: body.image,
       mode: body.mode,
@@ -183,6 +185,15 @@ app.get('/v1/restaurant-packs/:packId', (request, response) => {
 });
 
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+  if (isPayloadTooLargeError(error)) {
+    sendError(
+      response.status(413),
+      'image_payload_too_large',
+      'This photo was too large to scan. Try a smaller image.',
+    );
+    return;
+  }
+
   if (error instanceof z.ZodError) {
     sendError(response.status(400), 'validation_error', 'Request validation failed.', error.flatten());
     return;
@@ -214,6 +225,127 @@ function sendError(response: Response, code: string, message: string, details?: 
     error: { code, message, details },
   };
   response.json(payload);
+}
+
+function logScanRequest(body: z.infer<typeof scanRequestSchema>, contentType: string | undefined) {
+  if (process.env.NODE_ENV === 'production') {
+    return;
+  }
+
+  console.log('api_scan_body_keys', {
+    bodyKeys: Object.keys(body).sort(),
+    imageKeys: body.image ? Object.keys(body.image).sort() : [],
+  });
+  console.log('api_scan_image_exists', { exists: Boolean(body.image) });
+  console.log('api_scan_image_data_url_exists', { exists: Boolean(body.image?.dataUrl) });
+  console.log('api_scan_image_data_url_length', { length: body.image?.dataUrl?.length ?? 0 });
+  console.log('api_scan_image_data_url_prefix', { prefix: body.image?.dataUrl?.slice(0, 30) ?? null });
+  console.log('api_scan_provider_visible_start', {
+    contentType,
+    hasDataUrl: Boolean(body.image?.dataUrl),
+    hasUri: Boolean(body.image?.uri),
+    model: getPublicAiConfig().visionModel,
+    placeholder: Boolean(body.image?.placeholder),
+    provider: getPublicAiConfig().provider,
+  });
+  console.log('api_scan_provider_visible_result', {
+    providerVisible: isProviderVisibleImage(body.image),
+    reason: getProviderVisibleReason(body.image),
+  });
+  console.log('api_scan_request_received', {
+    bodyKeys: Object.keys(body).sort(),
+    contentType,
+    source: body.source,
+    timestamp: new Date().toISOString(),
+    mode: body.mode,
+    imageExists: Boolean(body.image),
+    imageDataUrlExists: Boolean(body.image?.dataUrl),
+    imageDataUrlLength: body.image?.dataUrl?.length ?? 0,
+    imageDataUrlSizeBytes: body.image?.dataUrlSizeBytes,
+    imageMimeType: body.image?.mimeType,
+    imageConversionError: body.image?.conversionError,
+    imageUriKind: body.image?.uri?.startsWith('http')
+      ? 'remote_url'
+      : body.image?.uri
+        ? 'local_or_private_uri'
+        : 'none',
+    imageWidth: body.image?.width,
+    imageHeight: body.image?.height,
+    jsonBodyLimit,
+    maxImageDataUrlChars,
+  });
+}
+
+function normalizeScanRequestInput(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const body = value as Record<string, unknown>;
+  const imageInput = body.image && typeof body.image === 'object' && !Array.isArray(body.image)
+    ? body.image as Record<string, unknown>
+    : {};
+  const aliasedDataUrl = getStringValue(imageInput.dataUrl) ??
+    getStringValue(imageInput.imageDataUrl) ??
+    getStringValue(body.imageDataUrl) ??
+    getStringValue(body.dataUrl);
+  const normalizedImage = Object.fromEntries(
+    Object.entries(imageInput).filter(([key]) => key !== 'imageDataUrl'),
+  );
+
+  if (aliasedDataUrl) {
+    normalizedImage.dataUrl = aliasedDataUrl;
+  }
+
+  return {
+    ...body,
+    image: Object.keys(normalizedImage).length > 0 ? normalizedImage : body.image,
+  };
+}
+
+function getStringValue(value: unknown) {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function isProviderVisibleImage(image: z.infer<typeof scanImageMetadataSchema> | undefined) {
+  return Boolean(
+    image &&
+    !image.placeholder &&
+    (
+      image.dataUrl?.startsWith('data:image/') ||
+      image.uri?.startsWith('https://') ||
+      image.uri?.startsWith('http://')
+    ),
+  );
+}
+
+function getProviderVisibleReason(image: z.infer<typeof scanImageMetadataSchema> | undefined) {
+  if (!image) {
+    return 'missing_image';
+  }
+  if (image.placeholder) {
+    return 'placeholder_image';
+  }
+  if (image.dataUrl?.startsWith('data:image/')) {
+    return 'data_url_visible';
+  }
+  if (image.uri?.startsWith('https://') || image.uri?.startsWith('http://')) {
+    return 'remote_uri_visible';
+  }
+  if (image.conversionError) {
+    return image.conversionError;
+  }
+
+  return 'no_provider_visible_image';
+}
+
+function isPayloadTooLargeError(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const typedError = error as { status?: number; type?: string };
+  return typedError.status === 413 || typedError.type === 'entity.too.large';
 }
 
 function getResponseImageMetadata(image: z.infer<typeof scanImageMetadataSchema> | undefined) {

@@ -20,6 +20,7 @@ import type {
   RecipeMode,
   ScanImageMetadata,
   ScanResult,
+  ScanState,
   ScanSource,
   ShareCard,
 } from '../types.js';
@@ -40,15 +41,77 @@ const matchScoreSchema = z.number().min(0).max(10);
 const aiSourceSchema = z.enum(['openrouter_ai', 'mock_ai', 'fallback_ai']);
 const scanStatusSchema = z.enum(['success', 'partial', 'rejected', 'failed']);
 const scanRejectionTypeSchema = z.enum(['not_food', 'unclear_image', 'ai_failed']);
+const scanStateSchema = z.enum([
+  'clear_food',
+  'food_present_uncertain_dish',
+  'partial_food',
+  'not_food',
+  'too_unclear',
+]);
+const visibleComponentsSchema = z.object({
+  protein: z.string().optional().default(''),
+  sauce: z.string().optional().default(''),
+  baseStarch: z.string().optional().default(''),
+  vegetables: z.string().optional().default(''),
+  toppingsGarnish: z.string().optional().default(''),
+  cookingMethod: z.string().optional().default(''),
+});
 const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
 const defaultRestaurantPrice = 18;
 const defaultHomemadeCost = 6.5;
-const uploadedImageConfidenceThreshold = 0.35;
+const uploadedImageConfidenceThreshold = 0.4;
 const notFoodConfidenceThreshold = 0.78;
+const foodEvidenceKeywords = [
+  'pizza',
+  'pasta',
+  'noodle',
+  'noodles',
+  'rice',
+  'bowl',
+  'burger',
+  'sandwich',
+  'taco',
+  'wrap',
+  'meat',
+  'chicken',
+  'beef',
+  'lamb',
+  'pork',
+  'fish',
+  'seafood',
+  'sushi',
+  'salad',
+  'soup',
+  'stew',
+  'fries',
+  'bread',
+  'sauce',
+  'cheese',
+  'vegetable',
+  'vegetables',
+  'garnish',
+  'grilled',
+  'fried',
+  'roasted',
+  'charred',
+  'creamy',
+  'spicy',
+  'plate',
+  'platter',
+  'dessert',
+  'steak',
+  'skewer',
+  'kebab',
+  'bbq',
+  'crispy',
+  'stir fry',
+  'stir-fry',
+];
 
 export type AiSource = z.infer<typeof aiSourceSchema>;
 export type ScanStatus = z.infer<typeof scanStatusSchema>;
 export type ScanRejectionType = z.infer<typeof scanRejectionTypeSchema>;
+export type FoodScanState = z.infer<typeof scanStateSchema>;
 
 export const foodImageAnalysisSchema = z.object({
   candidateScanId: z.string().min(1),
@@ -56,6 +119,8 @@ export const foodImageAnalysisSchema = z.object({
   dishName: z.string().min(1),
   cuisine: z.string().min(1),
   restaurantStyle: z.string().min(1),
+  scanState: scanStateSchema,
+  broadDishCategory: z.string().min(1),
   confidence: confidenceSchema,
   confidenceReason: z.string().min(1),
   isFoodImage: z.boolean(),
@@ -63,6 +128,8 @@ export const foodImageAnalysisSchema = z.object({
   rejectionReason: z.string().optional(),
   visibleIngredients: z.array(z.string()).default([]),
   likelyIngredients: z.array(z.string()).default([]),
+  possibleDishNames: z.array(z.string()).default([]),
+  visibleComponents: visibleComponentsSchema,
   restaurantPriceEstimate: z.number().nonnegative(),
   homemadeCostEstimate: z.number().nonnegative(),
   matchScore: matchScoreSchema,
@@ -127,12 +194,15 @@ export type AiScanSuccessResult = {
   recipeModel: string;
   fallbackReason?: string;
   confidence: number;
+  scanState: ScanState;
   uploadedImage: boolean;
 };
 
 export type AiScanPartialResult = {
   status: 'partial';
   scan: ScanResult;
+  recipe?: Recipe;
+  recipes?: Recipe[];
   note: string;
   aiSource: AiSource;
   aiProvider: 'openrouter';
@@ -140,6 +210,7 @@ export type AiScanPartialResult = {
   recipeModel: string;
   fallbackReason?: string;
   confidence: number;
+  scanState: ScanState;
   uploadedImage: boolean;
   partialReason: string;
 };
@@ -154,6 +225,7 @@ export type AiScanRejectedResult = {
   recipeModel: string;
   fallbackReason?: string;
   confidence: number;
+  scanState?: ScanState;
   uploadedImage: boolean;
   rejectionType: ScanRejectionType;
   rejectionReason: string;
@@ -164,11 +236,23 @@ export type AiScanResult = AiScanSuccessResult | AiScanPartialResult | AiScanRej
 export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<FoodImageAnalysis> {
   const config = getAiConfig();
   if (!canUseOpenRouter(config)) {
+    logScanDebug('api_openrouter_call_skipped', {
+      reason: getUnavailableAiReason(config),
+      stage: 'vision',
+    });
     logAi('mock_ai', getAiLogDetails(config, config.openRouterVisionModel, getMockReason(config)));
     return analyzeFoodImageWithMock(input);
   }
 
   try {
+    logScanDebug('api_openrouter_call_start', {
+      imageDataUrlExists: Boolean(input.image?.dataUrl),
+      imageDataUrlLength: input.image?.dataUrl?.length ?? 0,
+      imageUriKind: getImageUriKind(input.image),
+      model: config.openRouterVisionModel,
+      stage: 'vision',
+    });
+    logScanDebug('api_openrouter_model', { model: config.openRouterVisionModel, stage: 'vision' });
     const output = await analyzeFoodImageWithOpenRouter({
       config,
       image: input.image,
@@ -176,12 +260,28 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
     });
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterVisionModel, { stage: 'vision' }));
     const normalized = normalizeVisionOutput(output);
+    logScanDebug('api_scan_normalized_state', {
+      dishCategory: normalized.broadDishCategory,
+      confidence: normalized.confidence,
+      dishName: normalized.dishName,
+      foodDetected: normalized.isFoodImage,
+      scanState: normalized.scanState,
+      visibleComponentsCount: getVisibleComponentsCount(normalized.visibleComponents),
+      visibleIngredientsCount: normalized.visibleIngredients.length,
+    });
+    logScanDebug('api_openrouter_vision_normalized', {
+      confidence: normalized.confidence,
+      dishName: normalized.dishName,
+      foodDetected: normalized.isFoodImage,
+      scanState: normalized.scanState,
+    });
 
     return foodImageAnalysisSchema.parse({
       candidateScanId: mockScanResults[0].id,
       aiSource: 'openrouter_ai',
       confidence: normalized.confidence,
       confidenceReason: normalized.confidenceReason,
+      broadDishCategory: normalized.broadDishCategory,
       cuisine: normalized.cuisine,
       difficulty: getDifficultyFromConfidence(normalized.confidence),
       dishName: normalized.dishName,
@@ -192,13 +292,17 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
       matchScore: getMatchScoreFromConfidence(normalized.confidence),
       modes: recipeModes,
       notes: ['OpenRouter test output; verify before using.'],
+      possibleDishNames: normalized.possibleDishNames,
       rejectionReason: normalized.rejectionReason,
       restaurantPriceEstimate: normalized.restaurantPriceEstimate,
       restaurantStyle: normalized.cuisine,
+      scanState: normalized.scanState,
+      visibleComponents: normalized.visibleComponents,
       visibleIngredients: normalized.visibleIngredients,
     });
   } catch (error) {
     const fallbackDetails = getFallbackLogDetails(error, config, config.openRouterVisionModel);
+    logScanDebug('api_openrouter_call_error', fallbackDetails);
     logAi('fallback_ai', fallbackDetails);
     return analyzeFoodImageWithMock(input, 'fallback_ai', getFallbackReason(fallbackDetails));
   }
@@ -259,6 +363,36 @@ export function estimateIngredientCosts(input: EstimateIngredientCostsInput): In
 export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanResult> {
   const config = getAiConfig();
   const uploadedImage = hasRealUploadedImage(input);
+  const providerVisible = isProviderVisibleImage(input.image);
+  logScanDebug('api_scan_provider_visible_start', {
+    imageConversionError: input.image?.conversionError,
+    imageDataUrlExists: Boolean(input.image?.dataUrl),
+    imageDataUrlLength: input.image?.dataUrl?.length ?? 0,
+    imageUriKind: getImageUriKind(input.image),
+    placeholder: Boolean(input.image?.placeholder),
+  });
+  logScanDebug('api_scan_provider_visible_result', { providerVisible });
+  logScanDebug('api_openrouter_call_start', {
+    willCallOpenRouter: !isDemoMockScan(input) && uploadedImage && providerVisible && canUseOpenRouter(config),
+    aiEnabled: config.enabled,
+    hasOpenRouterKey: Boolean(config.openRouterApiKey),
+    imageProviderVisible: providerVisible,
+    model: config.openRouterVisionModel,
+    stage: 'vision_guard',
+  });
+  logScanDebug('api_scan_create_start', {
+    aiEnabled: config.enabled,
+    canUseOpenRouter: canUseOpenRouter(config),
+    hasOpenRouterKey: Boolean(config.openRouterApiKey),
+    imageConversionError: input.image?.conversionError,
+    imageDataUrlExists: Boolean(input.image?.dataUrl),
+    imageDataUrlLength: input.image?.dataUrl?.length ?? 0,
+    imageProviderVisible: providerVisible,
+    imageUriKind: getImageUriKind(input.image),
+    source: input.source,
+    uploadedImage,
+    visionModel: config.openRouterVisionModel,
+  });
 
   if (isDemoMockScan(input)) {
     const result = createDemoMockScan(input.mode, config);
@@ -267,6 +401,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       status: result.status,
       uploadedImage: result.uploadedImage,
     }));
+    logFinalScanResult(result);
     await logScanEvaluationFromResult(result, config);
     return result;
   }
@@ -290,11 +425,12 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       status: result.status,
       uploadedImage,
     }));
+    logFinalScanResult(result);
     await logScanEvaluationFromResult(result, config);
     return result;
   }
 
-  if (uploadedImage && !isProviderVisibleImage(input.image)) {
+  if (uploadedImage && !providerVisible) {
     const result = createRejectedScan({
       aiSource: 'fallback_ai',
       confidence: 0,
@@ -312,6 +448,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       status: result.status,
       uploadedImage,
     }));
+    logFinalScanResult(result);
     await logScanEvaluationFromResult(result, config);
     return result;
   }
@@ -329,6 +466,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
         fallbackReason: analysis.fallbackReason,
         rejectionReason: analysisRejection.rejectionReason,
         rejectionType: analysisRejection.rejectionType,
+        scanState: analysis.scanState,
         status: analysisRejection.status,
         uploadedImage,
       });
@@ -339,6 +477,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
         status: result.status,
         uploadedImage,
       }));
+      logFinalScanResult(result);
       await logScanEvaluationFromResult(result, config);
       return result;
     }
@@ -365,6 +504,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
         status: result.status,
         uploadedImage,
       }));
+      logFinalScanResult(result);
       await logScanEvaluationFromResult(result, config);
       return result;
     }
@@ -385,6 +525,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
         })
         : createFallbackScan(input.mode, config, 'recipe_missing', uploadedImage);
       await logScanEvaluationFromResult(fallbackResult, config);
+      logFinalScanResult(fallbackResult);
 
       return fallbackResult;
     }
@@ -404,6 +545,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       });
 
       await logScanEvaluationFromResult(result, config);
+      logFinalScanResult(result);
       return result;
     }
 
@@ -412,6 +554,9 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
     const aiSource = getScanAiSource(analysis.aiSource, generatedRecipe.aiSource, fallbackReason);
     const scan: ScanResult = {
       ...seedScan,
+      bestGuessDishName: analysis.dishName,
+      bestGuessNote: getBestGuessNote(analysis),
+      possibleDishNames: analysis.possibleDishNames,
       confidence: getBlendedConfidence(analysis.confidence, generatedRecipe.confidence, costEstimate.confidence),
       difficulty: analysis.difficulty,
       dishName: analysis.dishName,
@@ -421,6 +566,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       modes: analysis.modes,
       restaurantPrice: costEstimate.restaurantPrice,
       restaurantStyle: analysis.restaurantStyle,
+      scanState: analysis.scanState,
     };
 
     const result = {
@@ -434,14 +580,19 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
         ? 'AI provider output is for testing only. No image was stored; verify all food, cost, and recipe details.'
         : 'Mock AI service output only. No image was stored and no AI provider was called.',
       ...createAiDebugMetadata(config, aiSource, scan.confidence, fallbackReason),
+      scanState: analysis.scanState,
       uploadedImage,
     };
 
     await logScanEvaluationFromResult(result, config);
+    logFinalScanResult(result);
 
     return result;
-  } catch {
-    logAi('fallback_ai', { reason: 'ai_scan_failed' });
+  } catch (error) {
+    logAi('fallback_ai', {
+      errorMessage: error instanceof Error ? error.message : 'Unknown scan error.',
+      reason: 'ai_scan_failed',
+    });
     const fallbackResult = uploadedImage
       ? createRejectedScan({
         aiSource: 'fallback_ai',
@@ -456,6 +607,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       : createFallbackScan(input.mode, config, 'ai_scan_failed', uploadedImage);
 
     await logScanEvaluationFromResult(fallbackResult, config);
+    logFinalScanResult(fallbackResult);
 
     return fallbackResult;
   }
@@ -473,14 +625,25 @@ function analyzeFoodImageWithMock(
     candidateScanId: scan.id,
     aiSource,
     dishName: scan.dishName,
+    broadDishCategory: 'pasta/noodles',
     cuisine: scan.restaurantStyle,
     restaurantStyle: scan.restaurantStyle,
     confidence: input.image?.placeholder ? Math.min(scan.confidence, 0.72) : scan.confidence,
     confidenceReason: 'Seeded mock analysis for local testing; dish identity is not verified.',
     isFoodImage: true,
     isRestaurantMeal: true,
+    scanState: scan.scanState ?? 'clear_food',
     visibleIngredients: ['pasta', 'tomato sauce', 'cheese'],
     likelyIngredients: ['rigatoni', 'tomato paste', 'cream', 'parmesan', 'red pepper flakes'],
+    possibleDishNames: [scan.dishName, 'Pasta Bowl', 'Noodle Bowl'],
+    visibleComponents: {
+      protein: '',
+      sauce: 'tomato cream sauce',
+      baseStarch: 'rigatoni pasta',
+      vegetables: '',
+      toppingsGarnish: 'cheese',
+      cookingMethod: 'sauced pasta',
+    },
     restaurantPriceEstimate: scan.restaurantPrice,
     homemadeCostEstimate: scan.homemadeCost,
     matchScore: scan.matchScore,
@@ -522,7 +685,7 @@ function generateRecipeFromDishWithStarterFallback(
   input: GenerateRecipeFromDishInput,
   fallbackReason?: string,
 ): GeneratedRecipeOutput | undefined {
-  if (!getCommonDishKind(input.analysis)) {
+  if (!canGenerateRecipeForAnalysis(input.analysis)) {
     return undefined;
   }
 
@@ -681,6 +844,7 @@ function createFallbackScan(
     shareCard: getShareCard(scan.shareCardId),
     note: 'Fallback mock scan only. AI-shaped output was missing or invalid.',
     ...createAiDebugMetadata(config, 'fallback_ai', scan.confidence, fallbackReason),
+    scanState: scan.scanState ?? 'clear_food',
     uploadedImage,
   };
 }
@@ -699,6 +863,7 @@ function createDemoMockScan(mode: RecipeMode, config: ReturnType<typeof getAiCon
     shareCard: getShareCard(scan.shareCardId),
     note: 'Demo mock scan only. No AI provider was called.',
     ...createAiDebugMetadata(config, 'mock_ai', scan.confidence),
+    scanState: scan.scanState ?? 'clear_food',
     uploadedImage: false,
   };
 }
@@ -710,6 +875,7 @@ function createRejectedScan(input: {
   fallbackReason?: string;
   rejectionReason: string;
   rejectionType: ScanRejectionType;
+  scanState?: ScanState;
   status: 'rejected' | 'failed';
   uploadedImage: boolean;
 }): AiScanRejectedResult {
@@ -719,6 +885,7 @@ function createRejectedScan(input: {
     note: input.rejectionReason,
     rejectionType: input.rejectionType,
     rejectionReason: input.rejectionReason,
+    scanState: input.scanState,
     uploadedImage: input.uploadedImage,
     ...createAiDebugMetadata(
       input.config,
@@ -742,6 +909,9 @@ function createPartialScan(input: {
   const homemadeCost = normalizeHomemadeCost(input.analysis.homemadeCostEstimate, restaurantPrice);
   const scan: ScanResult = {
     ...seedScan,
+    bestGuessDishName: input.analysis.dishName,
+    bestGuessNote: getBestGuessNote(input.analysis),
+    possibleDishNames: input.analysis.possibleDishNames,
     confidence: input.analysis.confidence,
     difficulty: input.analysis.difficulty,
     dishName: input.analysis.dishName,
@@ -751,6 +921,7 @@ function createPartialScan(input: {
     modes: input.analysis.modes,
     restaurantPrice,
     restaurantStyle: input.analysis.restaurantStyle,
+    scanState: input.analysis.scanState,
   };
 
   return {
@@ -764,6 +935,7 @@ function createPartialScan(input: {
       clampConfidence(input.analysis.confidence),
       input.fallbackReason,
     ),
+    scanState: input.analysis.scanState,
     uploadedImage: input.uploadedImage,
   };
 }
@@ -777,6 +949,7 @@ async function logScanEvaluationFromResult(result: AiScanResult, config: ReturnT
     rejectionType: result.status === 'rejected' || result.status === 'failed' ? result.rejectionType : undefined,
     scan: result.status === 'success' || result.status === 'partial' ? result.scan : undefined,
     scanId: result.status === 'success' || result.status === 'partial' ? result.scan.id : result.scanId,
+    scanState: result.status === 'success' || result.status === 'partial' ? result.scan.scanState : result.scanState,
     status: result.status,
     uploadedImage: result.uploadedImage,
   });
@@ -798,19 +971,23 @@ function getAnalysisRejection(
     };
   }
 
-  if (!analysis.isFoodImage && analysis.confidence >= notFoodConfidenceThreshold) {
+  if (analysis.scanState === 'not_food' || (!analysis.isFoodImage && analysis.confidence >= notFoodConfidenceThreshold)) {
     return {
       status: 'rejected',
       rejectionType: 'not_food',
-      rejectionReason: analysis.rejectionReason || "This doesn't look like a restaurant meal.",
+      rejectionReason: analysis.rejectionReason || "This doesn't look like a food photo.",
     };
   }
 
-  if (!analysis.isFoodImage || !analysis.isRestaurantMeal || analysis.confidence < uploadedImageConfidenceThreshold) {
+  if (
+    analysis.scanState === 'too_unclear' ||
+    !analysis.isFoodImage ||
+    analysis.confidence < uploadedImageConfidenceThreshold
+  ) {
     return {
       status: 'rejected',
       rejectionType: 'unclear_image',
-      rejectionReason: 'Okyo could not identify this meal confidently. Try a clearer, closer food photo.',
+      rejectionReason: analysis.rejectionReason || 'Okyo needs a clearer food photo before it can make a useful recipe.',
     };
   }
 
@@ -852,10 +1029,13 @@ function isProviderVisibleImage(image: ScanImageMetadata | undefined) {
 
 function getImageUnavailableReason(image: ScanImageMetadata | undefined) {
   if (image?.conversionError === 'image_payload_too_large') {
-    return 'Okyo could not analyze this photo because the selected image was too large. Try a smaller or clearer food photo.';
+    return 'This photo was too large to scan. Try a smaller image.';
   }
   if (image?.conversionError === 'image_base64_missing') {
     return 'Okyo could not analyze this photo because the image data was not available. Try another photo.';
+  }
+  if (image?.conversionError === 'image_processing_failed') {
+    return 'Okyo could not prepare this photo for scanning. Try another food photo.';
   }
 
   return 'Okyo could not analyze this photo because the uploaded image was not available to the AI scanner.';
@@ -958,6 +1138,21 @@ function getBlendedConfidence(...scores: number[]) {
   return Math.max(0, Math.min(1, Number(average.toFixed(2))));
 }
 
+function getBestGuessNote(analysis: FoodImageAnalysis) {
+  switch (analysis.scanState) {
+    case 'food_present_uncertain_dish':
+      return `Best guess: ${analysis.dishName}. You can edit or retry if this is off.`;
+    case 'partial_food':
+      return `Looks like ${analysis.dishName}. We made a homemade version based on what is visible.`;
+    case 'clear_food':
+      return `Looks like ${analysis.dishName}.`;
+    case 'not_food':
+      return 'No food recipe was generated for this photo.';
+    case 'too_unclear':
+      return 'The photo was too unclear for a useful recipe.';
+  }
+}
+
 function getRecipeVariant(output: OpenRouterRecipeOutput, mode: RecipeMode) {
   switch (mode) {
     case 'Budget':
@@ -969,38 +1164,158 @@ function getRecipeVariant(output: OpenRouterRecipeOutput, mode: RecipeMode) {
   }
 }
 
-function normalizeVisionOutput(output: OpenRouterVisionOutput) {
+export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const confidence = normalizeConfidence(output.confidence);
   const restaurantPriceEstimate = normalizeRestaurantPrice(output.restaurantPriceEstimate);
   const homemadeCostEstimate = normalizeHomemadeCost(output.homemadeCostEstimate, restaurantPriceEstimate);
-  const isFoodImage = normalizeBoolean(output.isFoodImage, true);
+  const explicitScanState = normalizeScanState(output.scanState);
+  const foodDetected = normalizeBoolean(output.foodDetected, false);
+  const isFoodImage = normalizeBoolean(
+    output.isFoodImage,
+    foodDetected || (explicitScanState ? isFoodScanState(explicitScanState) : true),
+  );
   const isRestaurantMeal = normalizeBoolean(output.isRestaurantMeal, isFoodImage);
-  const visibleIngredients = getSafeList(output.visibleIngredients, [], 6);
+  const visibleComponents = normalizeVisibleComponents(output.visibleComponents);
+  const visibleComponentIngredients = getVisibleComponentValues(visibleComponents);
+  const explicitVisibleIngredients = getSafeList(output.visibleIngredients, [], 8);
+  const visibleIngredients = explicitVisibleIngredients.length > 0 ? explicitVisibleIngredients : visibleComponentIngredients.slice(0, 8);
+  const explicitLikelyIngredients = getSafeList(output.likelyIngredients, [], 8);
   const likelyIngredients = getSafeList(
     output.likelyIngredients,
     visibleIngredients.length > 0 ? visibleIngredients : ['main ingredient', 'sauce', 'seasoning'],
-    6,
+    8,
+  );
+  const rawDishName = getSafeTextValue(output.dishName, '');
+  const broadDishCategory = normalizeBroadDishCategory(
+    output.broadDishCategory ?? output.dishCategory,
+    [
+      ...explicitVisibleIngredients,
+      ...explicitLikelyIngredients,
+      rawDishName,
+      getSafeTextValue(output.confidenceReason, ''),
+      getSafeTextValue(output.rejectionReason, ''),
+    ],
   );
   const cuisine = getSafeTextValue(output.cuisine, 'Restaurant-style');
-  const dishName = normalizeDishName(output.dishName, cuisine, [...visibleIngredients, ...likelyIngredients]);
+  const scanState = reconcileScanState({
+    broadDishCategory,
+    confidence,
+    explicitScanState,
+    foodEvidenceText: [
+      rawDishName,
+      broadDishCategory,
+      cuisine,
+      output.confidenceReason,
+      output.rejectionReason,
+      ...explicitVisibleIngredients,
+      ...explicitLikelyIngredients,
+      ...getVisibleComponentValues(visibleComponents),
+    ].join(' '),
+    foodDetected,
+    rawDishName,
+    isFoodImage,
+    visibleComponents,
+    visibleIngredients,
+  });
+  const normalizedIsFoodImage = scanState === 'not_food' || scanState === 'too_unclear'
+    ? false
+    : isFoodImage || isFoodScanState(scanState);
+  const dishName = normalizeDishName(output.dishName, cuisine, broadDishCategory, [...visibleIngredients, ...likelyIngredients]);
+  const possibleDishNames = normalizePossibleDishNames(output.possibleDishNames, dishName, broadDishCategory);
 
   return {
+    broadDishCategory,
     confidence,
     confidenceReason: getShortText(
       output.confidenceReason,
-      'AI estimate based on visible food cues; verify dish and ingredients.',
+      getDefaultConfidenceReason(scanState),
       160,
     ),
     cuisine,
     dishName,
     homemadeCostEstimate,
-    isFoodImage,
-    isRestaurantMeal,
+    isFoodImage: normalizedIsFoodImage,
+    isRestaurantMeal: normalizedIsFoodImage ? isRestaurantMeal : false,
     likelyIngredients,
+    possibleDishNames,
     rejectionReason: getOptionalShortText(output.rejectionReason, 160),
     restaurantPriceEstimate,
+    scanState,
+    visibleComponents,
     visibleIngredients,
   };
+}
+
+function isFoodScanState(scanState: ScanState) {
+  return scanState === 'clear_food' ||
+    scanState === 'food_present_uncertain_dish' ||
+    scanState === 'partial_food';
+}
+
+function reconcileScanState(input: {
+  broadDishCategory: string;
+  confidence: number;
+  explicitScanState?: ScanState;
+  foodEvidenceText: string;
+  foodDetected: boolean;
+  rawDishName: string;
+  isFoodImage: boolean;
+  visibleComponents: FoodImageAnalysis['visibleComponents'];
+  visibleIngredients: string[];
+}): ScanState {
+  const hasFoodEvidence = input.foodDetected ||
+    input.isFoodImage ||
+    hasVisibleFoodClues(input.visibleComponents, input.visibleIngredients) ||
+    hasUsefulDishCategory(input.broadDishCategory) ||
+    hasUsefulDishName(input.rawDishName) ||
+    hasFoodLikeEvidence(input.foodEvidenceText);
+
+  if (!input.explicitScanState) {
+    return inferScanState({
+      confidence: input.confidence,
+      isFoodImage: hasFoodEvidence,
+    });
+  }
+
+  if (isFoodScanState(input.explicitScanState)) {
+    if (input.confidence < uploadedImageConfidenceThreshold) {
+      return 'too_unclear';
+    }
+
+    return input.confidence >= 0.8
+      ? 'clear_food'
+      : input.confidence >= 0.6
+        ? input.explicitScanState === 'clear_food' ? 'food_present_uncertain_dish' : input.explicitScanState
+        : 'partial_food';
+  }
+
+  if (
+    (input.explicitScanState === 'not_food' || input.explicitScanState === 'too_unclear') &&
+    hasFoodEvidence
+  ) {
+    return input.confidence >= 0.6 ? 'food_present_uncertain_dish' : 'partial_food';
+  }
+
+  return input.explicitScanState;
+}
+
+function hasVisibleFoodClues(
+  visibleComponents: FoodImageAnalysis['visibleComponents'],
+  visibleIngredients: string[],
+) {
+  return getVisibleComponentValues(visibleComponents).length > 0 || visibleIngredients.length > 0;
+}
+
+function hasUsefulDishCategory(value: string) {
+  return value.trim().length > 0 && value !== 'unknown food dish';
+}
+
+function hasUsefulDishName(value: string) {
+  return value.trim().length > 0 && !isVagueDishName(value);
+}
+
+function hasFoodLikeEvidence(value: string) {
+  return includesAny(value.toLowerCase(), foodEvidenceKeywords);
 }
 
 function normalizeConfidence(value: unknown) {
@@ -1030,17 +1345,165 @@ function normalizeBoolean(value: unknown, fallback: boolean) {
   return fallback;
 }
 
-function normalizeRestaurantPrice(value: unknown) {
-  const parsed = getFiniteNumber(value);
-  if (parsed === undefined || parsed < 4) {
-    return defaultRestaurantPrice;
+function normalizeScanState(value: unknown): ScanState | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
   }
 
-  return roundMoney(clampNumber(parsed, 4, 120));
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return scanStateSchema.safeParse(normalized).success ? normalized as ScanState : undefined;
+}
+
+function inferScanState(input: {
+  confidence: number;
+  isFoodImage: boolean;
+}): ScanState {
+  if (!input.isFoodImage && input.confidence >= notFoodConfidenceThreshold) {
+    return 'not_food';
+  }
+
+  if (!input.isFoodImage || input.confidence < uploadedImageConfidenceThreshold) {
+    return 'too_unclear';
+  }
+
+  if (input.confidence >= 0.8) {
+    return 'clear_food';
+  }
+
+  if (input.confidence >= 0.6) {
+    return 'food_present_uncertain_dish';
+  }
+
+  return 'partial_food';
+}
+
+function normalizeVisibleComponents(value: unknown): FoodImageAnalysis['visibleComponents'] {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+
+  return visibleComponentsSchema.parse({
+    protein: getOptionalShortText(record.protein, 80) ?? '',
+    sauce: getOptionalShortText(record.sauce, 80) ?? '',
+    baseStarch: getOptionalShortText(record.baseStarch ?? record.base ?? record.starch, 80) ?? '',
+    vegetables: getOptionalShortText(record.vegetables ?? record.vegetable, 80) ?? '',
+    toppingsGarnish: getOptionalShortText(
+      record.toppingsGarnish ?? record.toppings ?? record.garnish,
+      80,
+    ) ?? '',
+    cookingMethod: getOptionalShortText(record.cookingMethod ?? record.method, 80) ?? '',
+  });
+}
+
+function getVisibleComponentValues(components: FoodImageAnalysis['visibleComponents']) {
+  return [
+    components.protein,
+    components.sauce,
+    components.baseStarch,
+    components.vegetables,
+    components.toppingsGarnish,
+  ].filter((value) => value.trim().length > 0);
+}
+
+function normalizeBroadDishCategory(value: unknown, ingredients: string[]) {
+  const raw = getSafeTextValue(value, '').toLowerCase().replace(/_/g, ' ').trim();
+  const allowedCategories = [
+    'pizza',
+    'pasta/noodles',
+    'rice bowl',
+    'burger/sandwich',
+    'tacos/wrap',
+    'grilled meat',
+    'fried food',
+    'seafood',
+    'salad',
+    'soup/stew',
+    'dessert',
+    'breakfast item',
+    'mixed platter',
+    'unknown food dish',
+  ];
+  const explicitCategory = allowedCategories.find((category) => raw === category || raw.includes(category));
+  if (explicitCategory && explicitCategory !== 'unknown food dish') {
+    return explicitCategory;
+  }
+
+  const text = ingredients.join(' ').toLowerCase();
+  if (includesAny(text, ['pizza', 'slice'])) {
+    return 'pizza';
+  }
+  if (includesAny(text, ['pasta', 'rigatoni', 'spaghetti', 'penne', 'noodle', 'ramen', 'udon'])) {
+    return 'pasta/noodles';
+  }
+  if (includesAny(text, ['rice', 'grain', 'bowl'])) {
+    return 'rice bowl';
+  }
+  if (includesAny(text, ['burger', 'sandwich', 'bun', 'patty'])) {
+    return 'burger/sandwich';
+  }
+  if (includesAny(text, ['taco', 'tortilla', 'wrap', 'burrito'])) {
+    return 'tacos/wrap';
+  }
+  if (includesAny(text, ['steak', 'grilled', 'skewer', 'kebab', 'bbq', 'charred', 'roasted', 'lamb', 'pork', 'beef', 'meat'])) {
+    return 'grilled meat';
+  }
+  if (includesAny(text, ['fried', 'crispy', 'tempura', 'cutlet', 'fries'])) {
+    return 'fried food';
+  }
+  if (includesAny(text, ['fish', 'shrimp', 'salmon', 'sushi', 'seafood'])) {
+    return 'seafood';
+  }
+  if (includesAny(text, ['salad', 'greens', 'lettuce'])) {
+    return 'salad';
+  }
+  if (includesAny(text, ['soup', 'stew', 'broth', 'ramen'])) {
+    return 'soup/stew';
+  }
+  if (includesAny(text, ['cake', 'cookie', 'dessert', 'ice cream', 'brownie'])) {
+    return 'dessert';
+  }
+  if (includesAny(text, ['egg', 'toast', 'pancake', 'waffle', 'breakfast'])) {
+    return 'breakfast item';
+  }
+
+  if (includesAny(text, ['sauce', 'plate', 'platter', 'garnish', 'vegetable', 'vegetables', 'stir fry', 'stir-fry'])) {
+    return 'mixed platter';
+  }
+
+  return 'unknown food dish';
+}
+
+function getDefaultConfidenceReason(scanState: ScanState) {
+  switch (scanState) {
+    case 'clear_food':
+      return 'The photo clearly shows food and enough visual detail for a confident best guess.';
+    case 'food_present_uncertain_dish':
+      return 'Food is visible, but the exact dish or cuisine is uncertain, so this is a best guess.';
+    case 'partial_food':
+      return 'Food is partly visible or the photo is low quality, so this is a cautious starter direction.';
+    case 'not_food':
+      return 'The image does not appear to show food.';
+    case 'too_unclear':
+      return 'The image is too unclear to identify visible food safely.';
+  }
+}
+
+function normalizeRestaurantPrice(value: unknown) {
+  const parsed = getFiniteNumber(value);
+  if (parsed === undefined || parsed <= 0) {
+    return 0;
+  }
+
+  return roundMoney(clampNumber(parsed, 0, 120));
 }
 
 function normalizeHomemadeCost(value: unknown, restaurantPrice: number) {
   const parsed = getFiniteNumber(value);
+  if (restaurantPrice <= 0) {
+    const rawCost = parsed === undefined || parsed < 1 ? defaultHomemadeCost : parsed;
+    return roundMoney(clampNumber(rawCost, 1, 80));
+  }
+
   const defaultCost = Math.min(defaultHomemadeCost, Math.max(2, restaurantPrice * 0.45));
   const rawCost = parsed === undefined || parsed < 1 ? defaultCost : parsed;
   const cappedCost = rawCost >= restaurantPrice ? Math.max(1, restaurantPrice * 0.45) : rawCost;
@@ -1061,35 +1524,121 @@ function getModeHomemadeCost(baseCost: number, restaurantPrice: number, mode: Re
   }
 }
 
-function normalizeDishName(value: unknown, cuisine: string, ingredients: string[]) {
+function normalizeDishName(value: unknown, cuisine: string, broadDishCategory: string, ingredients: string[]) {
   const text = getSafeTextValue(value, '');
   if (text && !isVagueDishName(text)) {
-    return titleCase(text);
+    return cleanDishName(titleCase(text));
   }
 
   const ingredientText = ingredients.join(' ').toLowerCase();
-  if (ingredientText.includes('pasta') || ingredientText.includes('rigatoni') || ingredientText.includes('noodle')) {
-    return 'Possible Pasta Dish';
+  if (ingredientText.includes('tomato') && includesAny(ingredientText, ['pasta', 'rigatoni', 'spaghetti', 'penne'])) {
+    return 'Creamy Tomato Pasta';
   }
-  if (ingredientText.includes('rice') || ingredientText.includes('grain') || ingredientText.includes('bowl')) {
-    return 'Possible Grain Bowl';
+  if (includesAny(ingredientText, ['pasta', 'rigatoni', 'spaghetti', 'penne', 'noodle', 'ramen', 'udon'])) {
+    return includesAny(ingredientText, ['noodle', 'ramen', 'udon']) ? 'Noodle Bowl' : 'Pasta Bowl';
   }
-  if (ingredientText.includes('chicken')) {
-    return 'Possible Chicken Dish';
-  }
-  if (ingredientText.includes('salad') || ingredientText.includes('greens')) {
-    return 'Possible Salad';
+  if (includesAny(ingredientText, ['rice', 'grain', 'bowl'])) {
+    return ingredientText.includes('chicken') ? 'Grilled Chicken Rice Bowl' : 'Saucy Rice Bowl';
   }
   if (ingredientText.includes('burger') || ingredientText.includes('patty')) {
-    return 'Possible Burger';
+    return 'Loaded Burger';
+  }
+  if (includesAny(ingredientText, ['charred', 'grilled', 'steak', 'lamb', 'pork', 'beef', 'meat', 'skewer', 'kebab'])) {
+    return 'Grilled Meat Plate';
+  }
+  if (includesAny(ingredientText, ['stir fry', 'stir-fry'])) {
+    return 'Stir-Fry Plate';
+  }
+  if (ingredientText.includes('chicken')) {
+    return ingredientText.includes('fried') || ingredientText.includes('crispy')
+      ? 'Saucy Fried Chicken'
+      : 'Grilled Chicken Plate';
   }
 
-  return cuisine && cuisine !== 'Restaurant-style' ? `Possible ${titleCase(cuisine)} Dish` : 'Possible Restaurant Dish';
+  switch (broadDishCategory) {
+    case 'pizza':
+      return 'Pizza';
+    case 'pasta/noodles':
+      return 'Noodle Bowl';
+    case 'rice bowl':
+      return 'Saucy Rice Bowl';
+    case 'burger/sandwich':
+      return 'Loaded Sandwich';
+    case 'tacos/wrap':
+      return 'Loaded Tacos';
+    case 'grilled meat':
+      return 'Grilled Meat Plate';
+    case 'fried food':
+      return 'Saucy Fried Plate';
+    case 'seafood':
+      return 'Seafood Plate';
+    case 'salad':
+      return 'Loaded Salad';
+    case 'soup/stew':
+      return 'Cozy Soup Bowl';
+    case 'dessert':
+      return 'Restaurant-Style Dessert';
+    case 'breakfast item':
+      return 'Breakfast Plate';
+    case 'mixed platter':
+      return 'Mixed Restaurant Plate';
+    default:
+      return cuisine && cuisine !== 'Restaurant-style' ? `${titleCase(cuisine)}-Style Plate` : 'Restaurant-Style Food Plate';
+  }
+}
+
+function normalizePossibleDishNames(value: unknown, dishName: string, broadDishCategory: string) {
+  const suggestions = getSafeList(Array.isArray(value) ? value : undefined, [], 6)
+    .map((name) => cleanDishName(titleCase(name)))
+    .filter((name) => name && !isVagueDishName(name));
+  const fallbackSuggestions = getBroadDishAlternatives(dishName, broadDishCategory);
+  const seen = new Set<string>();
+
+  return [dishName, ...suggestions, ...fallbackSuggestions]
+    .filter((name) => {
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 4);
+}
+
+function getBroadDishAlternatives(dishName: string, broadDishCategory: string) {
+  switch (broadDishCategory) {
+    case 'grilled meat':
+      return ['Grilled Meat Plate', 'Mixed Restaurant Plate', 'Charred Grill Plate'];
+    case 'rice bowl':
+      return ['Saucy Rice Bowl', 'Mixed Restaurant Plate', 'Stir-Fry Plate'];
+    case 'pasta/noodles':
+      return ['Noodle Bowl', 'Pasta Bowl', 'Saucy Noodles'];
+    case 'burger/sandwich':
+      return ['Loaded Sandwich', 'Loaded Burger', 'Restaurant-Style Food Plate'];
+    case 'pizza':
+      return ['Pizza', 'Cheesy Pizza', 'Restaurant-Style Pizza'];
+    case 'mixed platter':
+      return ['Mixed Restaurant Plate', 'Grilled Meat Plate', 'Restaurant-Style Food Plate'];
+    default:
+      return dishName === 'Restaurant-Style Food Plate'
+        ? ['Mixed Restaurant Plate', 'Saucy Rice Bowl', 'Loaded Sandwich']
+        : ['Restaurant-Style Food Plate', 'Mixed Restaurant Plate'];
+  }
 }
 
 function isVagueDishName(value: string) {
   const normalized = value.trim().toLowerCase();
-  return ['', 'dish', 'food', 'meal', 'plate', 'restaurant dish', 'unknown', 'unknown dish'].includes(normalized);
+  return ['', 'dish', 'food', 'meal', 'plate', 'restaurant dish', 'unknown', 'unknown dish', 'unclear dish'].includes(normalized);
+}
+
+function cleanDishName(value: string) {
+  return value
+    .replace(/\bpossible\s+/gi, '')
+    .replace(/\bmaybe\s+/gi, '')
+    .replace(/\bunknown\s+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function getRecipeTitle(value: string, dishName: string, mode: RecipeMode) {
@@ -1103,6 +1652,15 @@ function getRecipeTitle(value: string, dishName: string, mode: RecipeMode) {
 }
 
 type CommonDishKind = 'burger' | 'pizza' | 'noodles' | 'pasta' | 'bowl' | 'taco' | 'sandwich';
+
+function canGenerateRecipeForAnalysis(analysis: FoodImageAnalysis) {
+  return (
+    analysis.isFoodImage &&
+    analysis.confidence >= uploadedImageConfidenceThreshold &&
+    analysis.scanState !== 'not_food' &&
+    analysis.scanState !== 'too_unclear'
+  );
+}
 
 function getCommonDishKind(analysis: FoodImageAnalysis): CommonDishKind | undefined {
   const text = getAnalysisText(analysis);
@@ -1431,18 +1989,24 @@ function createSandwichStarterVariant(analysis: FoodImageAnalysis, mode: RecipeM
 }
 
 function createGenericStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
+  const visibleMain = getVisibleMainIngredient(analysis);
+  const visibleSauce = analysis.visibleComponents.sauce || 'matching sauce or dressing';
+  const visibleToppings = analysis.visibleComponents.toppingsGarnish ||
+    analysis.visibleComponents.vegetables ||
+    'visible toppings or vegetables';
+
   return createBaseStarterVariant({
     analysis,
     bestFor: 'weeknight dinner',
     cookTime: '15 min',
-    description: 'A flexible restaurant-style homemade version based on the visible dish.',
+    description: `A flexible restaurant-style homemade version based on the visible ${analysis.dishName.toLowerCase()}.`,
     equipment: getDefaultEquipment(analysis),
     ingredientGroups: [
-      { component: 'Main', items: ['8 oz main ingredient'] },
-      { component: 'Sauce', items: ['2 tbsp sauce base'] },
-      { component: 'Toppings', items: ['1 cup vegetables or toppings'] },
+      { component: 'Main', items: [visibleMain] },
+      { component: 'Sauce', items: [`2 tbsp ${visibleSauce}`] },
+      { component: 'Toppings', items: [`1 cup ${visibleToppings}`] },
     ],
-    ingredients: ['8 oz main ingredient', '2 tbsp sauce base', '1 cup vegetables or toppings', 'salt and pepper to taste'],
+    ingredients: [visibleMain, `2 tbsp ${visibleSauce}`, `1 cup ${visibleToppings}`, 'salt and pepper to taste'],
     mistake: getDefaultAvoidMistake(analysis),
     mode,
     prepTime: '10 min',
@@ -1451,6 +2015,23 @@ function createGenericStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMo
     substitutions: getDefaultSubstitutions(mode),
     title: `${analysis.dishName} Homemade Version`,
   });
+}
+
+function getVisibleMainIngredient(analysis: FoodImageAnalysis) {
+  if (analysis.visibleComponents.protein) {
+    return `8 oz ${analysis.visibleComponents.protein}`;
+  }
+  if (analysis.visibleComponents.baseStarch) {
+    return `2 cups ${analysis.visibleComponents.baseStarch}`;
+  }
+  if (analysis.visibleIngredients.length > 0) {
+    return `2 servings ${analysis.visibleIngredients[0]}`;
+  }
+  if (analysis.likelyIngredients.length > 0) {
+    return `2 servings ${analysis.likelyIngredients[0]}`;
+  }
+
+  return '2 servings visible main ingredient';
 }
 
 function getStarterTitle(title: string, mode: RecipeMode) {
@@ -2164,7 +2745,9 @@ function formatSourceIngredient(ingredient: RecipeIngredient) {
 function getAnalysisText(analysis: FoodImageAnalysis) {
   return [
     analysis.dishName,
+    analysis.broadDishCategory,
     analysis.cuisine,
+    ...getVisibleComponentValues(analysis.visibleComponents),
     ...analysis.visibleIngredients,
     ...analysis.likelyIngredients,
   ].join(' ').toLowerCase();
@@ -2192,7 +2775,9 @@ function ensureCoreIngredients(
 ) {
   const dishText = [
     analysis.dishName,
+    analysis.broadDishCategory,
     analysis.cuisine,
+    ...getVisibleComponentValues(analysis.visibleComponents),
     ...analysis.visibleIngredients,
     ...analysis.likelyIngredients,
   ].join(' ').toLowerCase();
@@ -2292,8 +2877,10 @@ function getSpicePairings(values: string[], analysis: FoodImageAnalysis) {
 
 function getDefaultSpicePairings(analysis: FoodImageAnalysis) {
   const text = [
+    analysis.broadDishCategory,
     analysis.cuisine,
     analysis.dishName,
+    ...getVisibleComponentValues(analysis.visibleComponents),
     ...analysis.visibleIngredients,
     ...analysis.likelyIngredients,
   ].join(' ').toLowerCase();
@@ -2647,8 +3234,70 @@ function getMatchScoreFromConfidence(confidence: number) {
   return Math.max(3, Math.min(9.5, Number((confidence * 10).toFixed(1))));
 }
 
-function logAi(event: 'mock_ai' | 'openrouter_ai' | 'fallback_ai', details: Record<string, unknown>) {
+function logFinalScanResult(result: AiScanResult) {
+  const isUsableResult = result.status === 'success' || result.status === 'partial';
+  const hasFoodEvidence = isUsableResult
+    ? hasScanFoodEvidence(result.scan, result.recipes)
+    : isFoodScanState((result.scanState ?? 'not_food') as ScanState);
+  logScanDebug('api_scan_final_dish_name', {
+    dishName: isUsableResult ? result.scan.dishName : undefined,
+  });
+  logScanDebug('api_scan_final_recipes_length', {
+    recipesLength: isUsableResult ? result.recipes?.length ?? 0 : 0,
+  });
+  logScanDebug('api_scan_final_has_food_evidence', { hasFoodEvidence });
+  logScanDebug('api_scan_final_status', { status: result.status });
+  logScanDebug('api_scan_final_response', {
+    status: result.status,
+    scanState: result.status === 'success' || result.status === 'partial' ? result.scan.scanState : result.scanState,
+    dishName: result.status === 'success' || result.status === 'partial' ? result.scan.dishName : undefined,
+    recipesLength: isUsableResult ? result.recipes?.length ?? 0 : 0,
+    hasRecipe: isUsableResult ? Boolean(result.recipe) : false,
+    hasFoodEvidence,
+    rejectionType: result.status === 'rejected' || result.status === 'failed' ? result.rejectionType : undefined,
+    rejectionReason: result.status === 'rejected' || result.status === 'failed' ? result.rejectionReason : undefined,
+    fallbackReason: result.fallbackReason,
+    uploadedImage: result.uploadedImage,
+  });
+}
+
+function getVisibleComponentsCount(components: FoodImageAnalysis['visibleComponents']) {
+  return Object.values(components).filter((value) => value.trim().length > 0).length;
+}
+
+function hasScanFoodEvidence(scan: ScanResult, recipes: Recipe[] | undefined) {
+  return Boolean(
+    isFoodScanState(scan.scanState ?? 'not_food') ||
+    scan.dishName.trim().length > 0 ||
+    scan.bestGuessDishName?.trim() ||
+    (recipes?.length ?? 0) > 0
+  );
+}
+
+function getImageUriKind(image: ScanImageMetadata | undefined) {
+  if (image?.dataUrl?.startsWith('data:image/')) {
+    return 'data_url';
+  }
+  if (image?.uri?.startsWith('https://') || image?.uri?.startsWith('http://')) {
+    return 'remote_url';
+  }
+  if (image?.uri) {
+    return 'local_or_private_uri';
+  }
+
+  return 'none';
+}
+
+function logScanDebug(event: string, details: Record<string, unknown>) {
+  if (process.env.NODE_ENV === 'production') {
+    return;
+  }
+
   console.log(event, details);
+}
+
+function logAi(event: 'mock_ai' | 'openrouter_ai' | 'fallback_ai', details: Record<string, unknown>) {
+  logScanDebug(event, details);
 }
 
 function getAiLogDetails(
