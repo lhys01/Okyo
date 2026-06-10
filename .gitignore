@@ -144,3 +144,5 @@ vite.config.ts.timestamp-*
 
 # Local Codex metadata/cache
 .codex/
+.DS_Store
+**/.DS_Store

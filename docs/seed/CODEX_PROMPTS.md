@@ -1,5 +1,7 @@
 # Codex Prompts
 
+Claude Code version: `docs/seed/CLAUDE_PROMPTS.md`.
+
 ## Prompt 1: Repo setup
 
 ```text

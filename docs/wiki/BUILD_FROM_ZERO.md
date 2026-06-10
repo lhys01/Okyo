@@ -2,6 +2,8 @@
 
 This file is the build path for creating Okyo from zero with Codex.
 
+Claude Code version: `docs/wiki/BUILD_FROM_ZERO_CLAUDE.md`.
+
 ## Current local setup
 
 The active local repo on this machine is:

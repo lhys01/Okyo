@@ -1,5 +1,7 @@
 # START HERE — Okyo Repo Setup
 
+Claude Code version: `docs/wiki/START_HERE_CLAUDE.md`.
+
 You deleted the old repo to start clean. Good.
 
 Use this folder exactly as the starting point.
