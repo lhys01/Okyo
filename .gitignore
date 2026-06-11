@@ -146,3 +146,6 @@ vite.config.ts.timestamp-*
 .codex/
 .DS_Store
 **/.DS_Store
+.DS_Store
+**/.DS_Store
+.claude/settings.local.json
