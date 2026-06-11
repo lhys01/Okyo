@@ -183,6 +183,7 @@ export async function analyzeFoodImageWithOpenRouter(input: {
     ],
     model: input.config.openRouterVisionModel,
     maxTokens: Math.min(input.config.maxOutputTokens, 1800),
+    stage: 'vision',
   });
 
   const output = openRouterVisionOutputSchema.safeParse(json);
@@ -208,30 +209,74 @@ export async function generateRecipeWithOpenRouter(input: {
   config: AiConfig;
   mode: RecipeMode;
 }) {
-  const json = await callOpenRouterJson({
-    config: input.config,
-    messages: [
-      {
-        role: 'system',
-        content: 'You are Okyo, a cautious restaurant-style recipe assistant. Return ONLY valid JSON in the assistant message content. Do not put JSON in reasoning. Do not return markdown. Do not explain.',
-      },
-      {
-        role: 'user',
-        content: getRecipePrompt(input.analysis, input.mode),
-      },
-    ],
-    model: input.config.openRouterTextModel,
-    maxTokens: input.config.maxOutputTokens,
-  });
+  const retryReasons: OpenRouterFailureReason[] = ['openrouter_output_truncated', 'openrouter_invalid_json'];
 
-  const output = openRouterRecipeOutputSchema.safeParse(json);
-  if (!output.success) {
-    throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
-      openRouterErrorMessage: getSchemaErrorMessage(output.error),
+  try {
+    const json = await callOpenRouterJson({
+      config: input.config,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are Okyo, a recipe assistant. Return ONLY valid JSON. No markdown. No reasoning. No explanations.',
+        },
+        {
+          role: 'user',
+          content: getRecipePrompt(input.analysis, input.mode),
+        },
+      ],
+      model: input.config.openRouterTextModel,
+      // Single-variant recipe fits in ~1500 tokens; cap at 1800 to avoid reasoning-model length cuts
+      maxTokens: Math.min(input.config.maxOutputTokens, 1800),
+      stage: 'recipe',
     });
-  }
 
-  return output.data;
+    const output = openRouterRecipeOutputSchema.safeParse(json);
+    if (!output.success) {
+      throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
+        openRouterErrorMessage: getSchemaErrorMessage(output.error),
+      });
+    }
+    return output.data;
+  } catch (firstError) {
+    const shouldRetry = firstError instanceof OpenRouterProviderError &&
+      retryReasons.includes(firstError.failure.reason);
+
+    if (!shouldRetry) {
+      throw firstError;
+    }
+
+    logOpenRouterDebug('openrouter_recipe_retry', {
+      firstReason: firstError.failure.reason,
+      model: input.config.openRouterTextModel,
+      retryPrompt: 'compact',
+      retryMaxTokens: 1200,
+    });
+
+    const retryJson = await callOpenRouterJson({
+      config: input.config,
+      messages: [
+        {
+          role: 'system',
+          content: 'Return JSON only. No markdown. No explanations.',
+        },
+        {
+          role: 'user',
+          content: getCompactRecipeRetryPrompt(input.analysis, input.mode),
+        },
+      ],
+      model: input.config.openRouterTextModel,
+      maxTokens: 1200,
+      stage: 'recipe_retry',
+    });
+
+    const retryOutput = openRouterRecipeOutputSchema.safeParse(retryJson);
+    if (!retryOutput.success) {
+      throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
+        openRouterErrorMessage: getSchemaErrorMessage(retryOutput.error),
+      });
+    }
+    return retryOutput.data;
+  }
 }
 
 async function callOpenRouterJson(input: {
@@ -239,12 +284,20 @@ async function callOpenRouterJson(input: {
   maxTokens: number;
   messages: OpenRouterMessage[];
   model: string;
+  stage?: string;
 }) {
   if (!input.config.openRouterApiKey) {
     throw createOpenRouterError(input.config, input.model, 'openrouter_missing_key', {
       openRouterErrorMessage: 'OpenRouter API key is missing.',
     });
   }
+
+  logOpenRouterDebug('openrouter_call_start', {
+    model: input.model,
+    provider: input.config.provider,
+    maxTokens: input.maxTokens,
+    stage: input.stage ?? 'unknown',
+  });
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), input.config.timeoutMs);
@@ -281,7 +334,15 @@ async function callOpenRouterJson(input: {
     }
 
     const responseJson = await parseResponseJson(response, input.config, input.model);
-    logOpenRouterDebug('openrouter_response_shape', getOpenRouterResponseShape(responseJson));
+    const responseShape = getOpenRouterResponseShape(responseJson);
+    logOpenRouterDebug('openrouter_response_shape', responseShape);
+    logOpenRouterDebug('openrouter_call_finish', {
+      model: input.model,
+      provider: input.config.provider,
+      maxTokens: input.maxTokens,
+      stage: input.stage ?? 'unknown',
+      finishReason: responseShape.finishReason,
+    });
     const assistantText = extractAssistantTextFromOpenRouterResponse(responseJson, input.config, input.model);
     logOpenRouterDebug('api_openrouter_response_text_preview', {
       length: assistantText.length,
@@ -291,7 +352,7 @@ async function callOpenRouterJson(input: {
       assistantText,
       input.config,
       input.model,
-      getOpenRouterResponseShape(responseJson).finishReason,
+      responseShape.finishReason,
     );
   } catch (error) {
     if (error instanceof OpenRouterProviderError) {
@@ -355,39 +416,49 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
   ].join('\n');
 }
 
+function getModeKey(mode: RecipeMode) {
+  return mode === 'Budget' ? 'budget' : mode === 'Healthy' ? 'healthy' : 'restaurantCopy';
+}
+
 function getRecipePrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
+  const modeKey = getModeKey(mode);
   const isUncertainFood = analysis.scanState === 'food_present_uncertain_dish' || analysis.scanState === 'partial_food';
 
   return [
-    'Create compact inspired-by homemade recipe JSON for Okyo based on this uncertain food analysis.',
-    'Return valid minified JSON only. No markdown, prose, reasoning, or extra text.',
-    'Top-level fields: selectedMode, restaurantCopy, budget, healthy.',
-    `selectedMode must be "${mode}". Make ONLY selectedMode fully detailed. Other modes should be light: title, description, 5-7 ingredients, prepTime, cookTime, difficulty.`,
-    'Selected mode fields: title, description, mainIngredientsSummary, equipment, bestFor, ingredients, ingredientGroups, steps, avoidMistake, substitutions, storageAndReheating, pantryNote, prepTime, cookTime, totalTime, activeTime, servings, skillLevel, groceryItems, spicePairings, cookingTerms.',
-    'Strict selected limits: ingredientGroups max 4, total ingredients max 10, steps 5-7, substitutions max 3, equipment max 5, groceryItems max 12, cookingTerms max 3, spicePairings max 3.',
-    'All text must be short. description 1 sentence. avoidMistake 1 short sentence. storageAndReheating 1 short sentence. step text max 22 words.',
-    'Never use the word copycat. Use inspired-by or restaurant-style instead.',
-    'Use exact cooking quantities. No repeated "as needed"; "to taste" only for salt/pepper/spices/garnish/finishing sauce.',
-    'Group ingredients by component. Burger: Patty, Sauce, Toppings, Assembly. Noodles: Noodles, Sauce, Protein/veg, Garnish. Pizza: Crust, Sauce, Cheese, Toppings.',
-    'Steps must start with action verbs and include time plus visual cue. Include 160°F/71°C for ground meat and 165°F/74°C for chicken.',
-    'GroceryItems are buyable store items, not cooking amounts. Burger groceries: 1 tomato, 1 small head romaine or 1 bag lettuce, 1 pack buns, protein, sliced cheese, sauces, pantry-check spices.',
-    'Allowed grocery categories: Produce, Protein, Bakery / Bread, Dairy, Sauces / Condiments, Pantry, Spices, Noodles / Grains, Garnish.',
-    'No exact nutrition claims. No unsafe cooking advice. Never call it official.',
-    'For food_present_uncertain_dish or partial_food, create a flexible homemade inspired-by version based only on visible components and likely cooking method. Do not pretend it is the exact restaurant recipe.',
+    `Create a compact inspired-by homemade recipe JSON for the ${mode} mode only.`,
+    'Return ONLY valid minified JSON. No markdown, no prose, no reasoning, no extra text.',
+    `Return exactly: {"selectedMode":"${mode}","${modeKey}":{...recipe fields...}}`,
+    `Include ONLY "selectedMode" and "${modeKey}". Do NOT include other mode keys.`,
+    'Recipe fields: title, description, mainIngredientsSummary, equipment, bestFor, ingredients, steps, avoidMistake, substitutions, storageAndReheating, pantryNote, prepTime, cookTime, totalTime, servings, skillLevel, groceryItems, spicePairings.',
+    'Strict limits: ingredients max 8, steps 5-7 (plain strings), substitutions max 2, equipment max 4, groceryItems max 8, spicePairings max 2.',
+    'Text limits: description 1 sentence. Each step max 20 words. avoidMistake 1 sentence. storageAndReheating 1 sentence.',
+    'Steps are plain strings starting with action verbs. Include time and visual cue. Use 160°F/71°C for ground meat, 165°F/74°C for chicken.',
+    'Never use the word copycat. Use inspired-by or restaurant-style.',
+    'Grocery categories: Produce, Protein, Bakery / Bread, Dairy, Sauces / Condiments, Pantry, Spices, Noodles / Grains, Garnish.',
+    'No nutrition claims. No unsafe cooking advice. Never call it official.',
     isUncertainFood
-      ? 'Because this scan is uncertain, description or pantryNote should gently signal it is a best guess based on what is visible.'
-      : 'Because this scan is clearer, keep wording confident but still honest and inspired-by.',
-    `Food analysis summary: ${JSON.stringify({
-      broadDishCategory: analysis.broadDishCategory,
-      confidence: analysis.confidence,
-      confidenceReason: analysis.confidenceReason,
-      cuisine: analysis.cuisine,
+      ? 'Scan is uncertain — make a flexible best-guess inspired-by version based only on visible components.'
+      : 'Scan is clear — keep wording honest and inspired-by.',
+    `Food: ${JSON.stringify({
       dishName: analysis.dishName,
-      likelyIngredients: analysis.likelyIngredients.slice(0, 6),
+      cuisine: analysis.cuisine,
+      broadDishCategory: analysis.broadDishCategory,
       scanState: analysis.scanState,
+      visibleIngredients: analysis.visibleIngredients.slice(0, 5),
+      likelyIngredients: analysis.likelyIngredients.slice(0, 5),
       visibleComponents: analysis.visibleComponents,
-      visibleIngredients: analysis.visibleIngredients.slice(0, 6),
     })}`,
+  ].join('\n');
+}
+
+function getCompactRecipeRetryPrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
+  const modeKey = getModeKey(mode);
+
+  return [
+    'JSON only. No markdown. No explanations.',
+    `Return: {"selectedMode":"${mode}","${modeKey}":{"title":"...","description":"...","ingredients":["...x6"],"steps":["...x5"],"prepTime":"...","cookTime":"...","totalTime":"...","servings":2,"skillLevel":"Easy","avoidMistake":"...","substitutions":["...x2"],"storageAndReheating":"...","pantryNote":"...","groceryItems":[],"spicePairings":[]}}`,
+    'ingredients: max 6 items. steps: exactly 5 plain strings, each under 18 words. All other text brief.',
+    `Dish: ${analysis.dishName}. Mode: ${mode}. Visible: ${analysis.visibleIngredients.slice(0, 4).join(', ')}.`,
   ].join('\n');
 }
 
