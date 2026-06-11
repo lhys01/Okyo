@@ -8,7 +8,6 @@ import {
   CheckCircle,
   Clock,
   Cutlery,
-  Leaf,
   NavArrowLeft,
   OpenBook,
   PlusCircle,
@@ -24,6 +23,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
+import { KikoMascot } from '../components/KikoMascot';
 import {
   PrimaryButton,
   colors,
@@ -555,7 +555,7 @@ export function ResultSummaryScreen() {
       <View style={styles.savingsHero}>
         <View style={styles.savingsTopRow}>
           <View style={styles.savingsBadge}>
-            <Leaf color={colors.green} height={28} strokeWidth={2.3} width={28} />
+            <KikoMascot pose="celebrating" size={44} />
           </View>
           <View style={styles.savingsAmountGroup}>
             <Text style={styles.savingsHeroLabel}>
@@ -1177,7 +1177,7 @@ const styles = StyleSheet.create({
   screenContent: {
     backgroundColor: colors.background,
     flexGrow: 1,
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
     paddingTop: 8,
   },
   topBar: {

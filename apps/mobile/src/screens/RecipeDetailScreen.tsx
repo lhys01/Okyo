@@ -669,7 +669,7 @@ const styles = StyleSheet.create({
   screenContent: {
     flexGrow: 1,
     paddingBottom: 28,
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
   },
   heroCard: {
     marginTop: 10,

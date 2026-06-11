@@ -463,7 +463,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     gap: 12,
-    padding: 16,
+    padding: 20,
     paddingBottom: 220,
   },
   topBar: {

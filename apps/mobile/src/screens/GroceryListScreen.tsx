@@ -292,9 +292,7 @@ export function GroceryListScreen() {
       )}
 
       <View style={styles.allSetCard}>
-        <View style={styles.basketIcon}>
-          <Bag color={colors.green} height={52} strokeWidth={1.8} width={52} />
-        </View>
+        <KikoMascot pose="cooking" size={110} style={styles.allSetMascot} />
         <Text style={styles.allSetTitle}>All set!</Text>
         <Text style={styles.allSetBody}>You're ready to make something delicious.</Text>
       </View>
@@ -655,7 +653,7 @@ const styles = StyleSheet.create({
   screenContent: {
     flexGrow: 1,
     paddingBottom: 34,
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
   },
   topBar: {
     alignItems: 'center',
@@ -866,14 +864,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingVertical: 28,
   },
-  basketIcon: {
-    alignItems: 'center',
-    backgroundColor: '#eaf6df',
-    borderRadius: 999,
-    height: 92,
-    justifyContent: 'center',
-    marginBottom: 12,
-    width: 92,
+  allSetMascot: {
+    marginBottom: 10,
   },
   allSetTitle: {
     color: colors.charcoal,

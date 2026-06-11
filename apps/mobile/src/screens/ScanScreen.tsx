@@ -316,10 +316,10 @@ export function ScanScreen() {
             numberOfLines={2}
             style={styles.headline}
           >
-            Turn a food photo into a homemade recipe.
+            What are we remaking today?
           </Text>
           <Text style={styles.subtitle}>
-            Upload a food photo. Okyo makes a best-guess recipe from what it can see, then you can edit it if it’s off.
+            Snap a restaurant meal and Okyo turns it into a homemade recipe, savings estimate, and grocery list.
           </Text>
         </View>
 
@@ -377,7 +377,9 @@ export function ScanScreen() {
                 <Text style={styles.recentMeta}>Saved recipe</Text>
                 <View style={styles.savedPill}>
                   <Dollar color={colors.green} height={17} strokeWidth={2.2} width={17} />
-                  <Text style={styles.savedPillText}>Saved recipe</Text>
+                  <Text style={styles.savedPillText}>
+                    Home est. {formatOptionalCurrency(recentRecipe.estimatedHomemadeCost)}
+                  </Text>
                 </View>
               </View>
               <NavArrowRight color={colors.body} height={26} strokeWidth={2.2} width={26} />

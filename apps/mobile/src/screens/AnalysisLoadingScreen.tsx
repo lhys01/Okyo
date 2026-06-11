@@ -1,7 +1,7 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Camera, NavArrowLeft, Spark, Sparks } from 'iconoir-react-native';
+import { Camera, NavArrowLeft, Sparks } from 'iconoir-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -132,9 +132,9 @@ export function AnalysisLoadingScreen() {
         <View style={styles.hero}>
           <KikoMascot pose="scanning" size={150} style={styles.heroMascot} />
           <Text style={styles.kicker}>SCANNING</Text>
-          <Text style={styles.title}>Okyo is building your homemade swap.</Text>
+          <Text style={styles.title}>Kiko is reading your plate…</Text>
           <Text style={styles.subtitle}>
-            This can take a few seconds for real food photos. We only show a result when it feels trustworthy.
+            Finding the homemade version. This can take a few seconds, and Okyo only shows a result it trusts.
           </Text>
         </View>
 
@@ -142,7 +142,7 @@ export function AnalysisLoadingScreen() {
           <View style={styles.progressCard}>
             <View style={styles.progressHeader}>
               <Sparks color={colors.coral} height={34} strokeWidth={2.1} width={34} />
-              <Text style={styles.progressTitle}>Building your homemade swap...</Text>
+              <Text style={styles.progressTitle}>Building your recipe, savings, and grocery list</Text>
             </View>
             <View style={styles.progressTrack} accessibilityRole="progressbar">
               {progressBars.map((bar) => {
@@ -171,8 +171,6 @@ export function AnalysisLoadingScreen() {
           <Camera color={colors.body} height={25} strokeWidth={2.25} width={25} />
           <Text style={styles.backButtonText}>Back to scan</Text>
         </Pressable>
-
-        <Spark color="#f5b763" height={26} style={styles.softSpark} strokeWidth={2.1} width={26} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -334,12 +332,6 @@ const styles = StyleSheet.create({
     color: colors.body,
     fontSize: 17,
     fontWeight: '900',
-  },
-  softSpark: {
-    opacity: 0.35,
-    position: 'absolute',
-    right: 32,
-    top: 302,
   },
   pressed: {
     opacity: 0.78,
