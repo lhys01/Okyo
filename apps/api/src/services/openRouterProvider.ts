@@ -152,28 +152,75 @@ export async function analyzeFoodImageWithOpenRouter(input: {
   image?: ScanImageMetadata;
   mode: RecipeMode;
 }) {
-  const content: OpenRouterContentPart[] = [
-    {
-      type: 'text',
-      text: getVisionPrompt(input.image, input.mode),
-    },
-  ];
   const imageUrl = getSafeImageUrl(input.image);
-  if (imageUrl) {
-    content.push({ type: 'image_url', image_url: { url: imageUrl } });
-  }
   logOpenRouterDebug('api_openrouter_has_image_payload', {
-    contentItemTypes: content.map((part) => part.type),
     hasImagePayload: Boolean(imageUrl),
     imagePayloadLength: imageUrl?.length ?? 0,
   });
   logOpenRouterDebug('openrouter_vision_payload', {
-    contentPartTypes: content.map((part) => part.type),
     imagePayloadAttached: Boolean(imageUrl),
     imagePayloadLength: imageUrl?.length ?? 0,
-    imageUriKind: getSafeImageUrl(input.image) ? 'provider_visible' : input.image?.uri ? 'local_or_private_uri_not_sent' : 'none',
+    imageUriKind: imageUrl ? 'provider_visible' : input.image?.uri ? 'local_or_private_uri_not_sent' : 'none',
     model: input.config.openRouterVisionModel,
   });
+
+  const firstOutput = await callVisionOnce(input, getVisionPrompt(input.image, input.mode), 'vision');
+  const firstQuality = evaluateVisionQuality(firstOutput);
+  logOpenRouterDebug('openrouter_scan_quality_check', {
+    dishName: firstOutput.dishName,
+    scanState: firstOutput.scanState,
+    confidencePercent: firstQuality.confidencePercent,
+    foodVisible: firstQuality.foodVisible,
+    genericName: firstQuality.generic,
+    drinkMismatch: firstQuality.drinkMismatch,
+    needsRetry: firstQuality.needsRetry,
+  });
+
+  if (!firstQuality.needsRetry) {
+    return firstOutput;
+  }
+
+  // Quality loop: one focused retry when food/drink is visible but the name is
+  // generic or contradicts visible drink clues. Failures keep the first result.
+  try {
+    const retryOutput = await callVisionOnce(
+      input,
+      getFocusedVisionRetryPrompt(input.image, input.mode, firstOutput),
+      'vision_quality_retry',
+    );
+    const retryQuality = evaluateVisionQuality(retryOutput);
+    const useRetry = retryQuality.foodVisible && !retryQuality.generic && !retryQuality.drinkMismatch;
+    logOpenRouterDebug('openrouter_scan_quality_retry', {
+      originalDishName: firstOutput.dishName,
+      retryDishName: retryOutput.dishName,
+      finalDishName: useRetry ? retryOutput.dishName : firstOutput.dishName,
+      retryGeneric: retryQuality.generic,
+      retryDrinkMismatch: retryQuality.drinkMismatch,
+      retryConfidencePercent: retryQuality.confidencePercent,
+      retryScanState: retryOutput.scanState,
+      usedRetry: useRetry,
+    });
+
+    return useRetry ? retryOutput : firstOutput;
+  } catch (error) {
+    logOpenRouterDebug('openrouter_scan_quality_retry_failed', {
+      originalDishName: firstOutput.dishName,
+      message: error instanceof OpenRouterProviderError ? error.failure.reason : 'unknown',
+    });
+    return firstOutput;
+  }
+}
+
+async function callVisionOnce(
+  input: { config: AiConfig; image?: ScanImageMetadata; mode: RecipeMode },
+  promptText: string,
+  stage: string,
+) {
+  const content: OpenRouterContentPart[] = [{ type: 'text', text: promptText }];
+  const imageUrl = getSafeImageUrl(input.image);
+  if (imageUrl) {
+    content.push({ type: 'image_url', image_url: { url: imageUrl } });
+  }
 
   const json = await callOpenRouterJson({
     config: input.config,
@@ -189,7 +236,7 @@ export async function analyzeFoodImageWithOpenRouter(input: {
     ],
     model: input.config.openRouterVisionModel,
     maxTokens: Math.min(input.config.maxOutputTokens, 1800),
-    stage: 'vision',
+    stage,
   });
 
   const output = openRouterVisionOutputSchema.safeParse(json);
@@ -205,9 +252,87 @@ export async function analyzeFoodImageWithOpenRouter(input: {
     dishName: output.data.dishName,
     foodDetected: output.data.foodDetected ?? output.data.isFoodImage,
     scanState: output.data.scanState,
+    stage,
   });
 
   return output.data;
+}
+
+// Names that are too generic to be useful when real food or drink is visible.
+const genericDishNames = new Set([
+  'dish', 'food', 'meal', 'plate', 'bowl', 'platter', 'drink', 'beverage',
+  'food item', 'food plate', 'food dish', 'food bowl',
+  'restaurant dish', 'restaurant plate', 'restaurant meal', 'restaurant food',
+  'restaurant style food plate', 'restaurant-style food plate',
+  'mixed restaurant plate', 'mixed plate', 'mixed platter', 'mixed food plate',
+  'generic meal', 'unknown', 'unknown dish', 'unknown food dish', 'unclear dish',
+]);
+
+export function isGenericDishName(value: string | undefined | null) {
+  const normalized = (value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^(a|an|the)\s+/, '')
+    .trim();
+
+  return !normalized || genericDishNames.has(normalized);
+}
+
+const drinkClueRegex = /\b(smoothie|milkshake|shake|latte|matcha|iced coffee|cold brew|frappe|frappuccino|boba|bubble tea|juice|lemonade|hot chocolate)\b/;
+
+export function isDrinkAnalysisText(value: string) {
+  const normalized = value.toLowerCase();
+  return drinkClueRegex.test(normalized) || normalized.includes('drink/beverage');
+}
+
+type VisionQuality = {
+  confidencePercent: number;
+  drinkMismatch: boolean;
+  foodVisible: boolean;
+  generic: boolean;
+  needsRetry: boolean;
+};
+
+function evaluateVisionQuality(output: z.infer<typeof openRouterVisionOutputSchema>): VisionQuality {
+  const confidencePercent = getLooseConfidencePercent(output.confidence);
+  const scanState = (output.scanState ?? '').toLowerCase();
+  const foodVisible = parseLooseBoolean(output.isFoodImage) ||
+    parseLooseBoolean(output.foodDetected) ||
+    ['clear_food', 'food_present_uncertain_dish', 'partial_food'].includes(scanState);
+  const generic = isGenericDishName(output.dishName);
+  const supportText = [
+    output.dishName,
+    output.broadDishCategory,
+    output.cuisine,
+    output.confidenceReason,
+    ...(output.visibleIngredients ?? []),
+    ...(output.likelyIngredients ?? []),
+    ...Object.values(output.visibleComponents ?? {}),
+  ].filter((value) => typeof value === 'string').join(' ').toLowerCase();
+  const looksLikeDrink = drinkClueRegex.test(supportText);
+  const nameSaysPlate = /\b(plate|platter)\b/.test((output.dishName ?? '').toLowerCase());
+  const drinkMismatch = looksLikeDrink && nameSaysPlate;
+  const needsRetry = foodVisible && (drinkMismatch || (generic && confidencePercent < 88));
+
+  return { confidencePercent, drinkMismatch, foodVisible, generic, needsRetry };
+}
+
+function getLooseConfidencePercent(value: number | string | undefined) {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+
+  return Math.min(100, parsed <= 1 ? parsed * 100 : parsed);
+}
+
+function parseLooseBoolean(value: boolean | string | undefined) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  return typeof value === 'string' && value.trim().toLowerCase() === 'true';
 }
 
 export async function generateRecipeWithOpenRouter(input: {
@@ -390,28 +515,33 @@ async function callOpenRouterJson(input: {
   }
 }
 
+const visionJsonContract = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}';
+
 function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode) {
   return [
-    'Analyze this real-world restaurant or takeout food photo for a testing-only Okyo prototype.',
+    'Analyze this real-world restaurant, cafe, or takeout food or drink photo for a testing-only Okyo prototype.',
     'Return ONLY valid JSON in the assistant message content. Do not put JSON in reasoning. Do not return markdown. Do not explain.',
     'Return JSON only with exactly these fields:',
-    '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}',
-    'First decide whether real edible food is visible. If any visible food exists, do not hard reject. Ignore table clutter, plates, utensils, hands, cups, napkins, packaging, captions, UI chrome, and restaurant background unless they help identify the food.',
+    visionJsonContract,
+    'First decide: is this food, a drink, or neither? Drinks count as scannable: smoothies, milkshakes, lattes, iced coffee, matcha, juices, lemonade, boba/bubble tea, and hot chocolate are all valid results, as are soups, desserts, and pastries.',
+    'If any visible food or drink exists, do not hard reject. Ignore table clutter, plates, utensils, hands, napkins, packaging, captions, UI chrome, and restaurant background unless they help identify the food or drink.',
     'Real restaurant photos are allowed to be messy: dim lighting, busy tables, multiple items, dark or charred food, shiny sauce, garnish, angled phone photos, partial plates, takeout containers, screenshots of food posts, hands, cups, napkins, menus, utensils, and cluttered backgrounds are normal.',
     'Ignore plates, utensils, table surfaces, cups, napkins, hands, menus, packaging, captions, UI chrome, and background unless they help identify the food. Focus on edible food.',
     'If multiple dishes are visible, choose the largest or most central edible item. Identify the central plate or central food pile; do not reject because side plates or clutter are present.',
     'If the exact dish is uncertain, identify a broad useful food category and give a lower-confidence best guess. Use broad category names instead of failure.',
     'Do not reject just because food is dark, charred, saucy, cluttered, garnished, partially visible, cropped, or photographed at an angle. Return lower confidence instead.',
-    'Examples: messy grilled meat platter -> Grilled Meat Plate or Mixed Restaurant Plate; saucy bowl -> Saucy Rice Bowl or Noodle Bowl; cluttered table with central plate -> identify the central dish; partial sandwich or burger -> Loaded Sandwich or Loaded Burger; unclear pasta/noodles -> Pasta Bowl or Noodle Bowl; charred or dark food -> Grilled or Charred Plate, not rejection.',
-    'Set broadDishCategory to one of: pizza, pasta/noodles, rice bowl, burger/sandwich, tacos/wrap, grilled meat, fried food, seafood, salad, soup/stew, dessert, breakfast item, mixed platter, unknown food dish.',
+    'dishName must be the MOST SPECIFIC name the image supports, built from what is visible. Examples: purple blended drink in a cup -> "Berry Smoothie"; green iced drink -> "Iced Matcha Latte"; creamy red-sauced pasta -> "Creamy Tomato Pasta"; burger with melted cheese -> "Cheeseburger"; bowl of rice with grilled chicken -> "Grilled Chicken Rice Bowl"; layered cake slice -> "Chocolate Cake".',
+    'Generic names like "Mixed Restaurant Plate", "Restaurant Plate", "Food Plate", "Meal", "Dish", "Plate", "Bowl", "Drink", or "Unknown Dish" are WRONG whenever any specific food or drink is identifiable. Prefer a specific guess with lower confidence over a generic name. Only use a broad name like "Mixed Restaurant Plate" when the image truly shows several distinct meal components on one platter and no single dish dominates.',
+    'The dishName must match the visible components. If the image shows a drink in a cup or glass (smoothie, latte, shake, juice), the dishName must say smoothie/latte/shake/juice — never call a drink a plate or bowl.',
+    'Set broadDishCategory to one of: pizza, pasta/noodles, rice bowl, burger/sandwich, tacos/wrap, grilled meat, fried food, seafood, salad, soup/stew, dessert, breakfast item, drink/beverage, mixed platter, unknown food dish.',
     'Identify cuisine only when there are strong visual clues. Otherwise use "Restaurant-style".',
     'Use visibleComponents to describe visible protein, sauce, base/starch, vegetables, toppings/garnish, and cooking method. Empty string is okay when not visible.',
-    'Return a best-guess dishName even if the exact restaurant dish name is unknown. Use broad useful names like "Mixed Restaurant Plate", "Grilled Meat Plate", "Charred Grill Plate", "Saucy Rice Bowl", "Noodle Bowl", "Pasta Bowl", "Loaded Sandwich", "Loaded Burger", "Pizza", "Stir-Fry Plate", "Restaurant-Style Food Plate", "Creamy Tomato Pasta", "Spicy Noodle Bowl", or "Grilled Chicken Rice Bowl". Do not invent exact menu names.',
-    'When uncertain, include 2-4 possibleDishNames using broad safe guesses such as Mixed Restaurant Plate, Grilled Meat Plate, Saucy Rice Bowl, Noodle Bowl, Pasta Bowl, Loaded Sandwich, Pizza, or Stir-Fry Plate.',
+    'Return a best-guess dishName even if the exact restaurant dish name is unknown. Build the name from visible components: descriptor + main item, like "Spicy Chicken Rice Bowl", "Creamy Tomato Rigatoni", "Loaded Cheeseburger", "Berry Smoothie", "Iced Matcha Latte", or "Grilled Salmon Plate". Do not invent exact menu names or brand names.',
+    'When uncertain, include 2-4 possibleDishNames that are specific alternates of the same visible food, like ["Berry Smoothie", "Acai Smoothie", "Mixed Fruit Smoothie"] or ["Beef Burrito Bowl", "Chicken Rice Bowl", "Carnitas Bowl"]. Alternates must not be generic names.',
     'scanState rules: clear_food means food and dish are clear; food_present_uncertain_dish means food is clear but exact dish/cuisine is uncertain; partial_food means food is visible but partial/low-quality/ambiguous; not_food means clearly no food; too_unclear means too blurry/dark/blocked to identify food safely.',
     'Confidence score rules: 80-95 clear dish, 60-79 food clear but exact dish uncertain, 40-59 food visible but ambiguous or partial, below 40 retry/clarification needed. If food is visible and confidence is 40-79, keep isFoodImage true and use scanState food_present_uncertain_dish or partial_food.',
     'Only reject when food is clearly absent or the image is too unclear to identify any visible food. Do not reject just because the exact dish name is uncertain.',
-    'Only use not_food when no food is visible. If food is visible, not_food is wrong.',
+    'Only use not_food when no food or drink is visible. If food or a drink is visible, not_food is wrong.',
     'Only use too_unclear when food cannot reasonably be identified at all because the image is truly blurry, blocked, or unreadable. If food is visible but the exact dish is unclear, use partial_food or food_present_uncertain_dish instead.',
     'If the image is not food, set scanState not_food, isFoodImage false, isRestaurantMeal false, and rejectionReason to a short user-friendly reason.',
     'If the image is too blurry/dark/blocked to know whether food is visible, set scanState too_unclear, isFoodImage false, confidence below 40, and rejectionReason to ask for a clearer food photo.',
@@ -427,6 +557,32 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
   ].join('\n');
 }
 
+function getFocusedVisionRetryPrompt(
+  image: ScanImageMetadata | undefined,
+  mode: RecipeMode,
+  firstOutput: z.infer<typeof openRouterVisionOutputSchema>,
+) {
+  const clues = [
+    ...(firstOutput.visibleIngredients ?? []),
+    ...(firstOutput.likelyIngredients ?? []),
+    ...Object.values(firstOutput.visibleComponents ?? {}),
+  ].filter((value) => typeof value === 'string' && value.trim()).slice(0, 8);
+
+  return [
+    'Look at this food or drink photo again. A previous analysis returned a name that was too generic to be useful.',
+    `Previous guess: "${firstOutput.dishName ?? 'none'}". Visible clues from the previous pass: ${clues.join(', ') || 'none recorded'}.`,
+    'Return ONLY valid JSON. No markdown. No explanations. Use exactly these fields:',
+    visionJsonContract,
+    'Name the MOST SPECIFIC dish or drink the image supports, built from visible components: descriptor + main item, like "Berry Smoothie", "Iced Matcha Latte", "Creamy Tomato Pasta", "Cheeseburger", "Grilled Chicken Rice Bowl", or "Chocolate Cake".',
+    'If the image shows a drink in a cup or glass (smoothie, milkshake, latte, iced coffee, juice, boba), the dishName MUST say so. Never call a drink a plate, bowl, or meal.',
+    'Generic names like "Mixed Restaurant Plate", "Food Plate", "Meal", "Dish", "Plate", or "Bowl" are wrong when any specific food or drink is identifiable. Prefer a specific guess with lower confidence.',
+    'Include 2-4 possibleDishNames that are specific alternates of the same visible food or drink.',
+    'Stay honest: keep scanState accurate, lower confidence instead of inventing details, set restaurantPriceEstimate to 0 unless a menu or receipt is visible, and use not_food only when no food or drink is visible at all.',
+    `Requested recipe mode: ${mode}.`,
+    `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
+  ].join('\n');
+}
+
 function getModeKey(mode: RecipeMode) {
   return mode === 'Budget' ? 'budget' : mode === 'Healthy' ? 'healthy' : 'restaurantCopy';
 }
@@ -434,9 +590,16 @@ function getModeKey(mode: RecipeMode) {
 function getRecipePrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
   const modeKey = getModeKey(mode);
   const isUncertainFood = analysis.scanState === 'food_present_uncertain_dish' || analysis.scanState === 'partial_food';
+  const isDrink = isDrinkAnalysisText([
+    analysis.dishName,
+    analysis.broadDishCategory,
+    ...analysis.visibleIngredients,
+    ...analysis.likelyIngredients,
+  ].join(' '));
 
   return [
-    `Create a compact inspired-by homemade recipe JSON for the ${mode} mode only.`,
+    `Create a compact inspired-by homemade recipe JSON for "${analysis.dishName}" in the ${mode} mode only.`,
+    `The recipe MUST be a homemade version of "${analysis.dishName}" as scanned. Do not switch to a different dish, drink, or cocktail. No alcohol.`,
     'Return ONLY valid minified JSON. No markdown, no prose, no reasoning, no extra text.',
     `Return exactly: {"selectedMode":"${mode}","${modeKey}":{...recipe fields...}}`,
     `Include ONLY "selectedMode" and "${modeKey}". Do NOT include other mode keys.`,
@@ -445,8 +608,10 @@ function getRecipePrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
     'Ingredients: each is one string that starts with an exact amount, then a normal grocery-store name, like "8 oz rigatoni", "1 tablespoon olive oil", "2 cloves garlic, minced", "1/2 cup tomato sauce". Never vague items like "sauce", "seasoning", or "protein". Every ingredient that needs cooking must appear in the steps.',
     'Steps: write for a total beginner. Each step is one plain string under 30 words, starts with an action verb, and covers ONE action. When an ingredient is added, repeat its exact amount. Include pan heat level, time, and a visual cue, like "Add the diced onion and cook for 3-4 minutes, stirring often, until soft and lightly golden."',
     'Never write vague steps like "Make the sauce", "Cook until done", "Prepare the ingredients", or "Season to taste" without naming the seasoning and amount.',
-    'Very simple dishes (salads, sandwiches, toast) may use 6-8 steps instead. Do not pad with filler steps.',
-    'Meat and seafood steps must include the safe internal temperature: 165°F/74°C chicken, 160°F/71°C ground meat, 145°F/63°C pork or fish.',
+    'Very simple dishes (salads, sandwiches, toast, drinks) may use 6-8 steps instead. Do not pad with filler steps.',
+    isDrink
+      ? 'This is a DRINK. The title must say smoothie/latte/shake/juice/etc. Write drink-making steps only: measure, blend or brew, taste, adjust thickness or sweetness, pour, garnish. No oven, no skillet, no meat, no meat temperatures. Ingredients must fit a drink: fruit, milk or yogurt or a dairy-free swap, ice, juice, espresso or matcha or cocoa if visible, sweetener.'
+      : 'Meat and seafood steps must include the safe internal temperature: 165°F/74°C chicken, 160°F/71°C ground meat, 145°F/63°C pork or fish.',
     'groceryItems use store-buyable units: {"name":"heavy cream","quantity":"1 small carton","category":"Dairy"}.',
     'Text limits: description 1-2 sentences. avoidMistake 1 sentence. storageAndReheating 1 sentence. pantryNote 1 sentence.',
     'Never use the word copycat. Use inspired-by or restaurant-style.',

@@ -1136,20 +1136,26 @@ function getPossibleDishNames(scanResult: ScanResult | null, displayDishName: st
 
 function getFallbackDishAlternatives(scanResult: ScanResult) {
   const text = `${scanResult.dishName} ${scanResult.restaurantStyle}`.toLowerCase();
+  if (text.includes('smoothie') || text.includes('shake') || text.includes('juice') || text.includes('latte') || text.includes('matcha')) {
+    return ['Berry Smoothie', 'Fruit Smoothie', 'Iced Latte'];
+  }
   if (text.includes('grill') || text.includes('meat') || text.includes('char')) {
-    return ['Mixed Restaurant Plate', 'Grilled Meat Plate', 'Restaurant-Style Food Plate'];
+    return ['Grilled Meat Plate', 'Grilled Chicken Plate', 'Charred Grill Plate'];
   }
   if (text.includes('rice') || text.includes('bowl')) {
-    return ['Saucy Rice Bowl', 'Mixed Restaurant Plate', 'Stir-Fry Plate'];
+    return ['Saucy Rice Bowl', 'Grilled Chicken Rice Bowl', 'Stir-Fry Plate'];
   }
   if (text.includes('noodle') || text.includes('pasta')) {
     return ['Noodle Bowl', 'Pasta Bowl', 'Saucy Noodles'];
   }
   if (text.includes('burger') || text.includes('sandwich')) {
-    return ['Loaded Sandwich', 'Loaded Burger', 'Restaurant-Style Food Plate'];
+    return ['Loaded Sandwich', 'Loaded Burger', 'Cheeseburger'];
+  }
+  if (text.includes('salad')) {
+    return ['Loaded Salad', 'Chopped Salad', 'Mediterranean-Style Salad'];
   }
 
-  return ['Mixed Restaurant Plate', 'Saucy Rice Bowl', 'Loaded Sandwich'];
+  return ['Saucy Rice Bowl', 'Loaded Sandwich', 'Noodle Bowl'];
 }
 
 function getPercentValue(value: number | null | undefined) {
