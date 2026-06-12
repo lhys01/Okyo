@@ -53,8 +53,8 @@ export function RestaurantPacksScreen() {
   if (safePacks.length === 0) {
     return (
       <EmptyState
-        eyebrow="Packs"
-        title="Packs are coming soon"
+        eyebrow="Discover"
+        title="Discover is coming soon"
         body="Curated restaurant-inspired recipe collections will live here. In the meantime, scan a meal to get your first homemade swap."
         actionLabel="Scan a meal"
         onAction={() => navigation.navigate('ScanScreen')}
@@ -64,8 +64,8 @@ export function RestaurantPacksScreen() {
 
   return (
     <ScreenContainer>
-      <Text style={styles.kicker}>Packs</Text>
-      <Text style={styles.title}>Restaurant-inspired packs</Text>
+      <Text style={styles.kicker}>Discover</Text>
+      <Text style={styles.title}>Restaurant-style collections</Text>
       <Text style={styles.description}>
         Curated collections of restaurant-inspired recipes, ready to remake at home.
       </Text>
@@ -97,15 +97,17 @@ const styles = StyleSheet.create({
   kicker: {
     color: colors.coral,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
+    letterSpacing: 1,
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   title: {
     color: colors.charcoal,
-    fontSize: 32,
-    fontWeight: '900',
-    lineHeight: 37,
+    fontSize: 34,
+    fontWeight: '700',
+    letterSpacing: -0.6,
+    lineHeight: 40,
   },
   description: {
     color: colors.body,

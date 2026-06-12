@@ -102,7 +102,7 @@ const styles = StyleSheet.create({
   brand: {
     color: colors.coral,
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 28,
     textTransform: 'uppercase',
   },
@@ -121,13 +121,13 @@ const styles = StyleSheet.create({
   stepCount: {
     color: colors.coral,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 12,
   },
   title: {
     color: colors.charcoal,
     fontSize: 34,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 39,
   },
   body: {

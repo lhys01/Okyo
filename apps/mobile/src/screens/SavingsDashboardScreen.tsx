@@ -459,14 +459,14 @@ const styles = StyleSheet.create({
   logoText: {
     color: colors.coral,
     fontSize: 25,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
   },
   screenTitle: {
     color: colors.charcoal,
     flex: 1,
     fontSize: 27,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     textAlign: 'center',
   },
@@ -496,7 +496,7 @@ const styles = StyleSheet.create({
   heroTitle: {
     color: '#0e5528',
     fontSize: 22,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     lineHeight: 27,
   },
@@ -561,7 +561,7 @@ const styles = StyleSheet.create({
   sectionKicker: {
     color: colors.green,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0.6,
     marginBottom: 10,
     textTransform: 'uppercase',
@@ -578,7 +578,7 @@ const styles = StyleSheet.create({
   biggestTitle: {
     color: colors.charcoal,
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 21,
   },
   biggestSavings: {
@@ -613,7 +613,7 @@ const styles = StyleSheet.create({
   thumbInitials: {
     color: colors.coral,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   periodEmptyCard: {
     backgroundColor: colors.card,
@@ -625,7 +625,7 @@ const styles = StyleSheet.create({
   periodEmptyTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   periodEmptyBody: {
     color: colors.body,
@@ -671,7 +671,7 @@ const styles = StyleSheet.create({
   statValue: {
     color: '#174d1f',
     fontSize: 20,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 3,
   },
   goalCard: {
@@ -700,7 +700,7 @@ const styles = StyleSheet.create({
   goalTitle: {
     color: colors.charcoal,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 20,
   },
   progressTrack: {
@@ -732,7 +732,7 @@ const styles = StyleSheet.create({
   goalPercent: {
     color: colors.coral,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   goalButton: {
     alignItems: 'center',
@@ -748,7 +748,7 @@ const styles = StyleSheet.create({
   goalButtonText: {
     color: colors.green,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   recentCard: {
     backgroundColor: colors.card,
@@ -760,7 +760,7 @@ const styles = StyleSheet.create({
   recentTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 8,
   },
   recentList: {
@@ -782,7 +782,7 @@ const styles = StyleSheet.create({
   recentDish: {
     color: colors.charcoal,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   recentMode: {
     color: colors.body,
@@ -793,7 +793,7 @@ const styles = StyleSheet.create({
   recentAmount: {
     color: colors.green,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
     maxWidth: 82,
   },
   emptyCard: {
@@ -812,7 +812,7 @@ const styles = StyleSheet.create({
   emptyTitle: {
     color: colors.charcoal,
     fontSize: 26,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 31,
     textAlign: 'center',
   },
@@ -836,7 +836,7 @@ const styles = StyleSheet.create({
   primaryActionText: {
     color: '#fffdf8',
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.72,

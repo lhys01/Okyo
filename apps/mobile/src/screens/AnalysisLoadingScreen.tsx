@@ -215,7 +215,7 @@ const styles = StyleSheet.create({
   backPillText: {
     color: colors.body,
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   topTitleWrap: {
     alignItems: 'center',
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
   topTitle: {
     color: colors.charcoal,
     fontSize: 21,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   hero: {
@@ -243,14 +243,14 @@ const styles = StyleSheet.create({
   kicker: {
     color: colors.coral,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 4,
     marginBottom: 16,
   },
   title: {
     color: colors.charcoal,
     fontSize: 33,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 39,
   },
   subtitle: {
@@ -315,7 +315,7 @@ const styles = StyleSheet.create({
   backButtonText: {
     color: colors.body,
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.78,

@@ -30,14 +30,16 @@ export type RootStackParamList = {
   ChallengeCompleteScreen: { challengeId?: string } | undefined;
   RestaurantPackDetailScreen: { packId?: string } | undefined;
   PaywallScreen: undefined;
+  SavingsDashboardScreen: undefined;
+  RankingsScreen: undefined;
+  SettingsScreen: undefined;
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
 };
 
 export type MainTabParamList = {
+  HomeScreen: undefined;
+  RestaurantPacksScreen: undefined;
   ScanScreen: undefined;
   LibraryScreen: undefined;
-  SavingsDashboardScreen: undefined;
-  RankingsScreen: undefined;
-  RestaurantPacksScreen: undefined;
-  SettingsScreen: undefined;
+  ProfileScreen: undefined;
 };
