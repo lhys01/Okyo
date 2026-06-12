@@ -34,6 +34,7 @@ export function HomeScreen() {
   const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
+  const homeMoment = useMemo(() => getHomeMoment(), []);
 
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [];
   const recentRecipes = useMemo(() => safeSavedRecipes.slice().reverse().slice(0, 3), [safeSavedRecipes]);
@@ -78,54 +79,36 @@ export function HomeScreen() {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Text style={styles.kicker}>{getGreeting()}</Text>
-          <Text style={styles.title}>What should dinner become?</Text>
+          <Text style={styles.kicker}>{homeMoment.greeting}</Text>
+          <Text style={styles.title}>{homeMoment.title}</Text>
         </View>
 
-        <Pressable
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.heroCard, pressed ? styles.pressed : null]}
-          onPress={heroRecipe ? () => openRecipe(heroRecipe) : openScan}
-        >
-          {heroImageUri ? (
-            <Image source={{ uri: heroImageUri }} style={styles.heroImage} />
-          ) : (
-            <View style={styles.heroFallback}>
-              <KikoMascot pose={hasActivity ? 'recipe' : 'wave'} size={118} />
+        {heroRecipe || heroImageUri ? (
+          <Pressable
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.heroCard, pressed ? styles.pressed : null]}
+            onPress={heroRecipe ? () => openRecipe(heroRecipe) : openScan}
+          >
+            {heroImageUri ? (
+              <Image source={{ uri: heroImageUri }} style={styles.heroImage} />
+            ) : (
+              <View style={styles.heroFallback}>
+                <KikoMascot pose={hasActivity ? 'recipe' : 'wave'} size={118} />
+              </View>
+            )}
+            <View style={styles.heroCopy}>
+              <Text style={styles.heroEyebrow}>{hasActivity ? 'Today in Okyo' : 'Latest photo'}</Text>
+              <Text numberOfLines={2} style={styles.heroTitle}>
+                {heroRecipe?.title ?? 'Latest scan'}
+              </Text>
+              <Text style={styles.heroBody}>
+                {heroRecipe
+                  ? `${heroRecipe.difficulty} · about ${formatCurrency(heroRecipe.estimatedHomemadeCost)} at home`
+                  : 'Your latest photo is here. Save a recipe and it becomes part of your cooking timeline.'}
+              </Text>
             </View>
-          )}
-          <View style={styles.heroCopy}>
-            <Text style={styles.heroEyebrow}>{hasActivity ? 'Today in Okyo' : 'Fresh start'}</Text>
-            <Text numberOfLines={2} style={styles.heroTitle}>
-              {heroRecipe?.title ?? 'Scan something delicious'}
-            </Text>
-            <Text style={styles.heroBody}>
-              {heroRecipe
-                ? `${heroRecipe.difficulty} · about ${formatCurrency(heroRecipe.estimatedHomemadeCost)} at home`
-                : 'Use a photo, get a clear homemade path, and keep the good parts of the craving.'}
-            </Text>
-          </View>
-        </Pressable>
-
-        <View style={styles.statStrip}>
-          <InlineStat icon={<MoneySquare color={colors.green} height={20} strokeWidth={2} width={20} />} label="Saved" value={formatCurrency(estimatedSaved)} />
-          <View style={styles.statDivider} />
-          <InlineStat icon={<Camera color={colors.coral} height={20} strokeWidth={2} width={20} />} label="Scans" value={weeklyScanCount.toString()} />
-        </View>
-
-        <View style={styles.actionRow}>
-          <HomeAction
-            icon={<Camera color="#fffdf8" height={20} strokeWidth={2.2} width={20} />}
-            label="Scan"
-            primary
-            onPress={openScan}
-          />
-          <HomeAction
-            icon={<Book color={colors.charcoal} height={20} strokeWidth={2} width={20} />}
-            label="Plan"
-            onPress={openPlan}
-          />
-        </View>
+          </Pressable>
+        ) : null}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Recent meals</Text>
@@ -158,11 +141,18 @@ export function HomeScreen() {
             ))}
           </View>
         ) : (
-          <View style={styles.emptyRecent}>
-            <Spark color={colors.coral} height={24} strokeWidth={2} width={24} />
-            <Text style={styles.emptyRecentTitle}>Your first remake starts with a photo.</Text>
-            <Text style={styles.emptyRecentBody}>Recent scans and saved swaps will appear here as a quiet cooking timeline.</Text>
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.emptyRecent, pressed ? styles.pressed : null]}
+            onPress={openScan}
+          >
+            <KikoMascot pose="wave" size={72} style={styles.emptyMascot} />
+            <View style={styles.emptyRecentCopy}>
+              <Spark color={colors.coral} height={22} strokeWidth={2} width={22} />
+              <Text style={styles.emptyRecentTitle}>No recent meals yet.</Text>
+              <Text style={styles.emptyRecentBody}>Scan once and this becomes your cooking timeline.</Text>
+            </View>
+          </Pressable>
         )}
 
         <Pressable accessibilityRole="button" style={({ pressed }) => [styles.savingsCard, pressed ? styles.pressed : null]} onPress={openSavings}>
@@ -178,55 +168,43 @@ export function HomeScreen() {
   );
 }
 
-function InlineStat({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-  return (
-    <View style={styles.inlineStat}>
-      {icon}
-      <View>
-        <Text style={styles.inlineStatLabel}>{label}</Text>
-        <Text style={styles.inlineStatValue}>{value}</Text>
-      </View>
-    </View>
-  );
+type HomeMoment = {
+  greeting: string;
+  title: string;
+};
+
+function getHomeMoment(date = new Date()): HomeMoment {
+  const hour = date.getHours();
+
+  if (hour >= 22 || hour < 5) {
+    return {
+      greeting: getStablePhrase(['Still hungry?', 'Late-night kitchen?'], date),
+      title: getStablePhrase(['What should a late-night bite become?', 'What should this snack turn into?'], date),
+    };
+  }
+
+  if (hour < 11) {
+    return {
+      greeting: 'Good morning',
+      title: getStablePhrase(['What should breakfast become?', 'What should the morning bite become?'], date),
+    };
+  }
+
+  if (hour < 17) {
+    return {
+      greeting: 'Good afternoon',
+      title: getStablePhrase(['What should lunch become?', 'What should the midday craving become?'], date),
+    };
+  }
+
+  return {
+    greeting: 'Good evening',
+    title: getStablePhrase(['What should dinner become?', 'What should tonight become?'], date),
+  };
 }
 
-function HomeAction({
-  icon,
-  label,
-  onPress,
-  primary = false,
-}: {
-  icon: ReactNode;
-  label: string;
-  onPress: () => void;
-  primary?: boolean;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      style={({ pressed }) => [
-        styles.homeAction,
-        primary ? styles.homeActionPrimary : null,
-        pressed ? styles.pressed : null,
-      ]}
-      onPress={onPress}
-    >
-      {icon}
-      <Text style={[styles.homeActionText, primary ? styles.homeActionTextPrimary : null]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function getGreeting() {
-  const hour = new Date().getHours();
-
-  if (hour < 12) {
-    return 'Good morning';
-  }
-  if (hour < 18) {
-    return 'Good afternoon';
-  }
-  return 'Good evening';
+function getStablePhrase(phrases: string[], date: Date) {
+  return phrases[(date.getDate() + date.getHours()) % phrases.length] ?? phrases[0];
 }
 
 function getFiniteNumber(value: unknown) {
@@ -280,7 +258,7 @@ const styles = StyleSheet.create({
     color: colors.coral,
     fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 1,
+    letterSpacing: 0,
     marginBottom: 8,
     textTransform: 'uppercase',
   },
@@ -290,67 +268,6 @@ const styles = StyleSheet.create({
   heroBody: {
     ...typography.body,
     marginTop: 8,
-  },
-  statStrip: {
-    alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 20,
-    padding: 18,
-    ...shadows.card,
-  },
-  inlineStat: {
-    alignItems: 'center',
-    flex: 1,
-    flexDirection: 'row',
-    gap: 10,
-    minWidth: 0,
-  },
-  inlineStatLabel: {
-    ...typography.caption,
-  },
-  inlineStatValue: {
-    color: colors.charcoal,
-    fontSize: 20,
-    fontWeight: '800',
-    letterSpacing: -0.3,
-    marginTop: 2,
-  },
-  statDivider: {
-    backgroundColor: colors.border,
-    height: 38,
-    marginHorizontal: 12,
-    width: 1,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 18,
-  },
-  homeAction: {
-    alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: radius.button,
-    flex: 1,
-    flexDirection: 'row',
-    gap: 9,
-    justifyContent: 'center',
-    minHeight: 56,
-    ...shadows.card,
-  },
-  homeActionPrimary: {
-    backgroundColor: colors.coral,
-    shadowColor: colors.coralDark,
-  },
-  homeActionText: {
-    color: colors.charcoal,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  homeActionTextPrimary: {
-    color: '#fffdf8',
   },
   sectionHeader: {
     alignItems: 'center',
@@ -413,12 +330,22 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   emptyRecent: {
+    alignItems: 'center',
     backgroundColor: colors.card,
     borderRadius: radius.card,
+    flexDirection: 'row',
     gap: 8,
     marginTop: 14,
     padding: 20,
     ...shadows.card,
+  },
+  emptyMascot: {
+    marginRight: 8,
+  },
+  emptyRecentCopy: {
+    flex: 1,
+    gap: 7,
+    minWidth: 0,
   },
   emptyRecentTitle: {
     ...typography.heading,
@@ -439,14 +366,14 @@ const styles = StyleSheet.create({
     color: colors.green,
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.9,
+    letterSpacing: 0,
     textTransform: 'uppercase',
   },
   savingsTitle: {
     color: colors.green,
     fontSize: 34,
     fontWeight: '800',
-    letterSpacing: -0.6,
+    letterSpacing: 0,
     lineHeight: 39,
     marginTop: 8,
   },

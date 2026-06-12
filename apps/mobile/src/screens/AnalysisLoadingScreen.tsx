@@ -35,6 +35,7 @@ export function AnalysisLoadingScreen() {
   const latestScanFailure = useOkyoStore((state) => state.latestScanFailure);
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const [pulseIndex, setPulseIndex] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const didNavigate = useRef(false);
   const didTrackCompletion = useRef(false);
 
@@ -42,6 +43,7 @@ export function AnalysisLoadingScreen() {
     uiLog('AnalysisLoadingScreen', 'enter');
     const pulse = setInterval(() => {
       setPulseIndex((currentIndex) => (currentIndex + 1) % loadingSteps.length);
+      setElapsedSeconds((currentSeconds) => currentSeconds + 1);
     }, 1000);
 
     return () => clearInterval(pulse);
@@ -91,18 +93,21 @@ export function AnalysisLoadingScreen() {
     return () => clearTimeout(finish);
   }, [latestScanStatus, navigation, route.params?.scanSessionId, scanSessionId]);
 
+  // Safety net: the scan store always receives a terminal write (the API client
+  // times out at 60s), but if anything ever hangs past that, move the user on
+  // instead of stranding them on the loading screen.
   useEffect(() => {
-    const fallback = setTimeout(() => {
+    const safetyFallback = setTimeout(() => {
       if (didNavigate.current) {
         return;
       }
 
       didNavigate.current = true;
-      uiLog('AnalysisLoadingScreen', 'navigate_result_waiting');
+      uiLog('AnalysisLoadingScreen', 'navigate_result_safety_fallback');
       navigation.navigate('ResultSummaryScreen', { scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined });
-    }, 5200);
+    }, 90_000);
 
-    return () => clearTimeout(fallback);
+    return () => clearTimeout(safetyFallback);
   }, [navigation, route.params?.scanSessionId, scanSessionId]);
 
   const goBackToScan = () => {
@@ -142,6 +147,11 @@ export function AnalysisLoadingScreen() {
           <Text style={styles.subtitle}>
             Finding the homemade version. This can take a few seconds, and Okyo only shows a result it trusts.
           </Text>
+          {elapsedSeconds >= 8 ? (
+            <Text style={styles.stillWorkingText}>
+              Still working on the photo. Clear food and drink scans can take a little longer.
+            </Text>
+          ) : null}
         </View>
 
         <View style={styles.progressCardWrap}>
@@ -244,7 +254,7 @@ const styles = StyleSheet.create({
     color: colors.coral,
     fontSize: 15,
     fontWeight: '700',
-    letterSpacing: 4,
+    letterSpacing: 0,
     marginBottom: 16,
   },
   title: {
@@ -259,6 +269,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 25,
     marginTop: 18,
+  },
+  stillWorkingText: {
+    color: colors.muted,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 21,
+    marginTop: 14,
   },
   progressCardWrap: {
     marginTop: 40,

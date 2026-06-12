@@ -300,7 +300,10 @@ export function RecipeDetailScreen() {
                         itemIndex === group.items.length - 1 ? styles.ingredientRowLast : null,
                       ]}
                     >
-                      <Text style={styles.ingredientName}>{cleanDisplayText(item.name)}</Text>
+                      <IngredientAvatar name={item.name} />
+                      <View style={styles.ingredientTextBlock}>
+                        <Text style={styles.ingredientName}>{cleanDisplayText(item.name)}</Text>
+                      </View>
                       {item.quantity?.trim() ? (
                         <Text style={styles.ingredientQty}>{cleanDisplayText(item.quantity)}</Text>
                       ) : null}
@@ -583,6 +586,77 @@ function InfoCard({ children, title }: InfoCardProps) {
   );
 }
 
+type IngredientVisualTone = 'produce' | 'protein' | 'dairy' | 'grain' | 'sauce' | 'pantry' | 'default';
+
+type IngredientVisual = {
+  label: string;
+  tone: IngredientVisualTone;
+};
+
+function IngredientAvatar({ name }: { name: string }) {
+  const visual = getIngredientVisual(name);
+
+  return (
+    <View style={[styles.ingredientAvatar, getIngredientAvatarToneStyle(visual.tone)]}>
+      <Text style={styles.ingredientAvatarText}>{visual.label}</Text>
+    </View>
+  );
+}
+
+function getIngredientVisual(name: string): IngredientVisual {
+  const normalized = cleanDisplayText(name).toLowerCase();
+
+  // TODO: Prefer ingredient.visualUrl here once the backend owns a safe generated-image pipeline.
+  if (matchesIngredient(normalized, ['chicken', 'beef', 'pork', 'lamb', 'fish', 'salmon', 'shrimp', 'egg', 'tofu', 'turkey'])) {
+    return { label: 'P', tone: 'protein' };
+  }
+  if (matchesIngredient(normalized, ['lettuce', 'greens', 'spinach', 'tomato', 'onion', 'garlic', 'pepper', 'vegetable', 'cilantro', 'basil', 'parsley', 'lemon', 'lime'])) {
+    return { label: 'V', tone: 'produce' };
+  }
+  if (matchesIngredient(normalized, ['milk', 'cream', 'cheese', 'yogurt', 'butter', 'parmesan', 'mozzarella'])) {
+    return { label: 'D', tone: 'dairy' };
+  }
+  if (matchesIngredient(normalized, ['rice', 'pasta', 'noodle', 'bread', 'bun', 'tortilla', 'flour', 'oat', 'grain', 'crust'])) {
+    return { label: 'G', tone: 'grain' };
+  }
+  if (matchesIngredient(normalized, ['sauce', 'dressing', 'mayo', 'mustard', 'ketchup', 'soy', 'vinegar', 'honey', 'syrup'])) {
+    return { label: 'S', tone: 'sauce' };
+  }
+  if (matchesIngredient(normalized, ['salt', 'pepper', 'oil', 'spice', 'seasoning', 'chili', 'paprika', 'cumin'])) {
+    return { label: 'O', tone: 'pantry' };
+  }
+
+  return { label: getIngredientInitial(normalized), tone: 'default' };
+}
+
+function matchesIngredient(value: string, keywords: string[]) {
+  return keywords.some((keyword) => value.includes(keyword));
+}
+
+function getIngredientInitial(value: string) {
+  return value.trim().charAt(0).toUpperCase() || 'I';
+}
+
+function getIngredientAvatarToneStyle(tone: IngredientVisualTone) {
+  switch (tone) {
+    case 'produce':
+      return styles.ingredientAvatarProduce;
+    case 'protein':
+      return styles.ingredientAvatarProtein;
+    case 'dairy':
+      return styles.ingredientAvatarDairy;
+    case 'grain':
+      return styles.ingredientAvatarGrain;
+    case 'sauce':
+      return styles.ingredientAvatarSauce;
+    case 'pantry':
+      return styles.ingredientAvatarPantry;
+    case 'default':
+    default:
+      return styles.ingredientAvatarDefault;
+  }
+}
+
 type PrimaryActionProps = {
   label: string;
   onPress: () => void;
@@ -765,7 +839,7 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     fontSize: 34,
     fontWeight: '700',
-    letterSpacing: -0.6,
+    letterSpacing: 0,
     lineHeight: 39,
     minWidth: 0,
   },
@@ -895,7 +969,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f3e6d2',
     borderBottomWidth: 1,
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
     justifyContent: 'space-between',
     minHeight: 44,
     paddingVertical: 8,
@@ -905,10 +979,13 @@ const styles = StyleSheet.create({
   },
   ingredientName: {
     color: colors.charcoal,
-    flex: 1,
     fontSize: 15,
     fontWeight: '600',
     lineHeight: 20,
+    minWidth: 0,
+  },
+  ingredientTextBlock: {
+    flex: 1,
     minWidth: 0,
   },
   ingredientQty: {
@@ -916,6 +993,39 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     textAlign: 'right',
+  },
+  ingredientAvatar: {
+    alignItems: 'center',
+    borderRadius: 13,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
+  },
+  ingredientAvatarText: {
+    color: colors.charcoal,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  ingredientAvatarProduce: {
+    backgroundColor: colors.greenSoft,
+  },
+  ingredientAvatarProtein: {
+    backgroundColor: colors.coralSoft,
+  },
+  ingredientAvatarDairy: {
+    backgroundColor: '#f8efd8',
+  },
+  ingredientAvatarGrain: {
+    backgroundColor: '#f1e4cf',
+  },
+  ingredientAvatarSauce: {
+    backgroundColor: '#f7e7df',
+  },
+  ingredientAvatarPantry: {
+    backgroundColor: '#eee7dc',
+  },
+  ingredientAvatarDefault: {
+    backgroundColor: '#f5eee4',
   },
   infoCard: {
     backgroundColor: colors.cream,

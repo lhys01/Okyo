@@ -1,5 +1,6 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { BlurView } from 'expo-blur';
 import {
   Book,
   Camera,
@@ -10,7 +11,7 @@ import {
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors } from '../components/OkyoUI';
+import { colors, fontFamilies } from '../components/OkyoUI';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
@@ -138,6 +139,7 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
   return (
     <View pointerEvents="box-none" style={[styles.tabBarRoot, { height: 122 + bottomInset }]}>
       <View style={[styles.tabBarPill, { bottom: bottomInset + 8 }]}>
+        <BlurView intensity={34} pointerEvents="none" style={styles.tabBarBlur} tint="light" />
         <View style={styles.sideTabRow}>
           {visibleTabOrder.slice(0, 2).map(renderSideTab)}
           <View pointerEvents="none" style={styles.scanGap} />
@@ -178,6 +180,7 @@ export function MainTabs() {
       initialRouteName="HomeScreen"
       tabBar={(props) => <FloatingTabBar {...props} />}
       screenOptions={{
+        animation: 'shift',
         headerShown: false,
         sceneStyle: { backgroundColor: colors.background },
         tabBarAllowFontScaling: false,
@@ -201,8 +204,10 @@ const styles = StyleSheet.create({
   },
   tabBarPill: {
     alignItems: 'center',
-    backgroundColor: '#ffffff',
+    backgroundColor: 'rgba(255, 255, 255, 0.62)',
+    borderColor: 'rgba(255, 255, 255, 0.76)',
     borderRadius: 34,
+    borderWidth: StyleSheet.hairlineWidth,
     height: 76,
     justifyContent: 'center',
     left: 14,
@@ -212,9 +217,20 @@ const styles = StyleSheet.create({
     right: 14,
     shadowColor: '#3a2d1d',
     shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.1,
-    shadowRadius: 22,
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
     elevation: 10,
+  },
+  // Glass layer behind the tab row. On Android BlurView falls back to a
+  // translucent fill, which still reads correctly against the ivory canvas.
+  tabBarBlur: {
+    borderRadius: 34,
+    bottom: 0,
+    left: 0,
+    overflow: 'hidden',
+    position: 'absolute',
+    right: 0,
+    top: 0,
   },
   sideTabRow: {
     alignItems: 'center',
@@ -235,6 +251,7 @@ const styles = StyleSheet.create({
   },
   sideLabel: {
     color: inactiveGray,
+    fontFamily: fontFamilies.bold,
     fontSize: 10.5,
     fontWeight: '600',
     includeFontPadding: false,
@@ -262,7 +279,7 @@ const styles = StyleSheet.create({
   scanCircle: {
     alignItems: 'center',
     backgroundColor: colors.coral,
-    borderColor: '#ffffff',
+    borderColor: 'rgba(255, 255, 255, 0.92)',
     borderRadius: 40,
     borderWidth: 4,
     height: 76,
@@ -275,6 +292,7 @@ const styles = StyleSheet.create({
     elevation: 14,
   },
   scanLabel: {
+    fontFamily: fontFamilies.bold,
     fontSize: 12,
     fontWeight: '700',
     includeFontPadding: false,

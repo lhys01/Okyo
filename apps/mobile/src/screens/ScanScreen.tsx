@@ -100,7 +100,11 @@ export function ScanScreen() {
         );
         if (shouldUseSuccessPath && result.scan) {
           const selectedRecipe = getScanRecipeForMode(scanRecipes, selectedMode, result.recipe);
-          const storedStatus = selectedRecipe || foodEvidence ? 'success' : status;
+          const storedStatus = status === 'partial'
+            ? 'partial'
+            : selectedRecipe || foodEvidence
+              ? 'success'
+              : status;
           writeLatestScanSession({
             scanSessionId,
             latestScanStatus: storedStatus,
@@ -513,6 +517,9 @@ async function getProcessedImage(asset: ImagePicker.ImagePickerAsset) {
     { compress: 0.78, maxWidth: maxProcessedImageWidth },
     { compress: 0.64, maxWidth: 1200 },
     { compress: 0.52, maxWidth: 1000 },
+    { compress: 0.42, maxWidth: 850 },
+    { compress: 0.34, maxWidth: 720 },
+    { compress: 0.28, maxWidth: 600 },
   ];
   let latestResult: {
     base64?: string;
@@ -1088,7 +1095,7 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     fontSize: 40,
     fontWeight: '700',
-    letterSpacing: -0.8,
+    letterSpacing: 0,
     lineHeight: 46,
     maxWidth: 360,
   },
@@ -1172,7 +1179,7 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     fontSize: 20,
     fontWeight: '600',
-    letterSpacing: -0.2,
+    letterSpacing: 0,
     marginBottom: 12,
   },
   howCard: {

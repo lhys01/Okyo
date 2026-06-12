@@ -306,6 +306,13 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
     const fallbackDetails = getFallbackLogDetails(error, config, config.openRouterVisionModel);
     logScanDebug('api_openrouter_call_error', fallbackDetails);
     logAi('fallback_ai', fallbackDetails);
+    if (hasRealUploadedImage(input)) {
+      logScanDebug('api_scan_real_image_no_mock_vision_fallback', {
+        fallbackReason: getFallbackReason(fallbackDetails),
+        source: input.source,
+      });
+      throw error;
+    }
     return analyzeFoodImageWithMock(input, 'fallback_ai', getFallbackReason(fallbackDetails));
   }
 }
@@ -366,6 +373,13 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
   const config = getAiConfig();
   const uploadedImage = hasRealUploadedImage(input);
   const providerVisible = isProviderVisibleImage(input.image);
+  logScanDebug('api_scan_reliability_start', {
+    source: input.source,
+    uploadedImage,
+    imageProviderVisible: providerVisible,
+    imageConversionError: input.image?.conversionError,
+    mode: input.mode,
+  });
   logScanDebug('api_scan_provider_visible_start', {
     imageConversionError: input.image?.conversionError,
     imageDataUrlExists: Boolean(input.image?.dataUrl),
@@ -459,6 +473,19 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
 
   try {
     const analysis = await analyzeFoodImage(input);
+    const foodDrinkVisible = Boolean(analysis.isFoodImage || isFoodScanState(analysis.scanState));
+    logScanDebug('api_scan_vision_result', {
+      confidence: analysis.confidence,
+      dishName: analysis.dishName,
+      foodDrinkVisible,
+      scanState: analysis.scanState,
+    });
+    logScanDebug('api_scan_food_drink_visible', {
+      visible: foodDrinkVisible,
+      scanState: analysis.scanState,
+    });
+    logScanDebug('api_scan_first_dish_name', { dishName: analysis.dishName });
+    logScanDebug('api_scan_first_confidence', { confidence: analysis.confidence });
     const analysisRejection = getAnalysisRejection(analysis, uploadedImage);
     if (analysisRejection) {
       const result = createRejectedScan({
@@ -484,13 +511,24 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       return result;
     }
 
+    logScanDebug('api_scan_recipe_start', {
+      dishName: analysis.dishName,
+      mode: input.mode,
+      scanState: analysis.scanState,
+    });
     const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode });
     const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
+    logScanDebug('api_scan_recipe_result', {
+      aiSource: generatedRecipe.aiSource,
+      fallbackReason: recipeFallbackReason,
+      recipeGenerated: generatedRecipe.aiSource === 'openrouter_ai' && Boolean(generatedRecipe.recipe || generatedRecipe.recipes?.length),
+      recipeId: generatedRecipe.recipeId,
+      recipesLength: generatedRecipe.recipes?.length ?? 0,
+    });
 
     if (
       uploadedImage &&
-      generatedRecipe.aiSource !== 'openrouter_ai' &&
-      !canUseFallbackRecipeForUploadedImage(generatedRecipe)
+      generatedRecipe.aiSource !== 'openrouter_ai'
     ) {
       const result = createPartialScan({
         analysis,
@@ -511,7 +549,9 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       return result;
     }
 
-    const recipe = generatedRecipe.recipe ?? getRecipeById(generatedRecipe.recipeId) ?? fallback.recipe;
+    const recipe = generatedRecipe.recipe ?? (
+      uploadedImage ? undefined : getRecipeById(generatedRecipe.recipeId) ?? fallback.recipe
+    );
     const recipes = getGeneratedRecipes(generatedRecipe, recipe);
 
     if (!recipe) {
@@ -1091,14 +1131,6 @@ function getGeneratedRecipes(generatedRecipe: GeneratedRecipeOutput, selectedRec
     return generatedRecipe.recipes;
   }
   return selectedRecipe ? [selectedRecipe] : undefined;
-}
-
-function canUseFallbackRecipeForUploadedImage(generatedRecipe: GeneratedRecipeOutput) {
-  return Boolean(
-    generatedRecipe.aiSource === 'fallback_ai' &&
-    generatedRecipe.recipe?.id.startsWith('starter-') &&
-    generatedRecipe.recipes?.every((recipe) => recipe.id.startsWith('starter-')),
-  );
 }
 
 function getScanById(scanId: string) {

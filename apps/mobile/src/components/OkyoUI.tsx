@@ -3,9 +3,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { getSafeNumber, getSafeText, isRecipeMode } from '../mocks';
 import type { Recipe, RecipeMode, RestaurantPack } from '../mocks';
-import { colors, radius, shadows, spacing, typography } from '../theme/okyoTheme';
+import { colors, fontFamilies, radius, shadows, spacing, typography } from '../theme/okyoTheme';
 
-export { colors, spacing, typography };
+export { colors, fontFamilies, spacing, typography };
 
 type ScreenContainerProps = {
   children: ReactNode;
@@ -272,7 +272,7 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 1.2,
+    letterSpacing: 0,
     marginBottom: 10,
     textTransform: 'uppercase',
   },
@@ -280,14 +280,14 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     fontSize: 34,
     fontWeight: '700',
-    letterSpacing: -0.6,
+    letterSpacing: 0,
     lineHeight: 40,
   },
   emptyTitle: {
     color: colors.charcoal,
     fontSize: 30,
     fontWeight: '700',
-    letterSpacing: -0.5,
+    letterSpacing: 0,
     lineHeight: 36,
     textAlign: 'center',
   },
@@ -314,9 +314,10 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: '#fffdf8',
+    fontFamily: fontFamilies.extraBold,
     fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: -0.2,
+    fontWeight: '800',
+    letterSpacing: 0,
   },
   secondaryButton: {
     alignItems: 'center',
@@ -329,8 +330,9 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '800',
   },
   fullWidth: {
     width: '100%',
@@ -389,14 +391,14 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 11,
     fontWeight: '600',
-    letterSpacing: 0.8,
+    letterSpacing: 0,
     textTransform: 'uppercase',
   },
   statValue: {
     color: colors.charcoal,
     fontSize: 20,
     fontWeight: '800',
-    letterSpacing: -0.3,
+    letterSpacing: 0,
     marginTop: 7,
   },
   statValueSavings: {
@@ -445,7 +447,7 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     fontSize: 20,
     fontWeight: '600',
-    letterSpacing: -0.2,
+    letterSpacing: 0,
     lineHeight: 26,
   },
   cardBody: {

@@ -40,38 +40,50 @@ export const fontSizes = {
   caption: 13,
 };
 
+export const fontFamilies = {
+  display: 'Baloo2_800ExtraBold',
+  body: 'Nunito_400Regular',
+  bold: 'Nunito_700Bold',
+  extraBold: 'Nunito_800ExtraBold',
+} as const;
+
 // Editorial type presets. Spread into StyleSheet entries:
 //   title: { ...typography.title }
 export const typography = {
   display: {
     color: colors.charcoal,
+    fontFamily: fontFamilies.display,
     fontSize: 40,
-    fontWeight: '700',
-    letterSpacing: -0.8,
+    fontWeight: '800',
+    letterSpacing: 0,
     lineHeight: 46,
   },
   title: {
     color: colors.charcoal,
+    fontFamily: fontFamilies.display,
     fontSize: 28,
-    fontWeight: '700',
-    letterSpacing: -0.4,
+    fontWeight: '800',
+    letterSpacing: 0,
     lineHeight: 34,
   },
   heading: {
     color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 20,
-    fontWeight: '600',
-    letterSpacing: -0.2,
+    fontWeight: '800',
+    letterSpacing: 0,
     lineHeight: 26,
   },
   body: {
     color: colors.body,
+    fontFamily: fontFamilies.body,
     fontSize: 16,
     fontWeight: '400' as const,
     lineHeight: 24,
   },
   caption: {
     color: colors.muted,
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
     fontWeight: '500',
     lineHeight: 18,

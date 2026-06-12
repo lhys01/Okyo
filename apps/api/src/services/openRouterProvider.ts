@@ -164,8 +164,30 @@ export async function analyzeFoodImageWithOpenRouter(input: {
     model: input.config.openRouterVisionModel,
   });
 
-  const firstOutput = await callVisionOnce(input, getVisionPrompt(input.image, input.mode), 'vision');
+  let firstOutput: z.infer<typeof openRouterVisionOutputSchema>;
+  try {
+    firstOutput = await callVisionOnce(input, getVisionPrompt(input.image, input.mode), 'vision');
+  } catch (error) {
+    if (!isRetryableVisionOutputError(error)) {
+      throw error;
+    }
+
+    const retryReason = getOpenRouterErrorReason(error);
+    logOpenRouterDebug('openrouter_scan_quality_retry', {
+      retryReason,
+      retryPrompt: 'compact_vision',
+      stage: 'vision_initial_output',
+    });
+    await waitBeforeRetry();
+    firstOutput = await callVisionOnce(input, getCompactVisionRetryPrompt(input.image, input.mode), 'vision_initial_retry');
+    logOpenRouterDebug('openrouter_scan_quality_retry_result', {
+      retryReason,
+      retryDishName: firstOutput.dishName,
+      retryScanState: firstOutput.scanState,
+    });
+  }
   const firstQuality = evaluateVisionQuality(firstOutput);
+  const retryReason = getVisionQualityRetryReason(firstQuality);
   logOpenRouterDebug('openrouter_scan_quality_check', {
     dishName: firstOutput.dishName,
     scanState: firstOutput.scanState,
@@ -173,7 +195,9 @@ export async function analyzeFoodImageWithOpenRouter(input: {
     foodVisible: firstQuality.foodVisible,
     genericName: firstQuality.generic,
     drinkMismatch: firstQuality.drinkMismatch,
+    lowVisibleFoodConfidence: firstQuality.lowVisibleFoodConfidence,
     needsRetry: firstQuality.needsRetry,
+    retryReason,
   });
 
   if (!firstQuality.needsRetry) {
@@ -192,10 +216,12 @@ export async function analyzeFoodImageWithOpenRouter(input: {
     const useRetry = retryQuality.foodVisible && !retryQuality.generic && !retryQuality.drinkMismatch;
     logOpenRouterDebug('openrouter_scan_quality_retry', {
       originalDishName: firstOutput.dishName,
+      retryReason,
       retryDishName: retryOutput.dishName,
       finalDishName: useRetry ? retryOutput.dishName : firstOutput.dishName,
       retryGeneric: retryQuality.generic,
       retryDrinkMismatch: retryQuality.drinkMismatch,
+      retryLowVisibleFoodConfidence: retryQuality.lowVisibleFoodConfidence,
       retryConfidencePercent: retryQuality.confidencePercent,
       retryScanState: retryOutput.scanState,
       usedRetry: useRetry,
@@ -205,10 +231,37 @@ export async function analyzeFoodImageWithOpenRouter(input: {
   } catch (error) {
     logOpenRouterDebug('openrouter_scan_quality_retry_failed', {
       originalDishName: firstOutput.dishName,
+      retryReason,
       message: error instanceof OpenRouterProviderError ? error.failure.reason : 'unknown',
     });
     return firstOutput;
   }
+}
+
+// Timeouts are excluded: the first attempt already spent the full timeout budget,
+// and the mobile client aborts at 60s total. Everything else transient is worth
+// one retry. Free-tier models rate-limit (HTTP 429) and hiccup often.
+const retryableVisionOutputReasons = new Set<OpenRouterFailureReason>([
+  'openrouter_empty_content',
+  'openrouter_http_error',
+  'openrouter_invalid_json',
+  'openrouter_invalid_schema',
+  'openrouter_network_error',
+  'openrouter_output_truncated',
+  'openrouter_unknown_error',
+]);
+
+function isRetryableVisionOutputError(error: unknown) {
+  return error instanceof OpenRouterProviderError && retryableVisionOutputReasons.has(error.failure.reason);
+}
+
+// Short pause before retrying so rate-limited calls get a fresh window.
+function waitBeforeRetry(ms = 1500) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function getOpenRouterErrorReason(error: unknown) {
+  return error instanceof OpenRouterProviderError ? error.failure.reason : 'unknown';
 }
 
 async function callVisionOnce(
@@ -291,6 +344,7 @@ type VisionQuality = {
   drinkMismatch: boolean;
   foodVisible: boolean;
   generic: boolean;
+  lowVisibleFoodConfidence: boolean;
   needsRetry: boolean;
 };
 
@@ -313,9 +367,27 @@ function evaluateVisionQuality(output: z.infer<typeof openRouterVisionOutputSche
   const looksLikeDrink = drinkClueRegex.test(supportText);
   const nameSaysPlate = /\b(plate|platter)\b/.test((output.dishName ?? '').toLowerCase());
   const drinkMismatch = looksLikeDrink && nameSaysPlate;
-  const needsRetry = foodVisible && (drinkMismatch || (generic && confidencePercent < 88));
+  const lowVisibleFoodConfidence = foodVisible && confidencePercent > 0 && confidencePercent < 40;
+  const needsRetry = foodVisible && (drinkMismatch || lowVisibleFoodConfidence || (generic && confidencePercent < 88));
 
-  return { confidencePercent, drinkMismatch, foodVisible, generic, needsRetry };
+  return { confidencePercent, drinkMismatch, foodVisible, generic, lowVisibleFoodConfidence, needsRetry };
+}
+
+function getVisionQualityRetryReason(quality: VisionQuality) {
+  if (!quality.needsRetry) {
+    return undefined;
+  }
+  if (quality.drinkMismatch) {
+    return 'drink_named_as_plate';
+  }
+  if (quality.generic) {
+    return 'visible_food_generic_name';
+  }
+  if (quality.lowVisibleFoodConfidence) {
+    return 'visible_food_low_confidence';
+  }
+
+  return 'vision_quality';
 }
 
 function getLooseConfidencePercent(value: number | string | undefined) {
@@ -340,7 +412,15 @@ export async function generateRecipeWithOpenRouter(input: {
   config: AiConfig;
   mode: RecipeMode;
 }) {
-  const retryReasons: OpenRouterFailureReason[] = ['openrouter_output_truncated', 'openrouter_invalid_json'];
+  const retryReasons: OpenRouterFailureReason[] = [
+    'openrouter_empty_content',
+    'openrouter_http_error',
+    'openrouter_invalid_json',
+    'openrouter_invalid_schema',
+    'openrouter_network_error',
+    'openrouter_output_truncated',
+    'openrouter_unknown_error',
+  ];
 
   try {
     const json = await callOpenRouterJson({
@@ -385,6 +465,7 @@ export async function generateRecipeWithOpenRouter(input: {
       retryMaxTokens: 2200,
     });
 
+    await waitBeforeRetry();
     const retryJson = await callOpenRouterJson({
       config: input.config,
       messages: [
@@ -552,6 +633,22 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
     'Use cautious estimates. Never present food identification, cost, or ingredients as exact.',
     'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
     'If no actual image is available, return a cautious low-confidence result based only on metadata.',
+    `Requested recipe mode: ${mode}.`,
+    `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
+  ].join('\n');
+}
+
+function getCompactVisionRetryPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode) {
+  return [
+    'Analyze this image for Okyo. Food and drinks are valid scans.',
+    'Return ONLY valid JSON. No markdown. No explanation.',
+    'Use exactly this JSON shape:',
+    visionJsonContract,
+    'First decide whether visible food or drink exists. If no food or drink is visible, use scanState not_food. If the photo is too blurry or dark to identify anything, use too_unclear.',
+    'If any food or drink is visible, do not hard reject. Give the most specific honest dish or drink name supported by the image, with lower confidence if uncertain.',
+    'Drinks must be named as drinks, such as smoothie, latte, shake, juice, boba, coffee, or matcha. Never call a drink a plate or bowl.',
+    'Avoid generic names like Food Plate, Restaurant Plate, Meal, Dish, Bowl, Drink, or Unknown Dish when a more specific visible guess is possible.',
+    'Set restaurantPriceEstimate to 0 unless a visible menu, receipt, or price is in the image.',
     `Requested recipe mode: ${mode}.`,
     `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
   ].join('\n');
