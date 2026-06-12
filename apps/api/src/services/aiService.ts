@@ -1166,7 +1166,9 @@ function getRecipeVariant(output: OpenRouterRecipeOutput, mode: RecipeMode) {
 
 export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const confidence = normalizeConfidence(output.confidence);
-  const restaurantPriceEstimate = normalizeRestaurantPrice(output.restaurantPriceEstimate);
+  // A restaurant price guessed from a food photo is not real data. Savings must come
+  // from a user-entered price, so photo-derived price estimates are always dropped.
+  const restaurantPriceEstimate = 0;
   const homemadeCostEstimate = normalizeHomemadeCost(output.homemadeCostEstimate, restaurantPriceEstimate);
   const explicitScanState = normalizeScanState(output.scanState);
   const foodDetected = normalizeBoolean(output.foodDetected, false);
@@ -1647,8 +1649,9 @@ function getRecipeTitle(value: string, dishName: string, mode: RecipeMode) {
     : mode === 'Healthy'
       ? `Lighter ${dishName} Inspired-by`
       : `${dishName} Inspired-by`;
+  const safeValue = typeof value === 'string' && !isPlaceholderText(value) ? value : '';
 
-  return ensureInspiredTitle(getShortText(value, fallbackTitle, 90));
+  return ensureInspiredTitle(getShortText(safeValue, fallbackTitle, 90));
 }
 
 type CommonDishKind = 'burger' | 'pizza' | 'noodles' | 'pasta' | 'bowl' | 'taco' | 'sandwich';
@@ -2067,16 +2070,18 @@ function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mod
     ? analysis.likelyIngredients
     : ['main ingredient', 'sauce base', 'seasoning'];
 
-  const ingredients = getSafeList(values, fallback, 10).map(toRecipeIngredient);
-  return ensureCoreIngredients(ingredients, analysis, mode).slice(0, 10);
+  const ingredients = getSafeList(values, fallback, 12).map(toRecipeIngredient);
+  return ensureCoreIngredients(ingredients, analysis, mode).slice(0, 12);
 }
 
 function getRecipeSteps(values: OpenRouterRecipeVariant['steps'], dishName: string) {
   const fallbackSteps = getDefaultRecipeSteps(dishName);
   const cleanValues = (Array.isArray(values) ? values : [])
     .map(getStepText)
-    .filter(Boolean);
-  const steps = getSafeList(cleanValues, fallbackSteps, 7).map(cleanRecipeCopy);
+    .map((value) => getShortText(value, '', 240))
+    .filter((value) => Boolean(value) && !isPlaceholderText(value));
+  const source = cleanValues.length > 0 ? cleanValues : fallbackSteps;
+  const steps = [...new Set(source)].slice(0, 16).map(cleanRecipeCopy);
   const wordCount = steps.join(' ').split(/\s+/).filter(Boolean).length;
   const shouldUseFallback = steps.length < 5 || wordCount / Math.max(steps.length, 1) < 10;
 
@@ -2091,7 +2096,7 @@ function getStructuredSteps(
   const aiSteps = (Array.isArray(values) ? values : [])
     .map((value, index) => toStructuredStep(value, steps[index], analysis))
     .filter((step): step is RecipeStep => Boolean(step?.text))
-    .slice(0, 7);
+    .slice(0, 16);
 
   if (aiSteps.length >= 5) {
     return ensureStructuredStepFallbacks(aiSteps, analysis);
@@ -2985,7 +2990,7 @@ function toRecipeIngredient(value: string): RecipeIngredient {
     };
   }
 
-  const quantityMatch = withoutBadAsNeeded.match(/^((?:\d+(?:\.\d+)?|\d+\/\d+|\d+\s+\d+\/\d+|one|two|three|four|five|six|a|an)\s*(?:cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|ml|clove|cloves|slice|slices|can|cans|bunch|bunches|stalk|stalks|piece|pieces|large|medium|small)?)\s+(.+)$/i);
+  const quantityMatch = withoutBadAsNeeded.match(/^((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|one|two|three|four|five|six|a|an)\s*(?:cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|ml|clove|cloves|slice|slices|can|cans|bunch|bunches|stalk|stalks|piece|pieces|large|medium|small)?)\s+(.+)$/i);
   if (quantityMatch) {
     const name = cleanIngredientName(quantityMatch[2]);
     return {
@@ -3149,10 +3154,17 @@ function ensureInspiredCopy(value: string) {
 function getSafeList(values: string[] | undefined, fallback: string[], maxItems: number) {
   const cleanValues = (Array.isArray(values) ? values : [])
     .map((value) => getShortText(value, '', 120))
-    .filter(Boolean);
+    .filter((value) => Boolean(value) && !isPlaceholderText(value));
   const source = cleanValues.length > 0 ? cleanValues : fallback;
 
   return [...new Set(source)].slice(0, maxItems);
+}
+
+// Catches prompt-echo junk like "...", "...x6", or symbol-only strings so it
+// never reaches the app as a recipe title, step, or ingredient.
+function isPlaceholderText(value: string) {
+  const letterCount = (value.match(/[a-zA-Z]/g) ?? []).length;
+  return /\.{3}|…/.test(value) || letterCount < 3;
 }
 
 function getSafeTextValue(value: unknown, fallback: string) {

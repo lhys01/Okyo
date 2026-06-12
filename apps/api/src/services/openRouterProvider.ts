@@ -81,23 +81,29 @@ const recipeStepSchema = z.object({
   }).optional(),
 });
 
+// Models sometimes return list-like text fields as arrays; coerce instead of failing the whole recipe.
+const flexibleText = z.union([z.string(), z.array(z.string())])
+  .optional()
+  .default('')
+  .transform((value) => (Array.isArray(value) ? value.filter(Boolean).join(', ') : value));
+
 const recipeVariantSchema = z.object({
-  title: z.string().optional().default(''),
-  description: z.string().optional().default(''),
-  mainIngredientsSummary: z.string().optional().default(''),
+  title: flexibleText,
+  description: flexibleText,
+  mainIngredientsSummary: flexibleText,
   equipment: z.array(z.string()).optional().default([]),
-  bestFor: z.string().optional().default(''),
+  bestFor: flexibleText,
   ingredients: z.array(z.string()).optional().default([]),
   ingredientGroups: z.array(z.object({
     component: z.string().optional().default(''),
     items: z.array(z.string()).optional().default([]),
   })).optional().default([]),
   steps: z.array(z.union([z.string(), recipeStepSchema])).optional().default([]),
-  avoidMistake: z.string().optional().default(''),
-  mistakeWarning: z.string().optional().default(''),
+  avoidMistake: flexibleText,
+  mistakeWarning: flexibleText,
   substitutions: z.array(z.string()).optional().default([]),
-  storageAndReheating: z.string().optional().default(''),
-  storage: z.string().optional().default(''),
+  storageAndReheating: flexibleText,
+  storage: flexibleText,
   groceryItems: z.array(z.object({
     name: z.string().optional().default(''),
     quantity: z.string().optional().default(''),
@@ -111,11 +117,11 @@ const recipeVariantSchema = z.object({
     term: z.string().optional().default(''),
     meaning: z.string().optional().default(''),
   })).optional().default([]),
-  pantryNote: z.string().optional().default(''),
-  prepTime: z.string().optional().default(''),
-  cookTime: z.string().optional().default(''),
-  totalTime: z.string().optional().default(''),
-  activeTime: z.string().optional().default(''),
+  pantryNote: flexibleText,
+  prepTime: z.union([z.string(), z.number()]).optional().default('').transform(String),
+  cookTime: z.union([z.string(), z.number()]).optional().default('').transform(String),
+  totalTime: z.union([z.string(), z.number()]).optional().default('').transform(String),
+  activeTime: z.union([z.string(), z.number()]).optional().default('').transform(String),
   servings: z.union([z.number(), z.string()]).optional(),
   skillLevel: z.string().optional().default(''),
   difficulty: z.string().optional().default(''),
@@ -225,8 +231,10 @@ export async function generateRecipeWithOpenRouter(input: {
         },
       ],
       model: input.config.openRouterTextModel,
-      // Single-variant recipe fits in ~1500 tokens; cap at 1800 to avoid reasoning-model length cuts
-      maxTokens: Math.min(input.config.maxOutputTokens, 1800),
+      // Single-variant beginner-detail recipe fits in ~1800-2200 tokens. Reasoning models also
+      // spend budget thinking before they answer, so 3600 leaves room for both. Truncation
+      // still falls back to the compact retry below.
+      maxTokens: Math.min(input.config.maxOutputTokens, 3600),
       stage: 'recipe',
     });
 
@@ -249,7 +257,7 @@ export async function generateRecipeWithOpenRouter(input: {
       firstReason: firstError.failure.reason,
       model: input.config.openRouterTextModel,
       retryPrompt: 'compact',
-      retryMaxTokens: 1200,
+      retryMaxTokens: 2200,
     });
 
     const retryJson = await callOpenRouterJson({
@@ -265,7 +273,7 @@ export async function generateRecipeWithOpenRouter(input: {
         },
       ],
       model: input.config.openRouterTextModel,
-      maxTokens: 1200,
+      maxTokens: 2200,
       stage: 'recipe_retry',
     });
 
@@ -308,6 +316,9 @@ async function callOpenRouterJson(input: {
         max_tokens: input.maxTokens,
         messages: input.messages,
         model: input.model,
+        // Keep reasoning models from spending the whole budget thinking.
+        // OpenRouter ignores this for models without reasoning support.
+        reasoning: { enabled: false },
         response_format: { type: 'json_object' },
         temperature: 0.2,
       }),
@@ -430,9 +441,14 @@ function getRecipePrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
     `Return exactly: {"selectedMode":"${mode}","${modeKey}":{...recipe fields...}}`,
     `Include ONLY "selectedMode" and "${modeKey}". Do NOT include other mode keys.`,
     'Recipe fields: title, description, mainIngredientsSummary, equipment, bestFor, ingredients, steps, avoidMistake, substitutions, storageAndReheating, pantryNote, prepTime, cookTime, totalTime, servings, skillLevel, groceryItems, spicePairings.',
-    'Strict limits: ingredients max 8, steps 5-7 (plain strings), substitutions max 2, equipment max 4, groceryItems max 8, spicePairings max 2.',
-    'Text limits: description 1 sentence. Each step max 20 words. avoidMistake 1 sentence. storageAndReheating 1 sentence.',
-    'Steps are plain strings starting with action verbs. Include time and visual cue. Use 160°F/71°C for ground meat, 165°F/74°C for chicken.',
+    'Strict limits: ingredients 6-12, steps 8-14 (plain strings), substitutions max 3, equipment max 5, groceryItems max 10, spicePairings max 2.',
+    'Ingredients: each is one string that starts with an exact amount, then a normal grocery-store name, like "8 oz rigatoni", "1 tablespoon olive oil", "2 cloves garlic, minced", "1/2 cup tomato sauce". Never vague items like "sauce", "seasoning", or "protein". Every ingredient that needs cooking must appear in the steps.',
+    'Steps: write for a total beginner. Each step is one plain string under 30 words, starts with an action verb, and covers ONE action. When an ingredient is added, repeat its exact amount. Include pan heat level, time, and a visual cue, like "Add the diced onion and cook for 3-4 minutes, stirring often, until soft and lightly golden."',
+    'Never write vague steps like "Make the sauce", "Cook until done", "Prepare the ingredients", or "Season to taste" without naming the seasoning and amount.',
+    'Very simple dishes (salads, sandwiches, toast) may use 6-8 steps instead. Do not pad with filler steps.',
+    'Meat and seafood steps must include the safe internal temperature: 165°F/74°C chicken, 160°F/71°C ground meat, 145°F/63°C pork or fish.',
+    'groceryItems use store-buyable units: {"name":"heavy cream","quantity":"1 small carton","category":"Dairy"}.',
+    'Text limits: description 1-2 sentences. avoidMistake 1 sentence. storageAndReheating 1 sentence. pantryNote 1 sentence.',
     'Never use the word copycat. Use inspired-by or restaurant-style.',
     'Grocery categories: Produce, Protein, Bakery / Bread, Dairy, Sauces / Condiments, Pantry, Spices, Noodles / Grains, Garnish.',
     'No nutrition claims. No unsafe cooking advice. Never call it official.',
@@ -455,9 +471,9 @@ function getCompactRecipeRetryPrompt(analysis: FoodImageAnalysis, mode: RecipeMo
   const modeKey = getModeKey(mode);
 
   return [
-    'JSON only. No markdown. No explanations.',
-    `Return: {"selectedMode":"${mode}","${modeKey}":{"title":"...","description":"...","ingredients":["...x6"],"steps":["...x5"],"prepTime":"...","cookTime":"...","totalTime":"...","servings":2,"skillLevel":"Easy","avoidMistake":"...","substitutions":["...x2"],"storageAndReheating":"...","pantryNote":"...","groceryItems":[],"spicePairings":[]}}`,
-    'ingredients: max 6 items. steps: exactly 5 plain strings, each under 18 words. All other text brief.',
+    'JSON only. No markdown. No explanations. Write real recipe text in every field; never output placeholder dots.',
+    `Return one object with two keys: "selectedMode" set to "${mode}", and "${modeKey}" set to a recipe object.`,
+    `The "${modeKey}" recipe object has: title (string), description (1 sentence), ingredients (6 strings, each an exact amount plus grocery name like "8 oz rigatoni"), steps (6-8 plain strings, each under 22 words, beginner-friendly with time and visual cue), prepTime, cookTime, totalTime, servings (number), skillLevel, avoidMistake (1 sentence), substitutions (2 strings), storageAndReheating (1 sentence), pantryNote (1 sentence), groceryItems (empty array), spicePairings (empty array).`,
     `Dish: ${analysis.dishName}. Mode: ${mode}. Visible: ${analysis.visibleIngredients.slice(0, 4).join(', ')}.`,
   ].join('\n');
 }
@@ -550,6 +566,15 @@ function extractAssistantTextFromOpenRouterResponse(response: unknown, config: A
     if (text) {
       return text;
     }
+  }
+
+  // A length-cut response with no final content means the model spent the whole
+  // budget reasoning. Its reasoning text is not a finished answer — treat as
+  // truncated so the compact retry (or the honest failure path) takes over.
+  if (shape.finishReason === 'length') {
+    throw createOpenRouterError(config, model, 'openrouter_output_truncated', {
+      openRouterErrorMessage: 'Model hit the token limit before returning final content.',
+    });
   }
 
   const reasoning = message?.reasoning;

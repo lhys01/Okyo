@@ -87,8 +87,14 @@ export function RecipeDetailScreen() {
   const displaySteps = getRecipeDisplaySteps(recipe);
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
   const displayDescription = cleanDisplayText(recipe?.description ?? '');
-  const ingredientPreview = getIngredientPreview(recipe);
   const ingredientCount = getIngredientCount(recipe);
+  const fallbackIngredients = (Array.isArray(recipe?.ingredients) ? recipe.ingredients : [])
+    .filter((ingredient) => ingredient.name.trim());
+  const displayIngredientGroups = ingredientGroups.length > 0
+    ? ingredientGroups
+    : fallbackIngredients.length > 0
+      ? [{ component: '', items: fallbackIngredients }]
+      : [];
   const totalTime = recipe ? recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes : 0;
   const perServingCost = recipe && recipe.servings > 0 ? recipe.estimatedHomemadeCost / recipe.servings : null;
   const flavorNotes = getFlavorNotes(recipe, spicePairings);
@@ -278,14 +284,30 @@ export function RecipeDetailScreen() {
 
             <View style={styles.previewSection}>
               <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionSmallTitle}>What you'll need</Text>
-                <Text style={styles.sectionCount}>{ingredientCount} ingredients</Text>
+                <Text style={styles.sectionSmallTitle}>Ingredients</Text>
+                <Text style={styles.sectionCount}>{ingredientCount} items</Text>
               </View>
-              <View style={styles.ingredientPreviewRow}>
-                {ingredientPreview.map((ingredient) => (
-                  <IngredientPreviewCard key={`${recipe.id}-${ingredient.name}`} ingredient={ingredient} />
-                ))}
-              </View>
+              {displayIngredientGroups.map((group) => (
+                <View key={`${recipe.id}-${group.component || 'all'}`} style={styles.ingredientGroupCard}>
+                  {group.component ? (
+                    <Text style={styles.ingredientGroupTitle}>{group.component}</Text>
+                  ) : null}
+                  {group.items.map((item, itemIndex) => (
+                    <View
+                      key={`${recipe.id}-${group.component}-${item.name}`}
+                      style={[
+                        styles.ingredientRow,
+                        itemIndex === group.items.length - 1 ? styles.ingredientRowLast : null,
+                      ]}
+                    >
+                      <Text style={styles.ingredientName}>{cleanDisplayText(item.name)}</Text>
+                      {item.quantity?.trim() ? (
+                        <Text style={styles.ingredientQty}>{cleanDisplayText(item.quantity)}</Text>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              ))}
             </View>
 
             <InfoCard title="Why you'll love this">
@@ -543,23 +565,6 @@ function RecipeModeTabs({ modes, selectedMode, onSelectMode }: RecipeModeTabsPro
           </Pressable>
         );
       })}
-    </View>
-  );
-}
-
-type IngredientPreviewCardProps = {
-  ingredient: RecipeIngredient;
-};
-
-function IngredientPreviewCard({ ingredient }: IngredientPreviewCardProps) {
-  return (
-    <View style={styles.ingredientPreviewCard}>
-      <View style={styles.ingredientIconBubble}>
-        <Cutlery color={colors.coralDark} height={20} strokeWidth={2} width={20} />
-      </View>
-      <Text numberOfLines={2} style={styles.ingredientPreviewText}>
-        {cleanDisplayText(ingredient.name)}
-      </Text>
     </View>
   );
 }
@@ -884,36 +889,48 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
-  ingredientPreviewRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-    minWidth: 0,
-  },
-  ingredientPreviewCard: {
-    alignItems: 'center',
+  ingredientGroupCard: {
     backgroundColor: '#fff8ec',
-    borderRadius: 12,
-    flex: 1,
-    minHeight: 78,
-    minWidth: 0,
-    padding: 8,
+    borderRadius: 16,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
   },
-  ingredientIconBubble: {
+  ingredientGroupTitle: {
+    color: colors.coralDark,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    marginBottom: 2,
+    marginTop: 10,
+    textTransform: 'uppercase',
+  },
+  ingredientRow: {
     alignItems: 'center',
-    backgroundColor: '#fff1dc',
-    borderRadius: 999,
-    height: 32,
-    justifyContent: 'center',
-    marginBottom: 6,
-    width: 32,
+    borderBottomColor: '#f3e6d2',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    minHeight: 44,
+    paddingVertical: 8,
   },
-  ingredientPreviewText: {
+  ingredientRowLast: {
+    borderBottomWidth: 0,
+  },
+  ingredientName: {
     color: colors.charcoal,
-    fontSize: 10,
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 20,
+    minWidth: 0,
+  },
+  ingredientQty: {
+    color: colors.muted,
+    fontSize: 14,
     fontWeight: '800',
-    lineHeight: 13,
-    textAlign: 'center',
+    textAlign: 'right',
   },
   infoCard: {
     backgroundColor: '#fff8ec',
@@ -1419,7 +1436,7 @@ function getRecipeDisplaySteps(recipe: Recipe | null): DisplayRecipeStep[] {
         : undefined,
     }))
     .filter((step) => step.text)
-    .slice(0, 9);
+    .slice(0, 20);
 
   if (structuredSteps.length > 0) {
     return structuredSteps;
@@ -1428,22 +1445,7 @@ function getRecipeDisplaySteps(recipe: Recipe | null): DisplayRecipeStep[] {
   return (Array.isArray(recipe?.steps) ? recipe.steps : [])
     .map((step) => ({ text: cleanDisplayText(step) }))
     .filter((step) => step.text)
-    .slice(0, 9);
-}
-
-function getIngredientPreview(recipe: Recipe | null): RecipeIngredient[] {
-  if (!recipe) {
-    return [];
-  }
-
-  const groupedItems = getSafeIngredientGroups(recipe).flatMap((group) => group.items);
-  const ingredients = groupedItems.length > 0 ? groupedItems : Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
-  const preview = ingredients.filter((ingredient) => ingredient.name.trim()).slice(0, 4);
-  const remainingCount = Math.max(getIngredientCount(recipe) - preview.length, 0);
-
-  return remainingCount > 0
-    ? [...preview, { name: `+${remainingCount} more`, quantity: '' }]
-    : preview;
+    .slice(0, 20);
 }
 
 function getIngredientCount(recipe: Recipe | null) {

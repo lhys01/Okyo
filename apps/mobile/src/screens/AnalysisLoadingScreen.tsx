@@ -16,7 +16,13 @@ import { uiLog } from '../utils/uiDebug';
 type AnalysisNavigation = NativeStackNavigationProp<RootStackParamList, 'AnalysisLoadingScreen'>;
 type AnalysisRoute = RouteProp<RootStackParamList, 'AnalysisLoadingScreen'>;
 
-const progressBars = Array.from({ length: 8 }, (_, index) => index);
+const loadingSteps = [
+  'Reading your plate',
+  'Finding the best guess',
+  'Building your recipe',
+  'Making your grocery list',
+  'Checking the result',
+];
 
 export function AnalysisLoadingScreen() {
   const navigation = useNavigation<AnalysisNavigation>();
@@ -35,8 +41,8 @@ export function AnalysisLoadingScreen() {
   useEffect(() => {
     uiLog('AnalysisLoadingScreen', 'enter');
     const pulse = setInterval(() => {
-      setPulseIndex((currentIndex) => (currentIndex + 1) % progressBars.length);
-    }, 420);
+      setPulseIndex((currentIndex) => (currentIndex + 1) % loadingSteps.length);
+    }, 1000);
 
     return () => clearInterval(pulse);
   }, []);
@@ -139,27 +145,27 @@ export function AnalysisLoadingScreen() {
         </View>
 
         <View style={styles.progressCardWrap}>
-          <View style={styles.progressCard}>
-            <View style={styles.progressHeader}>
-              <Sparks color={colors.coral} height={34} strokeWidth={2.1} width={34} />
-              <Text style={styles.progressTitle}>Building your recipe, savings, and grocery list</Text>
-            </View>
-            <View style={styles.progressTrack} accessibilityRole="progressbar">
-              {progressBars.map((bar) => {
-                const isActive = (bar + progressBars.length - pulseIndex) % progressBars.length < 4;
+          <View style={styles.progressCard} accessibilityRole="progressbar">
+            {loadingSteps.map((step, index) => {
+              const isActive = index === pulseIndex;
+              const isDone = index < pulseIndex;
 
-                return (
-                  <View
-                    key={bar}
-                    style={[styles.progressSegment, isActive ? styles.progressSegmentActive : null]}
-                  />
-                );
-              })}
-            </View>
-            <View style={styles.progressFooter}>
-              <ActivityIndicator color={colors.coral} size="small" />
-              <Text style={styles.progressHint}>Checking the dish, homemade cost, and recipe fit.</Text>
-            </View>
+              return (
+                <View key={step} style={[styles.stepRow, isActive ? styles.stepRowActive : null]}>
+                  {isActive ? (
+                    <ActivityIndicator color={colors.coral} size="small" />
+                  ) : (
+                    <Sparks
+                      color={isDone ? colors.coral : colors.creamDeep}
+                      height={20}
+                      strokeWidth={2.1}
+                      width={20}
+                    />
+                  )}
+                  <Text style={[styles.stepText, isActive ? styles.stepTextActive : null]}>{step}</Text>
+                </View>
+              );
+            })}
           </View>
         </View>
 
@@ -260,59 +266,37 @@ const styles = StyleSheet.create({
   progressCard: {
     backgroundColor: colors.card,
     borderColor: '#f0e5d8',
-    borderRadius: 20,
+    borderRadius: 22,
     borderWidth: 1,
-    paddingHorizontal: 18,
-    paddingVertical: 22,
+    gap: 4,
+    padding: 12,
     shadowColor: '#7b5a38',
     shadowOffset: { height: 12, width: 0 },
     shadowOpacity: 0.08,
     shadowRadius: 22,
     elevation: 2,
   },
-  progressHeader: {
+  stepRow: {
     alignItems: 'center',
+    borderRadius: 14,
     flexDirection: 'row',
-    gap: 14,
+    gap: 12,
+    minHeight: 48,
+    paddingHorizontal: 12,
+  },
+  stepRowActive: {
+    backgroundColor: colors.cream,
+  },
+  stepText: {
+    color: colors.muted,
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '800',
+    lineHeight: 20,
     minWidth: 0,
   },
-  progressTitle: {
+  stepTextActive: {
     color: colors.charcoal,
-    flex: 1,
-    fontSize: 18,
-    fontWeight: '900',
-    lineHeight: 23,
-    minWidth: 0,
-  },
-  progressTrack: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 26,
-  },
-  progressSegment: {
-    backgroundColor: '#f4ebe2',
-    borderRadius: 999,
-    flex: 1,
-    height: 14,
-    minWidth: 0,
-  },
-  progressSegmentActive: {
-    backgroundColor: '#ffa36d',
-  },
-  progressFooter: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 18,
-    minWidth: 0,
-  },
-  progressHint: {
-    color: colors.body,
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '700',
-    lineHeight: 18,
-    minWidth: 0,
   },
   backButton: {
     alignItems: 'center',
