@@ -206,14 +206,14 @@ const styles = StyleSheet.create({
   kicker: {
     color: colors.coral,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   title: {
     color: colors.charcoal,
     fontSize: 32,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 37,
   },
   description: {
@@ -261,7 +261,7 @@ const styles = StyleSheet.create({
     color: colors.green,
     flex: 1,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'right',
   },
   instructionsCard: {
@@ -273,7 +273,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 10,
   },
   instruction: {
@@ -315,7 +315,7 @@ const styles = StyleSheet.create({
   ratingScore: {
     color: colors.green,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   returnAction: {
     marginTop: 12,
