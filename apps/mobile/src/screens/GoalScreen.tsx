@@ -61,6 +61,6 @@ const styles = StyleSheet.create({
   goalText: {
     color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
 });

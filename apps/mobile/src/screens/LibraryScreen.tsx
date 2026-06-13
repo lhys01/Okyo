@@ -129,7 +129,7 @@ export function LibraryScreen() {
   if (safeSavedRecipes.length === 0) {
     return (
       <LibraryFrame>
-        <TopBar title="Library" />
+        <TopBar title="Plan" />
         <View style={styles.emptyCard}>
           <KikoMascot pose="wave" size={118} style={styles.emptyMascot} />
           <Text style={styles.emptyTitle}>Saved meals worth remaking will live here.</Text>
@@ -144,7 +144,7 @@ export function LibraryScreen() {
 
   return (
     <LibraryFrame>
-      <TopBar title="Library" />
+      <TopBar title="Plan" />
 
       <View style={styles.heroCard}>
         <View style={styles.heroCopy}>
@@ -463,7 +463,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     gap: 12,
-    padding: 16,
+    padding: 24,
     paddingBottom: 220,
   },
   topBar: {
@@ -476,7 +476,7 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     flex: 1,
     fontSize: 26,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     textAlign: 'center',
   },
@@ -485,9 +485,7 @@ const styles = StyleSheet.create({
   },
   heroCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 22,
-    borderWidth: 1,
+    borderRadius: 28,
     minHeight: 142,
     overflow: 'hidden',
     padding: 14,
@@ -502,7 +500,7 @@ const styles = StyleSheet.create({
   heroKicker: {
     color: colors.coral,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0.4,
     marginBottom: 6,
     textTransform: 'uppercase',
@@ -510,7 +508,7 @@ const styles = StyleSheet.create({
   heroTitle: {
     color: colors.charcoal,
     fontSize: 23,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     lineHeight: 27,
   },
@@ -520,16 +518,14 @@ const styles = StyleSheet.create({
   heroBody: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
     lineHeight: 17,
     marginTop: 6,
   },
   recipeMascotCard: {
     alignItems: 'center',
     backgroundColor: '#fff1df',
-    borderColor: '#f4d6b0',
     borderRadius: 20,
-    borderWidth: 1,
     justifyContent: 'center',
     height: 82,
     padding: 3,
@@ -540,13 +536,13 @@ const styles = StyleSheet.create({
   },
   heroStats: {
     alignItems: 'stretch',
-    borderTopColor: '#efe3d6',
-    borderTopWidth: 1,
+    backgroundColor: colors.cream,
+    borderRadius: 18,
     flexDirection: 'row',
     gap: 4,
     justifyContent: 'space-between',
     marginTop: 10,
-    paddingTop: 10,
+    padding: 10,
   },
   heroStat: {
     alignItems: 'center',
@@ -570,12 +566,12 @@ const styles = StyleSheet.create({
   heroStatValue: {
     color: colors.coral,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '800',
   },
   heroStatLabel: {
     color: colors.body,
     fontSize: 9,
-    fontWeight: '800',
+    fontWeight: '600',
     textAlign: 'center',
   },
   searchRow: {
@@ -586,20 +582,23 @@ const styles = StyleSheet.create({
   searchBox: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 999,
     flex: 1,
     flexDirection: 'row',
     gap: 10,
     minHeight: 50,
     paddingHorizontal: 14,
+    shadowColor: '#4a3a28',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 1,
   },
   searchInput: {
     color: colors.charcoal,
     flex: 1,
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '500',
     minWidth: 0,
     paddingVertical: 0,
   },
@@ -611,21 +610,18 @@ const styles = StyleSheet.create({
   filterChip: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
+    borderRadius: 999,
     justifyContent: 'center',
     minHeight: 36,
     paddingHorizontal: 12,
   },
   filterChipSelected: {
     backgroundColor: '#fff2e8',
-    borderColor: '#ffb293',
   },
   filterText: {
     color: colors.charcoal,
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   filterTextSelected: {
     color: colors.coral,
@@ -635,9 +631,7 @@ const styles = StyleSheet.create({
   },
   recipeCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     gap: 9,
     padding: 8,
     shadowColor: '#3b2f20',
@@ -659,9 +653,7 @@ const styles = StyleSheet.create({
   recipeArt: {
     alignItems: 'center',
     backgroundColor: '#fff1df',
-    borderColor: '#f3d6b0',
     borderRadius: 14,
-    borderWidth: 1,
     height: 82,
     justifyContent: 'center',
     overflow: 'hidden',
@@ -670,7 +662,7 @@ const styles = StyleSheet.create({
   recipeArtText: {
     color: colors.coral,
     fontSize: 8,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 4,
     textAlign: 'center',
     textTransform: 'uppercase',
@@ -710,7 +702,7 @@ const styles = StyleSheet.create({
     color: colors.coral,
     flexShrink: 1,
     fontSize: 10,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   moreButton: {
     alignItems: 'center',
@@ -721,7 +713,7 @@ const styles = StyleSheet.create({
   recipeTitle: {
     color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     lineHeight: 20,
     marginTop: 5,
@@ -729,7 +721,7 @@ const styles = StyleSheet.create({
   recipeSubtitle: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
     marginTop: 3,
   },
   recipeMetaRow: {
@@ -751,7 +743,7 @@ const styles = StyleSheet.create({
   },
   metaTextGreen: {
     color: colors.green,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   cardActions: {
     alignItems: 'center',
@@ -762,7 +754,7 @@ const styles = StyleSheet.create({
   cookButton: {
     alignItems: 'center',
     backgroundColor: colors.coral,
-    borderRadius: 12,
+    borderRadius: 999,
     justifyContent: 'center',
     flex: 1,
     minHeight: 38,
@@ -772,13 +764,12 @@ const styles = StyleSheet.create({
   cookButtonText: {
     color: '#fffdf8',
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   groceryButton: {
     alignItems: 'center',
-    borderColor: colors.border,
-    borderRadius: 12,
-    borderWidth: 1,
+    backgroundColor: colors.cream,
+    borderRadius: 999,
     flex: 1,
     flexDirection: 'row',
     gap: 6,
@@ -790,19 +781,17 @@ const styles = StyleSheet.create({
   groceryButtonText: {
     color: colors.coral,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   noMatchesCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
     borderRadius: 20,
-    borderWidth: 1,
     padding: 20,
   },
   noMatchesTitle: {
     color: colors.charcoal,
     fontSize: 19,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   noMatchesBody: {
     color: colors.body,
@@ -813,12 +802,15 @@ const styles = StyleSheet.create({
   emptyCard: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
     borderRadius: 26,
-    borderWidth: 1,
     gap: 14,
     marginTop: 24,
     padding: 24,
+    shadowColor: '#4a3a28',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    elevation: 2,
   },
   emptyMascot: {
     marginBottom: 2,
@@ -826,7 +818,7 @@ const styles = StyleSheet.create({
   emptyTitle: {
     color: colors.charcoal,
     fontSize: 26,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 31,
     textAlign: 'center',
   },
@@ -840,7 +832,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'stretch',
     backgroundColor: colors.coral,
-    borderRadius: 16,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'center',
@@ -850,7 +842,7 @@ const styles = StyleSheet.create({
   primaryActionText: {
     color: '#fffdf8',
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.72,

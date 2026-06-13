@@ -84,14 +84,14 @@ const styles = StyleSheet.create({
   kicker: {
     color: colors.coral,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   title: {
     color: colors.charcoal,
     fontSize: 32,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 37,
   },
   description: {
@@ -114,7 +114,7 @@ const styles = StyleSheet.create({
   scoreValue: {
     color: colors.green,
     fontSize: 38,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 2,
   },
   grid: {

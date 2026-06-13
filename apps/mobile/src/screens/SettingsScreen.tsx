@@ -24,8 +24,8 @@ export function SettingsScreen() {
     track(analyticsEvents.SETTINGS_VIEWED, { screen: 'SettingsScreen' });
   }, []);
 
-  const showPlaceholder = (label: string) => {
-    Alert.alert(label, 'Placeholder only. This will be connected before launch.');
+  const showUnavailable = (label: string) => {
+    Alert.alert(label, 'This setting is not enabled in this preview build.');
   };
 
   const confirmResetOnboarding = () => {
@@ -73,28 +73,28 @@ export function SettingsScreen() {
         <View style={styles.row}>
           <View style={styles.rowText}>
             <Text style={styles.rowTitle}>Notifications</Text>
-            <Text style={styles.rowBody}>Placeholder. No push notifications are requested yet.</Text>
+            <Text style={styles.rowBody}>Okyo is not requesting push notifications in this build.</Text>
           </View>
-          <Switch value={false} onValueChange={() => showPlaceholder('Notifications')} />
+          <Switch value={false} onValueChange={() => showUnavailable('Notifications')} />
         </View>
         <View style={styles.row}>
           <View style={styles.rowText}>
             <Text style={styles.rowTitle}>Dark theme</Text>
-            <Text style={styles.rowBody}>Placeholder theme toggle.</Text>
+            <Text style={styles.rowBody}>The editorial light theme is active for this preview.</Text>
           </View>
-          <Switch value={false} onValueChange={() => showPlaceholder('Theme')} />
+          <Switch value={false} onValueChange={() => showUnavailable('Theme')} />
         </View>
       </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Help and legal</Text>
-        <Pressable style={styles.linkRow} onPress={() => showPlaceholder('Privacy Policy')}>
+        <Pressable style={styles.linkRow} onPress={() => showUnavailable('Privacy Policy')}>
           <Text style={styles.linkText}>Privacy Policy</Text>
         </Pressable>
-        <Pressable style={styles.linkRow} onPress={() => showPlaceholder('Support')}>
+        <Pressable style={styles.linkRow} onPress={() => showUnavailable('Support')}>
           <Text style={styles.linkText}>Support</Text>
         </Pressable>
-        <Pressable style={styles.linkRow} onPress={() => showPlaceholder('Terms')}>
+        <Pressable style={styles.linkRow} onPress={() => showUnavailable('Terms')}>
           <Text style={styles.linkText}>Terms</Text>
         </Pressable>
       </View>
@@ -119,14 +119,14 @@ const styles = StyleSheet.create({
   kicker: {
     color: colors.coral,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   title: {
     color: colors.charcoal,
     fontSize: 34,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 39,
   },
   description: {
@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 12,
   },
   row: {
