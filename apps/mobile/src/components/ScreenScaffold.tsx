@@ -46,7 +46,7 @@ const styles = StyleSheet.create({
   kicker: {
     color: colors.coral,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 12,
     textTransform: 'uppercase',
   },
@@ -57,7 +57,7 @@ const styles = StyleSheet.create({
   title: {
     color: colors.charcoal,
     fontSize: 32,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 38,
     marginBottom: 12,
   },

@@ -27,6 +27,8 @@ import type {
 import {
   analyzeFoodImageWithOpenRouter,
   generateRecipeWithOpenRouter,
+  isDrinkAnalysisText,
+  isGenericDishName,
   OpenRouterProviderError,
   type OpenRouterRecipeOutput,
   type OpenRouterRecipeVariant,
@@ -304,6 +306,13 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
     const fallbackDetails = getFallbackLogDetails(error, config, config.openRouterVisionModel);
     logScanDebug('api_openrouter_call_error', fallbackDetails);
     logAi('fallback_ai', fallbackDetails);
+    if (hasRealUploadedImage(input)) {
+      logScanDebug('api_scan_real_image_no_mock_vision_fallback', {
+        fallbackReason: getFallbackReason(fallbackDetails),
+        source: input.source,
+      });
+      throw error;
+    }
     return analyzeFoodImageWithMock(input, 'fallback_ai', getFallbackReason(fallbackDetails));
   }
 }
@@ -364,6 +373,13 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
   const config = getAiConfig();
   const uploadedImage = hasRealUploadedImage(input);
   const providerVisible = isProviderVisibleImage(input.image);
+  logScanDebug('api_scan_reliability_start', {
+    source: input.source,
+    uploadedImage,
+    imageProviderVisible: providerVisible,
+    imageConversionError: input.image?.conversionError,
+    mode: input.mode,
+  });
   logScanDebug('api_scan_provider_visible_start', {
     imageConversionError: input.image?.conversionError,
     imageDataUrlExists: Boolean(input.image?.dataUrl),
@@ -457,6 +473,19 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
 
   try {
     const analysis = await analyzeFoodImage(input);
+    const foodDrinkVisible = Boolean(analysis.isFoodImage || isFoodScanState(analysis.scanState));
+    logScanDebug('api_scan_vision_result', {
+      confidence: analysis.confidence,
+      dishName: analysis.dishName,
+      foodDrinkVisible,
+      scanState: analysis.scanState,
+    });
+    logScanDebug('api_scan_food_drink_visible', {
+      visible: foodDrinkVisible,
+      scanState: analysis.scanState,
+    });
+    logScanDebug('api_scan_first_dish_name', { dishName: analysis.dishName });
+    logScanDebug('api_scan_first_confidence', { confidence: analysis.confidence });
     const analysisRejection = getAnalysisRejection(analysis, uploadedImage);
     if (analysisRejection) {
       const result = createRejectedScan({
@@ -482,13 +511,24 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       return result;
     }
 
+    logScanDebug('api_scan_recipe_start', {
+      dishName: analysis.dishName,
+      mode: input.mode,
+      scanState: analysis.scanState,
+    });
     const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode });
     const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
+    logScanDebug('api_scan_recipe_result', {
+      aiSource: generatedRecipe.aiSource,
+      fallbackReason: recipeFallbackReason,
+      recipeGenerated: generatedRecipe.aiSource === 'openrouter_ai' && Boolean(generatedRecipe.recipe || generatedRecipe.recipes?.length),
+      recipeId: generatedRecipe.recipeId,
+      recipesLength: generatedRecipe.recipes?.length ?? 0,
+    });
 
     if (
       uploadedImage &&
-      generatedRecipe.aiSource !== 'openrouter_ai' &&
-      !canUseFallbackRecipeForUploadedImage(generatedRecipe)
+      generatedRecipe.aiSource !== 'openrouter_ai'
     ) {
       const result = createPartialScan({
         analysis,
@@ -509,7 +549,9 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       return result;
     }
 
-    const recipe = generatedRecipe.recipe ?? getRecipeById(generatedRecipe.recipeId) ?? fallback.recipe;
+    const recipe = generatedRecipe.recipe ?? (
+      uploadedImage ? undefined : getRecipeById(generatedRecipe.recipeId) ?? fallback.recipe
+    );
     const recipes = getGeneratedRecipes(generatedRecipe, recipe);
 
     if (!recipe) {
@@ -589,9 +631,20 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
 
     return result;
   } catch (error) {
+    // A thrown error here means the provider call failed outright (rate limit,
+    // timeout, HTTP error) — this is an Okyo-side hiccup, not a bad photo, so the
+    // copy must never ask the user for a clearer image.
+    const providerReason = getFallbackReason(getFallbackLogDetails(error, config, config.openRouterVisionModel));
     logAi('fallback_ai', {
       errorMessage: error instanceof Error ? error.message : 'Unknown scan error.',
       reason: 'ai_scan_failed',
+      providerReason,
+    });
+    logScanDebug('api_scan_failed_final', {
+      fallbackReason: 'ai_scan_failed',
+      providerReason,
+      rejectionType: 'ai_failed',
+      uploadedImage,
     });
     const fallbackResult = uploadedImage
       ? createRejectedScan({
@@ -599,7 +652,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
         confidence: 0,
         config,
         fallbackReason: 'ai_scan_failed',
-        rejectionReason: 'Okyo could not analyze this photo. Try uploading a clearer food photo.',
+        rejectionReason: getAiFailureRejectionReason(providerReason),
         rejectionType: 'ai_failed',
         status: 'failed',
         uploadedImage,
@@ -964,14 +1017,25 @@ function getAnalysisRejection(
   }
 
   if (analysis.aiSource !== 'openrouter_ai') {
+    // The vision provider failed — this says nothing about the photo itself,
+    // so never blame the user with "clearer photo" copy here.
+    logScanDebug('api_scan_rejection_decision', {
+      branch: 'ai_failed',
+      fallbackReason: analysis.fallbackReason,
+    });
     return {
       status: 'failed',
       rejectionType: 'ai_failed',
-      rejectionReason: 'Okyo could not analyze this photo. Try uploading a clearer food photo.',
+      rejectionReason: getAiFailureRejectionReason(analysis.fallbackReason),
     };
   }
 
   if (analysis.scanState === 'not_food' || (!analysis.isFoodImage && analysis.confidence >= notFoodConfidenceThreshold)) {
+    logScanDebug('api_scan_rejection_decision', {
+      branch: 'not_food',
+      confidence: analysis.confidence,
+      scanState: analysis.scanState,
+    });
     return {
       status: 'rejected',
       rejectionType: 'not_food',
@@ -979,11 +1043,20 @@ function getAnalysisRejection(
     };
   }
 
+  // When the vision model says food is visible, a low confidence score means
+  // "uncertain dish", not "unclear photo" — let it through as a best guess.
+  const foodVisible = isFoodScanState(analysis.scanState);
   if (
     analysis.scanState === 'too_unclear' ||
-    !analysis.isFoodImage ||
-    analysis.confidence < uploadedImageConfidenceThreshold
+    (!foodVisible && !analysis.isFoodImage) ||
+    (!foodVisible && analysis.confidence < uploadedImageConfidenceThreshold)
   ) {
+    logScanDebug('api_scan_rejection_decision', {
+      branch: 'unclear_image',
+      confidence: analysis.confidence,
+      foodVisible,
+      scanState: analysis.scanState,
+    });
     return {
       status: 'rejected',
       rejectionType: 'unclear_image',
@@ -992,6 +1065,17 @@ function getAnalysisRejection(
   }
 
   return undefined;
+}
+
+function getAiFailureRejectionReason(fallbackReason: string | undefined) {
+  if (fallbackReason?.includes('http_error')) {
+    return "Okyo's scanner is busy right now. It's not your photo — try the same one again in a minute.";
+  }
+  if (fallbackReason?.includes('timeout')) {
+    return 'The scan took too long and stopped. Try the same photo again.';
+  }
+
+  return "Okyo couldn't finish analyzing this photo. It's not your photo — try the same one again.";
 }
 
 function hasRealUploadedImage(input: AnalyzeFoodImageInput) {
@@ -1091,14 +1175,6 @@ function getGeneratedRecipes(generatedRecipe: GeneratedRecipeOutput, selectedRec
   return selectedRecipe ? [selectedRecipe] : undefined;
 }
 
-function canUseFallbackRecipeForUploadedImage(generatedRecipe: GeneratedRecipeOutput) {
-  return Boolean(
-    generatedRecipe.aiSource === 'fallback_ai' &&
-    generatedRecipe.recipe?.id.startsWith('starter-') &&
-    generatedRecipe.recipes?.every((recipe) => recipe.id.startsWith('starter-')),
-  );
-}
-
 function getScanById(scanId: string) {
   return mockScanResults.find((scan) => scan.id === scanId);
 }
@@ -1166,7 +1242,9 @@ function getRecipeVariant(output: OpenRouterRecipeOutput, mode: RecipeMode) {
 
 export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const confidence = normalizeConfidence(output.confidence);
-  const restaurantPriceEstimate = normalizeRestaurantPrice(output.restaurantPriceEstimate);
+  // A restaurant price guessed from a food photo is not real data. Savings must come
+  // from a user-entered price, so photo-derived price estimates are always dropped.
+  const restaurantPriceEstimate = 0;
   const homemadeCostEstimate = normalizeHomemadeCost(output.homemadeCostEstimate, restaurantPriceEstimate);
   const explicitScanState = normalizeScanState(output.scanState);
   const foodDetected = normalizeBoolean(output.foodDetected, false);
@@ -1220,7 +1298,11 @@ export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const normalizedIsFoodImage = scanState === 'not_food' || scanState === 'too_unclear'
     ? false
     : isFoodImage || isFoodScanState(scanState);
-  const dishName = normalizeDishName(output.dishName, cuisine, broadDishCategory, [...visibleIngredients, ...likelyIngredients]);
+  const dishName = normalizeDishName(output.dishName, cuisine, broadDishCategory, [
+    ...getVisibleComponentValues(visibleComponents),
+    ...visibleIngredients,
+    ...likelyIngredients,
+  ]);
   const possibleDishNames = normalizePossibleDishNames(output.possibleDishNames, dishName, broadDishCategory);
 
   return {
@@ -1420,6 +1502,7 @@ function normalizeBroadDishCategory(value: unknown, ingredients: string[]) {
     'soup/stew',
     'dessert',
     'breakfast item',
+    'drink/beverage',
     'mixed platter',
     'unknown food dish',
   ];
@@ -1427,8 +1510,14 @@ function normalizeBroadDishCategory(value: unknown, ingredients: string[]) {
   if (explicitCategory && explicitCategory !== 'unknown food dish') {
     return explicitCategory;
   }
+  if (includesAny(raw, ['drink', 'beverage', 'smoothie', 'latte', 'juice'])) {
+    return 'drink/beverage';
+  }
 
   const text = ingredients.join(' ').toLowerCase();
+  if (includesAny(text, ['smoothie', 'milkshake', 'latte', 'matcha', 'iced coffee', 'cold brew', 'frappe', 'boba', 'bubble tea', 'lemonade'])) {
+    return 'drink/beverage';
+  }
   if (includesAny(text, ['pizza', 'slice'])) {
     return 'pizza';
   }
@@ -1531,6 +1620,21 @@ function normalizeDishName(value: unknown, cuisine: string, broadDishCategory: s
   }
 
   const ingredientText = ingredients.join(' ').toLowerCase();
+  if (includesAny(ingredientText, ['smoothie', 'milkshake', 'blended drink'])) {
+    return buildDrinkName(ingredientText);
+  }
+  if (ingredientText.includes('matcha')) {
+    return 'Iced Matcha Latte';
+  }
+  if (includesAny(ingredientText, ['latte', 'espresso', 'cold brew', 'iced coffee', 'cappuccino'])) {
+    return 'Iced Coffee Latte';
+  }
+  if (includesAny(ingredientText, ['juice', 'lemonade'])) {
+    return 'Fresh Fruit Juice';
+  }
+  if (includesAny(ingredientText, ['boba', 'bubble tea'])) {
+    return 'Bubble Tea';
+  }
   if (ingredientText.includes('tomato') && includesAny(ingredientText, ['pasta', 'rigatoni', 'spaghetti', 'penne'])) {
     return 'Creamy Tomato Pasta';
   }
@@ -1580,6 +1684,8 @@ function normalizeDishName(value: unknown, cuisine: string, broadDishCategory: s
       return 'Restaurant-Style Dessert';
     case 'breakfast item':
       return 'Breakfast Plate';
+    case 'drink/beverage':
+      return buildDrinkName(ingredientText);
     case 'mixed platter':
       return 'Mixed Restaurant Plate';
     default:
@@ -1595,9 +1701,10 @@ function normalizePossibleDishNames(value: unknown, dishName: string, broadDishC
   const seen = new Set<string>();
 
   return [dishName, ...suggestions, ...fallbackSuggestions]
-    .filter((name) => {
+    .filter((name, index) => {
       const key = name.toLowerCase();
-      if (!name || seen.has(key)) {
+      // Keep the primary dishName; drop generic alternates.
+      if (!name || seen.has(key) || (index > 0 && isVagueDishName(name))) {
         return false;
       }
       seen.add(key);
@@ -1609,27 +1716,64 @@ function normalizePossibleDishNames(value: unknown, dishName: string, broadDishC
 function getBroadDishAlternatives(dishName: string, broadDishCategory: string) {
   switch (broadDishCategory) {
     case 'grilled meat':
-      return ['Grilled Meat Plate', 'Mixed Restaurant Plate', 'Charred Grill Plate'];
+      return ['Grilled Meat Plate', 'Charred Grill Plate', 'Grilled Chicken Plate'];
     case 'rice bowl':
-      return ['Saucy Rice Bowl', 'Mixed Restaurant Plate', 'Stir-Fry Plate'];
+      return ['Saucy Rice Bowl', 'Grilled Chicken Rice Bowl', 'Stir-Fry Plate'];
     case 'pasta/noodles':
       return ['Noodle Bowl', 'Pasta Bowl', 'Saucy Noodles'];
     case 'burger/sandwich':
-      return ['Loaded Sandwich', 'Loaded Burger', 'Restaurant-Style Food Plate'];
+      return ['Loaded Sandwich', 'Loaded Burger', 'Cheeseburger'];
     case 'pizza':
-      return ['Pizza', 'Cheesy Pizza', 'Restaurant-Style Pizza'];
+      return ['Pizza', 'Cheesy Pizza', 'Margherita-Style Pizza'];
+    case 'salad':
+      return ['Loaded Salad', 'Chopped Salad', 'Mediterranean-Style Salad'];
+    case 'drink/beverage':
+      return ['Fruit Smoothie', 'Berry Smoothie', 'Iced Latte'];
+    case 'dessert':
+      return ['Chocolate Cake', 'Ice Cream Sundae', 'Restaurant-Style Dessert'];
     case 'mixed platter':
-      return ['Mixed Restaurant Plate', 'Grilled Meat Plate', 'Restaurant-Style Food Plate'];
+      return ['Grilled Meat Plate', 'Saucy Rice Bowl', 'Loaded Salad'];
     default:
-      return dishName === 'Restaurant-Style Food Plate'
-        ? ['Mixed Restaurant Plate', 'Saucy Rice Bowl', 'Loaded Sandwich']
-        : ['Restaurant-Style Food Plate', 'Mixed Restaurant Plate'];
+      return ['Saucy Rice Bowl', 'Loaded Sandwich', 'Noodle Bowl'];
   }
 }
 
 function isVagueDishName(value: string) {
-  const normalized = value.trim().toLowerCase();
-  return ['', 'dish', 'food', 'meal', 'plate', 'restaurant dish', 'unknown', 'unknown dish', 'unclear dish'].includes(normalized);
+  return isGenericDishName(value);
+}
+
+// Builds an honest, specific drink name from visible clues when the model
+// could not name the drink itself.
+function buildDrinkName(ingredientText: string) {
+  if (ingredientText.includes('matcha')) {
+    return 'Iced Matcha Latte';
+  }
+  if (includesAny(ingredientText, ['coffee', 'espresso', 'latte', 'cold brew', 'cappuccino'])) {
+    return 'Iced Coffee Latte';
+  }
+  if (includesAny(ingredientText, ['boba', 'bubble tea'])) {
+    return 'Bubble Tea';
+  }
+  if (includesAny(ingredientText, ['chocolate', 'cocoa'])) {
+    return 'Chocolate Milkshake';
+  }
+  if (includesAny(ingredientText, ['berry', 'berries', 'strawberry', 'blueberry', 'raspberry', 'acai', 'purple'])) {
+    return 'Berry Smoothie';
+  }
+  if (includesAny(ingredientText, ['mango', 'pineapple', 'tropical'])) {
+    return 'Tropical Fruit Smoothie';
+  }
+  if (includesAny(ingredientText, ['spinach', 'kale', 'green'])) {
+    return 'Green Smoothie';
+  }
+  if (ingredientText.includes('banana')) {
+    return 'Banana Smoothie';
+  }
+  if (includesAny(ingredientText, ['juice', 'lemonade'])) {
+    return 'Fresh Fruit Juice';
+  }
+
+  return 'Fruit Smoothie';
 }
 
 function cleanDishName(value: string) {
@@ -1647,8 +1791,9 @@ function getRecipeTitle(value: string, dishName: string, mode: RecipeMode) {
     : mode === 'Healthy'
       ? `Lighter ${dishName} Inspired-by`
       : `${dishName} Inspired-by`;
+  const safeValue = typeof value === 'string' && !isPlaceholderText(value) ? value : '';
 
-  return ensureInspiredTitle(getShortText(value, fallbackTitle, 90));
+  return ensureInspiredTitle(getShortText(safeValue, fallbackTitle, 90));
 }
 
 type CommonDishKind = 'burger' | 'pizza' | 'noodles' | 'pasta' | 'bowl' | 'taco' | 'sandwich';
@@ -2067,18 +2212,22 @@ function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mod
     ? analysis.likelyIngredients
     : ['main ingredient', 'sauce base', 'seasoning'];
 
-  const ingredients = getSafeList(values, fallback, 10).map(toRecipeIngredient);
-  return ensureCoreIngredients(ingredients, analysis, mode).slice(0, 10);
+  const ingredients = getSafeList(values, fallback, 12).map(toRecipeIngredient);
+  return ensureCoreIngredients(ingredients, analysis, mode).slice(0, 12);
 }
 
 function getRecipeSteps(values: OpenRouterRecipeVariant['steps'], dishName: string) {
   const fallbackSteps = getDefaultRecipeSteps(dishName);
   const cleanValues = (Array.isArray(values) ? values : [])
     .map(getStepText)
-    .filter(Boolean);
-  const steps = getSafeList(cleanValues, fallbackSteps, 7).map(cleanRecipeCopy);
+    .map((value) => getShortText(value, '', 240))
+    .filter((value) => Boolean(value) && !isPlaceholderText(value));
+  const source = cleanValues.length > 0 ? cleanValues : fallbackSteps;
+  const steps = [...new Set(source)].slice(0, 16).map(cleanRecipeCopy);
   const wordCount = steps.join(' ').split(/\s+/).filter(Boolean).length;
-  const shouldUseFallback = steps.length < 5 || wordCount / Math.max(steps.length, 1) < 10;
+  // Only fall back on truly degenerate output (too few steps or fragment-length
+  // steps). Crisp real steps like "Brush crust with olive oil." must survive.
+  const shouldUseFallback = steps.length < 4 || wordCount / Math.max(steps.length, 1) < 6;
 
   return ensureSafetyTemperature(shouldUseFallback ? fallbackSteps : steps, dishName);
 }
@@ -2091,7 +2240,7 @@ function getStructuredSteps(
   const aiSteps = (Array.isArray(values) ? values : [])
     .map((value, index) => toStructuredStep(value, steps[index], analysis))
     .filter((step): step is RecipeStep => Boolean(step?.text))
-    .slice(0, 7);
+    .slice(0, 16);
 
   if (aiSteps.length >= 5) {
     return ensureStructuredStepFallbacks(aiSteps, analysis);
@@ -2249,6 +2398,24 @@ function getContextCookingTerm(step: string): CookingTerm | undefined {
 function getDefaultRecipeSteps(dishName: string) {
   const dishText = dishName.toLowerCase();
 
+  if (includesAny(dishText, ['smoothie', 'milkshake', 'shake', 'juice', 'frappe'])) {
+    return [
+      'Add 1 cup frozen fruit, 1 ripe banana, and 3/4 cup milk or yogurt to a blender.',
+      'Blend on high for 45-60 seconds until completely smooth, stopping once to scrape down the sides.',
+      'Check the thickness: add a splash of milk to thin it, or 3-4 ice cubes to thicken, then blend 10 more seconds.',
+      'Taste and adjust: add 1 teaspoon honey or maple syrup if the fruit is tart.',
+      'Pour into a tall glass and serve right away while cold.',
+    ];
+  }
+  if (includesAny(dishText, ['latte', 'matcha', 'iced coffee', 'cold brew', 'cappuccino'])) {
+    return [
+      'Fill a tall glass with ice cubes almost to the top.',
+      'Whisk 1 teaspoon matcha with 2 tablespoons warm water until smooth, or brew 1 shot of espresso or 1/2 cup strong coffee.',
+      'Pour 3/4 cup cold milk or a dairy-free swap over the ice.',
+      'Pour the matcha or coffee slowly over the milk so it layers.',
+      'Sweeten with 1-2 teaspoons honey or syrup if you like, stir, and serve right away.',
+    ];
+  }
   if (dishText.includes('burger')) {
     return [
       'Mix the patty seasoning for 1 minute, then shape 2 loose patties slightly wider than the buns so they shrink into the right size.',
@@ -2282,6 +2449,9 @@ function getDefaultRecipeSteps(dishName: string) {
 
 function ensureSafetyTemperature(steps: string[], dishName: string) {
   const dishText = dishName.toLowerCase();
+  if (isDrinkAnalysisText(dishText)) {
+    return steps;
+  }
   const stepText = steps.join(' ').toLowerCase();
 
   if (dishText.includes('burger') && !stepText.includes('160')) {
@@ -2426,6 +2596,9 @@ function getDefaultMainIngredientsSummary(ingredients: RecipeIngredient[]) {
 function getDefaultEquipment(analysis: FoodImageAnalysis) {
   const dishText = getAnalysisText(analysis);
 
+  if (isDrinkAnalysisText(dishText)) {
+    return ['blender or whisk', 'measuring cup', 'tall glass'];
+  }
   if (dishText.includes('burger')) {
     return ['skillet or grill pan', 'spatula', 'instant-read thermometer', 'knife and cutting board'];
   }
@@ -2453,6 +2626,9 @@ function getDefaultBestFor(mode: RecipeMode) {
 function getDefaultAvoidMistake(analysis: FoodImageAnalysis) {
   const dishText = getAnalysisText(analysis);
 
+  if (isDrinkAnalysisText(dishText)) {
+    return 'Do not over-blend with too much ice; it waters down the flavor fast.';
+  }
   if (dishText.includes('burger')) {
     return 'Do not press the patty hard while it cooks; that squeezes out juices.';
   }
@@ -2469,6 +2645,9 @@ function getDefaultAvoidMistake(analysis: FoodImageAnalysis) {
 function getDefaultStorageAndReheating(analysis: FoodImageAnalysis) {
   const dishText = getAnalysisText(analysis);
 
+  if (isDrinkAnalysisText(dishText)) {
+    return 'Best enjoyed right away. Refrigerate up to 24 hours and shake or stir before drinking.';
+  }
   if (dishText.includes('burger')) {
     return 'Store cooked patties and toppings separately up to 3 days. Reheat patties in a skillet until hot.';
   }
@@ -2885,6 +3064,9 @@ function getDefaultSpicePairings(analysis: FoodImageAnalysis) {
     ...analysis.likelyIngredients,
   ].join(' ').toLowerCase();
 
+  if (isDrinkAnalysisText(text)) {
+    return ['cinnamon', 'vanilla', 'honey'];
+  }
   if (text.includes('korean') || text.includes('gochujang') || text.includes('noodle')) {
     return ['gochugaru', 'toasted sesame oil', 'scallions', 'rice vinegar'];
   }
@@ -2985,7 +3167,7 @@ function toRecipeIngredient(value: string): RecipeIngredient {
     };
   }
 
-  const quantityMatch = withoutBadAsNeeded.match(/^((?:\d+(?:\.\d+)?|\d+\/\d+|\d+\s+\d+\/\d+|one|two|three|four|five|six|a|an)\s*(?:cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|ml|clove|cloves|slice|slices|can|cans|bunch|bunches|stalk|stalks|piece|pieces|large|medium|small)?)\s+(.+)$/i);
+  const quantityMatch = withoutBadAsNeeded.match(/^((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|one|two|three|four|five|six|a|an)\s*(?:cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|ml|clove|cloves|slice|slices|can|cans|bunch|bunches|stalk|stalks|piece|pieces|large|medium|small)?)\s+(.+)$/i);
   if (quantityMatch) {
     const name = cleanIngredientName(quantityMatch[2]);
     return {
@@ -3149,10 +3331,17 @@ function ensureInspiredCopy(value: string) {
 function getSafeList(values: string[] | undefined, fallback: string[], maxItems: number) {
   const cleanValues = (Array.isArray(values) ? values : [])
     .map((value) => getShortText(value, '', 120))
-    .filter(Boolean);
+    .filter((value) => Boolean(value) && !isPlaceholderText(value));
   const source = cleanValues.length > 0 ? cleanValues : fallback;
 
   return [...new Set(source)].slice(0, maxItems);
+}
+
+// Catches prompt-echo junk like "...", "...x6", or symbol-only strings so it
+// never reaches the app as a recipe title, step, or ingredient.
+function isPlaceholderText(value: string) {
+  const letterCount = (value.match(/[a-zA-Z]/g) ?? []).length;
+  return /\.{3}|…/.test(value) || letterCount < 3;
 }
 
 function getSafeTextValue(value: unknown, fallback: string) {

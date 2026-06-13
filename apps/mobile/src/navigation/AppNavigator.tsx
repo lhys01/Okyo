@@ -12,7 +12,10 @@ import { PaywallScreen } from '../screens/PaywallScreen';
 import { RecipeDetailScreen } from '../screens/RecipeDetailScreen';
 import { RestaurantPackDetailScreen } from '../screens/RestaurantPackDetailScreen';
 import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
+import { RankingsScreen } from '../screens/RankingsScreen';
+import { SavingsDashboardScreen } from '../screens/SavingsDashboardScreen';
 import { ScanScreen } from '../screens/ScanScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { useOkyoStore } from '../state/useOkyoStore';
@@ -93,7 +96,7 @@ export function AppNavigator() {
       <Stack.Screen
         name="ShareCardPreviewScreen"
         component={ShareCardPreviewScreen}
-        options={{ headerShown: false, title: 'Share Preview' }}
+        options={{ headerShown: false, presentation: 'modal', title: 'Share Preview' }}
       />
       <Stack.Screen
         name="DupeChallengeScreen"
@@ -111,6 +114,13 @@ export function AppNavigator() {
         options={{ title: 'Pack Detail' }}
       />
       <Stack.Screen name="PaywallScreen" component={PaywallScreen} options={{ title: 'Okyo Plus' }} />
+      <Stack.Screen
+        name="SavingsDashboardScreen"
+        component={SavingsDashboardScreen}
+        options={{ headerShown: false, title: 'Savings' }}
+      />
+      <Stack.Screen name="RankingsScreen" component={RankingsScreen} options={{ title: 'Rankings' }} />
+      <Stack.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false, title: 'Okyo' }} />
     </Stack.Navigator>
   );

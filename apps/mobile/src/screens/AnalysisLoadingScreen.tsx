@@ -1,7 +1,7 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Camera, NavArrowLeft, Spark, Sparks } from 'iconoir-react-native';
+import { Camera, NavArrowLeft, Sparks } from 'iconoir-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,7 +16,13 @@ import { uiLog } from '../utils/uiDebug';
 type AnalysisNavigation = NativeStackNavigationProp<RootStackParamList, 'AnalysisLoadingScreen'>;
 type AnalysisRoute = RouteProp<RootStackParamList, 'AnalysisLoadingScreen'>;
 
-const progressBars = Array.from({ length: 8 }, (_, index) => index);
+const loadingSteps = [
+  'Reading your plate',
+  'Finding the best guess',
+  'Building your recipe',
+  'Making your grocery list',
+  'Checking the result',
+];
 
 export function AnalysisLoadingScreen() {
   const navigation = useNavigation<AnalysisNavigation>();
@@ -29,14 +35,16 @@ export function AnalysisLoadingScreen() {
   const latestScanFailure = useOkyoStore((state) => state.latestScanFailure);
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const [pulseIndex, setPulseIndex] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const didNavigate = useRef(false);
   const didTrackCompletion = useRef(false);
 
   useEffect(() => {
     uiLog('AnalysisLoadingScreen', 'enter');
     const pulse = setInterval(() => {
-      setPulseIndex((currentIndex) => (currentIndex + 1) % progressBars.length);
-    }, 420);
+      setPulseIndex((currentIndex) => (currentIndex + 1) % loadingSteps.length);
+      setElapsedSeconds((currentSeconds) => currentSeconds + 1);
+    }, 1000);
 
     return () => clearInterval(pulse);
   }, []);
@@ -85,18 +93,21 @@ export function AnalysisLoadingScreen() {
     return () => clearTimeout(finish);
   }, [latestScanStatus, navigation, route.params?.scanSessionId, scanSessionId]);
 
+  // Safety net: the scan store always receives a terminal write (the API client
+  // times out at 60s), but if anything ever hangs past that, move the user on
+  // instead of stranding them on the loading screen.
   useEffect(() => {
-    const fallback = setTimeout(() => {
+    const safetyFallback = setTimeout(() => {
       if (didNavigate.current) {
         return;
       }
 
       didNavigate.current = true;
-      uiLog('AnalysisLoadingScreen', 'navigate_result_waiting');
+      uiLog('AnalysisLoadingScreen', 'navigate_result_safety_fallback');
       navigation.navigate('ResultSummaryScreen', { scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined });
-    }, 5200);
+    }, 90_000);
 
-    return () => clearTimeout(fallback);
+    return () => clearTimeout(safetyFallback);
   }, [navigation, route.params?.scanSessionId, scanSessionId]);
 
   const goBackToScan = () => {
@@ -132,34 +143,39 @@ export function AnalysisLoadingScreen() {
         <View style={styles.hero}>
           <KikoMascot pose="scanning" size={150} style={styles.heroMascot} />
           <Text style={styles.kicker}>SCANNING</Text>
-          <Text style={styles.title}>Okyo is building your homemade swap.</Text>
+          <Text style={styles.title}>Kiko is reading your plate…</Text>
           <Text style={styles.subtitle}>
-            This can take a few seconds for real food photos. We only show a result when it feels trustworthy.
+            Finding the homemade version. This can take a few seconds, and Okyo only shows a result it trusts.
           </Text>
+          {elapsedSeconds >= 8 ? (
+            <Text style={styles.stillWorkingText}>
+              Still working on the photo. Clear food and drink scans can take a little longer.
+            </Text>
+          ) : null}
         </View>
 
         <View style={styles.progressCardWrap}>
-          <View style={styles.progressCard}>
-            <View style={styles.progressHeader}>
-              <Sparks color={colors.coral} height={34} strokeWidth={2.1} width={34} />
-              <Text style={styles.progressTitle}>Building your homemade swap...</Text>
-            </View>
-            <View style={styles.progressTrack} accessibilityRole="progressbar">
-              {progressBars.map((bar) => {
-                const isActive = (bar + progressBars.length - pulseIndex) % progressBars.length < 4;
+          <View style={styles.progressCard} accessibilityRole="progressbar">
+            {loadingSteps.map((step, index) => {
+              const isActive = index === pulseIndex;
+              const isDone = index < pulseIndex;
 
-                return (
-                  <View
-                    key={bar}
-                    style={[styles.progressSegment, isActive ? styles.progressSegmentActive : null]}
-                  />
-                );
-              })}
-            </View>
-            <View style={styles.progressFooter}>
-              <ActivityIndicator color={colors.coral} size="small" />
-              <Text style={styles.progressHint}>Checking the dish, homemade cost, and recipe fit.</Text>
-            </View>
+              return (
+                <View key={step} style={[styles.stepRow, isActive ? styles.stepRowActive : null]}>
+                  {isActive ? (
+                    <ActivityIndicator color={colors.coral} size="small" />
+                  ) : (
+                    <Sparks
+                      color={isDone ? colors.coral : colors.creamDeep}
+                      height={20}
+                      strokeWidth={2.1}
+                      width={20}
+                    />
+                  )}
+                  <Text style={[styles.stepText, isActive ? styles.stepTextActive : null]}>{step}</Text>
+                </View>
+              );
+            })}
           </View>
         </View>
 
@@ -171,8 +187,6 @@ export function AnalysisLoadingScreen() {
           <Camera color={colors.body} height={25} strokeWidth={2.25} width={25} />
           <Text style={styles.backButtonText}>Back to scan</Text>
         </Pressable>
-
-        <Spark color="#f5b763" height={26} style={styles.softSpark} strokeWidth={2.1} width={26} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -211,7 +225,7 @@ const styles = StyleSheet.create({
   backPillText: {
     color: colors.body,
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   topTitleWrap: {
     alignItems: 'center',
@@ -225,7 +239,7 @@ const styles = StyleSheet.create({
   topTitle: {
     color: colors.charcoal,
     fontSize: 21,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   hero: {
@@ -239,14 +253,14 @@ const styles = StyleSheet.create({
   kicker: {
     color: colors.coral,
     fontSize: 15,
-    fontWeight: '900',
-    letterSpacing: 4,
+    fontWeight: '700',
+    letterSpacing: 0,
     marginBottom: 16,
   },
   title: {
     color: colors.charcoal,
     fontSize: 33,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 39,
   },
   subtitle: {
@@ -256,65 +270,50 @@ const styles = StyleSheet.create({
     lineHeight: 25,
     marginTop: 18,
   },
+  stillWorkingText: {
+    color: colors.muted,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 21,
+    marginTop: 14,
+  },
   progressCardWrap: {
     marginTop: 40,
   },
   progressCard: {
     backgroundColor: colors.card,
     borderColor: '#f0e5d8',
-    borderRadius: 20,
+    borderRadius: 22,
     borderWidth: 1,
-    paddingHorizontal: 18,
-    paddingVertical: 22,
+    gap: 4,
+    padding: 12,
     shadowColor: '#7b5a38',
     shadowOffset: { height: 12, width: 0 },
     shadowOpacity: 0.08,
     shadowRadius: 22,
     elevation: 2,
   },
-  progressHeader: {
+  stepRow: {
     alignItems: 'center',
+    borderRadius: 14,
     flexDirection: 'row',
-    gap: 14,
+    gap: 12,
+    minHeight: 48,
+    paddingHorizontal: 12,
+  },
+  stepRowActive: {
+    backgroundColor: colors.cream,
+  },
+  stepText: {
+    color: colors.muted,
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '800',
+    lineHeight: 20,
     minWidth: 0,
   },
-  progressTitle: {
+  stepTextActive: {
     color: colors.charcoal,
-    flex: 1,
-    fontSize: 18,
-    fontWeight: '900',
-    lineHeight: 23,
-    minWidth: 0,
-  },
-  progressTrack: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 26,
-  },
-  progressSegment: {
-    backgroundColor: '#f4ebe2',
-    borderRadius: 999,
-    flex: 1,
-    height: 14,
-    minWidth: 0,
-  },
-  progressSegmentActive: {
-    backgroundColor: '#ffa36d',
-  },
-  progressFooter: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 18,
-    minWidth: 0,
-  },
-  progressHint: {
-    color: colors.body,
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '700',
-    lineHeight: 18,
-    minWidth: 0,
   },
   backButton: {
     alignItems: 'center',
@@ -333,13 +332,7 @@ const styles = StyleSheet.create({
   backButtonText: {
     color: colors.body,
     fontSize: 17,
-    fontWeight: '900',
-  },
-  softSpark: {
-    opacity: 0.35,
-    position: 'absolute',
-    right: 32,
-    top: 302,
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.78,

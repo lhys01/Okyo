@@ -3,28 +3,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { getSafeNumber, getSafeText, isRecipeMode } from '../mocks';
 import type { Recipe, RecipeMode, RestaurantPack } from '../mocks';
+import { colors, fontFamilies, radius, shadows, spacing, typography } from '../theme/okyoTheme';
 
-export const colors = {
-  background: '#fff8ef',
-  card: '#ffffff',
-  cream: '#fff1df',
-  creamDeep: '#f4dcc2',
-  coral: '#e9552f',
-  coralDark: '#bd3f24',
-  green: '#167247',
-  greenSoft: '#e8f6ec',
-  charcoal: '#211d19',
-  body: '#5f574d',
-  muted: '#8b8175',
-  border: '#eadcc9',
-  danger: '#9f3324',
-};
-
-export const spacing = {
-  screen: 22,
-  section: 18,
-  card: 16,
-};
+export { colors, fontFamilies, spacing, typography };
 
 type ScreenContainerProps = {
   children: ReactNode;
@@ -266,15 +247,9 @@ export function PackCard({ pack, label, description, averageSavings, topDish, on
 export const sharedStyles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: radius.card,
     padding: spacing.card,
-    shadowColor: '#2f231a',
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
+    ...shadows.card,
   },
   row: {
     alignItems: 'center',
@@ -294,29 +269,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   eyebrow: {
-    color: colors.coral,
+    color: colors.muted,
     fontSize: 12,
-    fontWeight: '900',
-    marginBottom: 8,
+    fontWeight: '700',
+    letterSpacing: 0,
+    marginBottom: 10,
     textTransform: 'uppercase',
   },
   screenTitle: {
     color: colors.charcoal,
-    fontSize: 32,
-    fontWeight: '900',
-    lineHeight: 37,
+    fontSize: 34,
+    fontWeight: '700',
+    letterSpacing: 0,
+    lineHeight: 40,
   },
   emptyTitle: {
     color: colors.charcoal,
     fontSize: 30,
-    fontWeight: '900',
-    lineHeight: 35,
+    fontWeight: '700',
+    letterSpacing: 0,
+    lineHeight: 36,
     textAlign: 'center',
   },
   bodyText: {
-    color: colors.body,
-    fontSize: 16,
-    lineHeight: 23,
+    ...typography.body,
     marginTop: 10,
   },
   emptyAction: {
@@ -326,30 +302,37 @@ const styles = StyleSheet.create({
   primaryButton: {
     alignItems: 'center',
     backgroundColor: colors.coral,
-    borderRadius: 16,
-    minHeight: 54,
+    borderRadius: radius.button,
+    minHeight: 58,
     justifyContent: 'center',
-    paddingHorizontal: 18,
+    paddingHorizontal: 26,
+    shadowColor: colors.coral,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    elevation: 3,
   },
   primaryButtonText: {
     color: '#fffdf8',
-    fontSize: 16,
-    fontWeight: '900',
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: 0,
   },
   secondaryButton: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
-    minHeight: 52,
+    borderRadius: radius.button,
+    minHeight: 56,
     justifyContent: 'center',
-    paddingHorizontal: 18,
+    paddingHorizontal: 26,
+    ...shadows.card,
   },
   secondaryButtonText: {
     color: colors.charcoal,
-    fontSize: 15,
-    fontWeight: '900',
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 16,
+    fontWeight: '800',
   },
   fullWidth: {
     width: '100%',
@@ -378,7 +361,7 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   badgeText_dark: {
     color: '#fffdf8',
@@ -394,27 +377,28 @@ const styles = StyleSheet.create({
   },
   statCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: radius.panel,
     minHeight: 82,
-    padding: 14,
+    padding: 16,
     width: '48%',
+    ...shadows.card,
   },
   statCardSavings: {
     backgroundColor: colors.greenSoft,
     borderColor: '#c9e7d2',
   },
   statLabel: {
-    color: colors.body,
-    fontSize: 12,
-    fontWeight: '900',
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0,
     textTransform: 'uppercase',
   },
   statValue: {
     color: colors.charcoal,
-    fontSize: 19,
-    fontWeight: '900',
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: 0,
     marginTop: 7,
   },
   statValueSavings: {
@@ -442,7 +426,7 @@ const styles = StyleSheet.create({
   modeText: {
     color: colors.charcoal,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   modeTextSelected: {
@@ -462,8 +446,9 @@ const styles = StyleSheet.create({
   cardTitle: {
     color: colors.charcoal,
     fontSize: 20,
-    fontWeight: '900',
-    lineHeight: 25,
+    fontWeight: '600',
+    letterSpacing: 0,
+    lineHeight: 26,
   },
   cardBody: {
     color: colors.body,
@@ -482,19 +467,19 @@ const styles = StyleSheet.create({
   cardMetaValue: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 4,
   },
   savingsText: {
     color: colors.green,
     fontSize: 20,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 4,
   },
   topDish: {
     color: colors.charcoal,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 16,
   },
   removeAction: {
@@ -507,6 +492,6 @@ const styles = StyleSheet.create({
   removeText: {
     color: colors.danger,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
 });

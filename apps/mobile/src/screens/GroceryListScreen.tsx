@@ -292,9 +292,7 @@ export function GroceryListScreen() {
       )}
 
       <View style={styles.allSetCard}>
-        <View style={styles.basketIcon}>
-          <Bag color={colors.green} height={52} strokeWidth={1.8} width={52} />
-        </View>
+        <KikoMascot pose="cooking" size={110} style={styles.allSetMascot} />
         <Text style={styles.allSetTitle}>All set!</Text>
         <Text style={styles.allSetBody}>You're ready to make something delicious.</Text>
       </View>
@@ -655,7 +653,7 @@ const styles = StyleSheet.create({
   screenContent: {
     flexGrow: 1,
     paddingBottom: 34,
-    paddingHorizontal: 18,
+    paddingHorizontal: 24,
   },
   topBar: {
     alignItems: 'center',
@@ -665,10 +663,8 @@ const styles = StyleSheet.create({
   },
   backButton: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
+    backgroundColor: colors.card,
     borderRadius: 999,
-    borderWidth: 1,
     height: 42,
     justifyContent: 'center',
     width: 42,
@@ -686,13 +682,13 @@ const styles = StyleSheet.create({
   topTitle: {
     color: colors.charcoal,
     fontSize: 21,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   topSubtitle: {
     color: colors.charcoal,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
     marginTop: 4,
     maxWidth: '100%',
     textAlign: 'center',
@@ -708,10 +704,8 @@ const styles = StyleSheet.create({
   },
   tabButton: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 12,
-    borderWidth: 1,
+    backgroundColor: colors.card,
+    borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
     minHeight: 48,
@@ -720,12 +714,11 @@ const styles = StyleSheet.create({
   },
   tabButtonSelected: {
     backgroundColor: colors.coral,
-    borderColor: colors.coral,
   },
   tabButtonText: {
     color: colors.charcoal,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   tabButtonTextSelected: {
@@ -762,19 +755,22 @@ const styles = StyleSheet.create({
   controlText: {
     color: colors.charcoal,
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   categoryCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: 24,
     marginTop: 16,
     overflow: 'hidden',
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   categoryHeader: {
     alignItems: 'center',
-    backgroundColor: '#fff8ec',
+    backgroundColor: colors.cream,
     flexDirection: 'row',
     gap: 10,
     paddingHorizontal: 14,
@@ -792,7 +788,7 @@ const styles = StyleSheet.create({
     color: colors.green,
     flex: 1,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0.2,
     textTransform: 'uppercase',
   },
@@ -802,9 +798,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     flexDirection: 'row',
     gap: 12,
-    minHeight: 50,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    minHeight: 58,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   itemRowLast: {
     borderBottomWidth: 0,
@@ -812,11 +808,11 @@ const styles = StyleSheet.create({
   checkbox: {
     alignItems: 'center',
     borderColor: '#b7aa9a',
-    borderRadius: 4,
+    borderRadius: 8,
     borderWidth: 1.5,
-    height: 20,
+    height: 24,
     justifyContent: 'center',
-    width: 20,
+    width: 24,
   },
   checkboxChecked: {
     backgroundColor: colors.green,
@@ -825,8 +821,8 @@ const styles = StyleSheet.create({
   itemText: {
     color: colors.charcoal,
     flex: 1,
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 15,
+    lineHeight: 22,
     minWidth: 0,
   },
   itemTextChecked: {
@@ -836,11 +832,14 @@ const styles = StyleSheet.create({
   emptyTabCard: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: 24,
     marginTop: 16,
     padding: 20,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   emptyTabMascot: {
     marginBottom: 2,
@@ -848,7 +847,7 @@ const styles = StyleSheet.create({
   emptyTabTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 8,
   },
   emptyTabBody: {
@@ -860,25 +859,19 @@ const styles = StyleSheet.create({
   },
   allSetCard: {
     alignItems: 'center',
-    backgroundColor: '#fff4df',
-    borderRadius: 18,
+    backgroundColor: colors.cream,
+    borderRadius: 24,
     marginTop: 28,
     paddingHorizontal: 22,
     paddingVertical: 28,
   },
-  basketIcon: {
-    alignItems: 'center',
-    backgroundColor: '#eaf6df',
-    borderRadius: 999,
-    height: 92,
-    justifyContent: 'center',
-    marginBottom: 12,
-    width: 92,
+  allSetMascot: {
+    marginBottom: 10,
   },
   allSetTitle: {
     color: colors.charcoal,
     fontSize: 22,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   allSetBody: {
     color: colors.charcoal,
@@ -891,7 +884,7 @@ const styles = StyleSheet.create({
   primaryAction: {
     alignItems: 'center',
     backgroundColor: colors.coral,
-    borderRadius: 16,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'center',
@@ -907,20 +900,23 @@ const styles = StyleSheet.create({
   primaryActionText: {
     color: '#fffdf8',
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   issueCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     marginTop: 18,
     padding: 18,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   issueTitle: {
     color: colors.charcoal,
     fontSize: 25,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 30,
   },
   issueBody: {

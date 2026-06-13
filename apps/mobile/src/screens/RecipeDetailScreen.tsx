@@ -87,8 +87,14 @@ export function RecipeDetailScreen() {
   const displaySteps = getRecipeDisplaySteps(recipe);
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
   const displayDescription = cleanDisplayText(recipe?.description ?? '');
-  const ingredientPreview = getIngredientPreview(recipe);
   const ingredientCount = getIngredientCount(recipe);
+  const fallbackIngredients = (Array.isArray(recipe?.ingredients) ? recipe.ingredients : [])
+    .filter((ingredient) => ingredient.name.trim());
+  const displayIngredientGroups = ingredientGroups.length > 0
+    ? ingredientGroups
+    : fallbackIngredients.length > 0
+      ? [{ component: '', items: fallbackIngredients }]
+      : [];
   const totalTime = recipe ? recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes : 0;
   const perServingCost = recipe && recipe.servings > 0 ? recipe.estimatedHomemadeCost / recipe.servings : null;
   const flavorNotes = getFlavorNotes(recipe, spicePairings);
@@ -278,14 +284,33 @@ export function RecipeDetailScreen() {
 
             <View style={styles.previewSection}>
               <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionSmallTitle}>What you'll need</Text>
-                <Text style={styles.sectionCount}>{ingredientCount} ingredients</Text>
+                <Text style={styles.sectionSmallTitle}>Ingredients</Text>
+                <Text style={styles.sectionCount}>{ingredientCount} items</Text>
               </View>
-              <View style={styles.ingredientPreviewRow}>
-                {ingredientPreview.map((ingredient) => (
-                  <IngredientPreviewCard key={`${recipe.id}-${ingredient.name}`} ingredient={ingredient} />
-                ))}
-              </View>
+              {displayIngredientGroups.map((group) => (
+                <View key={`${recipe.id}-${group.component || 'all'}`} style={styles.ingredientGroupCard}>
+                  {group.component ? (
+                    <Text style={styles.ingredientGroupTitle}>{group.component}</Text>
+                  ) : null}
+                  {group.items.map((item, itemIndex) => (
+                    <View
+                      key={`${recipe.id}-${group.component}-${item.name}`}
+                      style={[
+                        styles.ingredientRow,
+                        itemIndex === group.items.length - 1 ? styles.ingredientRowLast : null,
+                      ]}
+                    >
+                      <IngredientAvatar name={item.name} />
+                      <View style={styles.ingredientTextBlock}>
+                        <Text style={styles.ingredientName}>{cleanDisplayText(item.name)}</Text>
+                      </View>
+                      {item.quantity?.trim() ? (
+                        <Text style={styles.ingredientQty}>{cleanDisplayText(item.quantity)}</Text>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              ))}
             </View>
 
             <InfoCard title="Why you'll love this">
@@ -547,23 +572,6 @@ function RecipeModeTabs({ modes, selectedMode, onSelectMode }: RecipeModeTabsPro
   );
 }
 
-type IngredientPreviewCardProps = {
-  ingredient: RecipeIngredient;
-};
-
-function IngredientPreviewCard({ ingredient }: IngredientPreviewCardProps) {
-  return (
-    <View style={styles.ingredientPreviewCard}>
-      <View style={styles.ingredientIconBubble}>
-        <Cutlery color={colors.coralDark} height={20} strokeWidth={2} width={20} />
-      </View>
-      <Text numberOfLines={2} style={styles.ingredientPreviewText}>
-        {cleanDisplayText(ingredient.name)}
-      </Text>
-    </View>
-  );
-}
-
 type InfoCardProps = {
   children: ReactNode;
   title: string;
@@ -576,6 +584,77 @@ function InfoCard({ children, title }: InfoCardProps) {
       {children}
     </View>
   );
+}
+
+type IngredientVisualTone = 'produce' | 'protein' | 'dairy' | 'grain' | 'sauce' | 'pantry' | 'default';
+
+type IngredientVisual = {
+  label: string;
+  tone: IngredientVisualTone;
+};
+
+function IngredientAvatar({ name }: { name: string }) {
+  const visual = getIngredientVisual(name);
+
+  return (
+    <View style={[styles.ingredientAvatar, getIngredientAvatarToneStyle(visual.tone)]}>
+      <Text style={styles.ingredientAvatarText}>{visual.label}</Text>
+    </View>
+  );
+}
+
+function getIngredientVisual(name: string): IngredientVisual {
+  const normalized = cleanDisplayText(name).toLowerCase();
+
+  // TODO: Prefer ingredient.visualUrl here once the backend owns a safe generated-image pipeline.
+  if (matchesIngredient(normalized, ['chicken', 'beef', 'pork', 'lamb', 'fish', 'salmon', 'shrimp', 'egg', 'tofu', 'turkey'])) {
+    return { label: 'P', tone: 'protein' };
+  }
+  if (matchesIngredient(normalized, ['lettuce', 'greens', 'spinach', 'tomato', 'onion', 'garlic', 'pepper', 'vegetable', 'cilantro', 'basil', 'parsley', 'lemon', 'lime'])) {
+    return { label: 'V', tone: 'produce' };
+  }
+  if (matchesIngredient(normalized, ['milk', 'cream', 'cheese', 'yogurt', 'butter', 'parmesan', 'mozzarella'])) {
+    return { label: 'D', tone: 'dairy' };
+  }
+  if (matchesIngredient(normalized, ['rice', 'pasta', 'noodle', 'bread', 'bun', 'tortilla', 'flour', 'oat', 'grain', 'crust'])) {
+    return { label: 'G', tone: 'grain' };
+  }
+  if (matchesIngredient(normalized, ['sauce', 'dressing', 'mayo', 'mustard', 'ketchup', 'soy', 'vinegar', 'honey', 'syrup'])) {
+    return { label: 'S', tone: 'sauce' };
+  }
+  if (matchesIngredient(normalized, ['salt', 'pepper', 'oil', 'spice', 'seasoning', 'chili', 'paprika', 'cumin'])) {
+    return { label: 'O', tone: 'pantry' };
+  }
+
+  return { label: getIngredientInitial(normalized), tone: 'default' };
+}
+
+function matchesIngredient(value: string, keywords: string[]) {
+  return keywords.some((keyword) => value.includes(keyword));
+}
+
+function getIngredientInitial(value: string) {
+  return value.trim().charAt(0).toUpperCase() || 'I';
+}
+
+function getIngredientAvatarToneStyle(tone: IngredientVisualTone) {
+  switch (tone) {
+    case 'produce':
+      return styles.ingredientAvatarProduce;
+    case 'protein':
+      return styles.ingredientAvatarProtein;
+    case 'dairy':
+      return styles.ingredientAvatarDairy;
+    case 'grain':
+      return styles.ingredientAvatarGrain;
+    case 'sauce':
+      return styles.ingredientAvatarSauce;
+    case 'pantry':
+      return styles.ingredientAvatarPantry;
+    case 'default':
+    default:
+      return styles.ingredientAvatarDefault;
+  }
 }
 
 type PrimaryActionProps = {
@@ -669,7 +748,7 @@ const styles = StyleSheet.create({
   screenContent: {
     flexGrow: 1,
     paddingBottom: 28,
-    paddingHorizontal: 18,
+    paddingHorizontal: 24,
   },
   heroCard: {
     marginTop: 10,
@@ -677,12 +756,15 @@ const styles = StyleSheet.create({
   recipePhoto: {
     aspectRatio: 1.12,
     backgroundColor: colors.cream,
-    borderColor: colors.border,
-    borderRadius: 24,
-    borderWidth: 1,
+    borderRadius: 32,
     justifyContent: 'center',
     overflow: 'hidden',
     position: 'relative',
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 12, width: 0 },
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    elevation: 5,
   },
   recipePhotoImage: {
     height: '100%',
@@ -697,15 +779,13 @@ const styles = StyleSheet.create({
   recipePhotoFallbackText: {
     color: colors.body,
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '600',
     textAlign: 'center',
   },
   circleBackButton: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
+    backgroundColor: colors.card,
     borderRadius: 999,
-    borderWidth: 1,
     height: 42,
     justifyContent: 'center',
     left: 14,
@@ -715,10 +795,8 @@ const styles = StyleSheet.create({
   },
   circleSaveButton: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
+    backgroundColor: colors.card,
     borderRadius: 999,
-    borderWidth: 1,
     height: 42,
     justifyContent: 'center',
     position: 'absolute',
@@ -728,10 +806,8 @@ const styles = StyleSheet.create({
   },
   inspiredPill: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
+    backgroundColor: colors.card,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 8,
     left: 14,
@@ -745,36 +821,33 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     flexShrink: 1,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '700',
     lineHeight: 16,
   },
   overviewPanel: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 22,
-    borderWidth: 1,
+    borderRadius: 28,
     marginTop: -24,
-    padding: 18,
-    shadowColor: '#7b5a38',
-    shadowOffset: { height: 10, width: 0 },
+    padding: 20,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 8, width: 0 },
     shadowOpacity: 0.08,
-    shadowRadius: 20,
+    shadowRadius: 18,
     elevation: 2,
   },
   recipeTitle: {
     color: colors.charcoal,
     fontSize: 34,
-    fontWeight: '900',
-    lineHeight: 37,
+    fontWeight: '700',
+    letterSpacing: 0,
+    lineHeight: 39,
     minWidth: 0,
   },
   savingsMiniPill: {
     alignItems: 'center',
     alignSelf: 'flex-start',
     backgroundColor: colors.greenSoft,
-    borderColor: '#c4dfcb',
     borderRadius: 999,
-    borderWidth: 1,
     flexDirection: 'row',
     gap: 6,
     marginTop: 12,
@@ -784,13 +857,11 @@ const styles = StyleSheet.create({
   savingsMiniText: {
     color: colors.green,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   quickStatsRow: {
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
+    backgroundColor: colors.cream,
+    borderRadius: 20,
     flexDirection: 'row',
     marginTop: 14,
     paddingVertical: 13,
@@ -809,33 +880,31 @@ const styles = StyleSheet.create({
   quickStatValue: {
     color: colors.charcoal,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 18,
     textAlign: 'center',
   },
   quickStatLabel: {
     color: colors.body,
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: '600',
     marginTop: 2,
     textAlign: 'center',
   },
   description: {
     color: colors.charcoal,
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 16,
+    lineHeight: 24,
     marginTop: 14,
   },
   modeSection: {
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
     marginTop: 18,
     paddingBottom: 14,
   },
   sectionSmallTitle: {
     color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   modeTabs: {
     flexDirection: 'row',
@@ -845,10 +914,8 @@ const styles = StyleSheet.create({
   },
   modeTab: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 12,
-    borderWidth: 1,
+    backgroundColor: colors.cream,
+    borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
     minHeight: 42,
@@ -857,20 +924,17 @@ const styles = StyleSheet.create({
   },
   modeTabSelected: {
     backgroundColor: colors.coral,
-    borderColor: colors.coral,
   },
   modeTabText: {
     color: colors.charcoal,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   modeTabTextSelected: {
     color: '#fffdf8',
   },
   previewSection: {
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
     marginTop: 16,
     paddingBottom: 14,
   },
@@ -882,51 +946,97 @@ const styles = StyleSheet.create({
   sectionCount: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
   },
-  ingredientPreviewRow: {
-    flexDirection: 'row',
-    gap: 8,
+  ingredientGroupCard: {
+    backgroundColor: colors.cream,
+    borderRadius: 20,
     marginTop: 12,
-    minWidth: 0,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
   },
-  ingredientPreviewCard: {
+  ingredientGroupTitle: {
+    color: colors.coralDark,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    marginBottom: 2,
+    marginTop: 10,
+    textTransform: 'uppercase',
+  },
+  ingredientRow: {
     alignItems: 'center',
-    backgroundColor: '#fff8ec',
-    borderRadius: 12,
-    flex: 1,
-    minHeight: 78,
-    minWidth: 0,
-    padding: 8,
+    borderBottomColor: '#f3e6d2',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    minHeight: 44,
+    paddingVertical: 8,
   },
-  ingredientIconBubble: {
-    alignItems: 'center',
-    backgroundColor: '#fff1dc',
-    borderRadius: 999,
-    height: 32,
-    justifyContent: 'center',
-    marginBottom: 6,
-    width: 32,
+  ingredientRowLast: {
+    borderBottomWidth: 0,
   },
-  ingredientPreviewText: {
+  ingredientName: {
     color: colors.charcoal,
-    fontSize: 10,
+    fontSize: 15,
+    fontWeight: '600',
+    lineHeight: 20,
+    minWidth: 0,
+  },
+  ingredientTextBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  ingredientQty: {
+    color: colors.muted,
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'right',
+  },
+  ingredientAvatar: {
+    alignItems: 'center',
+    borderRadius: 13,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
+  },
+  ingredientAvatarText: {
+    color: colors.charcoal,
+    fontSize: 12,
     fontWeight: '800',
-    lineHeight: 13,
-    textAlign: 'center',
+  },
+  ingredientAvatarProduce: {
+    backgroundColor: colors.greenSoft,
+  },
+  ingredientAvatarProtein: {
+    backgroundColor: colors.coralSoft,
+  },
+  ingredientAvatarDairy: {
+    backgroundColor: '#f8efd8',
+  },
+  ingredientAvatarGrain: {
+    backgroundColor: '#f1e4cf',
+  },
+  ingredientAvatarSauce: {
+    backgroundColor: '#f7e7df',
+  },
+  ingredientAvatarPantry: {
+    backgroundColor: '#eee7dc',
+  },
+  ingredientAvatarDefault: {
+    backgroundColor: '#f5eee4',
   },
   infoCard: {
-    backgroundColor: '#fff8ec',
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
+    backgroundColor: colors.cream,
+    borderRadius: 20,
     marginTop: 14,
     padding: 14,
   },
   infoCardTitle: {
     color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 10,
   },
   bulletRow: {
@@ -947,13 +1057,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   flavorChip: {
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
+    backgroundColor: colors.card,
     borderRadius: 999,
-    borderWidth: 1,
     color: colors.charcoal,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
     overflow: 'hidden',
     paddingHorizontal: 10,
     paddingVertical: 7,
@@ -971,17 +1079,15 @@ const styles = StyleSheet.create({
   equipmentText: {
     color: colors.charcoal,
     fontSize: 10,
-    fontWeight: '800',
+    fontWeight: '600',
     lineHeight: 13,
     marginTop: 6,
     textAlign: 'center',
   },
   savingsCard: {
     alignItems: 'center',
-    backgroundColor: '#eef8ee',
-    borderColor: '#c4dfcb',
-    borderRadius: 16,
-    borderWidth: 1,
+    backgroundColor: colors.greenSoft,
+    borderRadius: 24,
     flexDirection: 'row',
     gap: 12,
     marginTop: 14,
@@ -994,18 +1100,18 @@ const styles = StyleSheet.create({
   savingsLabel: {
     color: colors.green,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   savingsSubLabel: {
     color: '#3f6a52',
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '600',
     marginTop: 10,
   },
   savingsValue: {
     color: colors.green,
     fontSize: 31,
-    fontWeight: '900',
+    fontWeight: '800',
     lineHeight: 34,
     marginTop: 2,
   },
@@ -1026,7 +1132,7 @@ const styles = StyleSheet.create({
   primaryAction: {
     alignItems: 'center',
     backgroundColor: colors.coral,
-    borderRadius: 16,
+    borderRadius: 999,
     justifyContent: 'center',
     marginTop: 18,
     minHeight: 58,
@@ -1040,7 +1146,7 @@ const styles = StyleSheet.create({
   primaryActionText: {
     color: '#fffdf8',
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   secondaryActionsRow: {
     flexDirection: 'row',
@@ -1049,10 +1155,8 @@ const styles = StyleSheet.create({
   },
   secondaryIconAction: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
+    backgroundColor: colors.card,
+    borderRadius: 999,
     flex: 1,
     gap: 6,
     justifyContent: 'center',
@@ -1063,7 +1167,7 @@ const styles = StyleSheet.create({
   secondaryIconText: {
     color: colors.charcoal,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '700',
     textAlign: 'center',
   },
   instructionsSection: {
@@ -1077,7 +1181,7 @@ const styles = StyleSheet.create({
   instructionsTitle: {
     color: colors.charcoal,
     fontSize: 22,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 27,
     maxWidth: 280,
     textAlign: 'center',
@@ -1085,7 +1189,7 @@ const styles = StyleSheet.create({
   stepProgressText: {
     color: colors.charcoal,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 16,
   },
   progressTrack: {
@@ -1103,19 +1207,17 @@ const styles = StyleSheet.create({
   },
   stepCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     marginBottom: 14,
-    padding: 14,
-    shadowColor: '#7b5a38',
-    shadowOffset: { height: 7, width: 0 },
-    shadowOpacity: 0.05,
+    padding: 16,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
     shadowRadius: 14,
     elevation: 1,
   },
   stepCardActive: {
-    borderColor: '#ffb39a',
+    backgroundColor: '#fffdf8',
   },
   stepTopRow: {
     alignItems: 'flex-start',
@@ -1133,7 +1235,7 @@ const styles = StyleSheet.create({
   stepBadgeText: {
     color: '#fffdf8',
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   stepTitleGroup: {
     flex: 1,
@@ -1142,13 +1244,13 @@ const styles = StyleSheet.create({
   stepTitle: {
     color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 21,
   },
   stepTime: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
     marginTop: 3,
   },
   stepBody: {
@@ -1161,7 +1263,7 @@ const styles = StyleSheet.create({
   visualCue: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
     lineHeight: 18,
     marginLeft: 38,
     marginTop: 7,
@@ -1183,7 +1285,7 @@ const styles = StyleSheet.create({
   stepTipTitle: {
     color: colors.coral,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   stepTipText: {
     color: colors.charcoal,
@@ -1192,10 +1294,8 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   cookingNotesCard: {
-    backgroundColor: '#fff8ec',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    backgroundColor: colors.cream,
+    borderRadius: 24,
     gap: 12,
     marginTop: 2,
     padding: 14,
@@ -1206,7 +1306,7 @@ const styles = StyleSheet.create({
   noteTitle: {
     color: colors.charcoal,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   noteText: {
     color: colors.body,
@@ -1220,7 +1320,7 @@ const styles = StyleSheet.create({
   },
   stepNavButton: {
     alignItems: 'center',
-    borderRadius: 14,
+    borderRadius: 999,
     flex: 1,
     flexDirection: 'row',
     gap: 8,
@@ -1231,14 +1331,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.coral,
   },
   stepNavButtonSecondary: {
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderWidth: 1,
+    backgroundColor: colors.card,
   },
   stepNavButtonText: {
     color: colors.charcoal,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   stepNavButtonTextPrimary: {
     color: '#fffdf8',
@@ -1260,13 +1358,13 @@ const styles = StyleSheet.create({
   smallBackText: {
     color: colors.charcoal,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   simpleTopTitle: {
     color: colors.charcoal,
     flex: 1,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   topBarSpacer: {
@@ -1274,23 +1372,21 @@ const styles = StyleSheet.create({
   },
   issueCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     marginTop: 18,
     padding: 18,
   },
   kicker: {
     color: colors.coral,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   issueTitle: {
     color: colors.charcoal,
     fontSize: 26,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 31,
   },
   issueBody: {
@@ -1305,10 +1401,8 @@ const styles = StyleSheet.create({
   },
   secondaryAction: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
+    backgroundColor: colors.card,
+    borderRadius: 999,
     justifyContent: 'center',
     minHeight: 54,
     paddingHorizontal: 16,
@@ -1316,7 +1410,7 @@ const styles = StyleSheet.create({
   secondaryActionText: {
     color: colors.charcoal,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.78,
@@ -1419,7 +1513,7 @@ function getRecipeDisplaySteps(recipe: Recipe | null): DisplayRecipeStep[] {
         : undefined,
     }))
     .filter((step) => step.text)
-    .slice(0, 9);
+    .slice(0, 20);
 
   if (structuredSteps.length > 0) {
     return structuredSteps;
@@ -1428,22 +1522,7 @@ function getRecipeDisplaySteps(recipe: Recipe | null): DisplayRecipeStep[] {
   return (Array.isArray(recipe?.steps) ? recipe.steps : [])
     .map((step) => ({ text: cleanDisplayText(step) }))
     .filter((step) => step.text)
-    .slice(0, 9);
-}
-
-function getIngredientPreview(recipe: Recipe | null): RecipeIngredient[] {
-  if (!recipe) {
-    return [];
-  }
-
-  const groupedItems = getSafeIngredientGroups(recipe).flatMap((group) => group.items);
-  const ingredients = groupedItems.length > 0 ? groupedItems : Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
-  const preview = ingredients.filter((ingredient) => ingredient.name.trim()).slice(0, 4);
-  const remainingCount = Math.max(getIngredientCount(recipe) - preview.length, 0);
-
-  return remainingCount > 0
-    ? [...preview, { name: `+${remainingCount} more`, quantity: '' }]
-    : preview;
+    .slice(0, 20);
 }
 
 function getIngredientCount(recipe: Recipe | null) {

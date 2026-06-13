@@ -5,8 +5,10 @@ import * as ImagePicker from 'expo-image-picker';
 import {
   Book,
   CameraSolid,
+  Cart,
   Dollar,
   NavArrowRight,
+  OpenBook,
   Sparks,
   Upload,
 } from 'iconoir-react-native';
@@ -98,7 +100,11 @@ export function ScanScreen() {
         );
         if (shouldUseSuccessPath && result.scan) {
           const selectedRecipe = getScanRecipeForMode(scanRecipes, selectedMode, result.recipe);
-          const storedStatus = selectedRecipe || foodEvidence ? 'success' : status;
+          const storedStatus = status === 'partial'
+            ? 'partial'
+            : selectedRecipe || foodEvidence
+              ? 'success'
+              : status;
           writeLatestScanSession({
             scanSessionId,
             latestScanStatus: storedStatus,
@@ -316,10 +322,10 @@ export function ScanScreen() {
             numberOfLines={2}
             style={styles.headline}
           >
-            Turn a food photo into a homemade recipe.
+            What are we remaking today?
           </Text>
           <Text style={styles.subtitle}>
-            Upload a food photo. Okyo makes a best-guess recipe from what it can see, then you can edit it if it’s off.
+            Snap a restaurant meal and Okyo turns it into a homemade recipe, savings estimate, and grocery list.
           </Text>
         </View>
 
@@ -344,6 +350,29 @@ export function ScanScreen() {
               icon={<Sparks color={colors.coral} height={25} strokeWidth={2.15} width={25} />}
               label="Try demo scan"
               onPress={tryDemoScan}
+            />
+          </View>
+        </View>
+
+        <View style={styles.howItWorks}>
+          <Text style={styles.howTitle}>How Okyo works</Text>
+          <View style={styles.howCard}>
+            <HowStep
+              caption="Snap the dish"
+              icon={<CameraSolid color={colors.coral} height={24} width={24} />}
+              label="Scan"
+            />
+            <NavArrowRight color={colors.creamDeep} height={22} strokeWidth={2.6} width={22} />
+            <HowStep
+              caption="Homemade version"
+              icon={<OpenBook color={colors.coral} height={24} strokeWidth={2.1} width={24} />}
+              label="Recipe"
+            />
+            <NavArrowRight color={colors.creamDeep} height={22} strokeWidth={2.6} width={22} />
+            <HowStep
+              caption="Shop and cook"
+              icon={<Cart color={colors.coral} height={24} strokeWidth={2.1} width={24} />}
+              label="Groceries"
             />
           </View>
         </View>
@@ -377,7 +406,9 @@ export function ScanScreen() {
                 <Text style={styles.recentMeta}>Saved recipe</Text>
                 <View style={styles.savedPill}>
                   <Dollar color={colors.green} height={17} strokeWidth={2.2} width={17} />
-                  <Text style={styles.savedPillText}>Saved recipe</Text>
+                  <Text style={styles.savedPillText}>
+                    Home est. {formatOptionalCurrency(recentRecipe.estimatedHomemadeCost)}
+                  </Text>
                 </View>
               </View>
               <NavArrowRight color={colors.body} height={26} strokeWidth={2.2} width={26} />
@@ -386,6 +417,22 @@ export function ScanScreen() {
         ) : null}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+type HowStepProps = {
+  caption: string;
+  icon: ReactNode;
+  label: string;
+};
+
+function HowStep({ caption, icon, label }: HowStepProps) {
+  return (
+    <View style={styles.howStep}>
+      <View style={styles.howIcon}>{icon}</View>
+      <Text style={styles.howLabel}>{label}</Text>
+      <Text numberOfLines={2} style={styles.howCaption}>{caption}</Text>
+    </View>
   );
 }
 
@@ -470,6 +517,9 @@ async function getProcessedImage(asset: ImagePicker.ImagePickerAsset) {
     { compress: 0.78, maxWidth: maxProcessedImageWidth },
     { compress: 0.64, maxWidth: 1200 },
     { compress: 0.52, maxWidth: 1000 },
+    { compress: 0.42, maxWidth: 850 },
+    { compress: 0.34, maxWidth: 720 },
+    { compress: 0.28, maxWidth: 600 },
   ];
   let latestResult: {
     base64?: string;
@@ -1035,43 +1085,42 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
   },
   hero: {
-    marginTop: 18,
-    paddingBottom: 18,
+    marginTop: 20,
+    paddingBottom: 22,
   },
   headline: {
     color: colors.charcoal,
-    fontSize: 44,
-    fontWeight: '900',
-    lineHeight: 50,
+    fontSize: 40,
+    fontWeight: '700',
+    letterSpacing: 0,
+    lineHeight: 46,
     maxWidth: 360,
   },
   subtitle: {
     color: colors.body,
-    fontSize: 18,
-    lineHeight: 27,
-    marginTop: 16,
+    fontSize: 16,
+    lineHeight: 24,
+    marginTop: 12,
     maxWidth: 370,
   },
   scanCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 24,
-    borderWidth: 1,
-    padding: 14,
-    shadowColor: '#7b5a38',
+    borderRadius: 32,
+    padding: 16,
+    shadowColor: '#4a3a28',
     shadowOffset: { height: 12, width: 0 },
-    shadowOpacity: 0.08,
-    shadowRadius: 22,
+    shadowOpacity: 0.09,
+    shadowRadius: 24,
     elevation: 2,
   },
   illustrationPanel: {
     alignItems: 'center',
-    aspectRatio: 1.84,
+    aspectRatio: 2.35,
     backgroundColor: colors.cream,
-    borderRadius: 20,
+    borderRadius: 26,
     justifyContent: 'center',
     overflow: 'hidden',
     position: 'relative',
@@ -1080,31 +1129,29 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   scanActions: {
-    gap: 12,
-    marginTop: 18,
+    gap: 10,
+    marginTop: 16,
   },
   scanButton: {
     alignItems: 'center',
-    borderRadius: 18,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 12,
     justifyContent: 'center',
-    minHeight: 64,
+    minHeight: 58,
     minWidth: 0,
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
   },
   scanButtonPrimary: {
     backgroundColor: colors.coral,
-    shadowColor: colors.coral,
+    shadowColor: colors.coralDark,
     shadowOffset: { height: 8, width: 0 },
     shadowOpacity: 0.18,
     shadowRadius: 18,
     elevation: 3,
   },
   scanButtonSecondary: {
-    backgroundColor: '#fffdf8',
-    borderColor: colors.coral,
-    borderWidth: 1.5,
+    backgroundColor: colors.cream,
   },
   scanButtonIcon: {
     alignItems: 'center',
@@ -1114,8 +1161,8 @@ const styles = StyleSheet.create({
   },
   scanButtonText: {
     flexShrink: 1,
-    fontSize: 18,
-    fontWeight: '900',
+    fontSize: 16,
+    fontWeight: '700',
     minWidth: 0,
     textAlign: 'center',
   },
@@ -1125,8 +1172,59 @@ const styles = StyleSheet.create({
   scanButtonTextSecondary: {
     color: colors.coralDark,
   },
+  howItWorks: {
+    marginTop: 28,
+  },
+  howTitle: {
+    color: colors.charcoal,
+    fontSize: 20,
+    fontWeight: '600',
+    letterSpacing: 0,
+    marginBottom: 12,
+  },
+  howCard: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 18,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
+  },
+  howStep: {
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+  },
+  howIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.cream,
+    borderRadius: 999,
+    height: 52,
+    justifyContent: 'center',
+    width: 52,
+  },
+  howLabel: {
+    color: colors.charcoal,
+    fontSize: 15,
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  howCaption: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '600',
+    lineHeight: 15,
+    marginTop: 2,
+    textAlign: 'center',
+  },
   recentSection: {
-    marginTop: 22,
+    marginTop: 26,
   },
   recentHeader: {
     alignItems: 'center',
@@ -1136,8 +1234,8 @@ const styles = StyleSheet.create({
   },
   recentTitle: {
     color: colors.charcoal,
-    fontSize: 22,
-    fontWeight: '900',
+    fontSize: 20,
+    fontWeight: '600',
   },
   seeAllButton: {
     alignItems: 'center',
@@ -1149,19 +1247,22 @@ const styles = StyleSheet.create({
   seeAllText: {
     color: colors.coral,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   recentCard: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     flexDirection: 'row',
     gap: 12,
     minHeight: 106,
     minWidth: 0,
     padding: 14,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   recentIcon: {
     alignItems: 'center',
@@ -1178,12 +1279,12 @@ const styles = StyleSheet.create({
   recentRecipeTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   recentMeta: {
     color: colors.body,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '500',
     marginTop: 4,
   },
   savedPill: {
@@ -1202,7 +1303,7 @@ const styles = StyleSheet.create({
     color: colors.green,
     flexShrink: 1,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.78,

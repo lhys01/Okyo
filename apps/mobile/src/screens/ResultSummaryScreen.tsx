@@ -8,7 +8,6 @@ import {
   CheckCircle,
   Clock,
   Cutlery,
-  Leaf,
   NavArrowLeft,
   OpenBook,
   PlusCircle,
@@ -24,6 +23,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
+import { KikoMascot } from '../components/KikoMascot';
 import {
   PrimaryButton,
   colors,
@@ -106,6 +106,7 @@ export function ResultSummaryScreen() {
   const shouldShowPartial = isPartialScan && !hasUsableScan;
   const isRealScan = !isDemoScan;
   const failureCopy = getScanFailureCopy(latestScanFailure);
+  const failureGuidance = getFailureGuidance(latestScanFailure?.rejectionType);
   const partialStarterRecipe = shouldShowPartial && scanResult ? getStarterRecipe(scanResult.dishName) : null;
   const selectedModeUi = getModeUi(selectedMode);
   const totalTimeMinutes = selectedRecipe
@@ -303,7 +304,7 @@ export function ResultSummaryScreen() {
   };
 
   const openSettings = () => {
-    navigation.navigate('MainTabs', { screen: 'SettingsScreen' });
+    navigation.navigate('SettingsScreen');
   };
 
   if (shouldShowFailure) {
@@ -318,14 +319,12 @@ export function ResultSummaryScreen() {
         ) : null}
 
         <View style={styles.failureCard}>
-          <Text style={styles.failureTitle}>Try uploading a clearer food photo.</Text>
-          <Text style={styles.failureBody}>
-            Use a well-lit restaurant meal photo where the main dish is centered and visible.
-          </Text>
+          <Text style={styles.failureTitle}>{failureGuidance.title}</Text>
+          <Text style={styles.failureBody}>{failureGuidance.body}</Text>
         </View>
 
         <View style={styles.actions}>
-          <PrimaryButton onPress={goToScan}>Try Another Photo</PrimaryButton>
+          <PrimaryButton onPress={goToScan}>{failureGuidance.primaryLabel}</PrimaryButton>
           <ActionButton label="Back to Scan" onPress={goBackToScanTab} />
         </View>
       </ResultFrame>
@@ -442,8 +441,14 @@ export function ResultSummaryScreen() {
 
   return (
     <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
+      <FoodImageCard
+        dishName={displayDishName || 'Scanned dish'}
+        imageUri={selectedScanImage?.uri}
+        isDemoScan={isDemoScan}
+      />
+
       <View style={styles.headerSection}>
-        <Text style={styles.kicker}>SCAN RESULT</Text>
+        <Text style={styles.kicker}>Okyo's reply</Text>
         <Text
           adjustsFontSizeToFit
           minimumFontScale={0.82}
@@ -465,12 +470,6 @@ export function ResultSummaryScreen() {
           <Text style={styles.bestGuessNote}>{bestGuessNote}</Text>
         ) : null}
       </View>
-
-      <FoodImageCard
-        dishName={displayDishName || 'Scanned dish'}
-        imageUri={selectedScanImage?.uri}
-        isDemoScan={isDemoScan}
-      />
 
       {shouldShowDishConfirmation && scanResult ? (
         <View style={styles.confirmCard}>
@@ -555,7 +554,7 @@ export function ResultSummaryScreen() {
       <View style={styles.savingsHero}>
         <View style={styles.savingsTopRow}>
           <View style={styles.savingsBadge}>
-            <Leaf color={colors.green} height={28} strokeWidth={2.3} width={28} />
+            <KikoMascot pose="celebrating" size={44} />
           </View>
           <View style={styles.savingsAmountGroup}>
             <Text style={styles.savingsHeroLabel}>
@@ -1136,20 +1135,26 @@ function getPossibleDishNames(scanResult: ScanResult | null, displayDishName: st
 
 function getFallbackDishAlternatives(scanResult: ScanResult) {
   const text = `${scanResult.dishName} ${scanResult.restaurantStyle}`.toLowerCase();
+  if (text.includes('smoothie') || text.includes('shake') || text.includes('juice') || text.includes('latte') || text.includes('matcha')) {
+    return ['Berry Smoothie', 'Fruit Smoothie', 'Iced Latte'];
+  }
   if (text.includes('grill') || text.includes('meat') || text.includes('char')) {
-    return ['Mixed Restaurant Plate', 'Grilled Meat Plate', 'Restaurant-Style Food Plate'];
+    return ['Grilled Meat Plate', 'Grilled Chicken Plate', 'Charred Grill Plate'];
   }
   if (text.includes('rice') || text.includes('bowl')) {
-    return ['Saucy Rice Bowl', 'Mixed Restaurant Plate', 'Stir-Fry Plate'];
+    return ['Saucy Rice Bowl', 'Grilled Chicken Rice Bowl', 'Stir-Fry Plate'];
   }
   if (text.includes('noodle') || text.includes('pasta')) {
     return ['Noodle Bowl', 'Pasta Bowl', 'Saucy Noodles'];
   }
   if (text.includes('burger') || text.includes('sandwich')) {
-    return ['Loaded Sandwich', 'Loaded Burger', 'Restaurant-Style Food Plate'];
+    return ['Loaded Sandwich', 'Loaded Burger', 'Cheeseburger'];
+  }
+  if (text.includes('salad')) {
+    return ['Loaded Salad', 'Chopped Salad', 'Mediterranean-Style Salad'];
   }
 
-  return ['Mixed Restaurant Plate', 'Saucy Rice Bowl', 'Loaded Sandwich'];
+  return ['Saucy Rice Bowl', 'Loaded Sandwich', 'Noodle Bowl'];
 }
 
 function getPercentValue(value: number | null | undefined) {
@@ -1177,7 +1182,7 @@ const styles = StyleSheet.create({
   screenContent: {
     backgroundColor: colors.background,
     flexGrow: 1,
-    paddingHorizontal: 18,
+    paddingHorizontal: 24,
     paddingTop: 8,
   },
   topBar: {
@@ -1190,10 +1195,8 @@ const styles = StyleSheet.create({
   },
   scanAgainButton: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
+    backgroundColor: colors.card,
     borderRadius: 999,
-    borderWidth: 1,
     flexDirection: 'row',
     gap: 5,
     left: 0,
@@ -1208,7 +1211,7 @@ const styles = StyleSheet.create({
     color: colors.coral,
     flexShrink: 1,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   topTitleWrap: {
     alignItems: 'center',
@@ -1222,15 +1225,13 @@ const styles = StyleSheet.create({
   topTitle: {
     color: colors.charcoal,
     fontSize: 20,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   settingsButton: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
+    backgroundColor: colors.card,
     borderRadius: 999,
-    borderWidth: 1,
     height: 44,
     justifyContent: 'center',
     position: 'absolute',
@@ -1240,45 +1241,47 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   headerSection: {
-    marginBottom: 14,
+    marginBottom: 16,
+    marginTop: 22,
     minWidth: 0,
   },
   kicker: {
-    color: colors.coral,
-    fontSize: 14,
-    fontWeight: '900',
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1.1,
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   title: {
     color: colors.charcoal,
-    fontSize: 37,
-    fontWeight: '900',
-    lineHeight: 42,
+    fontSize: 40,
+    fontWeight: '700',
+    letterSpacing: -0.8,
+    lineHeight: 46,
     minWidth: 0,
   },
   failureHeadline: {
     color: colors.charcoal,
     fontSize: 29,
-    fontWeight: '900',
+    fontWeight: '700',
+    letterSpacing: -0.4,
     lineHeight: 34,
     minWidth: 0,
   },
   subtitle: {
     color: colors.body,
-    fontSize: 17,
-    fontWeight: '700',
-    lineHeight: 23,
-    marginTop: 4,
+    fontSize: 16,
+    fontWeight: '400',
+    lineHeight: 24,
+    marginTop: 8,
     minWidth: 0,
   },
   matchPill: {
     alignItems: 'center',
     alignSelf: 'flex-start',
     backgroundColor: colors.greenSoft,
-    borderColor: '#bfdcc8',
     borderRadius: 999,
-    borderWidth: 1,
     flexDirection: 'row',
     gap: 8,
     marginTop: 10,
@@ -1287,33 +1290,31 @@ const styles = StyleSheet.create({
   },
   matchPillText: {
     color: colors.green,
-    fontSize: 15,
-    fontWeight: '900',
+    fontSize: 14,
+    fontWeight: '700',
   },
   bestGuessNote: {
     color: colors.body,
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '500',
     lineHeight: 20,
     marginTop: 10,
   },
   foodImageCard: {
     alignItems: 'center',
-    aspectRatio: 1.73,
+    aspectRatio: 1.08,
     backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 32,
     justifyContent: 'center',
-    maxHeight: 220,
-    minHeight: 170,
+    maxHeight: 360,
+    minHeight: 260,
     overflow: 'hidden',
     width: '100%',
-    shadowColor: '#7b5a38',
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    elevation: 2,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 12, width: 0 },
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    elevation: 5,
   },
   foodImage: {
     height: '100%',
@@ -1336,7 +1337,7 @@ const styles = StyleSheet.create({
   photoUnavailableTitle: {
     color: colors.charcoal,
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
     maxWidth: '90%',
     textAlign: 'center',
   },
@@ -1348,29 +1349,32 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   confirmCard: {
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    backgroundColor: colors.card,
+    borderRadius: 24,
     marginTop: 14,
-    padding: 16,
+    padding: 18,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   confirmLabel: {
     color: colors.coral,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     textTransform: 'uppercase',
   },
   confirmTitle: {
     color: colors.charcoal,
     fontSize: 19,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 6,
   },
   confirmDishName: {
     color: colors.charcoal,
     fontSize: 24,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 29,
     marginTop: 8,
   },
@@ -1382,22 +1386,18 @@ const styles = StyleSheet.create({
   },
   alternativeChip: {
     backgroundColor: '#fff5ef',
-    borderColor: '#ffcab9',
     borderRadius: 999,
-    borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   alternativeChipText: {
     color: colors.coral,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   dishNameInput: {
     backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
+    borderRadius: 16,
     color: colors.charcoal,
     fontSize: 17,
     fontWeight: '800',
@@ -1413,7 +1413,7 @@ const styles = StyleSheet.create({
   confirmPrimary: {
     alignItems: 'center',
     backgroundColor: colors.coral,
-    borderRadius: 14,
+    borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
     minHeight: 48,
@@ -1422,15 +1422,13 @@ const styles = StyleSheet.create({
   confirmPrimaryText: {
     color: '#fffdf8',
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   confirmSecondary: {
     alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
+    backgroundColor: colors.cream,
+    borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
     minHeight: 48,
@@ -1439,26 +1437,24 @@ const styles = StyleSheet.create({
   confirmSecondaryText: {
     color: colors.charcoal,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   confirmNote: {
     color: colors.body,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '500',
     lineHeight: 19,
     marginTop: 10,
   },
   savingsHero: {
     alignItems: 'stretch',
-    backgroundColor: '#eef8ee',
-    borderColor: '#bee1c5',
-    borderRadius: 18,
-    borderWidth: 1,
+    backgroundColor: colors.greenSoft,
+    borderRadius: 24,
     gap: 12,
     marginTop: 14,
     minWidth: 0,
-    padding: 14,
+    padding: 18,
   },
   savingsTopRow: {
     alignItems: 'center',
@@ -1480,24 +1476,24 @@ const styles = StyleSheet.create({
   },
   savingsHeroLabel: {
     color: colors.green,
-    fontSize: 13,
-    fontWeight: '900',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.9,
     textTransform: 'uppercase',
   },
   savingsHeroValue: {
     color: colors.green,
-    fontSize: 33,
-    fontWeight: '900',
+    fontSize: 36,
+    fontWeight: '800',
+    letterSpacing: -0.5,
     includeFontPadding: false,
     lineHeight: 36,
     marginTop: 2,
   },
   priceCompareRow: {
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 253, 248, 0.72)',
-    borderColor: '#d5eadb',
-    borderRadius: 14,
-    borderWidth: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.72)',
+    borderRadius: 18,
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'space-between',
@@ -1512,29 +1508,27 @@ const styles = StyleSheet.create({
   priceLabel: {
     color: colors.body,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   priceValue: {
     color: colors.charcoal,
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 4,
   },
   priceHint: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
     lineHeight: 17,
     marginTop: 5,
   },
   priceInput: {
     backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
+    borderRadius: 999,
     color: colors.charcoal,
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
     minHeight: 50,
     minWidth: 94,
     paddingHorizontal: 12,
@@ -1543,14 +1537,17 @@ const styles = StyleSheet.create({
   summaryCard: {
     alignItems: 'center',
     backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     flexDirection: 'row',
     marginTop: 14,
     minWidth: 0,
     paddingHorizontal: 8,
     paddingVertical: 12,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   statTile: {
     alignItems: 'center',
@@ -1580,23 +1577,21 @@ const styles = StyleSheet.create({
   metricLabel: {
     color: colors.body,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '500',
     textAlign: 'center',
   },
   metricValue: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 22,
     marginTop: 1,
     textAlign: 'center',
   },
   modeTabs: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    backgroundColor: colors.cream,
+    borderRadius: 999,
     flexDirection: 'row',
     marginTop: 12,
     minWidth: 0,
@@ -1623,15 +1618,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   modeTabSelected: {
-    backgroundColor: '#fffdf8',
-    borderColor: '#ffb39a',
-    borderWidth: 1,
+    backgroundColor: colors.card,
   },
   modeTabText: {
     color: colors.body,
     flexShrink: 1,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     minWidth: 0,
     textAlign: 'center',
   },
@@ -1640,17 +1633,15 @@ const styles = StyleSheet.create({
   },
   matchCard: {
     backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     marginTop: 12,
     minWidth: 0,
     padding: 14,
-    shadowColor: '#7b5a38',
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: 0.05,
-    shadowRadius: 18,
-    elevation: 1,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   matchTopRow: {
     alignItems: 'center',
@@ -1663,9 +1654,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'flex-start',
     backgroundColor: '#fff5ef',
-    borderColor: '#ffcab9',
     borderRadius: 999,
-    borderWidth: 1,
     maxWidth: '74%',
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -1674,7 +1663,7 @@ const styles = StyleSheet.create({
     color: colors.coral,
     flexShrink: 1,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   matchBodyRow: {
     alignItems: 'flex-start',
@@ -1690,13 +1679,13 @@ const styles = StyleSheet.create({
   matchTitle: {
     color: colors.charcoal,
     fontSize: 20,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 25,
   },
   matchScoreLine: {
     color: colors.coral,
     fontSize: 19,
-    fontWeight: '900',
+    fontWeight: '800',
     lineHeight: 24,
     marginTop: 6,
   },
@@ -1725,10 +1714,8 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   infoChip: {
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
+    backgroundColor: colors.cream,
     borderRadius: 999,
-    borderWidth: 1,
     flex: 1,
     justifyContent: 'center',
     minHeight: 42,
@@ -1739,54 +1726,61 @@ const styles = StyleSheet.create({
   infoChipText: {
     color: colors.green,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     includeFontPadding: false,
     lineHeight: 18,
     textAlign: 'center',
   },
   standaloneScanPreview: {
     backgroundColor: '#fffaf3',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     height: 170,
     marginTop: 14,
     width: '100%',
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   failureCard: {
     backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     marginTop: 14,
-    padding: 16,
+    padding: 18,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   partialCard: {
     backgroundColor: '#fff7d8',
-    borderColor: '#eadc91',
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     marginTop: 14,
-    padding: 16,
+    padding: 18,
   },
   starterCard: {
     backgroundColor: '#ffffff',
-    borderColor: '#eadc91',
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     marginTop: 14,
     padding: 18,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   starterLabel: {
     color: colors.coral,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     textTransform: 'uppercase',
   },
   starterTitle: {
     color: colors.charcoal,
     fontSize: 20,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 6,
   },
   starterBody: {
@@ -1798,35 +1792,38 @@ const styles = StyleSheet.create({
   starterStep: {
     color: colors.charcoal,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '600',
     lineHeight: 21,
     marginTop: 8,
   },
   starterNote: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
     lineHeight: 18,
     marginTop: 12,
   },
   loadingMiniCard: {
     backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     marginTop: 20,
     padding: 18,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
   loadingMiniText: {
     color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   failureTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   failureBody: {
     color: colors.body,
@@ -1846,9 +1843,7 @@ const styles = StyleSheet.create({
   actionButton: {
     alignItems: 'center',
     backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: 999,
     flex: 1,
     flexDirection: 'row',
     gap: 6,
@@ -1856,6 +1851,11 @@ const styles = StyleSheet.create({
     minHeight: 50,
     minWidth: 0,
     paddingHorizontal: 7,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 5, width: 0 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 1,
   },
   actionButtonIcon: {
     alignItems: 'center',
@@ -1867,14 +1867,14 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     flexShrink: 1,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     minWidth: 0,
     textAlign: 'center',
   },
   resultPrimaryButton: {
     alignItems: 'center',
     backgroundColor: colors.coral,
-    borderRadius: 20,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 12,
     justifyContent: 'center',
@@ -1889,7 +1889,7 @@ const styles = StyleSheet.create({
   resultPrimaryButtonText: {
     color: '#fffdf8',
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.78,
@@ -1959,9 +1959,37 @@ function getScanFailureCopy(failure: { rejectionType?: string; rejectionReason?:
     };
   }
 
+  // ai_failed: the scanner hiccuped (rate limit, timeout, provider error). This
+  // is not about the photo, so the copy must not ask for a clearer one.
   return {
-    title: 'Okyo had trouble scanning this photo.',
-    body: friendlyReason ?? 'Try again in a second.',
+    title: 'That scan didn’t go through.',
+    body: friendlyReason ?? 'It’s not your photo — Okyo’s scanner hit a snag. Try the same photo again.',
+  };
+}
+
+// The guidance card under the headline. Only the genuinely photo-related
+// rejections should suggest a clearer photo; provider hiccups should not.
+function getFailureGuidance(rejectionType: string | undefined) {
+  if (rejectionType === 'not_food') {
+    return {
+      title: 'Point Okyo at a dish.',
+      body: 'Okyo works best on a clear photo of food or a drink.',
+      primaryLabel: 'Try a Food Photo',
+    };
+  }
+
+  if (rejectionType === 'unclear_image') {
+    return {
+      title: 'Try uploading a clearer food photo.',
+      body: 'Use a well-lit photo where the main dish is centered and visible.',
+      primaryLabel: 'Try Another Photo',
+    };
+  }
+
+  return {
+    title: 'Mind trying that again?',
+    body: 'The scanner had a momentary hiccup. The same photo will usually work on a second try.',
+    primaryLabel: 'Try Again',
   };
 }
 
