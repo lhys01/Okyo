@@ -84,6 +84,7 @@ export function RecipeDetailScreen() {
   const cookingTerms = getSafeCookingTerms(recipe?.cookingTerms);
   const ingredientGroups = getSafeIngredientGroups(recipe);
   const equipment = getSafeTextList(recipe?.equipment);
+  const substitutions = getSafeTextList(recipe?.substitutions);
   const displaySteps = getRecipeDisplaySteps(recipe);
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
   const displayDescription = cleanDisplayText(recipe?.description ?? '');
@@ -342,6 +343,17 @@ export function RecipeDetailScreen() {
                     </View>
                   ))}
                 </View>
+              </InfoCard>
+            ) : null}
+
+            {substitutions.length > 0 ? (
+              <InfoCard title="Easy swaps">
+                {substitutions.map((item) => (
+                  <View key={item} style={styles.bulletRow}>
+                    <Leaf color={colors.green} height={16} strokeWidth={2.2} width={16} />
+                    <Text style={styles.bulletText}>{cleanDisplayText(item)}</Text>
+                  </View>
+                ))}
               </InfoCard>
             ) : null}
 

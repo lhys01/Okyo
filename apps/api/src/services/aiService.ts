@@ -839,7 +839,7 @@ function createRecipeFromVariant(
     160,
   ));
 
-  return {
+  return sanitizeRecipeVagueness({
     id: `${options.idPrefix ?? 'ai'}-${slugify(analysis.dishName)}-${slugify(mode)}`,
     scanResultId: analysis.candidateScanId,
     title,
@@ -875,7 +875,7 @@ function createRecipeFromVariant(
     groceryItems,
     spicePairings,
     cookingTerms,
-  };
+  }, analysis);
 }
 
 function createFallbackScan(
@@ -1260,7 +1260,7 @@ export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const explicitLikelyIngredients = getSafeList(output.likelyIngredients, [], 8);
   const likelyIngredients = getSafeList(
     output.likelyIngredients,
-    visibleIngredients.length > 0 ? visibleIngredients : ['main ingredient', 'sauce', 'seasoning'],
+    visibleIngredients.length > 0 ? visibleIngredients : [],
     8,
   );
   const rawDishName = getSafeTextValue(output.dishName, '');
@@ -2162,21 +2162,133 @@ function createGenericStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMo
   });
 }
 
-function getVisibleMainIngredient(analysis: FoodImageAnalysis) {
-  if (analysis.visibleComponents.protein) {
-    return `8 oz ${analysis.visibleComponents.protein}`;
-  }
-  if (analysis.visibleComponents.baseStarch) {
-    return `2 cups ${analysis.visibleComponents.baseStarch}`;
-  }
-  if (analysis.visibleIngredients.length > 0) {
-    return `2 servings ${analysis.visibleIngredients[0]}`;
-  }
-  if (analysis.likelyIngredients.length > 0) {
-    return `2 servings ${analysis.likelyIngredients[0]}`;
+// Standalone words that are too vague to ever ship as an ingredient name or to
+// stand in for an actual ingredient in a step. Exact-match only, so real names
+// like "tomato sauce" or "mixed vegetables, chopped" are never caught.
+const vagueIngredientWords = new Set([
+  'main ingredient', 'the main ingredient', 'main ingredients', 'the main ingredients',
+  'visible main ingredient', 'protein', 'proteins', 'the protein', 'vegetable', 'vegetables',
+  'veggies', 'sauce', 'sauces', 'sauce base', 'seasoning', 'seasonings', 'spice', 'spices',
+  'topping', 'toppings', 'optional items', 'optional toppings', 'ingredients', 'filling',
+  'fillings', 'cream stuff', 'food', 'dish', 'meal', 'stuff',
+]);
+
+function isVagueIngredientWord(value: string) {
+  return vagueIngredientWords.has(value.trim().toLowerCase());
+}
+
+// A specific, honest best-guess noun for the dish's main component, derived from
+// the vision analysis. Never returns a vague placeholder — this is what replaces
+// any "main ingredient" wording so the hard ban can always be satisfied.
+function getBestGuessIngredientName(analysis: FoodImageAnalysis): string {
+  const candidates = [
+    analysis.visibleComponents?.protein,
+    analysis.visibleComponents?.baseStarch,
+    analysis.visibleComponents?.vegetables,
+    ...(Array.isArray(analysis.visibleIngredients) ? analysis.visibleIngredients : []),
+    ...(Array.isArray(analysis.likelyIngredients) ? analysis.likelyIngredients : []),
+  ];
+  for (const candidate of candidates) {
+    const cleaned = (candidate ?? '').trim().toLowerCase();
+    if (cleaned.length > 2 && !isVagueIngredientWord(cleaned)) {
+      return cleaned;
+    }
   }
 
-  return '2 servings visible main ingredient';
+  return getCategoryMainIngredient(analysis.broadDishCategory, analysis.dishName);
+}
+
+function getCategoryMainIngredient(broadDishCategory: string, dishName: string): string {
+  const text = `${broadDishCategory} ${dishName}`.toLowerCase();
+  if (text.includes('pizza')) return 'the dough, sauce, and cheese';
+  if (includesAny(text, ['cheeseburger', 'burger'])) return 'the burger patty';
+  if (includesAny(text, ['noodle', 'ramen', 'udon', 'pho'])) return 'the noodles';
+  if (includesAny(text, ['pasta', 'rigatoni', 'spaghetti', 'penne', 'lasagna'])) return 'the pasta';
+  if (includesAny(text, ['fried rice', 'rice bowl', 'rice', 'grain', 'bowl'])) return 'the cooked rice';
+  if (includesAny(text, ['salad', 'greens'])) return 'the greens';
+  if (includesAny(text, ['smoothie', 'shake', 'juice', 'frappe'])) return 'the fruit';
+  if (includesAny(text, ['latte', 'matcha', 'coffee', 'cappuccino'])) return 'the brewed coffee or matcha';
+  if (includesAny(text, ['taco', 'burrito', 'wrap', 'quesadilla'])) return 'the filling and tortillas';
+  if (includesAny(text, ['chicken'])) return 'the chicken';
+  if (includesAny(text, ['steak', 'beef'])) return 'the beef';
+  if (includesAny(text, ['pork', 'bacon', 'ham'])) return 'the pork';
+  if (includesAny(text, ['salmon', 'shrimp', 'fish', 'seafood', 'tuna'])) return 'the seafood';
+  if (includesAny(text, ['tofu'])) return 'the tofu';
+  if (includesAny(text, ['soup', 'stew', 'chili'])) return 'the broth and vegetables';
+  if (includesAny(text, ['cake', 'cookie', 'brownie', 'dessert', 'pastry'])) return 'the batter';
+  if (includesAny(text, ['egg', 'omelet', 'breakfast'])) return 'the eggs';
+
+  const cleanedDish = dishName.trim().toLowerCase();
+  return cleanedDish && !isVagueDishName(cleanedDish) ? `the ${cleanedDish}` : 'the prepped ingredients';
+}
+
+// Hard guarantee: "the main ingredient" (and its variants) can never reach the
+// app. Replaces the banned phrasing with a specific best-guess noun.
+function sanitizeVagueRecipeText(text: string, bestGuess: string): string {
+  if (!text) {
+    return text;
+  }
+
+  return text
+    .replace(/\bthe\s+visible\s+main\s+ingredients?\b/gi, bestGuess)
+    .replace(/\bvisible\s+main\s+ingredients?\b/gi, bestGuess)
+    .replace(/\bthe\s+main\s+ingredients?\b/gi, bestGuess)
+    .replace(/\bmain\s+ingredients?\b/gi, bestGuess)
+    .replace(/\s+([.,;:])/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sanitizeRecipeVagueness(recipe: Recipe, analysis: FoodImageAnalysis): Recipe {
+  const guess = getBestGuessIngredientName(analysis);
+  const fix = (value: string) => sanitizeVagueRecipeText(value, guess);
+  const fixOptional = (value: string | undefined) => (value ? fix(value) : value);
+
+  return {
+    ...recipe,
+    description: fix(recipe.description),
+    steps: recipe.steps.map(fix),
+    structuredSteps: recipe.structuredSteps?.map((step) => ({
+      ...step,
+      text: fix(step.text),
+      visualCue: step.visualCue ? fix(step.visualCue) : step.visualCue,
+      whyItMatters: step.whyItMatters ? fix(step.whyItMatters) : step.whyItMatters,
+      flavorBoost: step.flavorBoost ? fix(step.flavorBoost) : step.flavorBoost,
+    })),
+    ingredients: recipe.ingredients.map((item) => ({ ...item, name: fix(item.name) })),
+    ingredientGroups: recipe.ingredientGroups?.map((group) => ({
+      ...group,
+      items: group.items.map((item) => ({ ...item, name: fix(item.name) })),
+    })),
+    groceryItems: recipe.groceryItems?.map((item) => ({ ...item, name: fix(item.name) })),
+    substitutions: recipe.substitutions.map(fix),
+    pantryNote: fix(recipe.pantryNote),
+    mainIngredientsSummary: fixOptional(recipe.mainIngredientsSummary),
+    avoidMistake: fixOptional(recipe.avoidMistake),
+    mistakeWarning: fixOptional(recipe.mistakeWarning),
+    storageAndReheating: fixOptional(recipe.storageAndReheating),
+    storage: fixOptional(recipe.storage),
+    bestFor: fixOptional(recipe.bestFor),
+  };
+}
+
+function getVisibleMainIngredient(analysis: FoodImageAnalysis) {
+  if (analysis.visibleComponents.protein && !isVagueIngredientWord(analysis.visibleComponents.protein)) {
+    return `8 oz ${analysis.visibleComponents.protein}`;
+  }
+  if (analysis.visibleComponents.baseStarch && !isVagueIngredientWord(analysis.visibleComponents.baseStarch)) {
+    return `2 cups ${analysis.visibleComponents.baseStarch}`;
+  }
+  const firstVisible = analysis.visibleIngredients.find((item) => item && !isVagueIngredientWord(item));
+  if (firstVisible) {
+    return `2 servings ${firstVisible}`;
+  }
+  const firstLikely = analysis.likelyIngredients.find((item) => item && !isVagueIngredientWord(item));
+  if (firstLikely) {
+    return `2 servings ${firstLikely}`;
+  }
+
+  return `2 servings ${getCategoryMainIngredient(analysis.broadDishCategory, analysis.dishName).replace(/^the /, '')}`;
 }
 
 function getStarterTitle(title: string, mode: RecipeMode) {
@@ -2208,12 +2320,41 @@ function createStarterGroceryItem(
 }
 
 function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mode: RecipeMode) {
-  const fallback = analysis.likelyIngredients.length > 0
-    ? analysis.likelyIngredients
-    : ['main ingredient', 'sauce base', 'seasoning'];
+  const usableLikely = analysis.likelyIngredients.filter((item) => item && !isVagueIngredientWord(item));
+  const fallback = usableLikely.length > 0
+    ? usableLikely
+    : getCategoryFallbackIngredients(analysis.broadDishCategory, analysis.dishName);
 
-  const ingredients = getSafeList(values, fallback, 12).map(toRecipeIngredient);
+  const ingredients = getSafeList(values, fallback, 12)
+    .filter((value) => !isVagueIngredientWord(value))
+    .map(toRecipeIngredient);
   return ensureCoreIngredients(ingredients, analysis, mode).slice(0, 12);
+}
+
+// Specific, buyable starter ingredients per dish family — used only when the
+// model returned nothing usable, so the list is never vague.
+function getCategoryFallbackIngredients(broadDishCategory: string, dishName: string): string[] {
+  const text = `${broadDishCategory} ${dishName}`.toLowerCase();
+  if (text.includes('pizza')) {
+    return ['1 pizza dough or crust', '1/2 cup tomato sauce', '1 1/2 cups shredded mozzarella', '1 tablespoon olive oil'];
+  }
+  if (includesAny(text, ['cheeseburger', 'burger'])) {
+    return ['1 lb ground beef', '4 burger buns', '4 slices cheddar cheese', '1 cup shredded romaine lettuce', '1 tomato, sliced'];
+  }
+  if (includesAny(text, ['pasta', 'rigatoni', 'spaghetti', 'penne', 'noodle'])) {
+    return ['8 oz pasta', '1 cup tomato sauce', '2 cloves garlic, minced', '1/4 cup grated parmesan', '1 tablespoon olive oil'];
+  }
+  if (includesAny(text, ['salad', 'greens'])) {
+    return ['4 cups mixed greens', '1 cup cherry tomatoes, halved', '1/2 cucumber, sliced', '3 tablespoons olive oil', '1 tablespoon lemon juice'];
+  }
+  if (includesAny(text, ['smoothie', 'shake', 'juice'])) {
+    return ['1 cup frozen fruit', '1 ripe banana', '3/4 cup milk or yogurt', '1 teaspoon honey'];
+  }
+  if (includesAny(text, ['rice', 'bowl', 'grain'])) {
+    return ['2 cups cooked rice', '8 oz cooked chicken', '1 cup steamed vegetables', '2 tablespoons soy sauce'];
+  }
+
+  return ['8 oz cooked chicken', '1 cup steamed vegetables', '2 tablespoons olive oil', '1/2 teaspoon kosher salt'];
 }
 
 function getRecipeSteps(values: OpenRouterRecipeVariant['steps'], dishName: string) {
@@ -2430,19 +2571,40 @@ function getDefaultRecipeSteps(dishName: string) {
     return [
       'Bring a pot of salted water to a boil, then cook the pasta or noodles until just tender with a small bite, usually 1 minute less than the package says.',
       'Save 1 cup cooking water before draining; the starch helps the sauce turn glossy instead of watery.',
-      'Warm the sauce base in a skillet for 1-2 minutes until it smells rich and looks slightly darker.',
-      'Stir in dairy, broth, or sauce liquid over low heat until smooth; lower heat keeps creamy sauces from splitting.',
-      'Toss in the noodles for 1-2 minutes, adding splashes of saved water until the sauce coats every piece.',
-      'Finish with garnish or spice, taste, and adjust in small pinches while the noodles are still hot.',
+      'Warm 1 cup tomato or cream sauce in a skillet for 1-2 minutes until it smells rich and looks slightly darker.',
+      'Stir the sauce over low heat until smooth; lower heat keeps creamy sauces from splitting.',
+      'Toss the drained pasta in the sauce for 1-2 minutes, adding splashes of saved water until every piece is coated.',
+      'Finish with 1/4 cup grated parmesan and a pinch of red pepper flakes, taste, and adjust while hot.',
+    ];
+  }
+  if (dishText.includes('pizza')) {
+    return [
+      'Heat the oven to 475°F / 245°C with a rack in the upper third, and let it fully preheat for 15 minutes.',
+      'Stretch 1 pizza dough into a 12-inch round on a floured surface, pressing from the center outward.',
+      'Spread 1/2 cup tomato sauce over the dough, leaving a 1-inch border for the crust.',
+      'Scatter 1 1/2 cups shredded mozzarella evenly, then add any toppings you like.',
+      'Bake for 10-14 minutes, until the crust edges are golden and the cheese is bubbling and lightly browned.',
+      'Rest the pizza for 2 minutes, then slice and finish with fresh basil or a pinch of oregano.',
+    ];
+  }
+  if (includesAny(dishText, ['salad', 'greens', 'slaw'])) {
+    return [
+      'Rinse 4 cups of greens under cold water and dry them well in a towel or salad spinner.',
+      'Chop 1 cup cherry tomatoes and 1/2 cucumber into bite-size pieces and add them to a large bowl.',
+      'Whisk 3 tablespoons olive oil with 1 tablespoon lemon juice and 1/4 teaspoon salt until it looks blended.',
+      'Add the greens to the bowl and pour the dressing around the edges, not all in one spot.',
+      'Toss gently for 30 seconds with tongs until every leaf is lightly coated but not soggy.',
+      'Taste, add a pinch more salt if it tastes flat, and serve right away while crisp.',
     ];
   }
 
+  const mainIngredient = getCategoryMainIngredient(dishText, dishName);
   return [
-    `Prep the ingredients for the ${dishName.toLowerCase()} for 5 minutes, keeping sauces and toppings close by so cooking feels calm.`,
-    'Cook the main ingredient over medium-high heat for 3-5 minutes per side, until browned outside and cooked through.',
-    'Warm or mix the sauce base for 1-2 minutes until glossy, then combine it with the cooked ingredients.',
-    'Use the cooking time to prep toppings, garnish, or serving bowls so the final assembly is quick.',
-    'Let hot meat, sauce, or filling sit for 1 minute if it looks juicy; this keeps the final bite from turning watery.',
+    `Gather and chop everything for the ${dishName.toLowerCase()}, keeping sauces and toppings within reach so cooking stays calm.`,
+    `Cook ${mainIngredient} over medium-high heat for 3-5 minutes per side, until browned outside and cooked through.`,
+    'Warm 1/2 cup of your sauce for 1-2 minutes until glossy, then combine it with the cooked food.',
+    'While that cooks, prep the toppings, garnish, or serving bowls so the final assembly is quick.',
+    'Let hot meat or filling rest for 1 minute if it looks juicy; this keeps the final bite from turning watery.',
     'Taste, adjust salt or spice in small pinches, and serve while warm.',
   ];
 }
@@ -3123,7 +3285,7 @@ function getDefaultCookingTerms(steps: string[]): CookingTerm[] {
   }
 
   return terms.length > 0 ? terms : [
-    { term: 'Season to taste', meaning: 'Add small pinches, taste, then adjust.' },
+    { term: 'Season as you go', meaning: 'Start with 1/4 teaspoon salt, taste, then add more in small pinches until it tastes right.' },
   ];
 }
 

@@ -71,12 +71,12 @@ function makePackRecipe(pack: RestaurantPack, dish: RestaurantPackDish): Recipe 
     estimatedHomemadeCost: dish.homemadeCost,
     estimatedSavings: dish.estimatedSavings,
     ingredients: [
-      { name: 'main ingredients', quantity: '1 set' },
-      { name: 'sauce or seasoning', quantity: 'to taste', pantryItem: true },
+      { name: `${dish.dishName.toLowerCase()} ingredients`, quantity: '1 set' },
+      { name: 'a matching sauce or dressing', quantity: 'to taste', pantryItem: true },
     ],
     steps: [
-      'Use this pack recipe as a saved placeholder.',
-      'Follow the closest matching Okyo mock recipe when starting a challenge.',
+      `Open the full ${dish.dishName} recipe to see the exact ingredients and steps.`,
+      'Start a challenge to cook it with Okyo step by step.',
     ],
     substitutions: ['Adjust protein, sauce, or base ingredients based on what you have.'],
     pantryNote: 'Assumes salt, pepper, oil, and basic seasonings are available.',

@@ -678,21 +678,21 @@ function createStarterRecipeFromScan(scan: NonNullable<CreateScanResult['scan']>
       { component: 'Finish', items: [{ name: 'fresh garnish or vegetables', quantity: '1 cup' }] },
     ],
     steps: [
-      `Prep the visible main ingredients for ${dishName}.`,
-      'Cook the main ingredient with oil, salt, and pepper until hot and browned where appropriate.',
+      `Prep the ${ingredientName} for ${dishName}, cutting or portioning into even pieces.`,
+      `Cook the ${ingredientName} with oil, salt, and pepper until hot and browned where appropriate.`,
       'Warm or stir together the sauce so it can coat the food evenly.',
       'Combine the base, sauce, and toppings, then taste and adjust seasoning.',
       'Serve right away with garnish or a bright squeeze of lemon if it fits.',
     ],
     structuredSteps: [
       {
-        text: `Prep the visible main ingredients for ${dishName}.`,
+        text: `Prep the ${ingredientName} for ${dishName}, cutting or portioning into even pieces.`,
         timeEstimate: '5 min',
         visualCue: 'Ingredients are cut or portioned.',
         whyItMatters: 'A flexible starter keeps the result useful without pretending to know the exact restaurant recipe.',
       },
       {
-        text: 'Cook the main ingredient with oil, salt, and pepper until hot and browned where appropriate.',
+        text: `Cook the ${ingredientName} with oil, salt, and pepper until hot and browned where appropriate.`,
         timeEstimate: '8-12 min',
         visualCue: 'Food is hot, browned, or tender.',
       },
@@ -713,7 +713,7 @@ function createStarterRecipeFromScan(scan: NonNullable<CreateScanResult['scan']>
     equipment: ['skillet or sheet pan', 'knife', 'cutting board', 'mixing bowl'],
     bestFor: 'a quick best-guess homemade version',
     avoidMistake: 'Do not treat this as the exact restaurant recipe; adjust based on what you can see.',
-    mistakeWarning: 'Do not overcook the main ingredient while recreating the visible dish.',
+    mistakeWarning: `Do not overcook the ${ingredientName} while recreating the visible dish.`,
     storageAndReheating: 'Store leftovers up to 3 days and reheat gently.',
     storage: 'Store leftovers up to 3 days and reheat gently.',
     groceryItems: [
@@ -754,8 +754,12 @@ function getStarterIngredientName(dishName: string) {
   if (normalized.includes('salad')) {
     return 'greens, toppings, and dressing';
   }
+  if (normalized.includes('smoothie') || normalized.includes('shake') || normalized.includes('juice')) {
+    return 'fruit, yogurt, and ice';
+  }
 
-  return 'visible main ingredient';
+  const cleaned = dishName.trim().toLowerCase();
+  return cleaned ? `${cleaned} ingredients` : 'visible ingredients';
 }
 
 function getModeStarterCost(homemadeCost: number, restaurantPrice: number, mode: RecipeMode) {

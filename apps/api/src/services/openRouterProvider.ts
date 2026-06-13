@@ -421,35 +421,16 @@ export async function generateRecipeWithOpenRouter(input: {
     'openrouter_output_truncated',
     'openrouter_unknown_error',
   ];
+  const isDrink = isDrinkAnalysisText([
+    input.analysis.dishName,
+    input.analysis.broadDishCategory,
+    ...input.analysis.visibleIngredients,
+    ...input.analysis.likelyIngredients,
+  ].join(' '));
 
+  let firstOutput: OpenRouterRecipeOutput;
   try {
-    const json = await callOpenRouterJson({
-      config: input.config,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are Okyo, a recipe assistant. Return ONLY valid JSON. No markdown. No reasoning. No explanations.',
-        },
-        {
-          role: 'user',
-          content: getRecipePrompt(input.analysis, input.mode),
-        },
-      ],
-      model: input.config.openRouterTextModel,
-      // Single-variant beginner-detail recipe fits in ~1800-2200 tokens. Reasoning models also
-      // spend budget thinking before they answer, so 3600 leaves room for both. Truncation
-      // still falls back to the compact retry below.
-      maxTokens: Math.min(input.config.maxOutputTokens, 3600),
-      stage: 'recipe',
-    });
-
-    const output = openRouterRecipeOutputSchema.safeParse(json);
-    if (!output.success) {
-      throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
-        openRouterErrorMessage: getSchemaErrorMessage(output.error),
-      });
-    }
-    return output.data;
+    firstOutput = await callRecipeStage(input, getRecipePrompt(input.analysis, input.mode), 3600, 'recipe');
   } catch (firstError) {
     const shouldRetry = firstError instanceof OpenRouterProviderError &&
       retryReasons.includes(firstError.failure.reason);
@@ -466,31 +447,153 @@ export async function generateRecipeWithOpenRouter(input: {
     });
 
     await waitBeforeRetry();
-    const retryJson = await callOpenRouterJson({
-      config: input.config,
-      messages: [
-        {
-          role: 'system',
-          content: 'Return JSON only. No markdown. No explanations.',
-        },
-        {
-          role: 'user',
-          content: getCompactRecipeRetryPrompt(input.analysis, input.mode),
-        },
-      ],
-      model: input.config.openRouterTextModel,
-      maxTokens: 2200,
-      stage: 'recipe_retry',
-    });
-
-    const retryOutput = openRouterRecipeOutputSchema.safeParse(retryJson);
-    if (!retryOutput.success) {
-      throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
-        openRouterErrorMessage: getSchemaErrorMessage(retryOutput.error),
-      });
-    }
-    return retryOutput.data;
+    return await callRecipeStage(input, getCompactRecipeRetryPrompt(input.analysis, input.mode), 2200, 'recipe_retry');
   }
+
+  // Quality gate: even valid JSON can be too vague to cook from. One focused
+  // repair pass, then keep whichever output is cleaner. The deterministic
+  // sanitizer in aiService is still the final safety net after this.
+  const issues = getRecipeQualityIssues(firstOutput, input.mode, isDrink);
+  if (issues.length === 0) {
+    return firstOutput;
+  }
+
+  logOpenRouterDebug('openrouter_recipe_quality_check', {
+    dishName: input.analysis.dishName,
+    issues,
+    willRepair: true,
+  });
+
+  try {
+    await waitBeforeRetry();
+    const repaired = await callRecipeStage(
+      input,
+      getRecipeRepairPrompt(input.analysis, input.mode, firstOutput, issues),
+      3600,
+      'recipe_quality_repair',
+    );
+    const repairedIssues = getRecipeQualityIssues(repaired, input.mode, isDrink);
+    logOpenRouterDebug('openrouter_recipe_quality_repair_result', {
+      beforeIssues: issues,
+      afterIssues: repairedIssues,
+      usedRepair: repairedIssues.length < issues.length,
+    });
+    return repairedIssues.length < issues.length ? repaired : firstOutput;
+  } catch (repairError) {
+    logOpenRouterDebug('openrouter_recipe_quality_repair_failed', {
+      reason: repairError instanceof OpenRouterProviderError ? repairError.failure.reason : 'unknown',
+    });
+    return firstOutput;
+  }
+}
+
+async function callRecipeStage(
+  input: { analysis: FoodImageAnalysis; config: AiConfig; mode: RecipeMode },
+  userPrompt: string,
+  maxTokens: number,
+  stage: string,
+): Promise<OpenRouterRecipeOutput> {
+  const json = await callOpenRouterJson({
+    config: input.config,
+    messages: [
+      {
+        role: 'system',
+        content: 'You are Okyo, a recipe assistant. Return ONLY valid JSON. No markdown. No reasoning. No explanations.',
+      },
+      { role: 'user', content: userPrompt },
+    ],
+    model: input.config.openRouterTextModel,
+    maxTokens: Math.min(input.config.maxOutputTokens, maxTokens),
+    stage,
+  });
+
+  const output = openRouterRecipeOutputSchema.safeParse(json);
+  if (!output.success) {
+    throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
+      openRouterErrorMessage: getSchemaErrorMessage(output.error),
+    });
+  }
+  return output.data;
+}
+
+// Detects recipe output that is too vague to cook from. Returns a list of issue
+// codes (empty = good enough). Drives the one-shot repair retry above.
+function getRecipeQualityIssues(output: OpenRouterRecipeOutput, mode: RecipeMode, isDrink: boolean): string[] {
+  const variant = output[getModeKey(mode)];
+  const issues: string[] = [];
+  if (!variant) {
+    return ['missing_variant'];
+  }
+
+  const ingredients = (Array.isArray(variant.ingredients) ? variant.ingredients : [])
+    .map((value) => (typeof value === 'string' ? value : '').trim())
+    .filter(Boolean);
+  const stepTexts = (Array.isArray(variant.steps) ? variant.steps : [])
+    .map((value) => (typeof value === 'string' ? value : value?.text ?? '').trim())
+    .filter(Boolean);
+  const allText = `${variant.title ?? ''} ${variant.description ?? ''} ${ingredients.join(' ')} ${stepTexts.join(' ')}`.toLowerCase();
+
+  if (/\bmain ingredient\b/.test(allText)) {
+    issues.push('vague_main_ingredient');
+  }
+  if (ingredients.length < 4) {
+    issues.push('too_few_ingredients');
+  }
+  const vagueStandalone = ingredients.filter((value) => standaloneVagueIngredient.test(value.toLowerCase().trim()));
+  if (vagueStandalone.length > 0) {
+    issues.push('vague_ingredient_name');
+  }
+  const missingAmounts = ingredients.filter((value) => !hasIngredientAmount(value));
+  if (missingAmounts.length > Math.max(1, Math.floor(ingredients.length / 3))) {
+    issues.push('ingredients_missing_amounts');
+  }
+  if (stepTexts.length < 5) {
+    issues.push('too_few_steps');
+  }
+  if (stepTexts.some((step) => vagueStepPattern.test(step.toLowerCase()))) {
+    issues.push('vague_step');
+  }
+  if (isDrink && stepTexts.some((step) => /\b(oven|skillet|saut[eé]|bake|roast|sear|pan-fry|°f|°c|internal temp)\b/i.test(step))) {
+    issues.push('drink_uses_cooking_language');
+  }
+
+  return issues;
+}
+
+const standaloneVagueIngredient = /^(the\s+)?(main ingredients?|protein|proteins|vegetables?|veggies|sauce|sauces|seasoning|seasonings|spice|spices|toppings?|ingredients|filling|stuff)$/;
+const vagueStepPattern = /\bcook until done\b|\bprepare the ingredients\b|\bmix everything\b|\bseason to taste\b|\b(cook|add|prepare|make) the (main ingredient|protein|vegetables|sauce)\b/;
+
+function hasIngredientAmount(value: string): boolean {
+  const text = value.toLowerCase();
+  if (/\d/.test(text)) {
+    return true;
+  }
+  return /\b(a|an|one|two|three|four|half|pinch|dash|handful|to taste|some)\b/.test(text);
+}
+
+function getRecipeRepairPrompt(
+  analysis: FoodImageAnalysis,
+  mode: RecipeMode,
+  badOutput: OpenRouterRecipeOutput,
+  issues: string[],
+): string {
+  const modeKey = getModeKey(mode);
+
+  return [
+    `Your previous recipe JSON for "${analysis.dishName}" had quality problems: ${issues.join(', ')}.`,
+    'Rewrite it so a beginner can cook it with zero guessing. Return ONLY valid minified JSON, same shape as before.',
+    `Return exactly: {"selectedMode":"${mode}","${modeKey}":{...recipe fields...}}`,
+    'Fix every problem: NEVER write "the main ingredient" or "main ingredient" — name the actual food. Every ingredient must start with an exact amount and a real grocery name. Every step must name real ingredients with amounts, a time, and a visual cue. No "cook until done", "prepare the ingredients", "season to taste", or "mix everything".',
+    'Keep 6-12 ingredients and 8-14 steps (6-8 for drinks or salads).',
+    `Food: ${JSON.stringify({
+      dishName: analysis.dishName,
+      cuisine: analysis.cuisine,
+      broadDishCategory: analysis.broadDishCategory,
+      visibleIngredients: analysis.visibleIngredients.slice(0, 5),
+      likelyIngredients: analysis.likelyIngredients.slice(0, 5),
+      visibleComponents: analysis.visibleComponents,
+    })}`,
+  ].join('\n');
 }
 
 async function callOpenRouterJson(input: {
@@ -702,9 +805,10 @@ function getRecipePrompt(analysis: FoodImageAnalysis, mode: RecipeMode) {
     `Include ONLY "selectedMode" and "${modeKey}". Do NOT include other mode keys.`,
     'Recipe fields: title, description, mainIngredientsSummary, equipment, bestFor, ingredients, steps, avoidMistake, substitutions, storageAndReheating, pantryNote, prepTime, cookTime, totalTime, servings, skillLevel, groceryItems, spicePairings.',
     'Strict limits: ingredients 6-12, steps 8-14 (plain strings), substitutions max 3, equipment max 5, groceryItems max 10, spicePairings max 2.',
-    'Ingredients: each is one string that starts with an exact amount, then a normal grocery-store name, like "8 oz rigatoni", "1 tablespoon olive oil", "2 cloves garlic, minced", "1/2 cup tomato sauce". Never vague items like "sauce", "seasoning", or "protein". Every ingredient that needs cooking must appear in the steps.',
-    'Steps: write for a total beginner. Each step is one plain string under 30 words, starts with an action verb, and covers ONE action. When an ingredient is added, repeat its exact amount. Include pan heat level, time, and a visual cue, like "Add the diced onion and cook for 3-4 minutes, stirring often, until soft and lightly golden."',
-    'Never write vague steps like "Make the sauce", "Cook until done", "Prepare the ingredients", or "Season to taste" without naming the seasoning and amount.',
+    'BANNED WORDING (never use, anywhere — title, ingredients, steps, notes): "the main ingredient", "main ingredient", standalone "protein", standalone "vegetables", standalone "sauce", standalone "seasoning", "toppings", "cook until done", "prepare the ingredients", "mix everything", "season to taste" with no amount. Always name the actual food or an honest best guess (e.g. "chicken breast", "ground beef", "rigatoni", "blueberries", "romaine lettuce", "tomato sauce").',
+    'Ingredients: each is one string that starts with an exact amount, then a normal grocery-store name, like "8 oz rigatoni", "1 tablespoon olive oil", "2 cloves garlic, minced", "1/2 cup tomato sauce". Order them by when they are used. Add a prep note when needed ("2 cloves garlic, minced"). "sauce" alone is banned — name it ("1/2 cup tomato sauce", "1/4 cup soy-ginger sauce"). "protein" alone is banned — name it ("chicken breast", "a burger patty"). Every ingredient that needs cooking must appear in the steps.',
+    'Steps: write for a total beginner. Each step is one plain string under 30 words, starts with an action verb, and covers ONE action. Name the real ingredient by name and repeat its exact amount when it is added. Include pan heat level, time, and a visual cue, like "Add the diced onion and cook for 3-4 minutes, stirring often, until soft and lightly golden."',
+    'Never write vague steps like "Cook the main ingredient", "Make the sauce", "Cook until done", "Prepare the ingredients", "Add the vegetables", or "Season to taste". Say exactly what to do, for how long, and what it should look/smell/feel like.',
     'Very simple dishes (salads, sandwiches, toast, drinks) may use 6-8 steps instead. Do not pad with filler steps.',
     isDrink
       ? 'This is a DRINK. The title must say smoothie/latte/shake/juice/etc. Write drink-making steps only: measure, blend or brew, taste, adjust thickness or sweetness, pour, garnish. No oven, no skillet, no meat, no meat temperatures. Ingredients must fit a drink: fruit, milk or yogurt or a dairy-free swap, ice, juice, espresso or matcha or cocoa if visible, sweetener.'

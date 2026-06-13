@@ -2046,10 +2046,10 @@ function getStarterRecipe(dishName: string) {
     title: `${dishName} starter`,
     body: 'A simple inspired-by cooking path based on the recognized dish name.',
     steps: [
-      'Identify the main protein, grain, or vegetable base.',
-      'Cook the main ingredient simply with salt, pepper, and oil.',
-      'Add a sauce or seasoning that matches the dish style.',
-      'Taste and adjust before serving.',
+      `Prep the ${dishName.toLowerCase()} base — the protein, grain, or vegetable you can see — into even pieces.`,
+      `Cook the ${dishName.toLowerCase()} base over medium-high heat with 1 tablespoon oil, 1/2 teaspoon salt, and a pinch of pepper until browned and cooked through.`,
+      'Stir in a sauce that matches the dish, like tomato, soy-ginger, or a creamy dressing, until everything is coated.',
+      'Taste, add a pinch more salt if it tastes flat, and serve while warm.',
     ],
   };
 }
