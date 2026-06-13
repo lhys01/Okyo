@@ -11,14 +11,16 @@ Run from apps/mobile:
 from __future__ import annotations
 
 import math
+import json
 import shutil
 from dataclasses import dataclass
+from html import escape
 from pathlib import Path
 
 try:
     import imageio.v2 as imageio
     import numpy as np
-    from PIL import Image, ImageDraw, ImageFilter
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont
 except ImportError as exc:
     raise SystemExit(
         "Missing animation dependencies. Install them with:\n"
@@ -41,6 +43,11 @@ CHARCOAL = (28, 24, 19, 255)
 MUTED = (142, 134, 123, 255)
 CREAM_DEEP = (234, 223, 203, 255)
 YELLOW = (250, 191, 88, 255)
+CONTACT_SHEET_COLUMNS = 3
+CONTACT_SHEET_CARD_WIDTH = 320
+CONTACT_SHEET_CARD_HEIGHT = 286
+CONTACT_SHEET_MARGIN = 28
+CONTACT_SHEET_THUMB_SIZE = 168
 
 
 @dataclass(frozen=True)
@@ -50,6 +57,7 @@ class AnimationSpec:
     purpose: str
     source_asset: str
     renderer_name: str
+    notes: str
 
 
 ANIMATIONS = [
@@ -59,6 +67,7 @@ ANIMATIONS = [
         purpose="Use for active cooking, sauteing, or recipe-in-progress moments.",
         source_asset="kiko-cooking.png",
         renderer_name="pan_saute",
+        notes="Transparent GIF/PNG frames with Kiko bounce, pan tilt, food flip, and steam. MP4 uses warm cream background.",
     ),
     AnimationSpec(
         slug="kiko-cutting-vegetables",
@@ -66,6 +75,7 @@ ANIMATIONS = [
         purpose="Use for prep, chopping, ingredient, or mise en place moments.",
         source_asset="kiko-side-profile.png",
         renderer_name="cutting",
+        notes="Transparent GIF/PNG frames with cutting board, vegetable pieces, and knife motion. MP4 uses warm cream background.",
     ),
     AnimationSpec(
         slug="kiko-scanning",
@@ -73,6 +83,7 @@ ANIMATIONS = [
         purpose="Use while Okyo analyzes an uploaded food or drink photo.",
         source_asset="kiko-scanning.png",
         renderer_name="scanning",
+        notes="Transparent GIF/PNG frames with scanning glow, scan line, pulse, and sparkles. MP4 uses warm cream background.",
     ),
     AnimationSpec(
         slug="kiko-cooking-stirring",
@@ -80,6 +91,7 @@ ANIMATIONS = [
         purpose="Use for simmering, stirring, and recipe-building moments.",
         source_asset="kiko-cooking.png",
         renderer_name="stirring",
+        notes="Transparent GIF/PNG frames with pot, spoon motion, Kiko bounce, and cooking steam. MP4 uses warm cream background.",
     ),
     AnimationSpec(
         slug="kiko-success-celebration",
@@ -87,6 +99,7 @@ ANIMATIONS = [
         purpose="Use for scan success, recipe saved, challenge complete, or progress wins.",
         source_asset="kiko-celebrating.png",
         renderer_name="celebration",
+        notes="Transparent GIF/PNG frames with celebration bounce, confetti, and sparkles. MP4 uses warm cream background.",
     ),
     AnimationSpec(
         slug="kiko-grocery-bag",
@@ -94,6 +107,7 @@ ANIMATIONS = [
         purpose="Use for grocery list, shopping, and pantry planning moments.",
         source_asset="kiko-grocery-list.png",
         renderer_name="grocery",
+        notes="Transparent GIF/PNG frames with grocery bag bounce and small sparkles. MP4 uses warm cream background.",
     ),
 ]
 
@@ -141,6 +155,9 @@ def main() -> None:
             }
         )
 
+    write_manifest(output_dir, generated)
+    write_contact_sheet(output_dir, generated)
+    write_preview_html(output_dir, generated)
     write_readme(output_dir, generated)
     print(f"Generated {len(generated)} Kiko animations in {output_dir}")
 
@@ -451,11 +468,289 @@ def composite_over_cream(frame: Image.Image) -> Image.Image:
     return background
 
 
+def write_manifest(output_dir: Path, generated: list[dict[str, object]]) -> None:
+    manifest = {
+        "pack": "okyo-kiko-animation-pack",
+        "version": 2,
+        "size": {
+            "width": CANVAS_SIZE,
+            "height": CANVAS_SIZE,
+        },
+        "duration_seconds": DURATION_SECONDS,
+        "fps": FPS,
+        "frame_count": FRAME_COUNT,
+        "backgrounds": {
+            "gif": "transparent",
+            "png_frames": "transparent",
+            "mp4": "warm cream (#faf7f0)",
+        },
+        "regenerate_command": "cd apps/mobile && python3 scripts/generate_kiko_animations.py",
+        "animations": [build_manifest_entry(item) for item in generated],
+    }
+    (output_dir / "animation_manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def build_manifest_entry(item: dict[str, object]) -> dict[str, object]:
+    spec = item["spec"]
+    gif_path = item["gif"]
+    mp4_path = item["mp4"]
+    frame_dir = item["frames"]
+    source = item["source"]
+    assert isinstance(spec, AnimationSpec)
+    assert isinstance(gif_path, Path)
+    assert isinstance(mp4_path, Path)
+    assert isinstance(frame_dir, Path)
+    assert isinstance(source, Path)
+
+    return {
+        "id": spec.slug,
+        "name": spec.title,
+        "use_case": spec.purpose,
+        "gif_path": relative_to_mobile(gif_path),
+        "mp4_path": relative_to_mobile(mp4_path),
+        "frame_folder_path": f"{relative_to_mobile(frame_dir)}/",
+        "size": {
+            "width": CANVAS_SIZE,
+            "height": CANVAS_SIZE,
+        },
+        "duration_seconds": DURATION_SECONDS,
+        "fps": FPS,
+        "frame_count": item["frame_count"],
+        "background_type": {
+            "gif": "transparent",
+            "mp4": "warm cream",
+            "png_frames": "transparent",
+        },
+        "source_kiko_asset": relative_to_mobile(source),
+        "file_sizes": {
+            "gif_bytes": gif_path.stat().st_size,
+            "mp4_bytes": mp4_path.stat().st_size,
+        },
+        "notes": spec.notes,
+    }
+
+
+def write_contact_sheet(output_dir: Path, generated: list[dict[str, object]]) -> None:
+    rows = math.ceil(len(generated) / CONTACT_SHEET_COLUMNS)
+    width = CONTACT_SHEET_COLUMNS * CONTACT_SHEET_CARD_WIDTH + CONTACT_SHEET_MARGIN * 2
+    height = rows * CONTACT_SHEET_CARD_HEIGHT + CONTACT_SHEET_MARGIN * 2
+    sheet = Image.new("RGBA", (width, height), CREAM)
+    draw = ImageDraw.Draw(sheet)
+    title_font = load_font(16)
+    meta_font = load_font(12)
+    format_font = load_font(13)
+
+    for index, item in enumerate(generated):
+        spec = item["spec"]
+        frame_dir = item["frames"]
+        assert isinstance(spec, AnimationSpec)
+        assert isinstance(frame_dir, Path)
+
+        column = index % CONTACT_SHEET_COLUMNS
+        row = index // CONTACT_SHEET_COLUMNS
+        x = CONTACT_SHEET_MARGIN + column * CONTACT_SHEET_CARD_WIDTH
+        y = CONTACT_SHEET_MARGIN + row * CONTACT_SHEET_CARD_HEIGHT
+        draw.rounded_rectangle(
+            (x + 8, y + 10, x + CONTACT_SHEET_CARD_WIDTH - 8, y + CONTACT_SHEET_CARD_HEIGHT - 8),
+            radius=24,
+            fill=CARD,
+            outline=(239, 232, 219, 255),
+            width=1,
+        )
+
+        preview_frame = frame_dir / f"{spec.slug}_frame_{FRAME_COUNT // 2:03d}.png"
+        thumb = composite_over_cream(Image.open(preview_frame).convert("RGBA"))
+        thumb.thumbnail((CONTACT_SHEET_THUMB_SIZE, CONTACT_SHEET_THUMB_SIZE), Image.Resampling.LANCZOS)
+        thumb_x = x + (CONTACT_SHEET_CARD_WIDTH - thumb.width) // 2
+        thumb_y = y + 20
+        sheet.alpha_composite(thumb, (thumb_x, thumb_y))
+
+        draw_centered_text(draw, spec.title, x + CONTACT_SHEET_CARD_WIDTH // 2, y + 200, CHARCOAL, title_font)
+        draw_centered_text(draw, spec.slug, x + CONTACT_SHEET_CARD_WIDTH // 2, y + 226, MUTED, meta_font)
+        draw_centered_text(draw, "GIF / MP4 / PNG frames", x + CONTACT_SHEET_CARD_WIDTH // 2, y + 250, GREEN, format_font)
+
+    sheet.convert("RGB").save(output_dir / "preview_contact_sheet.png", optimize=True)
+
+
+def draw_centered_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    center_x: int,
+    y: int,
+    fill: tuple[int, int, int, int],
+    font: ImageFont.ImageFont,
+) -> None:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    draw.text((center_x - text_width // 2, y), text, fill=fill, font=font)
+
+
+def load_font(size: int) -> ImageFont.ImageFont:
+    candidates = [
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Helvetica.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.exists():
+            return ImageFont.truetype(str(path), size=size)
+
+    return ImageFont.load_default()
+
+
+def write_preview_html(output_dir: Path, generated: list[dict[str, object]]) -> None:
+    cards = []
+    for item in generated:
+        spec = item["spec"]
+        gif_path = item["gif"]
+        mp4_path = item["mp4"]
+        frame_dir = item["frames"]
+        source = item["source"]
+        assert isinstance(spec, AnimationSpec)
+        assert isinstance(gif_path, Path)
+        assert isinstance(mp4_path, Path)
+        assert isinstance(frame_dir, Path)
+        assert isinstance(source, Path)
+        cards.append(
+            f"""
+      <article class="card">
+        <img src="{escape(gif_path.name)}" alt="{escape(spec.title)} GIF preview" />
+        <div class="card-copy">
+          <h2>{escape(spec.title)}</h2>
+          <p>{escape(spec.purpose)}</p>
+          <dl>
+            <dt>ID</dt><dd>{escape(spec.slug)}</dd>
+            <dt>Formats</dt><dd>GIF, MP4, PNG frames</dd>
+            <dt>Duration</dt><dd>{DURATION_SECONDS:.1f}s at {FPS}fps</dd>
+            <dt>Source</dt><dd>{escape(relative_to_mobile(source))}</dd>
+          </dl>
+          <div class="links">
+            <a href="{escape(gif_path.name)}" download>GIF</a>
+            <a href="{escape(mp4_path.name)}" download>MP4</a>
+            <a href="{escape(relative_to_animations(frame_dir))}/">Frames</a>
+          </div>
+        </div>
+      </article>"""
+        )
+
+    html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Okyo Kiko Animation Pack</title>
+    <style>
+      :root {{
+        color: #1c1813;
+        background: #faf7f0;
+        font-family: -apple-system, BlinkMacSystemFont, "Nunito", "Segoe UI", sans-serif;
+      }}
+      body {{
+        margin: 0;
+        padding: 32px;
+      }}
+      header {{
+        max-width: 920px;
+        margin: 0 auto 28px;
+      }}
+      h1 {{
+        margin: 0 0 8px;
+        font-size: 36px;
+        line-height: 1.1;
+      }}
+      p {{
+        color: #575047;
+        line-height: 1.5;
+      }}
+      .grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 18px;
+        max-width: 1100px;
+        margin: 0 auto;
+      }}
+      .card {{
+        background: #fff;
+        border: 1px solid #efe8db;
+        border-radius: 24px;
+        box-shadow: 0 10px 28px rgba(74, 58, 40, 0.08);
+        overflow: hidden;
+      }}
+      .card img {{
+        display: block;
+        width: 100%;
+        aspect-ratio: 1;
+        object-fit: contain;
+        background: #faf7f0;
+      }}
+      .card-copy {{
+        padding: 18px;
+      }}
+      h2 {{
+        margin: 0 0 8px;
+        font-size: 20px;
+      }}
+      dl {{
+        display: grid;
+        grid-template-columns: 86px 1fr;
+        gap: 6px 10px;
+        color: #575047;
+        font-size: 13px;
+      }}
+      dt {{
+        color: #8e867b;
+        font-weight: 700;
+      }}
+      dd {{
+        margin: 0;
+      }}
+      .links {{
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 14px;
+      }}
+      .links a {{
+        background: #e9552f;
+        border-radius: 999px;
+        color: #fffdf8;
+        font-size: 13px;
+        font-weight: 700;
+        padding: 8px 12px;
+        text-decoration: none;
+      }}
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Okyo Kiko Animation Pack</h1>
+      <p>Local preview for downloadable GIF, MP4, and PNG frame sequence assets. GIFs and frames are transparent; MP4s use warm cream because MP4 does not preserve alpha.</p>
+    </header>
+    <main class="grid">
+      {"".join(cards)}
+    </main>
+  </body>
+</html>
+"""
+    (output_dir / "preview.html").write_text(html, encoding="utf-8")
+
+
 def write_readme(output_dir: Path, generated: list[dict[str, object]]) -> None:
     lines = [
         "# Kiko Animation Assets",
         "",
         "Generated 2D Kiko animation files for Okyo. GIFs and PNG frame sequences use transparent backgrounds; MP4s are composited on warm cream because MP4 does not preserve alpha.",
+        "",
+        "## Catalog",
+        "",
+        "- Manifest: `assets/animations/animation_manifest.json`",
+        "- Contact sheet: `assets/animations/preview_contact_sheet.png`",
+        "- Local preview: `assets/animations/preview.html`",
         "",
         "## Regenerate",
         "",
@@ -488,10 +783,12 @@ def write_readme(output_dir: Path, generated: list[dict[str, object]]) -> None:
                 f"- Use: {spec.purpose}",
                 f"- Duration: {DURATION_SECONDS:.1f}s loop at {FPS}fps",
                 f"- Size: {CANVAS_SIZE}x{CANVAS_SIZE}",
+                f"- Backgrounds: GIF/PNG frames are transparent; MP4 is warm cream",
                 f"- Source Kiko asset: `{relative_to_mobile(source)}`",
                 f"- GIF: `{relative_to_mobile(gif_path)}` ({format_bytes(gif_path.stat().st_size)})",
                 f"- MP4: `{relative_to_mobile(mp4_path)}` ({format_bytes(mp4_path.stat().st_size)})",
                 f"- PNG frames: `{relative_to_mobile(frame_dir)}/` ({item['frame_count']} frames)",
+                f"- Notes: {spec.notes}",
                 "",
             ]
         )
@@ -502,6 +799,11 @@ def write_readme(output_dir: Path, generated: list[dict[str, object]]) -> None:
 def relative_to_mobile(path: Path) -> str:
     mobile_root = Path(__file__).resolve().parents[1]
     return str(path.resolve().relative_to(mobile_root))
+
+
+def relative_to_animations(path: Path) -> str:
+    animations_root = Path(__file__).resolve().parents[1] / "assets" / "animations"
+    return str(path.resolve().relative_to(animations_root))
 
 
 def format_bytes(size: int) -> str:

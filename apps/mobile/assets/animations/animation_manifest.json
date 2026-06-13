@@ -1,0 +1,175 @@
+{
+  "pack": "okyo-kiko-animation-pack",
+  "version": 2,
+  "size": {
+    "width": 384,
+    "height": 384
+  },
+  "duration_seconds": 3.0,
+  "fps": 12,
+  "frame_count": 36,
+  "backgrounds": {
+    "gif": "transparent",
+    "png_frames": "transparent",
+    "mp4": "warm cream (#faf7f0)"
+  },
+  "regenerate_command": "cd apps/mobile && python3 scripts/generate_kiko_animations.py",
+  "animations": [
+    {
+      "id": "kiko-cooking-pan-saute",
+      "name": "Kiko cooking with a pan",
+      "use_case": "Use for active cooking, sauteing, or recipe-in-progress moments.",
+      "gif_path": "assets/animations/kiko-cooking-pan-saute.gif",
+      "mp4_path": "assets/animations/kiko-cooking-pan-saute.mp4",
+      "frame_folder_path": "assets/animations/frames/kiko-cooking-pan-saute/",
+      "size": {
+        "width": 384,
+        "height": 384
+      },
+      "duration_seconds": 3.0,
+      "fps": 12,
+      "frame_count": 36,
+      "background_type": {
+        "gif": "transparent",
+        "mp4": "warm cream",
+        "png_frames": "transparent"
+      },
+      "source_kiko_asset": "assets/mascot/kiko_transparent_backgrounds_careful/kiko-cooking.png",
+      "file_sizes": {
+        "gif_bytes": 411300,
+        "mp4_bytes": 104184
+      },
+      "notes": "Transparent GIF/PNG frames with Kiko bounce, pan tilt, food flip, and steam. MP4 uses warm cream background."
+    },
+    {
+      "id": "kiko-cutting-vegetables",
+      "name": "Kiko cutting vegetables",
+      "use_case": "Use for prep, chopping, ingredient, or mise en place moments.",
+      "gif_path": "assets/animations/kiko-cutting-vegetables.gif",
+      "mp4_path": "assets/animations/kiko-cutting-vegetables.mp4",
+      "frame_folder_path": "assets/animations/frames/kiko-cutting-vegetables/",
+      "size": {
+        "width": 384,
+        "height": 384
+      },
+      "duration_seconds": 3.0,
+      "fps": 12,
+      "frame_count": 36,
+      "background_type": {
+        "gif": "transparent",
+        "mp4": "warm cream",
+        "png_frames": "transparent"
+      },
+      "source_kiko_asset": "assets/mascot/kiko_transparent_backgrounds_careful/kiko-side-profile.png",
+      "file_sizes": {
+        "gif_bytes": 260735,
+        "mp4_bytes": 68462
+      },
+      "notes": "Transparent GIF/PNG frames with cutting board, vegetable pieces, and knife motion. MP4 uses warm cream background."
+    },
+    {
+      "id": "kiko-scanning",
+      "name": "Kiko scanning",
+      "use_case": "Use while Okyo analyzes an uploaded food or drink photo.",
+      "gif_path": "assets/animations/kiko-scanning.gif",
+      "mp4_path": "assets/animations/kiko-scanning.mp4",
+      "frame_folder_path": "assets/animations/frames/kiko-scanning/",
+      "size": {
+        "width": 384,
+        "height": 384
+      },
+      "duration_seconds": 3.0,
+      "fps": 12,
+      "frame_count": 36,
+      "background_type": {
+        "gif": "transparent",
+        "mp4": "warm cream",
+        "png_frames": "transparent"
+      },
+      "source_kiko_asset": "assets/mascot/kiko_transparent_backgrounds_careful/kiko-scanning.png",
+      "file_sizes": {
+        "gif_bytes": 559025,
+        "mp4_bytes": 144580
+      },
+      "notes": "Transparent GIF/PNG frames with scanning glow, scan line, pulse, and sparkles. MP4 uses warm cream background."
+    },
+    {
+      "id": "kiko-cooking-stirring",
+      "name": "Kiko cooking and stirring",
+      "use_case": "Use for simmering, stirring, and recipe-building moments.",
+      "gif_path": "assets/animations/kiko-cooking-stirring.gif",
+      "mp4_path": "assets/animations/kiko-cooking-stirring.mp4",
+      "frame_folder_path": "assets/animations/frames/kiko-cooking-stirring/",
+      "size": {
+        "width": 384,
+        "height": 384
+      },
+      "duration_seconds": 3.0,
+      "fps": 12,
+      "frame_count": 36,
+      "background_type": {
+        "gif": "transparent",
+        "mp4": "warm cream",
+        "png_frames": "transparent"
+      },
+      "source_kiko_asset": "assets/mascot/kiko_transparent_backgrounds_careful/kiko-cooking.png",
+      "file_sizes": {
+        "gif_bytes": 394413,
+        "mp4_bytes": 86512
+      },
+      "notes": "Transparent GIF/PNG frames with pot, spoon motion, Kiko bounce, and cooking steam. MP4 uses warm cream background."
+    },
+    {
+      "id": "kiko-success-celebration",
+      "name": "Kiko success celebration",
+      "use_case": "Use for scan success, recipe saved, challenge complete, or progress wins.",
+      "gif_path": "assets/animations/kiko-success-celebration.gif",
+      "mp4_path": "assets/animations/kiko-success-celebration.mp4",
+      "frame_folder_path": "assets/animations/frames/kiko-success-celebration/",
+      "size": {
+        "width": 384,
+        "height": 384
+      },
+      "duration_seconds": 3.0,
+      "fps": 12,
+      "frame_count": 36,
+      "background_type": {
+        "gif": "transparent",
+        "mp4": "warm cream",
+        "png_frames": "transparent"
+      },
+      "source_kiko_asset": "assets/mascot/kiko_transparent_backgrounds_careful/kiko-celebrating.png",
+      "file_sizes": {
+        "gif_bytes": 451076,
+        "mp4_bytes": 167119
+      },
+      "notes": "Transparent GIF/PNG frames with celebration bounce, confetti, and sparkles. MP4 uses warm cream background."
+    },
+    {
+      "id": "kiko-grocery-bag",
+      "name": "Kiko grocery bag",
+      "use_case": "Use for grocery list, shopping, and pantry planning moments.",
+      "gif_path": "assets/animations/kiko-grocery-bag.gif",
+      "mp4_path": "assets/animations/kiko-grocery-bag.mp4",
+      "frame_folder_path": "assets/animations/frames/kiko-grocery-bag/",
+      "size": {
+        "width": 384,
+        "height": 384
+      },
+      "duration_seconds": 3.0,
+      "fps": 12,
+      "frame_count": 36,
+      "background_type": {
+        "gif": "transparent",
+        "mp4": "warm cream",
+        "png_frames": "transparent"
+      },
+      "source_kiko_asset": "assets/mascot/kiko_transparent_backgrounds_careful/kiko-grocery-list.png",
+      "file_sizes": {
+        "gif_bytes": 431618,
+        "mp4_bytes": 103352
+      },
+      "notes": "Transparent GIF/PNG frames with grocery bag bounce and small sparkles. MP4 uses warm cream background."
+    }
+  ]
+}
