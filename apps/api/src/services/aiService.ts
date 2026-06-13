@@ -631,9 +631,20 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
 
     return result;
   } catch (error) {
+    // A thrown error here means the provider call failed outright (rate limit,
+    // timeout, HTTP error) — this is an Okyo-side hiccup, not a bad photo, so the
+    // copy must never ask the user for a clearer image.
+    const providerReason = getFallbackReason(getFallbackLogDetails(error, config, config.openRouterVisionModel));
     logAi('fallback_ai', {
       errorMessage: error instanceof Error ? error.message : 'Unknown scan error.',
       reason: 'ai_scan_failed',
+      providerReason,
+    });
+    logScanDebug('api_scan_failed_final', {
+      fallbackReason: 'ai_scan_failed',
+      providerReason,
+      rejectionType: 'ai_failed',
+      uploadedImage,
     });
     const fallbackResult = uploadedImage
       ? createRejectedScan({
@@ -641,7 +652,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
         confidence: 0,
         config,
         fallbackReason: 'ai_scan_failed',
-        rejectionReason: 'Okyo could not analyze this photo. Try uploading a clearer food photo.',
+        rejectionReason: getAiFailureRejectionReason(providerReason),
         rejectionType: 'ai_failed',
         status: 'failed',
         uploadedImage,
@@ -1006,14 +1017,25 @@ function getAnalysisRejection(
   }
 
   if (analysis.aiSource !== 'openrouter_ai') {
+    // The vision provider failed — this says nothing about the photo itself,
+    // so never blame the user with "clearer photo" copy here.
+    logScanDebug('api_scan_rejection_decision', {
+      branch: 'ai_failed',
+      fallbackReason: analysis.fallbackReason,
+    });
     return {
       status: 'failed',
       rejectionType: 'ai_failed',
-      rejectionReason: 'Okyo could not analyze this photo. Try uploading a clearer food photo.',
+      rejectionReason: getAiFailureRejectionReason(analysis.fallbackReason),
     };
   }
 
   if (analysis.scanState === 'not_food' || (!analysis.isFoodImage && analysis.confidence >= notFoodConfidenceThreshold)) {
+    logScanDebug('api_scan_rejection_decision', {
+      branch: 'not_food',
+      confidence: analysis.confidence,
+      scanState: analysis.scanState,
+    });
     return {
       status: 'rejected',
       rejectionType: 'not_food',
@@ -1021,11 +1043,20 @@ function getAnalysisRejection(
     };
   }
 
+  // When the vision model says food is visible, a low confidence score means
+  // "uncertain dish", not "unclear photo" — let it through as a best guess.
+  const foodVisible = isFoodScanState(analysis.scanState);
   if (
     analysis.scanState === 'too_unclear' ||
-    !analysis.isFoodImage ||
-    analysis.confidence < uploadedImageConfidenceThreshold
+    (!foodVisible && !analysis.isFoodImage) ||
+    (!foodVisible && analysis.confidence < uploadedImageConfidenceThreshold)
   ) {
+    logScanDebug('api_scan_rejection_decision', {
+      branch: 'unclear_image',
+      confidence: analysis.confidence,
+      foodVisible,
+      scanState: analysis.scanState,
+    });
     return {
       status: 'rejected',
       rejectionType: 'unclear_image',
@@ -1034,6 +1065,17 @@ function getAnalysisRejection(
   }
 
   return undefined;
+}
+
+function getAiFailureRejectionReason(fallbackReason: string | undefined) {
+  if (fallbackReason?.includes('http_error')) {
+    return "Okyo's scanner is busy right now. It's not your photo — try the same one again in a minute.";
+  }
+  if (fallbackReason?.includes('timeout')) {
+    return 'The scan took too long and stopped. Try the same photo again.';
+  }
+
+  return "Okyo couldn't finish analyzing this photo. It's not your photo — try the same one again.";
 }
 
 function hasRealUploadedImage(input: AnalyzeFoodImageInput) {

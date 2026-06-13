@@ -106,6 +106,7 @@ export function ResultSummaryScreen() {
   const shouldShowPartial = isPartialScan && !hasUsableScan;
   const isRealScan = !isDemoScan;
   const failureCopy = getScanFailureCopy(latestScanFailure);
+  const failureGuidance = getFailureGuidance(latestScanFailure?.rejectionType);
   const partialStarterRecipe = shouldShowPartial && scanResult ? getStarterRecipe(scanResult.dishName) : null;
   const selectedModeUi = getModeUi(selectedMode);
   const totalTimeMinutes = selectedRecipe
@@ -318,14 +319,12 @@ export function ResultSummaryScreen() {
         ) : null}
 
         <View style={styles.failureCard}>
-          <Text style={styles.failureTitle}>Try uploading a clearer food photo.</Text>
-          <Text style={styles.failureBody}>
-            Use a well-lit restaurant meal photo where the main dish is centered and visible.
-          </Text>
+          <Text style={styles.failureTitle}>{failureGuidance.title}</Text>
+          <Text style={styles.failureBody}>{failureGuidance.body}</Text>
         </View>
 
         <View style={styles.actions}>
-          <PrimaryButton onPress={goToScan}>Try Another Photo</PrimaryButton>
+          <PrimaryButton onPress={goToScan}>{failureGuidance.primaryLabel}</PrimaryButton>
           <ActionButton label="Back to Scan" onPress={goBackToScanTab} />
         </View>
       </ResultFrame>
@@ -1960,9 +1959,37 @@ function getScanFailureCopy(failure: { rejectionType?: string; rejectionReason?:
     };
   }
 
+  // ai_failed: the scanner hiccuped (rate limit, timeout, provider error). This
+  // is not about the photo, so the copy must not ask for a clearer one.
   return {
-    title: 'Okyo had trouble scanning this photo.',
-    body: friendlyReason ?? 'Try again in a second.',
+    title: 'That scan didn’t go through.',
+    body: friendlyReason ?? 'It’s not your photo — Okyo’s scanner hit a snag. Try the same photo again.',
+  };
+}
+
+// The guidance card under the headline. Only the genuinely photo-related
+// rejections should suggest a clearer photo; provider hiccups should not.
+function getFailureGuidance(rejectionType: string | undefined) {
+  if (rejectionType === 'not_food') {
+    return {
+      title: 'Point Okyo at a dish.',
+      body: 'Okyo works best on a clear photo of food or a drink.',
+      primaryLabel: 'Try a Food Photo',
+    };
+  }
+
+  if (rejectionType === 'unclear_image') {
+    return {
+      title: 'Try uploading a clearer food photo.',
+      body: 'Use a well-lit photo where the main dish is centered and visible.',
+      primaryLabel: 'Try Another Photo',
+    };
+  }
+
+  return {
+    title: 'Mind trying that again?',
+    body: 'The scanner had a momentary hiccup. The same photo will usually work on a second try.',
+    primaryLabel: 'Try Again',
   };
 }
 
