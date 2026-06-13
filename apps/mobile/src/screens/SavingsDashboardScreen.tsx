@@ -6,6 +6,7 @@ import {
   Cutlery,
   DollarCircle,
   MoneySquare,
+  NavArrowLeft,
   NavArrowRight,
   StatsUpSquare,
 } from 'iconoir-react-native';
@@ -115,6 +116,16 @@ export function SavingsDashboardScreen() {
     navigation.navigate('MainTabs', { screen: 'ScanScreen' });
   };
 
+  // Savings is pushed from Home/Profile with its native header hidden, so it
+  // needs its own back affordance to avoid stranding the user.
+  const goBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
+  };
+
   const openSavedRecipe = (recipe: Recipe) => {
     const mode = getSafeRecipeMode(recipe.mode);
     uiLog('SavingsDashboardScreen', 'open_recent_win', { recipeId: recipe.id });
@@ -133,7 +144,15 @@ export function SavingsDashboardScreen() {
     return (
       <SavingsFrame>
         <View style={styles.brandHeader}>
-          <Text style={styles.logoText}>okyo</Text>
+          <Pressable
+            accessibilityLabel="Back"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={goBack}
+            style={({ pressed }) => [styles.backButton, pressed ? styles.pressed : null]}
+          >
+            <NavArrowLeft color={colors.charcoal} height={24} strokeWidth={2.2} width={24} />
+          </Pressable>
           <Text style={styles.screenTitle}>Savings</Text>
           <View style={styles.headerSpacer} />
         </View>
@@ -151,7 +170,15 @@ export function SavingsDashboardScreen() {
   return (
     <SavingsFrame>
       <View style={styles.brandHeader}>
-        <Text style={styles.logoText}>okyo</Text>
+        <Pressable
+          accessibilityLabel="Back"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={goBack}
+          style={({ pressed }) => [styles.backButton, pressed ? styles.pressed : null]}
+        >
+          <NavArrowLeft color={colors.charcoal} height={24} strokeWidth={2.2} width={24} />
+        </Pressable>
         <Text style={styles.screenTitle}>Savings</Text>
         <View style={styles.headerSpacer} />
       </View>
@@ -471,6 +498,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   headerSpacer: {
+    width: 76,
+  },
+  backButton: {
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    minHeight: 44,
     width: 76,
   },
   heroCard: {
