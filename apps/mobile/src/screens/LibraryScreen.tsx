@@ -325,7 +325,8 @@ function SavedRecipeCard({
 
 function RecipeThumb({ recipe, uri }: { recipe: Recipe; uri?: string | null }) {
   if (uri) {
-    return <Image source={{ uri }} style={styles.recipeImage} />;
+    // Square cover-crop of the real scan photo — centered, never stretched.
+    return <Image source={{ uri }} resizeMode="cover" style={styles.recipeImage} />;
   }
 
   return (
@@ -646,18 +647,18 @@ const styles = StyleSheet.create({
   },
   recipeImage: {
     backgroundColor: colors.cream,
-    borderRadius: 14,
-    height: 82,
-    width: 74,
+    borderRadius: 16,
+    height: 80,
+    width: 80,
   },
   recipeArt: {
     alignItems: 'center',
     backgroundColor: '#fff1df',
-    borderRadius: 14,
-    height: 82,
+    borderRadius: 16,
+    height: 80,
     justifyContent: 'center',
     overflow: 'hidden',
-    width: 74,
+    width: 80,
   },
   recipeArtText: {
     color: colors.coral,

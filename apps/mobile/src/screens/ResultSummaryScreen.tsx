@@ -22,6 +22,7 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { attachRealScanImage } from '../utils/savedRecipeImage';
 import { uiLog } from '../utils/uiDebug';
 import { KikoMascot } from '../components/KikoMascot';
 import {
@@ -255,7 +256,7 @@ export function ResultSummaryScreen() {
 
     const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === selectedRecipe.id);
     uiLog('ResultSummaryScreen', 'save_recipe', { recipeId: selectedRecipe.id });
-    saveRecipe(selectedRecipe);
+    saveRecipe(attachRealScanImage(selectedRecipe, selectedScanImage));
     if (!alreadySaved) {
       awardXPOnce(`save-recipe-${selectedRecipe.id}`, 5);
     }

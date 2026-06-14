@@ -82,6 +82,11 @@ export type GroceryListItem = {
 export type Recipe = {
   id: string;
   scanResultId: string;
+  // Snapshot of the user's real scan photo, attached when the recipe is saved so
+  // the library card can show the actual meal. Only ever a real uploaded image —
+  // never a demo/placeholder. Undefined falls back to the Okyo placeholder card.
+  // TODO: when a safe generated bird's-eye dish-image pipeline exists, prefer it here.
+  imageUri?: string;
   title: string;
   mode: RecipeMode;
   description: string;

@@ -36,6 +36,7 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { attachRealScanImage } from '../utils/savedRecipeImage';
 import { uiLog } from '../utils/uiDebug';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
@@ -143,7 +144,7 @@ export function RecipeDetailScreen() {
 
     const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
     uiLog('RecipeDetailScreen', 'save_recipe', { recipeId: recipe.id });
-    saveRecipe(recipe);
+    saveRecipe(attachRealScanImage(recipe, selectedScanImage));
     if (!alreadySaved) {
       awardXPOnce(`save-recipe-${recipe.id}`, 5);
     }
@@ -396,7 +397,8 @@ export function RecipeDetailScreen() {
           style={styles.instructionsSection}
         >
           <View style={styles.instructionsHeader}>
-            <Text style={styles.instructionsTitle}>{displayTitle}</Text>
+            <Text style={styles.instructionsEyebrow}>STEP-BY-STEP</Text>
+            <Text style={styles.instructionsTitle}>How to make it</Text>
             {displaySteps.length > 0 ? (
               <>
                 <Text style={styles.stepProgressText}>Step {activeStepIndex + 1} of {displaySteps.length}</Text>
@@ -1183,26 +1185,32 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   instructionsSection: {
-    paddingTop: 28,
+    paddingTop: 16,
   },
   instructionsHeader: {
-    alignItems: 'center',
-    marginBottom: 18,
-    paddingHorizontal: 10,
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  instructionsEyebrow: {
+    color: colors.coral,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
   instructionsTitle: {
     color: colors.charcoal,
     fontSize: 22,
     fontWeight: '700',
     lineHeight: 27,
-    maxWidth: 280,
-    textAlign: 'center',
+    marginTop: 4,
+    textAlign: 'left',
   },
   stepProgressText: {
     color: colors.charcoal,
     fontSize: 13,
     fontWeight: '700',
-    marginTop: 16,
+    marginTop: 14,
   },
   progressTrack: {
     backgroundColor: colors.creamDeep,
