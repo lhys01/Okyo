@@ -475,7 +475,7 @@ const styles = StyleSheet.create({
   screenContent: {
     gap: 14,
     padding: 20,
-    paddingBottom: 220,
+    paddingBottom: 132,
   },
   brandHeader: {
     alignItems: 'center',

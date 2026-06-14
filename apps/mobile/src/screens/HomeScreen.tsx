@@ -13,12 +13,15 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { KikoMascot } from '../components/KikoMascot';
+import { RecommendationCard } from '../components/RecommendationCard';
 import { colors, typography } from '../components/OkyoUI';
+import { getMealTimeForHour, getRecommendationsForMealTime } from '../data/recommendedRecipes';
 import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { radius, shadows, spacing } from '../theme/okyoTheme';
 import { uiLog } from '../utils/uiDebug';
+import { useOpenRecommendation } from '../utils/useOpenRecommendation';
 
 type HomeNavigation = NativeStackNavigationProp<RootStackParamList>;
 
@@ -34,10 +37,13 @@ export function HomeScreen() {
   const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
+  const openRecommendation = useOpenRecommendation();
   const homeMoment = useMemo(() => getHomeMoment(), []);
+  const mealIdeas = useMemo(() => getRecommendationsForMealTime(getMealTimeForHour(new Date().getHours()), 4), []);
 
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [];
   const recentRecipes = useMemo(() => safeSavedRecipes.slice().reverse().slice(0, 3), [safeSavedRecipes]);
+  const hasMoreRecent = safeSavedRecipes.length > 3;
   const heroRecipe = latestScanRecipe ?? recentRecipes[0] ?? null;
   const heroImageUri = latestScanSession?.selectedScanImage?.uri ?? selectedScanImage?.uri ?? null;
   const estimatedSaved = safeSavedRecipes.reduce(
@@ -59,6 +65,16 @@ export function HomeScreen() {
   const openSavings = () => {
     uiLog('HomeScreen', 'open_savings');
     navigation.navigate('SavingsDashboardScreen');
+  };
+
+  const openDiscover = () => {
+    uiLog('HomeScreen', 'open_discover');
+    navigation.navigate('MainTabs', { screen: 'RestaurantPacksScreen' });
+  };
+
+  const openKitchenLetter = () => {
+    uiLog('HomeScreen', 'open_kitchen_letter');
+    navigation.navigate('KitchenLetterScreen');
   };
 
   const openRecipe = (recipe: Recipe) => {
@@ -110,12 +126,31 @@ export function HomeScreen() {
           </Pressable>
         ) : null}
 
+        {mealIdeas.length > 0 ? (
+          <View style={styles.ideasSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Today's ideas</Text>
+              <Pressable accessibilityRole="button" hitSlop={8} style={styles.sectionLink} onPress={openDiscover}>
+                <Text style={styles.sectionLinkText}>Explore</Text>
+                <NavArrowRight color={colors.charcoal} height={18} strokeWidth={2} width={18} />
+              </Pressable>
+            </View>
+            <View style={styles.ideasGrid}>
+              {mealIdeas.map((recipe) => (
+                <RecommendationCard key={recipe.id} recipe={recipe} onPress={() => openRecommendation(recipe)} />
+              ))}
+            </View>
+          </View>
+        ) : null}
+
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Recent meals</Text>
-          <Pressable accessibilityRole="button" hitSlop={8} style={styles.sectionLink} onPress={openPlan}>
-            <Text style={styles.sectionLinkText}>View all</Text>
-            <NavArrowRight color={colors.charcoal} height={18} strokeWidth={2} width={18} />
-          </Pressable>
+          {hasMoreRecent ? (
+            <Pressable accessibilityRole="button" hitSlop={8} style={styles.sectionLink} onPress={openPlan}>
+              <Text style={styles.sectionLinkText}>View all</Text>
+              <NavArrowRight color={colors.charcoal} height={18} strokeWidth={2} width={18} />
+            </Pressable>
+          ) : null}
         </View>
 
         {recentRecipes.length > 0 ? (
@@ -162,6 +197,19 @@ export function HomeScreen() {
             <Text style={styles.savingsBody}>Estimated savings tracked across saved meals and cooking wins.</Text>
           </View>
           <Clock color={colors.charcoal} height={28} strokeWidth={1.8} width={28} />
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.kitchenLetterCard, pressed ? styles.pressed : null]}
+          onPress={openKitchenLetter}
+        >
+          <View style={styles.kitchenLetterCopy}>
+            <Text style={styles.kitchenLetterKicker}>The Kitchen Letter</Text>
+            <Text style={styles.kitchenLetterTitle}>Weekly meal ideas from Kiko</Text>
+            <Text style={styles.kitchenLetterBody}>Seasonal recipes and grocery-saving tips — join the list.</Text>
+          </View>
+          <NavArrowRight color={colors.coral} height={22} strokeWidth={2.2} width={22} />
         </Pressable>
       </ScrollView>
     </SafeAreaView>
@@ -218,7 +266,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     padding: spacing.screen,
-    paddingBottom: 220,
+    paddingBottom: 150,
   },
   header: {
     marginTop: 8,
@@ -268,6 +316,16 @@ const styles = StyleSheet.create({
   heroBody: {
     ...typography.body,
     marginTop: 8,
+  },
+  ideasSection: {
+    marginTop: spacing.section,
+  },
+  ideasGrid: {
+    columnGap: 14,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 14,
+    rowGap: 16,
   },
   sectionHeader: {
     alignItems: 'center',
@@ -381,6 +439,36 @@ const styles = StyleSheet.create({
     ...typography.caption,
     marginTop: 5,
     maxWidth: 250,
+  },
+  kitchenLetterCard: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: radius.card,
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    marginTop: 14,
+    padding: 20,
+    ...shadows.card,
+  },
+  kitchenLetterCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  kitchenLetterKicker: {
+    color: colors.coral,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  kitchenLetterTitle: {
+    ...typography.heading,
+    marginTop: 6,
+  },
+  kitchenLetterBody: {
+    ...typography.caption,
+    marginTop: 5,
   },
   pressed: {
     opacity: 0.82,

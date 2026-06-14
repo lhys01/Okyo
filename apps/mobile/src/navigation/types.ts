@@ -33,6 +33,8 @@ export type RootStackParamList = {
   SavingsDashboardScreen: undefined;
   RankingsScreen: undefined;
   SettingsScreen: undefined;
+  RecommendationCategoryScreen: { category?: string } | undefined;
+  KitchenLetterScreen: undefined;
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
 };
 

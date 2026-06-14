@@ -465,7 +465,7 @@ const styles = StyleSheet.create({
   screenContent: {
     gap: 12,
     padding: 24,
-    paddingBottom: 220,
+    paddingBottom: 132,
   },
   topBar: {
     alignItems: 'center',

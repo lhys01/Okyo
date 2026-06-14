@@ -12,7 +12,9 @@ import { PaywallScreen } from '../screens/PaywallScreen';
 import { RecipeDetailScreen } from '../screens/RecipeDetailScreen';
 import { RestaurantPackDetailScreen } from '../screens/RestaurantPackDetailScreen';
 import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
+import { KitchenLetterScreen } from '../screens/KitchenLetterScreen';
 import { RankingsScreen } from '../screens/RankingsScreen';
+import { RecommendationCategoryScreen } from '../screens/RecommendationCategoryScreen';
 import { SavingsDashboardScreen } from '../screens/SavingsDashboardScreen';
 import { ScanScreen } from '../screens/ScanScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
@@ -121,6 +123,16 @@ export function AppNavigator() {
       />
       <Stack.Screen name="RankingsScreen" component={RankingsScreen} options={{ title: 'Rankings' }} />
       <Stack.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
+      <Stack.Screen
+        name="RecommendationCategoryScreen"
+        component={RecommendationCategoryScreen}
+        options={{ headerShown: false, title: 'Food Ideas' }}
+      />
+      <Stack.Screen
+        name="KitchenLetterScreen"
+        component={KitchenLetterScreen}
+        options={{ headerShown: false, presentation: 'modal', title: 'Kitchen Letter' }}
+      />
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false, title: 'Okyo' }} />
     </Stack.Navigator>
   );

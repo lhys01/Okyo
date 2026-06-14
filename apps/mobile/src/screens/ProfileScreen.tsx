@@ -152,7 +152,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     padding: spacing.screen,
-    paddingBottom: 220,
+    paddingBottom: 132,
   },
   headerCard: {
     alignItems: 'center',

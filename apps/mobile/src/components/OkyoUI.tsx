@@ -263,7 +263,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     flexGrow: 1,
     padding: spacing.screen,
-    paddingBottom: 220,
+    // Generous enough to clear the floating tab bar where present, without the
+    // large empty gap the old 220 left on pushed screens.
+    paddingBottom: 132,
   },
   centeredContent: {
     justifyContent: 'center',
