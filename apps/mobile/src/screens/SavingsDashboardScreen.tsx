@@ -447,7 +447,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     gap: 14,
-    padding: 18,
+    padding: 20,
     paddingBottom: 220,
   },
   brandHeader: {

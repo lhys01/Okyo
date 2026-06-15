@@ -3,28 +3,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { getSafeNumber, getSafeText, isRecipeMode } from '../mocks';
 import type { Recipe, RecipeMode, RestaurantPack } from '../mocks';
+import { colors, radius, shadows, spacing } from '../theme/okyoTheme';
 
-export const colors = {
-  background: '#fff8ef',
-  card: '#ffffff',
-  cream: '#fff1df',
-  creamDeep: '#f4dcc2',
-  coral: '#e9552f',
-  coralDark: '#bd3f24',
-  green: '#167247',
-  greenSoft: '#e8f6ec',
-  charcoal: '#211d19',
-  body: '#5f574d',
-  muted: '#8b8175',
-  border: '#eadcc9',
-  danger: '#9f3324',
-};
-
-export const spacing = {
-  screen: 22,
-  section: 18,
-  card: 16,
-};
+export { colors, spacing };
 
 type ScreenContainerProps = {
   children: ReactNode;
@@ -267,14 +248,10 @@ export const sharedStyles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
     borderColor: colors.border,
-    borderRadius: 16,
+    borderRadius: radius.card,
     borderWidth: 1,
     padding: spacing.card,
-    shadowColor: '#2f231a',
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
+    ...shadows.card,
   },
   row: {
     alignItems: 'center',
@@ -326,8 +303,8 @@ const styles = StyleSheet.create({
   primaryButton: {
     alignItems: 'center',
     backgroundColor: colors.coral,
-    borderRadius: 16,
-    minHeight: 54,
+    borderRadius: radius.button,
+    minHeight: 56,
     justifyContent: 'center',
     paddingHorizontal: 18,
   },
@@ -340,9 +317,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.card,
     borderColor: colors.border,
-    borderRadius: 16,
+    borderRadius: radius.button,
     borderWidth: 1,
-    minHeight: 52,
+    minHeight: 56,
     justifyContent: 'center',
     paddingHorizontal: 18,
   },
@@ -395,7 +372,7 @@ const styles = StyleSheet.create({
   statCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
-    borderRadius: 16,
+    borderRadius: radius.panel,
     borderWidth: 1,
     minHeight: 82,
     padding: 14,

@@ -5,8 +5,10 @@ import * as ImagePicker from 'expo-image-picker';
 import {
   Book,
   CameraSolid,
+  Cart,
   Dollar,
   NavArrowRight,
+  OpenBook,
   Sparks,
   Upload,
 } from 'iconoir-react-native';
@@ -316,10 +318,10 @@ export function ScanScreen() {
             numberOfLines={2}
             style={styles.headline}
           >
-            Turn a food photo into a homemade recipe.
+            What are we remaking today?
           </Text>
           <Text style={styles.subtitle}>
-            Upload a food photo. Okyo makes a best-guess recipe from what it can see, then you can edit it if it’s off.
+            Snap a restaurant meal and Okyo turns it into a homemade recipe, savings estimate, and grocery list.
           </Text>
         </View>
 
@@ -344,6 +346,29 @@ export function ScanScreen() {
               icon={<Sparks color={colors.coral} height={25} strokeWidth={2.15} width={25} />}
               label="Try demo scan"
               onPress={tryDemoScan}
+            />
+          </View>
+        </View>
+
+        <View style={styles.howItWorks}>
+          <Text style={styles.howTitle}>How Okyo works</Text>
+          <View style={styles.howCard}>
+            <HowStep
+              caption="Snap the dish"
+              icon={<CameraSolid color={colors.coral} height={24} width={24} />}
+              label="Scan"
+            />
+            <NavArrowRight color={colors.creamDeep} height={22} strokeWidth={2.6} width={22} />
+            <HowStep
+              caption="Homemade version"
+              icon={<OpenBook color={colors.coral} height={24} strokeWidth={2.1} width={24} />}
+              label="Recipe"
+            />
+            <NavArrowRight color={colors.creamDeep} height={22} strokeWidth={2.6} width={22} />
+            <HowStep
+              caption="Shop and cook"
+              icon={<Cart color={colors.coral} height={24} strokeWidth={2.1} width={24} />}
+              label="Groceries"
             />
           </View>
         </View>
@@ -377,7 +402,9 @@ export function ScanScreen() {
                 <Text style={styles.recentMeta}>Saved recipe</Text>
                 <View style={styles.savedPill}>
                   <Dollar color={colors.green} height={17} strokeWidth={2.2} width={17} />
-                  <Text style={styles.savedPillText}>Saved recipe</Text>
+                  <Text style={styles.savedPillText}>
+                    Home est. {formatOptionalCurrency(recentRecipe.estimatedHomemadeCost)}
+                  </Text>
                 </View>
               </View>
               <NavArrowRight color={colors.body} height={26} strokeWidth={2.2} width={26} />
@@ -386,6 +413,22 @@ export function ScanScreen() {
         ) : null}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+type HowStepProps = {
+  caption: string;
+  icon: ReactNode;
+  label: string;
+};
+
+function HowStep({ caption, icon, label }: HowStepProps) {
+  return (
+    <View style={styles.howStep}>
+      <View style={styles.howIcon}>{icon}</View>
+      <Text style={styles.howLabel}>{label}</Text>
+      <Text numberOfLines={2} style={styles.howCaption}>{caption}</Text>
+    </View>
   );
 }
 
@@ -1125,8 +1168,60 @@ const styles = StyleSheet.create({
   scanButtonTextSecondary: {
     color: colors.coralDark,
   },
+  howItWorks: {
+    marginTop: 26,
+  },
+  howTitle: {
+    color: colors.charcoal,
+    fontSize: 22,
+    fontWeight: '900',
+    marginBottom: 12,
+  },
+  howCard: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: 22,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 18,
+    shadowColor: '#7b5a38',
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.07,
+    shadowRadius: 16,
+    elevation: 2,
+  },
+  howStep: {
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+  },
+  howIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.cream,
+    borderRadius: 999,
+    height: 52,
+    justifyContent: 'center',
+    width: 52,
+  },
+  howLabel: {
+    color: colors.charcoal,
+    fontSize: 15,
+    fontWeight: '900',
+    marginTop: 8,
+  },
+  howCaption: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 15,
+    marginTop: 2,
+    textAlign: 'center',
+  },
   recentSection: {
-    marginTop: 22,
+    marginTop: 26,
   },
   recentHeader: {
     alignItems: 'center',

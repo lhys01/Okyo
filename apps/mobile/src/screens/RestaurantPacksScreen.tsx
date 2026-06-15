@@ -13,7 +13,7 @@ type RestaurantPacksNavigation = NativeStackNavigationProp<RootStackParamList>;
 
 function getPackDescription(packName: string) {
   const name = packName.replace('-inspired', '');
-  return `Restaurant-style dupes inspired by ${name} favorites.`;
+  return `Homemade swaps inspired by ${name} favorites.`;
 }
 
 function getAverageSavings(pack: RestaurantPack) {
@@ -54,9 +54,9 @@ export function RestaurantPacksScreen() {
     return (
       <EmptyState
         eyebrow="Packs"
-        title="No packs yet"
-        body="Static inspired-by restaurant packs will appear here. You can still start with the first mock scan."
-        actionLabel="Start a Scan"
+        title="Packs are coming soon"
+        body="Curated restaurant-inspired recipe collections will live here. In the meantime, scan a meal to get your first homemade swap."
+        actionLabel="Scan a meal"
         onAction={() => navigation.navigate('ScanScreen')}
       />
     );
@@ -67,7 +67,7 @@ export function RestaurantPacksScreen() {
       <Text style={styles.kicker}>Packs</Text>
       <Text style={styles.title}>Restaurant-inspired packs</Text>
       <Text style={styles.description}>
-        Browse static inspired-by dupes made for home kitchens.
+        Curated collections of restaurant-inspired recipes, ready to remake at home.
       </Text>
 
       <View style={styles.packGrid}>

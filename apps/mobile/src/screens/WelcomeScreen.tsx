@@ -4,23 +4,27 @@ import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { KikoMascot, type KikoMascotPose } from '../components/KikoMascot';
 import { PrimaryButton, ScreenContainer, colors, sharedStyles } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { uiLog } from '../utils/uiDebug';
 
-const onboardingSteps = [
+const onboardingSteps: Array<{ title: string; body: string; pose: KikoMascotPose }> = [
   {
     title: 'Scan restaurant food',
     body: 'Snap or upload a dish you want to recreate at home.',
+    pose: 'wave',
   },
   {
-    title: 'Get a homemade dupe',
+    title: 'Get a homemade swap',
     body: 'Okyo gives you an inspired-by recipe with a homemade cost estimate.',
+    pose: 'cooking',
   },
   {
     title: 'Save, cook, share',
     body: 'Build your library, take the Dupe Challenge, earn badges, and share your wins.',
+    pose: 'celebrating',
   },
 ];
 
@@ -72,11 +76,8 @@ export function WelcomeScreen() {
     <ScreenContainer scroll={false} centered>
       <Text style={styles.brand}>Okyo</Text>
       <View style={styles.heroBlock}>
-        <View style={styles.imageDish}>
-          <View style={styles.plate}>
-            <Text style={styles.plateText}>$31.60</Text>
-            <Text style={styles.plateLabel}>saved</Text>
-          </View>
+        <View style={styles.mascotStage}>
+          <KikoMascot pose={currentStep.pose} size={156} />
         </View>
         <Text style={styles.stepCount}>Step {stepIndex + 1} of {onboardingSteps.length}</Text>
         <Text style={styles.title}>{currentStep.title}</Text>
@@ -109,34 +110,13 @@ const styles = StyleSheet.create({
     ...sharedStyles.card,
     padding: 22,
   },
-  imageDish: {
+  mascotStage: {
     alignItems: 'center',
     backgroundColor: colors.cream,
-    borderRadius: 16,
-    height: 132,
+    borderRadius: 20,
     justifyContent: 'center',
     marginBottom: 20,
-  },
-  plate: {
-    alignItems: 'center',
-    backgroundColor: colors.card,
-    borderColor: colors.coral,
-    borderRadius: 58,
-    borderWidth: 4,
-    height: 116,
-    justifyContent: 'center',
-    width: 116,
-  },
-  plateText: {
-    color: colors.green,
-    fontSize: 26,
-    fontWeight: '900',
-  },
-  plateLabel: {
-    color: colors.body,
-    fontSize: 12,
-    fontWeight: '900',
-    textTransform: 'uppercase',
+    paddingVertical: 18,
   },
   stepCount: {
     color: colors.coral,
