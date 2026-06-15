@@ -73,6 +73,10 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
   ) as Record<MainTabRouteName, (typeof state.routes)[number]>;
   const focusedRoute = state.routes[state.index];
 
+  if (focusedRoute?.name === 'RecipeStepsScreen') {
+    return null;
+  }
+
   const navigateToTab = (routeName: MainTabRouteName) => {
     const route = routesByName[routeName];
 

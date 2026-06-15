@@ -19,12 +19,24 @@ import {
   User,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
+import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import {
   defaultScanResult,
@@ -38,6 +50,7 @@ import {
 import type { MainTabParamList, RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
+import { getCookingTipForStep, type CookingTip } from '../utils/cookingTips';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
@@ -60,6 +73,17 @@ type DisplayRecipeStep = {
   safetyNote?: string;
   flavorBoost?: string;
   cookingTerm?: NonNullable<Recipe['cookingTerms']>[number];
+};
+type GuidedCookingStep = {
+  estimatedMinutes: number | null;
+  ingredientsUsed: RecipeIngredient[];
+  instruction: string;
+  safetyNote?: string;
+  stepNumber: number;
+  tip?: string;
+  title: string;
+  toolsUsed: string[];
+  visualCue?: string;
 };
 
 export function RecipeDetailScreen() {
@@ -384,6 +408,8 @@ export function RecipeDetailScreen() {
 export function RecipeStepsScreen() {
   const navigation = useNavigation<RecipeStepsNavigation>();
   const route = useRoute<RecipeStepsRoute>();
+  const guidedScrollRef = useRef<ScrollView | null>(null);
+  const { width } = useWindowDimensions();
   const routeMode = route.params?.mode;
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
   const selectedMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
@@ -401,10 +427,21 @@ export function RecipeStepsScreen() {
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
   const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
   const canShowSavings = Boolean(recipe) && restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
-  const displaySteps = getRecipeDisplaySteps(recipe);
-  const displayTitle = cleanDisplayText(recipe?.title ?? '');
   const spicePairings = getSafeTextList(recipe?.spicePairings);
   const cookingTerms = getSafeCookingTerms(recipe?.cookingTerms);
+  const guidedSteps = useMemo(
+    () => getGuidedCookingSteps(recipe, cookingTerms, spicePairings),
+    [cookingTerms, recipe, spicePairings],
+  );
+  const displayTitle = cleanDisplayText(recipe?.title ?? '');
+  const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
+  const recipeImageStatus = getRecipeImageStatus(recipe);
+  const guidedPageWidth = Math.max(width, 1);
+  const [activeStepIndex, setActiveStepIndex] = useState(0);
+  const [activeTip, setActiveTip] = useState<CookingTip | null>(null);
+  const [showCompletion, setShowCompletion] = useState(false);
+  const activeStep = guidedSteps[Math.min(activeStepIndex, Math.max(guidedSteps.length - 1, 0))];
+  const progress = guidedSteps.length > 0 ? ((activeStepIndex + 1) / guidedSteps.length) * 100 : 0;
 
   useEffect(() => {
     uiLog('RecipeStepsScreen', 'enter', { routeMode, selectedMode });
@@ -416,6 +453,16 @@ export function RecipeStepsScreen() {
       });
     }
   }, [routeMode, selectedMode]);
+
+  useEffect(() => {
+    if (activeStepIndex >= guidedSteps.length) {
+      setActiveStepIndex(Math.max(guidedSteps.length - 1, 0));
+    }
+  }, [activeStepIndex, guidedSteps.length]);
+
+  useEffect(() => {
+    guidedScrollRef.current?.scrollTo({ animated: false, x: activeStepIndex * guidedPageWidth, y: 0 });
+  }, [activeStepIndex, guidedPageWidth]);
 
   const goBack = () => {
     if (navigation.canGoBack()) {
@@ -463,6 +510,42 @@ export function RecipeStepsScreen() {
     });
   };
 
+  const goToStep = (nextIndex: number) => {
+    const clampedIndex = Math.max(0, Math.min(guidedSteps.length - 1, nextIndex));
+    setShowCompletion(false);
+    setActiveStepIndex(clampedIndex);
+    guidedScrollRef.current?.scrollTo({ animated: true, x: clampedIndex * guidedPageWidth, y: 0 });
+  };
+
+  const goPreviousStep = () => {
+    goToStep(activeStepIndex - 1);
+  };
+
+  const goNextStep = () => {
+    if (activeStepIndex >= guidedSteps.length - 1) {
+      setShowCompletion(true);
+      return;
+    }
+
+    goToStep(activeStepIndex + 1);
+  };
+
+  const handleGuidedScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const nextIndex = Math.round(event.nativeEvent.contentOffset.x / guidedPageWidth);
+    const clampedIndex = Math.max(0, Math.min(guidedSteps.length - 1, nextIndex));
+    setActiveStepIndex(clampedIndex);
+  };
+
+  const openCurrentTip = () => {
+    if (!activeStep) {
+      return;
+    }
+
+    setActiveTip(activeStep.tip
+      ? { body: activeStep.tip, category: 'visual', title: 'Step tip' }
+      : getCookingTipForStep(activeStep));
+  };
+
   if (!recipe) {
     return (
       <ScreenFrame onBack={goBack} title="Cooking Steps">
@@ -481,93 +564,181 @@ export function RecipeStepsScreen() {
     );
   }
 
-  return (
-    <ScreenFrame onBack={goBack} title="Cooking Steps">
-      <View style={styles.stepsHeroCard}>
-        <Text style={styles.instructionsEyebrow}>Cook along</Text>
-        <Text numberOfLines={2} style={styles.stepsRecipeTitle}>{displayTitle}</Text>
-        <Text style={styles.stepsIntroText}>
-          {displaySteps.length > 0
-            ? `${displaySteps.length} calm steps. Read through once, then cook at your pace.`
-            : 'Steps are not available for this recipe yet.'}
-        </Text>
-      </View>
-
-      <View style={styles.instructionsSection}>
-        {displaySteps.length > 0 ? (
-          displaySteps.map((step, index) => {
-            const parsedStep = getStepCopy(step, index);
-            const tip = getStepTip(step, index, displaySteps.length, cookingTerms, spicePairings);
-
-            return (
-              <View
-                key={`${recipe.id}-step-${index}-${step.text}`}
-                style={styles.stepCard}
-              >
-                <View style={styles.stepTopRow}>
-                  <View style={styles.stepBadge}>
-                    <Text style={styles.stepBadgeText}>{index + 1}</Text>
-                  </View>
-                  <View style={styles.stepTitleGroup}>
-                    <Text style={styles.stepTitle}>{parsedStep.title}</Text>
-                    {step.timeEstimate ? <Text style={styles.stepTime}>{step.timeEstimate}</Text> : null}
-                  </View>
-                </View>
-                <Text style={styles.stepBody}>{parsedStep.body}</Text>
-                {step.visualCue ? (
-                  <View style={styles.visualCueBlock}>
-                    <Text style={styles.visualCueLabel}>Look for</Text>
-                    <Text style={styles.visualCueText}>{cleanDisplayText(step.visualCue)}</Text>
-                  </View>
-                ) : null}
-                {tip ? (
-                  <View style={styles.stepTipCard}>
-                    <Spark color={colors.coral} height={16} strokeWidth={2.2} width={16} />
-                    <View style={styles.stepTipCopy}>
-                      <Text style={styles.stepTipTitle}>{tip.title}</Text>
-                      <Text style={styles.stepTipText}>{tip.body}</Text>
-                    </View>
-                  </View>
-                ) : null}
-              </View>
-            );
-          })
-        ) : (
-          <View style={styles.stepCard}>
-            <Text style={styles.stepTitle}>Steps are not available yet.</Text>
-            <Text style={styles.stepBody}>Try another style or scan again when you are ready.</Text>
+  if (showCompletion) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.guidedScreenContent}>
+          <View style={styles.simpleTopBar}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setShowCompletion(false)}
+              style={({ pressed }) => [styles.smallBackButton, pressed ? styles.pressed : null]}
+            >
+              <NavArrowLeft color={colors.charcoal} height={22} strokeWidth={2.35} width={22} />
+              <Text style={styles.smallBackText}>Steps</Text>
+            </Pressable>
+            <Text numberOfLines={1} style={styles.simpleTopTitle}>Done</Text>
+            <View style={styles.topBarSpacer} />
           </View>
-        )}
-      </View>
 
-      {recipe.avoidMistake || recipe.storageAndReheating || recipe.pantryNote ? (
-        <View style={styles.cookingNotesCard}>
-          {recipe.pantryNote ? (
-            <View style={styles.noteBlock}>
-              <Text style={styles.noteTitle}>Pantry note</Text>
-              <Text style={styles.noteText}>{cleanDisplayText(recipe.pantryNote)}</Text>
+          <ScrollView contentContainerStyle={styles.completionScrollContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.completionCard}>
+              <Text style={styles.completionEyebrow}>You made it.</Text>
+              <FoodImage
+                fallbackLabel="Image coming soon"
+                imageStatus={recipeImageStatus}
+                imageUrl={recipeImageUrl}
+                showFallbackLabel
+                style={styles.completionImage}
+              />
+              <KikoMascot pose="celebrating" size={92} style={styles.completionMascot} />
+              <Text numberOfLines={2} style={styles.completionTitle}>{displayTitle}</Text>
+              <Text style={styles.completionBody}>
+                Nice work. Let it rest if the recipe calls for it, taste once more, then enjoy your Okyo version.
+              </Text>
+              <PrimaryAction label="Share it" onPress={openShareRecipe} />
+              <SecondaryAction label="Save" onPress={saveSelectedRecipe} />
+              <View style={styles.disabledPhotoAction}>
+                <Text style={styles.disabledPhotoActionText}>Take a photo of your version</Text>
+                <Text style={styles.disabledPhotoActionSubtext}>Coming soon</Text>
+              </View>
             </View>
-          ) : null}
-          {recipe.avoidMistake ? (
-            <View style={styles.noteBlock}>
-              <Text style={styles.noteTitle}>Helpful heads-up</Text>
-              <Text style={styles.noteText}>{cleanDisplayText(recipe.avoidMistake)}</Text>
-            </View>
-          ) : null}
-          {recipe.storageAndReheating ? (
-            <View style={styles.noteBlock}>
-              <Text style={styles.noteTitle}>Storage and reheating</Text>
-              <Text style={styles.noteText}>{cleanDisplayText(recipe.storageAndReheating)}</Text>
-            </View>
-          ) : null}
+          </ScrollView>
         </View>
-      ) : null}
+      </SafeAreaView>
+    );
+  }
 
-      <View style={styles.stepActionRow}>
-        <SecondaryIconAction icon={<Bookmark color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Save" onPress={saveSelectedRecipe} />
-        <SecondaryIconAction icon={<ShareAndroid color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Share" onPress={openShareRecipe} />
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.guidedScreenContent}>
+        <View style={styles.simpleTopBar}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={goBack}
+            style={({ pressed }) => [styles.smallBackButton, pressed ? styles.pressed : null]}
+          >
+            <NavArrowLeft color={colors.charcoal} height={22} strokeWidth={2.35} width={22} />
+            <Text style={styles.smallBackText}>Back</Text>
+          </Pressable>
+          <Text numberOfLines={1} style={styles.simpleTopTitle}>Guided Cooking</Text>
+          <View style={styles.topBarSpacer} />
+        </View>
+
+        <View style={styles.guidedHeader}>
+          <KikoMascot pose="cooking" size={68} style={styles.guidedMascot} />
+          <View style={styles.guidedHeaderCopy}>
+            <Text numberOfLines={2} style={styles.guidedRecipeTitle}>{displayTitle}</Text>
+            <Text style={styles.guidedProgressText}>
+              Step {activeStepIndex + 1} of {guidedSteps.length}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.guidedProgressTrack}>
+          <View style={[styles.guidedProgressFill, { width: `${progress}%` }]} />
+        </View>
+
+        <ScrollView
+          ref={guidedScrollRef}
+          bounces={false}
+          decelerationRate="fast"
+          horizontal
+          onMomentumScrollEnd={handleGuidedScrollEnd}
+          pagingEnabled
+          scrollEventThrottle={16}
+          showsHorizontalScrollIndicator={false}
+          style={styles.guidedCarousel}
+        >
+          {guidedSteps.map((step) => (
+            <View key={`${recipe.id}-guided-step-${step.stepNumber}`} style={[styles.guidedPage, { width: guidedPageWidth }]}>
+              <View style={styles.guidedStepCard}>
+                <ScrollView contentContainerStyle={styles.guidedStepCardContent} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                  <View style={styles.guidedStepTopRow}>
+                    <Text style={styles.guidedStepNumber}>Step {step.stepNumber}</Text>
+                    {step.estimatedMinutes ? (
+                      <Text style={styles.guidedTimeChip}>~{step.estimatedMinutes} min</Text>
+                    ) : null}
+                  </View>
+
+                  <Text
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.82}
+                    numberOfLines={3}
+                    style={styles.guidedStepTitle}
+                  >
+                    {step.title}
+                  </Text>
+                  <Text style={styles.guidedInstruction}>{step.instruction}</Text>
+
+                  {step.visualCue ? (
+                    <View style={styles.guidedCueBlock}>
+                      <Text style={styles.guidedCueLabel}>Look for</Text>
+                      <Text style={styles.guidedCueText}>{step.visualCue}</Text>
+                    </View>
+                  ) : null}
+
+                  {step.safetyNote ? (
+                    <View style={styles.guidedSafetyBlock}>
+                      <Text style={styles.guidedSafetyLabel}>Safety</Text>
+                      <Text style={styles.guidedSafetyText}>{step.safetyNote}</Text>
+                    </View>
+                  ) : null}
+
+                  {step.ingredientsUsed.length > 0 ? (
+                    <GuidedChipGroup label="Use now" values={step.ingredientsUsed.map((ingredient) => formatIngredientChip(ingredient)).slice(0, 3)} />
+                  ) : null}
+
+                  {step.toolsUsed.length > 0 ? (
+                    <GuidedChipGroup label="Tools" values={step.toolsUsed.slice(0, 2)} />
+                  ) : null}
+                </ScrollView>
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+
+        <View style={styles.guidedControlArea}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={openCurrentTip}
+            style={({ pressed }) => [styles.tipPill, pressed ? styles.pressed : null]}
+          >
+            <Spark color={colors.coral} height={18} strokeWidth={2.2} width={18} />
+            <Text style={styles.tipPillText}>Tip</Text>
+          </Pressable>
+
+          <View style={styles.guidedNavRow}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={activeStepIndex === 0}
+              onPress={goPreviousStep}
+              style={({ pressed }) => [
+                styles.guidedNavButton,
+                activeStepIndex === 0 ? styles.guidedNavButtonDisabled : null,
+                pressed ? styles.pressed : null,
+              ]}
+            >
+              <Text style={[styles.guidedNavText, activeStepIndex === 0 ? styles.guidedNavTextDisabled : null]}>
+                Previous
+              </Text>
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={goNextStep}
+              style={({ pressed }) => [styles.guidedNavButton, styles.guidedNavButtonPrimary, pressed ? styles.pressed : null]}
+            >
+              <Text style={styles.guidedNavPrimaryText}>
+                {activeStepIndex >= guidedSteps.length - 1 ? 'Finish' : 'Next'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
       </View>
-    </ScreenFrame>
+
+      <CookingTipPanel tip={activeTip} onClose={() => setActiveTip(null)} />
+    </SafeAreaView>
   );
 }
 
@@ -596,6 +767,49 @@ function ScreenFrame({ children, onBack, title }: ScreenFrameProps) {
         {children}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function GuidedChipGroup({ label, values }: { label: string; values: string[] }) {
+  const safeValues = values.map((value) => cleanDisplayText(value)).filter(Boolean).slice(0, 4);
+
+  if (safeValues.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.guidedChipGroup}>
+      <Text style={styles.guidedChipLabel}>{label}</Text>
+      <View style={styles.guidedChipRow}>
+        {safeValues.map((value) => (
+          <Text key={`${label}-${value}`} numberOfLines={1} style={styles.guidedChip}>
+            {value}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function CookingTipPanel({ onClose, tip }: { onClose: () => void; tip: CookingTip | null }) {
+  return (
+    <Modal animationType="fade" transparent visible={Boolean(tip)} onRequestClose={onClose}>
+      <Pressable accessibilityRole="button" style={styles.tipModalScrim} onPress={onClose}>
+        <Pressable onPress={(event) => event.stopPropagation()} style={styles.tipPanel}>
+          <View style={styles.tipPanelHandle} />
+          <Text style={styles.tipPanelKicker}>Cooking tip</Text>
+          <Text style={styles.tipPanelTitle}>{tip?.title ?? 'Quick tip'}</Text>
+          <Text style={styles.tipPanelBody}>{tip?.body ?? ''}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={onClose}
+            style={({ pressed }) => [styles.tipPanelClose, pressed ? styles.pressed : null]}
+          >
+            <Text style={styles.tipPanelCloseText}>Got it</Text>
+          </Pressable>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -1212,6 +1426,379 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
   },
+  guidedScreenContent: {
+    flex: 1,
+    paddingBottom: 24,
+    paddingHorizontal: 24,
+  },
+  guidedHeader: {
+    alignItems: 'center',
+    backgroundColor: colors.coral,
+    borderRadius: 28,
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+    minHeight: 88,
+    overflow: 'hidden',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    shadowColor: colors.coral,
+    shadowOffset: { height: 10, width: 0 },
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
+    elevation: 3,
+  },
+  guidedMascot: {
+    marginLeft: -4,
+  },
+  guidedHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  guidedRecipeTitle: {
+    color: '#fffdf8',
+    fontSize: 19,
+    fontWeight: '800',
+    lineHeight: 24,
+  },
+  guidedProgressText: {
+    color: '#fff4df',
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 6,
+  },
+  guidedProgressTrack: {
+    backgroundColor: '#f2ddc2',
+    borderRadius: 999,
+    height: 6,
+    marginTop: 12,
+    overflow: 'hidden',
+  },
+  guidedProgressFill: {
+    backgroundColor: colors.coral,
+    borderRadius: 999,
+    height: '100%',
+  },
+  guidedCarousel: {
+    flex: 1,
+    marginHorizontal: -24,
+    marginTop: 12,
+  },
+  guidedPage: {
+    paddingHorizontal: 24,
+    paddingVertical: 2,
+  },
+  guidedStepCard: {
+    backgroundColor: colors.card,
+    borderRadius: 30,
+    flex: 1,
+    marginRight: 0,
+    overflow: 'hidden',
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    elevation: 2,
+  },
+  guidedStepCardContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 20,
+    paddingBottom: 24,
+  },
+  guidedStepTopRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  guidedStepNumber: {
+    color: colors.coral,
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  guidedTimeChip: {
+    backgroundColor: '#fff1de',
+    borderRadius: 999,
+    color: colors.coral,
+    fontSize: 13,
+    fontWeight: '800',
+    overflow: 'hidden',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  guidedStepTitle: {
+    color: colors.charcoal,
+    fontSize: 23,
+    fontWeight: '800',
+    letterSpacing: 0,
+    lineHeight: 29,
+    textAlign: 'center',
+  },
+  guidedInstruction: {
+    color: colors.charcoal,
+    fontSize: 16,
+    lineHeight: 24,
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  guidedCueBlock: {
+    backgroundColor: colors.greenSoft,
+    borderRadius: 20,
+    marginTop: 16,
+    padding: 14,
+  },
+  guidedCueLabel: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    textAlign: 'center',
+    textTransform: 'uppercase',
+  },
+  guidedCueText: {
+    color: colors.charcoal,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  guidedSafetyBlock: {
+    backgroundColor: '#fff4df',
+    borderRadius: 20,
+    marginTop: 12,
+    padding: 14,
+  },
+  guidedSafetyLabel: {
+    color: colors.coral,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    textAlign: 'center',
+    textTransform: 'uppercase',
+  },
+  guidedSafetyText: {
+    color: colors.charcoal,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  guidedChipGroup: {
+    marginTop: 14,
+  },
+  guidedChipLabel: {
+    color: colors.body,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    marginBottom: 8,
+    textAlign: 'center',
+    textTransform: 'uppercase',
+  },
+  guidedChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  guidedChip: {
+    backgroundColor: colors.cream,
+    borderRadius: 999,
+    color: colors.charcoal,
+    fontSize: 12,
+    fontWeight: '700',
+    maxWidth: '100%',
+    overflow: 'hidden',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  guidedControlArea: {
+    gap: 12,
+    marginTop: 12,
+  },
+  tipPill: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: '#fff1de',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 7,
+    minHeight: 42,
+    paddingHorizontal: 18,
+  },
+  tipPillText: {
+    color: colors.coral,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  guidedNavRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  guidedNavButton: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: 999,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 54,
+    paddingHorizontal: 14,
+  },
+  guidedNavButtonPrimary: {
+    backgroundColor: colors.coral,
+    shadowColor: colors.coral,
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    elevation: 2,
+  },
+  guidedNavButtonDisabled: {
+    opacity: 0.45,
+  },
+  guidedNavText: {
+    color: colors.charcoal,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  guidedNavTextDisabled: {
+    color: colors.muted,
+  },
+  guidedNavPrimaryText: {
+    color: '#fffdf8',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  tipModalScrim: {
+    backgroundColor: 'rgba(28, 24, 19, 0.32)',
+    flex: 1,
+    justifyContent: 'flex-end',
+    padding: 18,
+  },
+  tipPanel: {
+    backgroundColor: colors.card,
+    borderRadius: 28,
+    padding: 22,
+    shadowColor: '#1c1813',
+    shadowOffset: { height: 10, width: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 26,
+    elevation: 8,
+  },
+  tipPanelHandle: {
+    alignSelf: 'center',
+    backgroundColor: '#e4d5c2',
+    borderRadius: 999,
+    height: 4,
+    marginBottom: 16,
+    width: 42,
+  },
+  tipPanelKicker: {
+    color: colors.coral,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  tipPanelTitle: {
+    color: colors.charcoal,
+    fontSize: 24,
+    fontWeight: '800',
+    lineHeight: 29,
+    marginTop: 7,
+  },
+  tipPanelBody: {
+    color: colors.charcoal,
+    fontSize: 16,
+    lineHeight: 24,
+    marginTop: 10,
+  },
+  tipPanelClose: {
+    alignItems: 'center',
+    backgroundColor: colors.coral,
+    borderRadius: 999,
+    justifyContent: 'center',
+    marginTop: 18,
+    minHeight: 50,
+  },
+  tipPanelCloseText: {
+    color: '#fffdf8',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  completionCard: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: 32,
+    padding: 20,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 10, width: 0 },
+    shadowOpacity: 0.1,
+    shadowRadius: 22,
+    elevation: 3,
+  },
+  completionScrollContent: {
+    flexGrow: 1,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  completionEyebrow: {
+    color: colors.coral,
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+    marginBottom: 12,
+  },
+  completionImage: {
+    aspectRatio: 1.18,
+    backgroundColor: colors.cream,
+    borderRadius: 26,
+    width: '100%',
+  },
+  completionMascot: {
+    marginTop: -48,
+  },
+  completionTitle: {
+    color: colors.charcoal,
+    fontSize: 28,
+    fontWeight: '800',
+    lineHeight: 33,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  completionBody: {
+    color: colors.body,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  disabledPhotoAction: {
+    alignItems: 'center',
+    borderColor: '#eadfce',
+    borderRadius: 999,
+    borderWidth: 1,
+    marginTop: 12,
+    opacity: 0.68,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    width: '100%',
+  },
+  disabledPhotoActionText: {
+    color: colors.charcoal,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  disabledPhotoActionSubtext: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
   instructionsSection: {
     paddingTop: 16,
   },
@@ -1685,6 +2272,121 @@ function getStepTip(
   }
 
   return null;
+}
+
+function getGuidedCookingSteps(
+  recipe: Recipe | null,
+  cookingTerms: NonNullable<Recipe['cookingTerms']>,
+  spicePairings: string[],
+): GuidedCookingStep[] {
+  const displaySteps = getRecipeDisplaySteps(recipe);
+  const stepCount = Math.max(displaySteps.length, 1);
+  const totalTime = recipe ? recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes : 0;
+  const fallbackMinutes = totalTime > 0 ? Math.max(1, Math.round(totalTime / stepCount)) : null;
+  const recipeIngredients = getRecipeIngredients(recipe);
+  const recipeTools = getSafeTextList(recipe?.equipment);
+
+  if (!recipe || displaySteps.length === 0) {
+    return [{
+      estimatedMinutes: null,
+      ingredientsUsed: [],
+      instruction: 'Okyo could not find detailed cooking steps for this recipe yet. Review the overview, then try another scan when you are ready.',
+      stepNumber: 1,
+      title: 'Review the recipe',
+      toolsUsed: [],
+    }];
+  }
+
+  return displaySteps.map((step, index) => {
+    const parsedStep = getStepCopy(step, index);
+    const tip = getStepTip(step, index, displaySteps.length, cookingTerms, spicePairings);
+    const instruction = parsedStep.body || step.text;
+
+    return {
+      estimatedMinutes: parseEstimatedMinutes(step.timeEstimate) ?? fallbackMinutes,
+      ingredientsUsed: getStepIngredients(step.text, recipeIngredients),
+      instruction,
+      safetyNote: step.safetyNote,
+      stepNumber: index + 1,
+      tip: tip?.body,
+      title: parsedStep.title || `Step ${index + 1}`,
+      toolsUsed: getStepTools(step.text, recipeTools),
+      visualCue: step.visualCue,
+    };
+  });
+}
+
+function getRecipeIngredients(recipe: Recipe | null) {
+  if (!recipe) {
+    return [];
+  }
+
+  const groupedIngredients = getSafeIngredientGroups(recipe).flatMap((group) => group.items);
+  const ingredients = groupedIngredients.length > 0
+    ? groupedIngredients
+    : Array.isArray(recipe.ingredients)
+      ? recipe.ingredients
+      : [];
+
+  return ingredients
+    .filter((ingredient) => ingredient?.name?.trim())
+    .slice(0, 40);
+}
+
+function getStepIngredients(stepText: string, ingredients: RecipeIngredient[]) {
+  const normalizedStep = normalizeForMatching(stepText);
+  const matchedIngredients = ingredients.filter((ingredient) => {
+    const name = normalizeForMatching(ingredient.name);
+    const nameParts = name.split(' ').filter((part) => part.length > 3);
+
+    return normalizedStep.includes(name) || nameParts.some((part) => normalizedStep.includes(part));
+  });
+
+  return matchedIngredients.slice(0, 5);
+}
+
+function getStepTools(stepText: string, equipment: string[]) {
+  const normalizedStep = normalizeForMatching(stepText);
+
+  return equipment
+    .filter((tool) => {
+      const normalizedTool = normalizeForMatching(tool);
+      const toolParts = normalizedTool.split(' ').filter((part) => part.length > 2);
+
+      return normalizedStep.includes(normalizedTool) || toolParts.some((part) => normalizedStep.includes(part));
+    })
+    .slice(0, 4);
+}
+
+function parseEstimatedMinutes(value?: string) {
+  if (!value) {
+    return null;
+  }
+
+  const numbers = value.match(/\d+/g)?.map((number) => Number(number)).filter((number) => Number.isFinite(number)) ?? [];
+  if (numbers.length === 0) {
+    return null;
+  }
+  if (numbers.length === 1) {
+    return Math.max(1, numbers[0]);
+  }
+
+  return Math.max(1, Math.round((numbers[0] + numbers[1]) / 2));
+}
+
+function formatIngredientChip(ingredient: RecipeIngredient) {
+  const quantity = cleanDisplayText(ingredient.quantity ?? '');
+  const name = cleanDisplayText(ingredient.name);
+
+  return quantity ? `${quantity} ${name}` : name;
+}
+
+function normalizeForMatching(value: string) {
+  return cleanDisplayText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function getModeLabel(mode: RecipeMode) {

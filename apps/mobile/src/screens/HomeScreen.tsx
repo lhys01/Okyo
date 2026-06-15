@@ -1,7 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  Clock,
   NavArrowRight,
   Spark,
 } from 'iconoir-react-native';
@@ -32,7 +31,6 @@ export function HomeScreen() {
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
   const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
@@ -49,10 +47,6 @@ export function HomeScreen() {
     getRealScanImageUri(latestScanSession?.selectedScanImage) ?? getRealScanImageUri(selectedScanImage),
   );
   const heroImageStatus = getRecipeImageStatus(heroRecipe);
-  const estimatedSaved = safeSavedRecipes.reduce(
-    (total, recipe) => total + getFiniteNumber(recipe.estimatedSavings),
-    getFiniteNumber(totalMoneySaved),
-  );
   const hasActivity = Boolean(heroRecipe || heroImageUri || safeSavedRecipes.length > 0 || weeklyScanCount > 0);
 
   const openScan = () => {
@@ -63,11 +57,6 @@ export function HomeScreen() {
   const openPlan = () => {
     uiLog('HomeScreen', 'open_plan');
     navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
-  };
-
-  const openSavings = () => {
-    uiLog('HomeScreen', 'open_savings');
-    navigation.navigate('SavingsDashboardScreen');
   };
 
   const openDiscover = () => {
@@ -202,14 +191,6 @@ export function HomeScreen() {
           </Pressable>
         )}
 
-        <Pressable accessibilityRole="button" style={({ pressed }) => [styles.savingsCard, pressed ? styles.pressed : null]} onPress={openSavings}>
-          <View>
-            <Text style={styles.savingsKicker}>Kitchen ledger</Text>
-            <Text style={styles.savingsTitle}>{formatCurrency(estimatedSaved)}</Text>
-            <Text style={styles.savingsBody}>Estimated savings tracked across saved meals and cooking wins.</Text>
-          </View>
-          <Clock color={colors.charcoal} height={28} strokeWidth={1.8} width={28} />
-        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
@@ -252,10 +233,6 @@ function getHomeMoment(date = new Date()): HomeMoment {
 
 function getStablePhrase(phrases: string[], date: Date) {
   return phrases[(date.getDate() + date.getHours()) % phrases.length] ?? phrases[0];
-}
-
-function getFiniteNumber(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 const styles = StyleSheet.create({
@@ -434,35 +411,6 @@ const styles = StyleSheet.create({
   },
   emptyRecentBody: {
     ...typography.body,
-  },
-  savingsCard: {
-    alignItems: 'flex-start',
-    backgroundColor: colors.greenSoft,
-    borderRadius: radius.card,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 18,
-    padding: 20,
-  },
-  savingsKicker: {
-    color: colors.green,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0,
-    textTransform: 'uppercase',
-  },
-  savingsTitle: {
-    color: colors.green,
-    fontSize: 34,
-    fontWeight: '800',
-    letterSpacing: 0,
-    lineHeight: 39,
-    marginTop: 8,
-  },
-  savingsBody: {
-    ...typography.caption,
-    marginTop: 5,
-    maxWidth: 250,
   },
   pressed: {
     opacity: 0.82,
