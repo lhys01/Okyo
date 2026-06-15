@@ -3,6 +3,12 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { z } from 'zod';
 
 import { getPublicAiConfig } from './config/aiConfig.js';
+import { getCostControlConfig } from './config/costControlConfig.js';
+import {
+  checkAndIncrementGlobalAiCap,
+  logCostEvent,
+  scanRateLimitMiddleware,
+} from './middleware/costControls.js';
 import {
   awardXp,
   createChallenge,
@@ -78,12 +84,33 @@ app.get('/health', (_request, response) => {
 });
 
 app.get('/debug/ai-config', (_request, response) => {
+  if (process.env.NODE_ENV === 'production') {
+    sendError(response.status(404), 'not_found', 'Not found.');
+    return;
+  }
   sendOk(response, getPublicAiConfig());
 });
 
-app.post('/v1/scans', async (request, response, next) => {
+app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) => {
   try {
     const body = parseRequest(scanRequestSchema, normalizeScanRequestInput(request.body));
+
+    // Configurable image size guard (secondary check; Zod schema is the primary).
+    const imageSizeBytes = body.image?.dataUrlSizeBytes ?? body.image?.dataUrl?.length ?? 0;
+    const maxScanImageBytes = getCostControlConfig().maxScanImageBytes;
+    if (imageSizeBytes > maxScanImageBytes) {
+      logCostEvent('scan_image_too_large', { imageSizeBytes, maxScanImageBytes });
+      sendError(response.status(413), 'image_payload_too_large', 'This photo was too large to scan. Try a smaller image.');
+      return;
+    }
+
+    // Global daily AI request cap — only counts real uploaded images, not mock scans.
+    const isRealAiScan = body.source !== 'mock' && Boolean(body.image) && !body.image?.placeholder;
+    if (isRealAiScan && !checkAndIncrementGlobalAiCap()) {
+      sendError(response.status(429), 'ai_daily_cap_exceeded', "Okyo has reached its daily scan limit. Try again tomorrow.");
+      return;
+    }
+
     logScanRequest(body, request.get('content-type'));
     const result = await createAiScan({
       image: body.image,
