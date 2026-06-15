@@ -194,7 +194,7 @@ export function DupeChallengeScreen() {
         </View>
       )}
       <View style={styles.returnAction}>
-        <PrimaryButton onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })}>
+        <PrimaryButton onPress={() => navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: selectedMode } })}>
           Back to Recipe
         </PrimaryButton>
       </View>

@@ -2,16 +2,15 @@ import type { Recipe } from '../mocks';
 
 type ScanImageLike = { uri?: string; placeholder?: boolean } | null | undefined;
 
-// Snapshots the user's real scan photo onto a recipe at save time so the saved
-// library card can show the actual meal. Rules:
-//  - Keep an existing imageUri (e.g. re-saving an already-saved recipe) so a
-//    stale store image never clobbers the correct one.
+// Snapshots the user's real scan photo onto a recipe at save time so saved
+// surfaces can show the actual meal. Rules:
+//  - Keep an existing imageUrl/imageUri (e.g. re-saving an already-saved recipe)
+//    so a stale store image never clobbers the correct one.
 //  - Only attach a real uploaded/camera photo — never a demo/placeholder image.
-//  - If no real image is available, leave imageUri unset so the card uses the
+//  - If no real image is available, leave image fields unset so cards use the
 //    clean Okyo fallback instead of a fake/broken image.
-// TODO: prefer a safe generated bird's-eye dish image here once that pipeline exists.
 export function attachRealScanImage(recipe: Recipe, image: ScanImageLike): Recipe {
-  if (recipe.imageUri) {
+  if (recipe.imageUrl || recipe.imageUri) {
     return recipe;
   }
 
@@ -19,5 +18,5 @@ export function attachRealScanImage(recipe: Recipe, image: ScanImageLike): Recip
     ? image.uri
     : undefined;
 
-  return uri ? { ...recipe, imageUri: uri } : recipe;
+  return uri ? { ...recipe, imageStatus: 'ready', imageUri: uri, imageUrl: uri } : recipe;
 }

@@ -20,6 +20,7 @@ import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import { KikoMascot } from '../components/KikoMascot';
+import { sampleFoodImageUrls } from '../data/sampleFoodImages';
 import { colors } from '../components/OkyoUI';
 import { defaultScanResult, getSafeRecipeForMode, getSafeRecipeMode, type Recipe, type RecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
@@ -302,7 +303,7 @@ export function ScanScreen() {
       source: 'ScanScreen.openRecentRecipe',
     });
     setSelectedMode(mode);
-    navigation.navigate('RecipeDetailScreen', { mode });
+    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
   };
 
   const openLibrary = () => {
@@ -625,11 +626,52 @@ function getAiDebugMetadata(result: CreateScanResult): AiDebugMetadata | null {
 }
 
 function getScanRecipes(result: CreateScanResult) {
+  const decorateRecipe = shouldUseSampleRecipeImages(result)
+    ? addSampleImageUrl
+    : (recipe: Recipe) => recipe;
+
   if (Array.isArray(result.recipes) && result.recipes.length > 0) {
-    return result.recipes;
+    return result.recipes.map(decorateRecipe);
   }
 
-  return result.recipe ? [result.recipe] : [];
+  return result.recipe ? [decorateRecipe(result.recipe)] : [];
+}
+
+function shouldUseSampleRecipeImages(result: CreateScanResult) {
+  return result.source === 'mock' || result.image?.placeholder === true;
+}
+
+function addSampleImageUrl(recipe: Recipe): Recipe {
+  if (recipe.imageUrl || recipe.imageUri) {
+    return recipe;
+  }
+
+  return {
+    ...recipe,
+    imageStatus: 'ready',
+    imageUrl: getSampleImageUrlForDish(recipe.title),
+  };
+}
+
+function getSampleImageUrlForDish(dishName: string) {
+  const normalized = dishName.toLowerCase();
+  if (normalized.includes('pasta') || normalized.includes('rigatoni') || normalized.includes('noodle') || normalized.includes('spaghetti')) {
+    return sampleFoodImageUrls.pasta;
+  }
+  if (normalized.includes('burger') || normalized.includes('sandwich') || normalized.includes('biscuit')) {
+    return sampleFoodImageUrls.burger;
+  }
+  if (normalized.includes('salad')) {
+    return sampleFoodImageUrls.salad;
+  }
+  if (normalized.includes('cake') || normalized.includes('cookie') || normalized.includes('dessert')) {
+    return sampleFoodImageUrls.dessert;
+  }
+  if (normalized.includes('egg') || normalized.includes('toast') || normalized.includes('breakfast')) {
+    return sampleFoodImageUrls.breakfast;
+  }
+
+  return sampleFoodImageUrls.bowl;
 }
 
 function getDemoRecipes() {

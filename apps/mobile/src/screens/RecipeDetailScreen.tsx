@@ -1,5 +1,7 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
+import type { CompositeNavigationProp } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Bookmark,
@@ -7,8 +9,6 @@ import {
   Check,
   Clock,
   Cutlery,
-  FastArrowLeft,
-  FastArrowRight,
   FireFlame,
   Heart,
   Leaf,
@@ -19,11 +19,12 @@ import {
   User,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
-import { useEffect, useRef, useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { FoodImage } from '../components/FoodImage';
 import { colors } from '../components/OkyoUI';
 import {
   defaultScanResult,
@@ -34,14 +35,23 @@ import {
   type RecipeIngredient,
   type RecipeMode,
 } from '../mocks';
-import type { RootStackParamList } from '../navigation/types';
+import type { MainTabParamList, RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
+import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
-type RecipeDetailNavigation = NativeStackNavigationProp<RootStackParamList, 'RecipeDetailScreen'>;
-type RecipeDetailRoute = RouteProp<RootStackParamList, 'RecipeDetailScreen'>;
+type RecipeDetailNavigation = CompositeNavigationProp<
+  BottomTabNavigationProp<MainTabParamList, 'RecipeDetailScreen'>,
+  NativeStackNavigationProp<RootStackParamList>
+>;
+type RecipeDetailRoute = RouteProp<MainTabParamList, 'RecipeDetailScreen'>;
+type RecipeStepsNavigation = CompositeNavigationProp<
+  BottomTabNavigationProp<MainTabParamList, 'RecipeStepsScreen'>,
+  NativeStackNavigationProp<RootStackParamList>
+>;
+type RecipeStepsRoute = RouteProp<MainTabParamList, 'RecipeStepsScreen'>;
 type DisplayRecipeStep = {
   text: string;
   timeEstimate?: string;
@@ -55,9 +65,6 @@ type DisplayRecipeStep = {
 export function RecipeDetailScreen() {
   const navigation = useNavigation<RecipeDetailNavigation>();
   const route = useRoute<RecipeDetailRoute>();
-  const scrollRef = useRef<ScrollView | null>(null);
-  const instructionTop = useRef(0);
-  const stepOffsets = useRef<number[]>([]);
   const routeMode = route.params?.mode;
   const initialMode = getSafeRecipeMode(routeMode ?? defaultScanResult.modes[0]);
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
@@ -73,7 +80,6 @@ export function RecipeDetailScreen() {
   const [selectedMode, setSelectedMode] = useState<RecipeMode>(
     getSafeRecipeMode(initialMode ?? storeSelectedMode),
   );
-  const [activeStepIndex, setActiveStepIndex] = useState(0);
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const storedRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode, latestScanRecipe);
   const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
@@ -82,11 +88,9 @@ export function RecipeDetailScreen() {
   const canShowSavings = restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
   const availableModes = scanResult?.modes ?? getAvailableModes(latestScanRecipes, latestScanRecipe, isDemoScan);
   const spicePairings = getSafeTextList(recipe?.spicePairings);
-  const cookingTerms = getSafeCookingTerms(recipe?.cookingTerms);
   const ingredientGroups = getSafeIngredientGroups(recipe);
   const equipment = getSafeTextList(recipe?.equipment);
   const substitutions = getSafeTextList(recipe?.substitutions);
-  const displaySteps = getRecipeDisplaySteps(recipe);
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
   const displayDescription = cleanDisplayText(recipe?.description ?? '');
   const ingredientCount = getIngredientCount(recipe);
@@ -101,6 +105,8 @@ export function RecipeDetailScreen() {
   const perServingCost = recipe && recipe.servings > 0 ? recipe.estimatedHomemadeCost / recipe.servings : null;
   const flavorNotes = getFlavorNotes(recipe, spicePairings);
   const whyBullets = getWhyBullets(recipe, totalTime);
+  const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
+  const recipeImageStatus = getRecipeImageStatus(recipe);
 
   useEffect(() => {
     const safeMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
@@ -128,7 +134,6 @@ export function RecipeDetailScreen() {
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
     setStoreSelectedMode(mode);
-    setActiveStepIndex(0);
     uiLog('RecipeDetailScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
       dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
@@ -178,23 +183,8 @@ export function RecipeDetailScreen() {
     navigation.navigate('GroceryListScreen', { mode: selectedMode });
   };
 
-  const scrollToInstructions = () => {
-    setActiveStepIndex(0);
-    scrollToY(instructionTop.current);
-  };
-
-  const goToStep = (index: number) => {
-    if (displaySteps.length === 0) {
-      return;
-    }
-
-    const nextIndex = Math.max(0, Math.min(displaySteps.length - 1, index));
-    setActiveStepIndex(nextIndex);
-    scrollToY(stepOffsets.current[nextIndex] ?? instructionTop.current);
-  };
-
-  const scrollToY = (y: number) => {
-    scrollRef.current?.scrollTo({ animated: true, y: Math.max(y - 12, 0) });
+  const openCookingSteps = () => {
+    navigation.navigate('RecipeStepsScreen', { mode: selectedMode });
   };
 
   if (!recipe) {
@@ -218,20 +208,17 @@ export function RecipeDetailScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
-        ref={scrollRef}
         contentContainerStyle={styles.screenContent}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.heroCard}>
-          <View style={styles.recipePhoto}>
-            {selectedScanImage?.uri ? (
-              <Image source={{ uri: selectedScanImage.uri }} resizeMode="cover" style={styles.recipePhotoImage} />
-            ) : (
-              <View style={styles.recipePhotoFallback}>
-                <Cutlery color={colors.coral} height={42} strokeWidth={2.1} width={42} />
-                <Text style={styles.recipePhotoFallbackText}>Okyo-style homemade version</Text>
-              </View>
-            )}
+          <FoodImage
+            fallbackLabel="Image coming soon"
+            imageStatus={recipeImageStatus}
+            imageUrl={recipeImageUrl}
+            showFallbackLabel
+            style={styles.recipePhoto}
+          >
             <Pressable
               accessibilityRole="button"
               onPress={goBack}
@@ -250,7 +237,7 @@ export function RecipeDetailScreen() {
               <Spark color={colors.coral} height={18} strokeWidth={2.2} width={18} />
               <Text style={styles.inspiredPillText}>Inspired by your restaurant meal</Text>
             </View>
-          </View>
+          </FoodImage>
 
           <View style={styles.overviewPanel}>
             <Text
@@ -381,7 +368,7 @@ export function RecipeDetailScreen() {
               </View>
             </View>
 
-            <PrimaryAction label="Start Cooking" onPress={scrollToInstructions} />
+            <PrimaryAction label="Start Cooking" onPress={openCookingSteps} />
             <View style={styles.secondaryActionsRow}>
               <SecondaryIconAction icon={<Bookmark color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Save" onPress={saveSelectedRecipe} />
               <SecondaryIconAction icon={<Cart color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Grocery List" onPress={openGroceryList} />
@@ -389,113 +376,198 @@ export function RecipeDetailScreen() {
             </View>
           </View>
         </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
 
-        <View
-          onLayout={(event) => {
-            instructionTop.current = event.nativeEvent.layout.y;
-          }}
-          style={styles.instructionsSection}
-        >
-          <View style={styles.instructionsHeader}>
-            <Text style={styles.instructionsEyebrow}>STEP-BY-STEP</Text>
-            <Text style={styles.instructionsTitle}>How to make it</Text>
-            {displaySteps.length > 0 ? (
-              <>
-                <Text style={styles.stepProgressText}>Step {activeStepIndex + 1} of {displaySteps.length}</Text>
-                <View style={styles.progressTrack}>
-                  <View style={[styles.progressFill, { width: `${((activeStepIndex + 1) / displaySteps.length) * 100}%` }]} />
-                </View>
-              </>
-            ) : null}
+export function RecipeStepsScreen() {
+  const navigation = useNavigation<RecipeStepsNavigation>();
+  const route = useRoute<RecipeStepsRoute>();
+  const routeMode = route.params?.mode;
+  const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
+  const selectedMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
+  const latestScanResult = useOkyoStore((state) => state.latestScanResult);
+  const latestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
+  const saveRecipe = useOkyoStore((state) => state.saveRecipe);
+  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
+  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
+  const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
+  const unlockBadge = useOkyoStore((state) => state.unlockBadge);
+  const isDemoScan = isExplicitDemoScan(selectedScanImage);
+  const storedRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode, latestScanRecipe);
+  const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
+  const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
+  const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
+  const canShowSavings = Boolean(recipe) && restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
+  const displaySteps = getRecipeDisplaySteps(recipe);
+  const displayTitle = cleanDisplayText(recipe?.title ?? '');
+  const spicePairings = getSafeTextList(recipe?.spicePairings);
+  const cookingTerms = getSafeCookingTerms(recipe?.cookingTerms);
+
+  useEffect(() => {
+    uiLog('RecipeStepsScreen', 'enter', { routeMode, selectedMode });
+
+    if (routeMode && !isRecipeMode(routeMode)) {
+      track(analyticsEvents.RESULT_ERROR, {
+        errorMessage: 'Recipe steps mode was missing or invalid.',
+        screen: 'RecipeStepsScreen',
+      });
+    }
+  }, [routeMode, selectedMode]);
+
+  const goBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+
+    navigation.navigate('RecipeDetailScreen', { mode: selectedMode });
+  };
+
+  const saveSelectedRecipe = () => {
+    if (!recipe) {
+      return;
+    }
+
+    const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
+    uiLog('RecipeStepsScreen', 'save_recipe', { recipeId: recipe.id });
+    saveRecipe(attachRealScanImage(recipe, selectedScanImage));
+    if (!alreadySaved) {
+      awardXPOnce(`save-recipe-${recipe.id}`, 5);
+    }
+    unlockBadge('first-dupe');
+    track(analyticsEvents.RECIPE_SAVED, {
+      dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
+      mode: recipe.mode,
+      savings: canShowSavings ? recipe.estimatedSavings : 0,
+      screen: 'RecipeStepsScreen',
+    });
+    Alert.alert('Saved', `${cleanDisplayText(recipe.title)} was added to your library.`);
+  };
+
+  const openShareRecipe = () => {
+    if (!recipe) {
+      return;
+    }
+
+    navigation.navigate('ShareCardPreviewScreen', {
+      cardType: 'scan_result',
+      mode: selectedMode,
+      scanContext: {
+        image: selectedScanImage,
+        recipe,
+        scanResult,
+      },
+    });
+  };
+
+  if (!recipe) {
+    return (
+      <ScreenFrame onBack={goBack} title="Cooking Steps">
+        <View style={styles.issueCard}>
+          <Text style={styles.kicker}>Steps issue</Text>
+          <Text style={styles.issueTitle}>This recipe needs another try.</Text>
+          <Text style={styles.issueBody}>
+            Okyo needs a completed recipe before it can show cooking steps for this scan.
+          </Text>
+          <View style={styles.issueActions}>
+            <PrimaryAction label="Back to Recipe" onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })} />
+            <SecondaryAction label="Try another photo" onPress={() => navigation.navigate('ScanScreen')} />
           </View>
+        </View>
+      </ScreenFrame>
+    );
+  }
 
-          {displaySteps.length > 0 ? (
-            displaySteps.map((step, index) => {
-              const parsedStep = getStepCopy(step, index);
-              const tip = getStepTip(step, index, displaySteps.length, cookingTerms, spicePairings);
-              const isActive = activeStepIndex === index;
+  return (
+    <ScreenFrame onBack={goBack} title="Cooking Steps">
+      <View style={styles.stepsHeroCard}>
+        <Text style={styles.instructionsEyebrow}>Cook along</Text>
+        <Text numberOfLines={2} style={styles.stepsRecipeTitle}>{displayTitle}</Text>
+        <Text style={styles.stepsIntroText}>
+          {displaySteps.length > 0
+            ? `${displaySteps.length} calm steps. Read through once, then cook at your pace.`
+            : 'Steps are not available for this recipe yet.'}
+        </Text>
+      </View>
 
-              return (
-                <View
-                  key={`${recipe.id}-step-${index}-${step.text}`}
-                  onLayout={(event) => {
-                    stepOffsets.current[index] = event.nativeEvent.layout.y + instructionTop.current;
-                  }}
-                  style={[styles.stepCard, isActive ? styles.stepCardActive : null]}
-                >
-                  <View style={styles.stepTopRow}>
-                    <View style={styles.stepBadge}>
-                      <Text style={styles.stepBadgeText}>{index + 1}</Text>
-                    </View>
-                    <View style={styles.stepTitleGroup}>
-                      <Text style={styles.stepTitle}>{parsedStep.title}</Text>
-                      {step.timeEstimate ? <Text style={styles.stepTime}>{step.timeEstimate}</Text> : null}
+      <View style={styles.instructionsSection}>
+        {displaySteps.length > 0 ? (
+          displaySteps.map((step, index) => {
+            const parsedStep = getStepCopy(step, index);
+            const tip = getStepTip(step, index, displaySteps.length, cookingTerms, spicePairings);
+
+            return (
+              <View
+                key={`${recipe.id}-step-${index}-${step.text}`}
+                style={styles.stepCard}
+              >
+                <View style={styles.stepTopRow}>
+                  <View style={styles.stepBadge}>
+                    <Text style={styles.stepBadgeText}>{index + 1}</Text>
+                  </View>
+                  <View style={styles.stepTitleGroup}>
+                    <Text style={styles.stepTitle}>{parsedStep.title}</Text>
+                    {step.timeEstimate ? <Text style={styles.stepTime}>{step.timeEstimate}</Text> : null}
+                  </View>
+                </View>
+                <Text style={styles.stepBody}>{parsedStep.body}</Text>
+                {step.visualCue ? (
+                  <View style={styles.visualCueBlock}>
+                    <Text style={styles.visualCueLabel}>Look for</Text>
+                    <Text style={styles.visualCueText}>{cleanDisplayText(step.visualCue)}</Text>
+                  </View>
+                ) : null}
+                {tip ? (
+                  <View style={styles.stepTipCard}>
+                    <Spark color={colors.coral} height={16} strokeWidth={2.2} width={16} />
+                    <View style={styles.stepTipCopy}>
+                      <Text style={styles.stepTipTitle}>{tip.title}</Text>
+                      <Text style={styles.stepTipText}>{tip.body}</Text>
                     </View>
                   </View>
-                  <Text style={styles.stepBody}>{parsedStep.body}</Text>
-                  {step.visualCue ? <Text style={styles.visualCue}>Cue: {cleanDisplayText(step.visualCue)}</Text> : null}
-                  {tip ? (
-                    <View style={styles.stepTipCard}>
-                      <Spark color={colors.coral} height={16} strokeWidth={2.2} width={16} />
-                      <View style={styles.stepTipCopy}>
-                        <Text style={styles.stepTipTitle}>{tip.title}</Text>
-                        <Text style={styles.stepTipText}>{tip.body}</Text>
-                      </View>
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })
-          ) : (
-            <View style={styles.stepCard}>
-              <Text style={styles.stepTitle}>Steps are not available yet.</Text>
-              <Text style={styles.stepBody}>Try another style or scan again when you are ready.</Text>
-            </View>
-          )}
+                ) : null}
+              </View>
+            );
+          })
+        ) : (
+          <View style={styles.stepCard}>
+            <Text style={styles.stepTitle}>Steps are not available yet.</Text>
+            <Text style={styles.stepBody}>Try another style or scan again when you are ready.</Text>
+          </View>
+        )}
+      </View>
 
-          {recipe.avoidMistake || recipe.storageAndReheating || recipe.pantryNote ? (
-            <View style={styles.cookingNotesCard}>
-              {recipe.avoidMistake ? (
-                <View style={styles.noteBlock}>
-                  <Text style={styles.noteTitle}>Helpful heads-up</Text>
-                  <Text style={styles.noteText}>{cleanDisplayText(recipe.avoidMistake)}</Text>
-                </View>
-              ) : null}
-              {recipe.storageAndReheating ? (
-                <View style={styles.noteBlock}>
-                  <Text style={styles.noteTitle}>Storage and reheating</Text>
-                  <Text style={styles.noteText}>{cleanDisplayText(recipe.storageAndReheating)}</Text>
-                </View>
-              ) : null}
-              {recipe.pantryNote ? (
-                <View style={styles.noteBlock}>
-                  <Text style={styles.noteTitle}>Pantry note</Text>
-                  <Text style={styles.noteText}>{cleanDisplayText(recipe.pantryNote)}</Text>
-                </View>
-              ) : null}
+      {recipe.avoidMistake || recipe.storageAndReheating || recipe.pantryNote ? (
+        <View style={styles.cookingNotesCard}>
+          {recipe.pantryNote ? (
+            <View style={styles.noteBlock}>
+              <Text style={styles.noteTitle}>Pantry note</Text>
+              <Text style={styles.noteText}>{cleanDisplayText(recipe.pantryNote)}</Text>
             </View>
           ) : null}
-
-          {displaySteps.length > 0 ? (
-            <View style={styles.stepNavigationRow}>
-              <StepNavButton
-                icon={<FastArrowLeft color={colors.charcoal} height={18} strokeWidth={2.25} width={18} />}
-                label="Previous"
-                onPress={() => goToStep(activeStepIndex - 1)}
-                tone="secondary"
-              />
-              <StepNavButton
-                icon={<FastArrowRight color="#fffdf8" height={18} strokeWidth={2.25} width={18} />}
-                iconSide="right"
-                label={activeStepIndex >= displaySteps.length - 1 ? 'Review Steps' : 'Next Step'}
-                onPress={() => goToStep(activeStepIndex >= displaySteps.length - 1 ? 0 : activeStepIndex + 1)}
-                tone="primary"
-              />
+          {recipe.avoidMistake ? (
+            <View style={styles.noteBlock}>
+              <Text style={styles.noteTitle}>Helpful heads-up</Text>
+              <Text style={styles.noteText}>{cleanDisplayText(recipe.avoidMistake)}</Text>
+            </View>
+          ) : null}
+          {recipe.storageAndReheating ? (
+            <View style={styles.noteBlock}>
+              <Text style={styles.noteTitle}>Storage and reheating</Text>
+              <Text style={styles.noteText}>{cleanDisplayText(recipe.storageAndReheating)}</Text>
             </View>
           ) : null}
         </View>
-      </ScrollView>
-    </SafeAreaView>
+      ) : null}
+
+      <View style={styles.stepActionRow}>
+        <SecondaryIconAction icon={<Bookmark color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Save" onPress={saveSelectedRecipe} />
+        <SecondaryIconAction icon={<ShareAndroid color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Share" onPress={openShareRecipe} />
+      </View>
+    </ScreenFrame>
   );
 }
 
@@ -726,34 +798,6 @@ function SecondaryIconAction({ icon, label, onPress }: SecondaryIconActionProps)
   );
 }
 
-type StepNavButtonProps = {
-  icon: ReactNode;
-  iconSide?: 'left' | 'right';
-  label: string;
-  onPress: () => void;
-  tone: 'primary' | 'secondary';
-};
-
-function StepNavButton({ icon, iconSide = 'left', label, onPress, tone }: StepNavButtonProps) {
-  const isPrimary = tone === 'primary';
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.stepNavButton,
-        isPrimary ? styles.stepNavButtonPrimary : styles.stepNavButtonSecondary,
-        pressed ? styles.pressed : null,
-      ]}
-    >
-      {iconSide === 'left' ? icon : null}
-      <Text style={[styles.stepNavButtonText, isPrimary ? styles.stepNavButtonTextPrimary : null]}>{label}</Text>
-      {iconSide === 'right' ? icon : null}
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   safeArea: {
     backgroundColor: colors.background,
@@ -761,7 +805,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     flexGrow: 1,
-    paddingBottom: 28,
+    paddingBottom: 150,
     paddingHorizontal: 24,
   },
   heroCard: {
@@ -779,22 +823,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 24,
     elevation: 5,
-  },
-  recipePhotoImage: {
-    height: '100%',
-    width: '100%',
-  },
-  recipePhotoFallback: {
-    alignItems: 'center',
-    gap: 10,
-    justifyContent: 'center',
-    padding: 24,
-  },
-  recipePhotoFallbackText: {
-    color: colors.body,
-    fontSize: 15,
-    fontWeight: '600',
-    textAlign: 'center',
   },
   circleBackButton: {
     alignItems: 'center',
@@ -1187,6 +1215,31 @@ const styles = StyleSheet.create({
   instructionsSection: {
     paddingTop: 16,
   },
+  stepsHeroCard: {
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    marginTop: 12,
+    padding: 18,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
+  },
+  stepsRecipeTitle: {
+    color: colors.charcoal,
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: 0,
+    lineHeight: 33,
+    marginTop: 6,
+  },
+  stepsIntroText: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 21,
+    marginTop: 10,
+  },
   instructionsHeader: {
     alignItems: 'flex-start',
     marginBottom: 16,
@@ -1288,6 +1341,27 @@ const styles = StyleSheet.create({
     marginLeft: 38,
     marginTop: 7,
   },
+  visualCueBlock: {
+    backgroundColor: colors.greenSoft,
+    borderRadius: 16,
+    gap: 4,
+    marginLeft: 38,
+    marginTop: 12,
+    padding: 12,
+  },
+  visualCueLabel: {
+    color: colors.green,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  visualCueText: {
+    color: colors.charcoal,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 19,
+  },
   stepTipCard: {
     alignItems: 'flex-start',
     backgroundColor: '#fff4df',
@@ -1333,33 +1407,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
-  stepNavigationRow: {
+  stepActionRow: {
     flexDirection: 'row',
     gap: 12,
     marginTop: 16,
-  },
-  stepNavButton: {
-    alignItems: 'center',
-    borderRadius: 999,
-    flex: 1,
-    flexDirection: 'row',
-    gap: 8,
-    justifyContent: 'center',
-    minHeight: 54,
-  },
-  stepNavButtonPrimary: {
-    backgroundColor: colors.coral,
-  },
-  stepNavButtonSecondary: {
-    backgroundColor: colors.card,
-  },
-  stepNavButtonText: {
-    color: colors.charcoal,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  stepNavButtonTextPrimary: {
-    color: '#fffdf8',
   },
   simpleTopBar: {
     alignItems: 'center',

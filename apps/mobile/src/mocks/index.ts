@@ -20,6 +20,7 @@ export type {
   GroceryListItem,
   LeaderboardEntry,
   Recipe,
+  RecipeImageStatus,
   RecipeIngredient,
   RecipeIngredientGroup,
   RecipeMode,

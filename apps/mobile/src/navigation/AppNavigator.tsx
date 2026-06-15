@@ -7,9 +7,7 @@ import { AnalysisLoadingScreen } from '../screens/AnalysisLoadingScreen';
 import { ChallengeCompleteScreen } from '../screens/ChallengeCompleteScreen';
 import { DupeChallengeScreen } from '../screens/DupeChallengeScreen';
 import { GoalScreen } from '../screens/GoalScreen';
-import { GroceryListScreen } from '../screens/GroceryListScreen';
 import { PaywallScreen } from '../screens/PaywallScreen';
-import { RecipeDetailScreen } from '../screens/RecipeDetailScreen';
 import { RestaurantPackDetailScreen } from '../screens/RestaurantPackDetailScreen';
 import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
 import { KitchenLetterScreen } from '../screens/KitchenLetterScreen';
@@ -84,16 +82,6 @@ export function AppNavigator() {
         name="ResultSummaryScreen"
         component={ResultSummaryScreen}
         options={{ headerShown: false, title: 'Result' }}
-      />
-      <Stack.Screen
-        name="RecipeDetailScreen"
-        component={RecipeDetailScreen}
-        options={{ headerShown: false, title: 'Recipe' }}
-      />
-      <Stack.Screen
-        name="GroceryListScreen"
-        component={GroceryListScreen}
-        options={{ headerShown: false, title: 'Grocery List' }}
       />
       <Stack.Screen
         name="ShareCardPreviewScreen"

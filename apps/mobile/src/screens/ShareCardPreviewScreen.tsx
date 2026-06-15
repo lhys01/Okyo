@@ -38,6 +38,7 @@ import {
 } from '../mocks';
 import type { RootStackParamList, ShareCardType } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
 type ShareCardRoute = RouteProp<RootStackParamList, 'ShareCardPreviewScreen'>;
@@ -778,9 +779,7 @@ function getModeLabel(mode: RecipeMode | string) {
 }
 
 function getRecipeImageUri(recipe: Recipe) {
-  const recipeWithImage = recipe as Recipe & { imageUri?: unknown; image?: { uri?: unknown } };
-  const uri = recipeWithImage.imageUri ?? recipeWithImage.image?.uri;
-  return typeof uri === 'string' && uri.trim().length > 0 ? uri : null;
+  return getRecipeImageUrl(recipe);
 }
 
 function getHomemadeImageUri(recipe: Recipe) {

@@ -11,9 +11,10 @@ import {
   StatsUpSquare,
 } from 'iconoir-react-native';
 import { useMemo, useState, type ReactNode } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import {
@@ -24,6 +25,7 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore, type CompletedChallenge } from '../state/useOkyoStore';
+import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
 type SavingsNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -37,6 +39,7 @@ type SavingsEntry = {
   restaurantCost: number;
   completedAt?: string | null;
   recipe?: Recipe;
+  imageStatus?: string;
   imageUri?: string | null;
 };
 
@@ -62,10 +65,13 @@ export function SavingsDashboardScreen() {
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id) : [];
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeStoredMoneySaved = getFiniteNumber(storedMoneySaved);
-  const latestImageUri = selectedScanImage?.uri ?? null;
+  const latestImageUri = getRealScanImageUri(selectedScanImage);
 
   const recipeEntries = useMemo(
-    () => safeSavedRecipes.map((recipe) => toRecipeEntry(recipe, recipe.id === latestScanRecipe?.id ? latestImageUri : null)),
+    () => safeSavedRecipes.map((recipe) => toRecipeEntry(
+      recipe,
+      getRecipeImageUrl(recipe, recipe.id === latestScanRecipe?.id ? latestImageUri : null),
+    )),
     [latestImageUri, latestScanRecipe?.id, safeSavedRecipes],
   );
   const challengeEntries = useMemo(
@@ -137,7 +143,7 @@ export function SavingsDashboardScreen() {
     if (isRecipeMode(recipe.mode)) {
       setSelectedMode(recipe.mode);
     }
-    navigation.navigate('RecipeDetailScreen', { mode });
+    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
   };
 
   if (!hasSavingsData) {
@@ -227,7 +233,7 @@ export function SavingsDashboardScreen() {
         <View style={styles.biggestCard}>
           <Text style={styles.sectionKicker}>Biggest win</Text>
           <View style={styles.biggestBody}>
-            <SavingsThumb title={biggestWin.title} uri={biggestWin.imageUri} />
+            <SavingsThumb imageStatus={biggestWin.imageStatus} title={biggestWin.title} uri={biggestWin.imageUri} />
             <View style={styles.biggestCopy}>
               <Text style={styles.biggestTitle}>{cleanDisplayText(biggestWin.title)}</Text>
               <Text style={styles.biggestSavings}>Saved about {formatCurrency(biggestWin.savings)}</Text>
@@ -329,22 +335,21 @@ function StatTile({ icon, label, value }: { icon: ReactNode; label: string; valu
   );
 }
 
-function SavingsThumb({ title, uri }: { title: string; uri?: string | null }) {
-  if (uri) {
-    return <Image source={{ uri }} style={styles.thumbImage} />;
-  }
-
+function SavingsThumb({ imageStatus, title, uri }: { imageStatus?: string; title: string; uri?: string | null }) {
   return (
-    <View style={styles.thumbArt}>
-      <Text style={styles.thumbInitials}>{getInitials(title)}</Text>
-    </View>
+    <FoodImage
+      fallbackLabel={getInitials(title)}
+      imageStatus={imageStatus}
+      imageUrl={uri}
+      style={styles.thumbImage}
+    />
   );
 }
 
 function RecentWinRow({ entry, onPress }: { entry: SavingsEntry; onPress?: () => void }) {
   const content = (
     <>
-      <SavingsThumb title={entry.title} uri={entry.imageUri} />
+      <SavingsThumb imageStatus={entry.imageStatus} title={entry.title} uri={entry.imageUri} />
       <View style={styles.recentCopy}>
         <Text numberOfLines={2} style={styles.recentDish}>{cleanDisplayText(entry.title)}</Text>
         <Text numberOfLines={1} style={styles.recentMode}>{getModeLabel(entry.mode)}</Text>
@@ -384,6 +389,7 @@ function toRecipeEntry(recipe: Recipe, imageUri?: string | null): SavingsEntry {
     restaurantCost: homeCost + savings,
     completedAt: getOptionalDate(recipe),
     recipe,
+    imageStatus: getRecipeImageStatus(recipe),
     imageUri,
   };
 }

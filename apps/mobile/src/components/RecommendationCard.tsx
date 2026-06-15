@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { FoodImage } from './FoodImage';
 import { colors } from './OkyoUI';
 import { radius, shadows } from '../theme/okyoTheme';
 import type { RecommendationRecipe } from '../data/recommendedRecipes';
@@ -9,9 +10,6 @@ type RecommendationCardProps = {
   onPress: () => void;
 };
 
-// A visual food-inspiration tile sized for a two-column grid. Uses a local color
-// tint + emoji as safe placeholder art — no external or copyrighted images.
-// TODO: render a generated top-down dish image here once a safe pipeline exists.
 export function RecommendationCard({ recipe, onPress }: RecommendationCardProps) {
   return (
     <Pressable
@@ -19,12 +17,16 @@ export function RecommendationCard({ recipe, onPress }: RecommendationCardProps)
       onPress={onPress}
       style={({ pressed }) => [styles.card, pressed ? styles.pressed : null]}
     >
-      <View style={[styles.art, { backgroundColor: recipe.tint }]}>
-        <Text style={styles.emoji}>{recipe.emoji}</Text>
+      <FoodImage
+        fallbackLabel={recipe.category}
+        imageStatus={recipe.imageStatus}
+        imageUrl={recipe.imageUrl}
+        style={styles.art}
+      >
         <View style={styles.categoryPill}>
           <Text numberOfLines={1} style={styles.categoryPillText}>{recipe.category}</Text>
         </View>
-      </View>
+      </FoodImage>
       <View style={styles.body}>
         <Text numberOfLines={2} style={styles.title}>{recipe.title}</Text>
         <Text numberOfLines={2} style={styles.blurb}>{recipe.blurb}</Text>
@@ -47,9 +49,6 @@ const styles = StyleSheet.create({
     aspectRatio: 1.4,
     justifyContent: 'center',
     width: '100%',
-  },
-  emoji: {
-    fontSize: 48,
   },
   categoryPill: {
     backgroundColor: 'rgba(255, 255, 255, 0.82)',

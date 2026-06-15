@@ -1,4 +1,5 @@
 import type { Recipe, RecipeIngredient, RecipeStep } from '../mocks';
+import { getSampleFoodImageUrl, type SampleFoodImageKey } from './sampleFoodImages';
 
 // Okyo recommendation recipes (seed data).
 //
@@ -45,9 +46,7 @@ export const recommendationCategories: RecommendationCategory[] = [
   'Dinner Ideas',
 ];
 
-// Soft, on-brand tints + an emoji used for the placeholder card art. No external
-// or copyrighted images — purely local color + emoji until a safe generated
-// dish-image pipeline exists.
+// Soft, on-brand tints + an emoji used for Discover category tiles.
 const categoryArt: Record<RecommendationCategory, { tint: string; emoji: string }> = {
   Breakfast: { tint: '#fff1d9', emoji: '🍳' },
   Smoothies: { tint: '#f3e6f7', emoji: '🥤' },
@@ -89,6 +88,7 @@ type RecommendationSpec = {
   steps: Array<{ text: string; time?: string; cue?: string }>;
   substitutions: string[];
   equipment: string[];
+  imageKey?: SampleFoodImageKey;
   pantryNote: string;
 };
 
@@ -104,6 +104,8 @@ function buildRecommendation(spec: RecommendationSpec): RecommendationRecipe {
   return {
     id: `rec-${spec.id}`,
     scanResultId: `rec-${spec.id}`,
+    imageStatus: 'ready',
+    imageUrl: getSampleFoodImageUrl(spec.imageKey ?? getCategoryImageKey(spec.category)),
     title: spec.title,
     mode: 'Restaurant Copy',
     description: spec.blurb,
@@ -129,6 +131,30 @@ function buildRecommendation(spec: RecommendationSpec): RecommendationRecipe {
     tint: art.tint,
     emoji: art.emoji,
   };
+}
+
+function getCategoryImageKey(category: RecommendationCategory): SampleFoodImageKey {
+  switch (category) {
+    case 'Breakfast':
+    case 'Smoothies':
+      return 'breakfast';
+    case 'High Protein':
+    case 'Bowls':
+    case 'Dinner Ideas':
+      return 'bowl';
+    case 'Pasta':
+      return 'pasta';
+    case 'Salads':
+      return 'salad';
+    case 'Burgers & Sandwiches':
+    case 'Pizza':
+    case 'Snacks':
+      return 'burger';
+    case 'Desserts':
+      return 'dessert';
+    default:
+      return 'bowl';
+  }
 }
 
 const specs: RecommendationSpec[] = [

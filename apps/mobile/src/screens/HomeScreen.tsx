@@ -1,17 +1,15 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  Book,
-  Camera,
   Clock,
-  MoneySquare,
   NavArrowRight,
   Spark,
 } from 'iconoir-react-native';
 import { useMemo, type ReactNode } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { RecommendationCard } from '../components/RecommendationCard';
 import { colors, typography } from '../components/OkyoUI';
@@ -20,6 +18,7 @@ import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { radius, shadows, spacing } from '../theme/okyoTheme';
+import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 import { useOpenRecommendation } from '../utils/useOpenRecommendation';
 
@@ -45,7 +44,11 @@ export function HomeScreen() {
   const recentRecipes = useMemo(() => safeSavedRecipes.slice().reverse().slice(0, 3), [safeSavedRecipes]);
   const hasMoreRecent = safeSavedRecipes.length > 3;
   const heroRecipe = latestScanRecipe ?? recentRecipes[0] ?? null;
-  const heroImageUri = latestScanSession?.selectedScanImage?.uri ?? selectedScanImage?.uri ?? null;
+  const heroImageUri = getRecipeImageUrl(
+    heroRecipe,
+    getRealScanImageUri(latestScanSession?.selectedScanImage) ?? getRealScanImageUri(selectedScanImage),
+  );
+  const heroImageStatus = getRecipeImageStatus(heroRecipe);
   const estimatedSaved = safeSavedRecipes.reduce(
     (total, recipe) => total + getFiniteNumber(recipe.estimatedSavings),
     getFiniteNumber(totalMoneySaved),
@@ -72,11 +75,6 @@ export function HomeScreen() {
     navigation.navigate('MainTabs', { screen: 'RestaurantPacksScreen' });
   };
 
-  const openKitchenLetter = () => {
-    uiLog('HomeScreen', 'open_kitchen_letter');
-    navigation.navigate('KitchenLetterScreen');
-  };
-
   const openRecipe = (recipe: Recipe) => {
     const mode = getSafeRecipeMode(recipe.mode);
     writeSavedRecipeContext({
@@ -88,7 +86,7 @@ export function HomeScreen() {
       setSelectedMode(recipe.mode);
     }
     uiLog('HomeScreen', 'open_recent_recipe', { recipeId: recipe.id });
-    navigation.navigate('RecipeDetailScreen', { mode });
+    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
   };
 
   return (
@@ -105,13 +103,13 @@ export function HomeScreen() {
             style={({ pressed }) => [styles.heroCard, pressed ? styles.pressed : null]}
             onPress={heroRecipe ? () => openRecipe(heroRecipe) : openScan}
           >
-            {heroImageUri ? (
-              <Image source={{ uri: heroImageUri }} style={styles.heroImage} />
-            ) : (
-              <View style={styles.heroFallback}>
-                <KikoMascot pose={hasActivity ? 'recipe' : 'wave'} size={118} />
-              </View>
-            )}
+            <FoodImage
+              fallbackLabel="Image coming soon"
+              imageStatus={heroImageStatus}
+              imageUrl={heroImageUri}
+              showFallbackLabel
+              style={styles.heroImage}
+            />
             <View style={styles.heroCopy}>
               <Text style={styles.heroEyebrow}>{hasActivity ? 'Today in Okyo' : 'Latest photo'}</Text>
               <Text numberOfLines={2} style={styles.heroTitle}>
@@ -140,6 +138,20 @@ export function HomeScreen() {
                 <RecommendationCard key={recipe.id} recipe={recipe} onPress={() => openRecommendation(recipe)} />
               ))}
             </View>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.discoverPromptCard, pressed ? styles.pressed : null]}
+              onPress={openDiscover}
+            >
+              <View style={styles.discoverPromptIcon}>
+                <Spark color={colors.coral} height={18} strokeWidth={2.2} width={18} />
+              </View>
+              <View style={styles.discoverPromptCopy}>
+                <Text style={styles.discoverPromptTitle}>Want more recommendations?</Text>
+                <Text style={styles.discoverPromptBody}>Browse more Okyo ideas in Discover.</Text>
+              </View>
+              <NavArrowRight color={colors.coral} height={20} strokeWidth={2.2} width={20} />
+            </Pressable>
           </View>
         ) : null}
 
@@ -197,19 +209,6 @@ export function HomeScreen() {
             <Text style={styles.savingsBody}>Estimated savings tracked across saved meals and cooking wins.</Text>
           </View>
           <Clock color={colors.charcoal} height={28} strokeWidth={1.8} width={28} />
-        </Pressable>
-
-        <Pressable
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.kitchenLetterCard, pressed ? styles.pressed : null]}
-          onPress={openKitchenLetter}
-        >
-          <View style={styles.kitchenLetterCopy}>
-            <Text style={styles.kitchenLetterKicker}>The Kitchen Letter</Text>
-            <Text style={styles.kitchenLetterTitle}>Weekly meal ideas from Kiko</Text>
-            <Text style={styles.kitchenLetterBody}>Seasonal recipes and grocery-saving tips — join the list.</Text>
-          </View>
-          <NavArrowRight color={colors.coral} height={22} strokeWidth={2.2} width={22} />
         </Pressable>
       </ScrollView>
     </SafeAreaView>
@@ -292,13 +291,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cream,
     width: '100%',
   },
-  heroFallback: {
-    alignItems: 'center',
-    aspectRatio: 1.15,
-    backgroundColor: colors.cream,
-    justifyContent: 'center',
-    width: '100%',
-  },
   heroCopy: {
     padding: 22,
   },
@@ -326,6 +318,38 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     marginTop: 14,
     rowGap: 16,
+  },
+  discoverPromptCard: {
+    alignItems: 'center',
+    backgroundColor: '#fff8eb',
+    borderColor: '#f3dac1',
+    borderRadius: 20,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+    padding: 14,
+  },
+  discoverPromptIcon: {
+    alignItems: 'center',
+    backgroundColor: '#fff0d7',
+    borderRadius: 999,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  discoverPromptCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  discoverPromptTitle: {
+    color: colors.charcoal,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  discoverPromptBody: {
+    ...typography.caption,
+    marginTop: 2,
   },
   sectionHeader: {
     alignItems: 'center',
@@ -439,36 +463,6 @@ const styles = StyleSheet.create({
     ...typography.caption,
     marginTop: 5,
     maxWidth: 250,
-  },
-  kitchenLetterCard: {
-    alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
-    flexDirection: 'row',
-    gap: 12,
-    justifyContent: 'space-between',
-    marginTop: 14,
-    padding: 20,
-    ...shadows.card,
-  },
-  kitchenLetterCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  kitchenLetterKicker: {
-    color: colors.coral,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
-  kitchenLetterTitle: {
-    ...typography.heading,
-    marginTop: 6,
-  },
-  kitchenLetterBody: {
-    ...typography.caption,
-    marginTop: 5,
   },
   pressed: {
     opacity: 0.82,

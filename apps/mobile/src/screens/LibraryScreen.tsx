@@ -11,15 +11,17 @@ import {
   ThreePointsCircle,
 } from 'iconoir-react-native';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import { getSafeRecipeMode, isRecipeMode, type Recipe, type RecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
 type LibraryNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -90,7 +92,7 @@ export function LibraryScreen() {
 
     const mode = prepareRecipeContext(recipe);
     uiLog('LibraryScreen', 'cook_again', { recipeId: recipe.id });
-    navigation.navigate('RecipeDetailScreen', { mode });
+    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
   };
 
   const openGroceries = (recipe: Recipe | null | undefined) => {
@@ -100,7 +102,7 @@ export function LibraryScreen() {
 
     const mode = prepareRecipeContext(recipe);
     uiLog('LibraryScreen', 'open_groceries', { recipeId: recipe.id });
-    navigation.navigate('GroceryListScreen', { mode });
+    navigation.navigate('MainTabs', { screen: 'GroceryListScreen', params: { mode } });
   };
 
   const goToScan = () => {
@@ -272,13 +274,12 @@ function SavedRecipeCard({
   onGroceries: () => void;
   onRemove: () => void;
 }) {
-  const imageUri = getRecipeImageUri(recipe);
   const modeLabel = getModeLabel(getSafeRecipeMode(recipe.mode));
 
   return (
     <View style={styles.recipeCard}>
       <View style={styles.recipeTop}>
-        <RecipeThumb recipe={recipe} uri={imageUri} />
+        <RecipeThumb recipe={recipe} />
         <View style={styles.recipeContent}>
           <View style={styles.cardTopRow}>
             <View style={styles.modePill}>
@@ -323,18 +324,13 @@ function SavedRecipeCard({
   );
 }
 
-function RecipeThumb({ recipe, uri }: { recipe: Recipe; uri?: string | null }) {
-  if (uri) {
-    // Square cover-crop of the real scan photo — centered, never stretched.
-    return <Image source={{ uri }} resizeMode="cover" style={styles.recipeImage} />;
-  }
-
+function RecipeThumb({ recipe }: { recipe: Recipe }) {
   return (
-    <View style={styles.recipeArt}>
-      <Cutlery color={colors.coral} height={24} strokeWidth={1.9} width={24} />
-      <Text style={styles.recipeArtText}>Saved meal</Text>
-      <View style={styles.recipeArtDot} />
-    </View>
+    <FoodImage
+      imageStatus={getRecipeImageStatus(recipe)}
+      imageUrl={getRecipeImageUrl(recipe)}
+      style={styles.recipeImage}
+    />
   );
 }
 
@@ -407,12 +403,6 @@ function getSavedTime(recipe: Recipe) {
 
   const date = new Date(maybeSavedAt);
   return Number.isFinite(date.getTime()) ? date.getTime() : 0;
-}
-
-function getRecipeImageUri(recipe: Recipe) {
-  const recipeWithImage = recipe as Recipe & { imageUri?: unknown; image?: { uri?: unknown } };
-  const uri = recipeWithImage.imageUri ?? recipeWithImage.image?.uri;
-  return typeof uri === 'string' && uri.trim().length > 0 ? uri : null;
 }
 
 function getSearchText(recipe: Recipe) {
@@ -650,33 +640,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     height: 80,
     width: 80,
-  },
-  recipeArt: {
-    alignItems: 'center',
-    backgroundColor: '#fff1df',
-    borderRadius: 16,
-    height: 80,
-    justifyContent: 'center',
-    overflow: 'hidden',
-    width: 80,
-  },
-  recipeArtText: {
-    color: colors.coral,
-    fontSize: 8,
-    fontWeight: '700',
-    marginTop: 4,
-    textAlign: 'center',
-    textTransform: 'uppercase',
-  },
-  recipeArtDot: {
-    backgroundColor: '#ffd5aa',
-    borderRadius: 999,
-    height: 42,
-    opacity: 0.55,
-    position: 'absolute',
-    right: -18,
-    top: -12,
-    width: 42,
   },
   recipeContent: {
     flex: 1,

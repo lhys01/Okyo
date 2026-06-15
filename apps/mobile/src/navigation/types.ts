@@ -21,8 +21,6 @@ export type RootStackParamList = {
   ScanScreen: undefined;
   AnalysisLoadingScreen: { scanSessionId?: string } | undefined;
   ResultSummaryScreen: { scanSessionId?: string } | undefined;
-  RecipeDetailScreen: { mode?: RecipeMode } | undefined;
-  GroceryListScreen: { mode?: RecipeMode } | undefined;
   ShareCardPreviewScreen:
     | { cardType?: ShareCardType; mode?: RecipeMode; packId?: string; dishId?: string; scanContext?: ShareScanContext }
     | undefined;
@@ -44,4 +42,7 @@ export type MainTabParamList = {
   ScanScreen: undefined;
   LibraryScreen: undefined;
   ProfileScreen: undefined;
+  RecipeDetailScreen: { mode?: RecipeMode } | undefined;
+  RecipeStepsScreen: { mode?: RecipeMode } | undefined;
+  GroceryListScreen: { mode?: RecipeMode } | undefined;
 };

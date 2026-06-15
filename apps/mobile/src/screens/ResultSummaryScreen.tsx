@@ -683,7 +683,7 @@ export function ResultSummaryScreen() {
       </View>
 
       <View style={styles.actions}>
-        <ResultPrimaryButton onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })}>
+        <ResultPrimaryButton onPress={() => navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: selectedMode } })}>
           <OpenBook color="#fffdf8" height={25} strokeWidth={2.15} width={25} />
           <Text style={styles.resultPrimaryButtonText}>View recipe</Text>
         </ResultPrimaryButton>
@@ -701,7 +701,7 @@ export function ResultSummaryScreen() {
           <ActionButton
             icon={<Cart color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
             label="Groceries"
-            onPress={() => navigation.navigate('GroceryListScreen', { mode: selectedMode })}
+            onPress={() => navigation.navigate('MainTabs', { screen: 'GroceryListScreen', params: { mode: selectedMode } })}
           />
         </View>
       </View>

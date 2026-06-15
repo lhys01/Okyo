@@ -4,6 +4,7 @@ import { BlurView } from 'expo-blur';
 import {
   Book,
   Camera,
+  Cart,
   Compass,
   HomeSimple,
   User,
@@ -12,9 +13,11 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, fontFamilies } from '../components/OkyoUI';
+import { GroceryListScreen } from '../screens/GroceryListScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
+import { RecipeDetailScreen, RecipeStepsScreen } from '../screens/RecipeDetailScreen';
 import { RestaurantPacksScreen } from '../screens/RestaurantPacksScreen';
 import { ScanScreen } from '../screens/ScanScreen';
 import type { MainTabParamList } from './types';
@@ -29,11 +32,14 @@ const tabLabels: Record<MainTabRouteName, string> = {
   ScanScreen: 'Scan',
   LibraryScreen: 'Plan',
   ProfileScreen: 'Profile',
+  RecipeDetailScreen: 'Recipe',
+  RecipeStepsScreen: 'Steps',
+  GroceryListScreen: 'Grocery',
 };
 
 const visibleTabOrder: MainTabRouteName[] = [
   'HomeScreen',
-  'RestaurantPacksScreen',
+  'GroceryListScreen',
   'LibraryScreen',
   'ProfileScreen',
 ];
@@ -47,6 +53,8 @@ function TabIcon({ color, focused, routeName }: { color: string; focused: boolea
       return <HomeSimple color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'RestaurantPacksScreen':
       return <Compass color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
+    case 'GroceryListScreen':
+      return <Cart color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'LibraryScreen':
       return <Book color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'ProfileScreen':
@@ -80,6 +88,11 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
     });
 
     if (!isFocused && !event.defaultPrevented) {
+      if (routeName === 'GroceryListScreen') {
+        navigation.navigate('GroceryListScreen', { mode: undefined });
+        return;
+      }
+
       navigation.navigate(route.name);
     }
   };
@@ -191,6 +204,9 @@ export function MainTabs() {
       <Tab.Screen name="ScanScreen" component={ScanScreen} options={{ title: 'Scan' }} />
       <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Plan' }} />
       <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />
+      <Tab.Screen name="RecipeDetailScreen" component={RecipeDetailScreen} options={{ title: 'Recipe' }} />
+      <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps' }} />
+      <Tab.Screen name="GroceryListScreen" component={GroceryListScreen} options={{ title: 'Grocery' }} />
     </Tab.Navigator>
   );
 }

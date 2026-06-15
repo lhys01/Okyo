@@ -23,6 +23,6 @@ export function useOpenRecommendation() {
       source: 'useOpenRecommendation',
     });
     setSelectedMode(recipe.mode);
-    navigation.navigate('RecipeDetailScreen', { mode: recipe.mode });
+    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: recipe.mode } });
   };
 }

@@ -23,6 +23,7 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { sampleFoodImageUrls } from '../data/sampleFoodImages';
 
 type RestaurantPackDetailNavigation = NativeStackNavigationProp<RootStackParamList, 'RestaurantPackDetailScreen'>;
 type RestaurantPackDetailRoute = RouteProp<RootStackParamList, 'RestaurantPackDetailScreen'>;
@@ -61,6 +62,8 @@ function makePackRecipe(pack: RestaurantPack, dish: RestaurantPackDish): Recipe 
   return {
     id: `pack-recipe-${dish.id}`,
     scanResultId: dish.id,
+    imageStatus: 'ready',
+    imageUrl: getPackDishImageUrl(dish),
     title: `${dish.dishName} Okyo-style`,
     mode,
     description: `Inspired-by ${pack.name} dupe made for home kitchens.`,
@@ -82,6 +85,24 @@ function makePackRecipe(pack: RestaurantPack, dish: RestaurantPackDish): Recipe 
     pantryNote: 'Assumes salt, pepper, oil, and basic seasonings are available.',
     confidenceNote: 'Static inspired-by pack recipe using estimated costs and savings.',
   };
+}
+
+function getPackDishImageUrl(dish: RestaurantPackDish) {
+  const name = dish.dishName.toLowerCase();
+  if (name.includes('pasta') || name.includes('rigatoni') || name.includes('noodle')) {
+    return sampleFoodImageUrls.pasta;
+  }
+  if (name.includes('burger') || name.includes('sandwich') || name.includes('biscuit')) {
+    return sampleFoodImageUrls.burger;
+  }
+  if (name.includes('salad')) {
+    return sampleFoodImageUrls.salad;
+  }
+  if (name.includes('cake') || name.includes('cookie') || name.includes('dessert')) {
+    return sampleFoodImageUrls.dessert;
+  }
+
+  return sampleFoodImageUrls.bowl;
 }
 
 export function RestaurantPackDetailScreen() {
