@@ -1,13 +1,9 @@
 import { z } from 'zod';
 
 import { getAiConfig } from '../config/aiConfig.js';
-import {
-  mockGroceryLists,
-  mockRecipes,
-  mockScanResults,
-  mockShareCards,
-} from '../mockData.js';
+import type { AiConfig } from '../config/aiConfig.js';
 import type {
+  DetectedComponent,
   Difficulty,
   GroceryCategory,
   GroceryListItem,
@@ -17,6 +13,7 @@ import type {
   RecipeIngredient,
   RecipeIngredientGroup,
   RecipeStep,
+  StepImagePromptData,
   RecipeMode,
   ScanImageMetadata,
   ScanResult,
@@ -26,23 +23,27 @@ import type {
 } from '../types.js';
 import {
   analyzeFoodImageWithOpenRouter,
+  callComponentRepairWithOpenRouter,
   generateRecipeWithOpenRouter,
   isDrinkAnalysisText,
   isGenericDishName,
   OpenRouterProviderError,
+  repairStepCoachingWithAI,
+  type ComponentRepairOutput,
   type OpenRouterRecipeOutput,
   type OpenRouterRecipeVariant,
   type OpenRouterVisionOutput,
+  type StepCoachingPatch,
 } from './openRouterProvider.js';
 import { logScanEvaluation } from './scanEvalLogger.js';
+import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
+import { getGeneratedRecipe, storeGeneratedRecipe } from '../store.js';
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
 const difficultySchema = z.enum(['Easy', 'Medium', 'Hard']);
 const confidenceSchema = z.number().min(0).max(1);
 const matchScoreSchema = z.number().min(0).max(10);
-const aiSourceSchema = z.enum(['openrouter_ai', 'mock_ai', 'fallback_ai']);
-const scanStatusSchema = z.enum(['success', 'partial', 'rejected', 'failed']);
-const scanRejectionTypeSchema = z.enum(['not_food', 'unclear_image', 'ai_failed']);
+const aiSourceSchema = z.enum(['openrouter_ai']);
 const scanStateSchema = z.enum([
   'clear_food',
   'food_present_uncertain_dish',
@@ -111,8 +112,6 @@ const foodEvidenceKeywords = [
 ];
 
 export type AiSource = z.infer<typeof aiSourceSchema>;
-export type ScanStatus = z.infer<typeof scanStatusSchema>;
-export type ScanRejectionType = z.infer<typeof scanRejectionTypeSchema>;
 export type FoodScanState = z.infer<typeof scanStateSchema>;
 
 export const foodImageAnalysisSchema = z.object({
@@ -139,6 +138,18 @@ export const foodImageAnalysisSchema = z.object({
   fallbackReason: z.string().optional(),
   modes: z.array(recipeModeSchema).min(1),
   notes: z.array(z.string()).default([]),
+  detectedComponents: z.array(z.object({
+    name: z.string(),
+    confidence: z.number().min(0).max(1),
+    estimatedQuantity: z.number().optional(),
+  })).default([]),
+  // Inline Epicure suggestions returned by the vision model. When present,
+  // recipe generation uses these directly without a separate Epicure API call.
+  epicureSuggestions: z.object({
+    complementaryIngredients: z.array(z.string()).default([]),
+    healthySubstitutions: z.record(z.string()).default({}),
+    budgetSubstitutions: z.record(z.string()).default({}),
+  }).optional(),
 });
 
 export const generatedRecipeOutputSchema = z.object({
@@ -162,7 +173,6 @@ export const ingredientCostEstimateSchema = z.object({
 export type FoodImageAnalysis = z.infer<typeof foodImageAnalysisSchema>;
 export type GeneratedRecipeOutput = z.infer<typeof generatedRecipeOutputSchema> & {
   recipe?: Recipe;
-  recipes?: Recipe[];
 };
 export type IngredientCostEstimate = z.infer<typeof ingredientCostEstimateSchema>;
 
@@ -186,7 +196,6 @@ export type AiScanSuccessResult = {
   status: 'success';
   scan: ScanResult;
   recipe?: Recipe;
-  recipes?: Recipe[];
   groceryList?: GroceryList;
   shareCard?: ShareCard;
   note: string;
@@ -200,132 +209,74 @@ export type AiScanSuccessResult = {
   uploadedImage: boolean;
 };
 
-export type AiScanPartialResult = {
-  status: 'partial';
-  scan: ScanResult;
-  recipe?: Recipe;
-  recipes?: Recipe[];
-  note: string;
-  aiSource: AiSource;
-  aiProvider: 'openrouter';
-  visionModel: string;
-  recipeModel: string;
-  fallbackReason?: string;
-  confidence: number;
-  scanState: ScanState;
-  uploadedImage: boolean;
-  partialReason: string;
-};
-
-export type AiScanRejectedResult = {
-  status: 'rejected' | 'failed';
-  scanId: string;
-  note: string;
-  aiSource: AiSource;
-  aiProvider: 'openrouter';
-  visionModel: string;
-  recipeModel: string;
-  fallbackReason?: string;
-  confidence: number;
-  scanState?: ScanState;
-  uploadedImage: boolean;
-  rejectionType: ScanRejectionType;
-  rejectionReason: string;
-};
-
-export type AiScanResult = AiScanSuccessResult | AiScanPartialResult | AiScanRejectedResult;
-
 export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<FoodImageAnalysis> {
   const config = getAiConfig();
-  if (!canUseOpenRouter(config)) {
-    logScanDebug('api_openrouter_call_skipped', {
-      reason: getUnavailableAiReason(config),
-      stage: 'vision',
-    });
-    logAi('mock_ai', getAiLogDetails(config, config.openRouterVisionModel, getMockReason(config)));
-    return analyzeFoodImageWithMock(input);
-  }
 
-  try {
-    logScanDebug('api_openrouter_call_start', {
-      imageDataUrlExists: Boolean(input.image?.dataUrl),
-      imageDataUrlLength: input.image?.dataUrl?.length ?? 0,
-      imageUriKind: getImageUriKind(input.image),
-      model: config.openRouterVisionModel,
-      stage: 'vision',
-    });
-    logScanDebug('api_openrouter_model', { model: config.openRouterVisionModel, stage: 'vision' });
-    const output = await analyzeFoodImageWithOpenRouter({
-      config,
-      image: input.image,
-      mode: input.mode,
-    });
-    logAi('openrouter_ai', getAiLogDetails(config, config.openRouterVisionModel, { stage: 'vision' }));
-    const normalized = normalizeVisionOutput(output);
-    logScanDebug('api_scan_normalized_state', {
-      dishCategory: normalized.broadDishCategory,
-      confidence: normalized.confidence,
-      dishName: normalized.dishName,
-      foodDetected: normalized.isFoodImage,
-      scanState: normalized.scanState,
-      visibleComponentsCount: getVisibleComponentsCount(normalized.visibleComponents),
-      visibleIngredientsCount: normalized.visibleIngredients.length,
-    });
-    logScanDebug('api_openrouter_vision_normalized', {
-      confidence: normalized.confidence,
-      dishName: normalized.dishName,
-      foodDetected: normalized.isFoodImage,
-      scanState: normalized.scanState,
-    });
+  logScanDebug('api_openrouter_call_start', {
+    imageDataUrlExists: Boolean(input.image?.dataUrl),
+    imageDataUrlLength: input.image?.dataUrl?.length ?? 0,
+    imageUriKind: getImageUriKind(input.image),
+    model: config.openRouterVisionModel,
+    stage: 'vision',
+  });
+  logScanDebug('api_openrouter_model', { model: config.openRouterVisionModel, stage: 'vision' });
+  const output = await analyzeFoodImageWithOpenRouter({
+    config,
+    image: input.image,
+    mode: input.mode,
+  });
+  logAi('openrouter_ai', getAiLogDetails(config, config.openRouterVisionModel, { stage: 'vision' }));
+  const normalized = normalizeVisionOutput(output);
+  logScanDebug('api_scan_normalized_state', {
+    dishCategory: normalized.broadDishCategory,
+    confidence: normalized.confidence,
+    dishName: normalized.dishName,
+    foodDetected: normalized.isFoodImage,
+    scanState: normalized.scanState,
+    visibleComponentsCount: getVisibleComponentsCount(normalized.visibleComponents),
+    visibleIngredientsCount: normalized.visibleIngredients.length,
+  });
+  logScanDebug('api_openrouter_vision_normalized', {
+    confidence: normalized.confidence,
+    dishName: normalized.dishName,
+    foodDetected: normalized.isFoodImage,
+    scanState: normalized.scanState,
+  });
 
-    return foodImageAnalysisSchema.parse({
-      candidateScanId: mockScanResults[0].id,
-      aiSource: 'openrouter_ai',
-      confidence: normalized.confidence,
-      confidenceReason: normalized.confidenceReason,
-      broadDishCategory: normalized.broadDishCategory,
-      cuisine: normalized.cuisine,
-      difficulty: getDifficultyFromConfidence(normalized.confidence),
-      dishName: normalized.dishName,
-      homemadeCostEstimate: normalized.homemadeCostEstimate,
-      isFoodImage: normalized.isFoodImage,
-      isRestaurantMeal: normalized.isRestaurantMeal,
-      likelyIngredients: normalized.likelyIngredients,
-      matchScore: getMatchScoreFromConfidence(normalized.confidence),
-      modes: recipeModes,
-      notes: ['OpenRouter test output; verify before using.'],
-      possibleDishNames: normalized.possibleDishNames,
-      rejectionReason: normalized.rejectionReason,
-      restaurantPriceEstimate: normalized.restaurantPriceEstimate,
-      restaurantStyle: normalized.cuisine,
-      scanState: normalized.scanState,
-      visibleComponents: normalized.visibleComponents,
-      visibleIngredients: normalized.visibleIngredients,
-    });
-  } catch (error) {
-    const fallbackDetails = getFallbackLogDetails(error, config, config.openRouterVisionModel);
-    logScanDebug('api_openrouter_call_error', fallbackDetails);
-    logAi('fallback_ai', fallbackDetails);
-    if (hasRealUploadedImage(input)) {
-      logScanDebug('api_scan_real_image_no_mock_vision_fallback', {
-        fallbackReason: getFallbackReason(fallbackDetails),
-        source: input.source,
-      });
-      throw error;
-    }
-    return analyzeFoodImageWithMock(input, 'fallback_ai', getFallbackReason(fallbackDetails));
-  }
+  return foodImageAnalysisSchema.parse({
+    candidateScanId: `scan-${Date.now()}`,
+    aiSource: 'openrouter_ai',
+    confidence: normalized.confidence,
+    confidenceReason: normalized.confidenceReason,
+    broadDishCategory: normalized.broadDishCategory,
+    cuisine: normalized.cuisine,
+    difficulty: getDifficultyFromConfidence(normalized.confidence),
+    dishName: normalized.dishName,
+    epicureSuggestions: normalized.epicureSuggestions,
+    homemadeCostEstimate: normalized.homemadeCostEstimate,
+    isFoodImage: normalized.isFoodImage,
+    isRestaurantMeal: normalized.isRestaurantMeal,
+    likelyIngredients: normalized.likelyIngredients,
+    matchScore: getMatchScoreFromConfidence(normalized.confidence),
+    modes: recipeModes,
+    notes: ['OpenRouter test output; verify before using.'],
+    possibleDishNames: normalized.possibleDishNames,
+    rejectionReason: normalized.rejectionReason,
+    restaurantPriceEstimate: normalized.restaurantPriceEstimate,
+    restaurantStyle: normalized.cuisine,
+    scanState: normalized.scanState,
+    visibleComponents: normalized.visibleComponents,
+    visibleIngredients: normalized.visibleIngredients,
+    detectedComponents: buildDetectedComponents(normalized.visibleIngredients, normalized.confidence),
+  });
 }
 
 export async function generateRecipeFromDish(
   input: GenerateRecipeFromDishInput,
 ): Promise<GeneratedRecipeOutput> {
   const config = getAiConfig();
-  if (!canUseOpenRouter(config)) {
-    logAi('mock_ai', getAiLogDetails(config, config.openRouterTextModel, getMockReason(config)));
-    return generateRecipeFromDishWithMock(input);
-  }
 
+  const startedAt = Date.now();
   try {
     const output = await generateRecipeWithOpenRouter({
       analysis: input.analysis,
@@ -333,17 +284,117 @@ export async function generateRecipeFromDish(
       mode: input.mode,
     });
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterTextModel, { stage: 'recipe' }));
-    return createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
-  } catch (error) {
-    const fallbackDetails = getFallbackLogDetails(error, config, config.openRouterTextModel);
-    logAi('fallback_ai', fallbackDetails);
-    const fallbackReason = getFallbackReason(fallbackDetails);
-    const starterRecipe = generateRecipeFromDishWithStarterFallback(input, fallbackReason);
-    if (starterRecipe) {
-      return starterRecipe;
+    const result = createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
+
+    // Store recipe for deferred coaching — enriched on Guided Cooking tap, not on scan.
+    if (result.recipe) {
+      storeGeneratedRecipe(result.recipe);
     }
 
-    return generateRecipeFromDishWithMock(input, 'fallback_ai', fallbackReason);
+    const initialScore = result.recipe?.structuredSteps?.length
+      ? calculateRecipeCoachingScore(result.recipe.structuredSteps)
+      : 0;
+
+    recordRecipeQualityForResult({
+      config,
+      analysis: input.analysis,
+      result,
+      initialScore,
+      finalScore: initialScore,
+      repairDelivered: false,
+      generationMs: Date.now() - startedAt,
+    });
+
+    // Component coverage repair: for platter-style meals, ensure every detected
+    // component appears in ingredientGroups.
+    let finalResult = result;
+    if (finalResult.recipe && isPlatterStyleMeal(input.analysis)) {
+      finalResult = await ensureComponentCoverage(finalResult, input.analysis, config);
+      if (finalResult.recipe) {
+        storeGeneratedRecipe(finalResult.recipe);
+      }
+    }
+
+    return finalResult;
+  } catch (error) {
+    // Fail-closed: throw on recipe generation failure. Never return a fabricated result.
+    throw error;
+  }
+}
+
+// Records a recipe-quality analytics event for the delivered recipe. Re-runs the
+// pure warning detector on the FINAL (post-repair) steps so "common issues"
+// reflect what the user actually receives. Fire-and-forget — never awaited on the
+// request path, and recordRecipeQuality swallows its own errors.
+function recordRecipeQualityForResult(args: {
+  config: AiConfig;
+  analysis: FoodImageAnalysis;
+  result: GeneratedRecipeOutput;
+  initialScore: number;
+  finalScore: number;
+  repairDelivered: boolean;
+  generationMs: number;
+}): void {
+  const { config, analysis, result, initialScore, finalScore, repairDelivered, generationMs } = args;
+  const finalSteps = result.recipe?.structuredSteps ?? [];
+  const warnings = finalSteps.length > 0
+    ? collectCoachingWarnings(
+        finalSteps,
+        analysis,
+        analysis.dishName ?? '',
+        result.recipe?.ingredients.map((i) => i.name),
+      ).warnCounts
+    : {};
+
+  void recordRecipeQuality({
+    model: config.openRouterTextModel,
+    dish: analysis.dishName ?? 'unknown',
+    category: analysis.broadDishCategory ?? 'unknown',
+    score: finalScore,
+    initialScore,
+    repairUsed: repairDelivered,
+    repairImprovement: repairDelivered ? finalScore - initialScore : 0,
+    repairSuccess: repairDelivered && finalScore > initialScore,
+    compact: Boolean(result.recipe?.isCompactRecipe),
+    generationMs,
+    stepCount: finalSteps.length,
+    warnings,
+  });
+}
+
+// Generates coaching fields for a previously scanned recipe.
+// Called when the user taps Guided Cooking — not during the scan itself.
+// Returns null if the recipe has expired from the store (>1 day old).
+export async function enrichRecipeCoaching(
+  recipeId: string,
+): Promise<{ structuredSteps: RecipeStep[] } | null> {
+  const recipe = getGeneratedRecipe(recipeId);
+  if (!recipe?.structuredSteps?.length) {
+    return null;
+  }
+
+  const steps = recipe.structuredSteps;
+  const weaknesses = identifyCoachingWeaknesses(steps);
+  if (weaknesses.length === 0) {
+    return { structuredSteps: steps };
+  }
+
+  const config = getAiConfig();
+  try {
+    const patches = await repairStepCoachingWithAI({
+      steps,
+      weaknesses,
+      dishName: recipe.title,
+      config,
+    });
+    const repairedSteps = applyCoachingPatches(steps, patches, weaknesses);
+    const repairedScore = calculateRecipeCoachingScore(repairedSteps);
+    const initialScore = calculateRecipeCoachingScore(steps);
+    // Only return repaired steps if they didn't regress the score.
+    return { structuredSteps: repairedScore >= initialScore ? repairedSteps : steps };
+  } catch {
+    // Fail gracefully — return uncoached steps so Guided Cooking still opens.
+    return { structuredSteps: steps };
   }
 }
 
@@ -365,11 +416,10 @@ export function estimateIngredientCosts(input: EstimateIngredientCostsInput): In
     return estimate.data;
   }
 
-  logAi('fallback_ai', { reason: 'cost_estimate_invalid' });
-  return estimateIngredientCostsWithMock(input);
+  throw new Error('Cost estimate validation failed');
 }
 
-export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanResult> {
+export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
   const config = getAiConfig();
   const uploadedImage = hasRealUploadedImage(input);
   const providerVisible = isProviderVisibleImage(input.image);
@@ -389,7 +439,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
   });
   logScanDebug('api_scan_provider_visible_result', { providerVisible });
   logScanDebug('api_openrouter_call_start', {
-    willCallOpenRouter: !isDemoMockScan(input) && uploadedImage && providerVisible && canUseOpenRouter(config),
+    willCallOpenRouter: uploadedImage && providerVisible && canUseOpenRouter(config),
     aiEnabled: config.enabled,
     hasOpenRouterKey: Boolean(config.openRouterApiKey),
     imageProviderVisible: providerVisible,
@@ -410,69 +460,24 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
     visionModel: config.openRouterVisionModel,
   });
 
-  if (isDemoMockScan(input)) {
-    const result = createDemoMockScan(input.mode, config);
-    logAi('mock_ai', getAiLogDetails(config, config.openRouterVisionModel, {
-      reason: 'demo_mock_scan',
-      status: result.status,
-      uploadedImage: result.uploadedImage,
-    }));
-    logFinalScanResult(result);
-    await logScanEvaluationFromResult(result, config);
-    return result;
-  }
-
   if (uploadedImage && !canUseOpenRouter(config)) {
-    const fallbackReason = getUnavailableAiReason(config);
-    const result = createRejectedScan({
-      aiSource: 'mock_ai',
-      confidence: 0,
-      config,
-      fallbackReason,
-      rejectionReason: 'Okyo could not analyze this photo because AI scanning is not available locally.',
-      rejectionType: 'ai_failed',
-      status: 'failed',
-      uploadedImage,
-    });
-
-    logAi('mock_ai', getAiLogDetails(config, config.openRouterVisionModel, {
-      fallbackReason,
-      rejectionType: result.rejectionType,
-      status: result.status,
-      uploadedImage,
-    }));
-    logFinalScanResult(result);
-    await logScanEvaluationFromResult(result, config);
-    return result;
+    const reason = getUnavailableAiReason(config);
+    throw new Error(`AI_UNAVAILABLE: ${reason}`);
   }
 
   if (uploadedImage && !providerVisible) {
-    const result = createRejectedScan({
-      aiSource: 'fallback_ai',
-      confidence: 0,
-      config,
-      fallbackReason: 'image_not_available_to_ai',
-      rejectionReason: getImageUnavailableReason(input.image),
-      rejectionType: 'ai_failed',
-      status: 'failed',
-      uploadedImage,
-    });
-
-    logAi('fallback_ai', getAiLogDetails(config, config.openRouterVisionModel, {
-      fallbackReason: result.fallbackReason,
-      rejectionType: result.rejectionType,
-      status: result.status,
-      uploadedImage,
-    }));
-    logFinalScanResult(result);
-    await logScanEvaluationFromResult(result, config);
-    return result;
+    throw new Error(`IMAGE_NOT_AVAILABLE: ${getImageUnavailableReason(input.image)}`);
   }
 
-  const fallback = createFallbackScan(input.mode, config, 'ai_scan_failed', uploadedImage);
 
+  // [scan_timing] orchestration timers. Per-OpenRouter-call timing is logged
+  // separately by callOpenRouterJson ([token_usage].durationMs, keyed by stage);
+  // this gives the end-to-end and deterministic-stage breakdown.
+  const scanStartedAt = Date.now();
   try {
+    const visionStartedAt = Date.now();
     const analysis = await analyzeFoodImage(input);
+    const visionMs = Date.now() - visionStartedAt;
     const foodDrinkVisible = Boolean(analysis.isFoodImage || isFoodScanState(analysis.scanState));
     logScanDebug('api_scan_vision_result', {
       confidence: analysis.confidence,
@@ -486,122 +491,55 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
     });
     logScanDebug('api_scan_first_dish_name', { dishName: analysis.dishName });
     logScanDebug('api_scan_first_confidence', { confidence: analysis.confidence });
-    const analysisRejection = getAnalysisRejection(analysis, uploadedImage);
-    if (analysisRejection) {
-      const result = createRejectedScan({
-        aiSource: analysis.aiSource,
-        confidence: analysis.confidence,
-        config,
-        fallbackReason: analysis.fallbackReason,
-        rejectionReason: analysisRejection.rejectionReason,
-        rejectionType: analysisRejection.rejectionType,
-        scanState: analysis.scanState,
-        status: analysisRejection.status,
-        uploadedImage,
-      });
-
-      logAi(result.aiSource, getAiLogDetails(config, config.openRouterVisionModel, {
-        fallbackReason: result.fallbackReason,
-        rejectionType: result.rejectionType,
-        status: result.status,
-        uploadedImage,
-      }));
-      logFinalScanResult(result);
-      await logScanEvaluationFromResult(result, config);
-      return result;
-    }
 
     logScanDebug('api_scan_recipe_start', {
       dishName: analysis.dishName,
       mode: input.mode,
       scanState: analysis.scanState,
     });
+    const recipeStartedAt = Date.now();
     const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode });
+    const recipeMs = Date.now() - recipeStartedAt;
     const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
     logScanDebug('api_scan_recipe_result', {
       aiSource: generatedRecipe.aiSource,
       fallbackReason: recipeFallbackReason,
-      recipeGenerated: generatedRecipe.aiSource === 'openrouter_ai' && Boolean(generatedRecipe.recipe || generatedRecipe.recipes?.length),
+      recipeGenerated: generatedRecipe.aiSource === 'openrouter_ai' && Boolean(generatedRecipe.recipe),
       recipeId: generatedRecipe.recipeId,
-      recipesLength: generatedRecipe.recipes?.length ?? 0,
     });
 
     if (
       uploadedImage &&
       generatedRecipe.aiSource !== 'openrouter_ai'
     ) {
-      const result = createPartialScan({
-        analysis,
-        aiSource: getScanAiSource(analysis.aiSource, generatedRecipe.aiSource, recipeFallbackReason),
-        config,
-        fallbackReason: recipeFallbackReason,
-        partialReason: `Okyo recognized this as ${analysis.dishName}, but could not safely generate the recipe yet. Try again.`,
-        uploadedImage,
-      });
-
-      logAi(result.aiSource, getAiLogDetails(config, config.openRouterTextModel, {
-        fallbackReason: result.fallbackReason,
-        status: result.status,
-        uploadedImage,
-      }));
-      logFinalScanResult(result);
-      await logScanEvaluationFromResult(result, config);
-      return result;
+      // Fail-closed: throw on recipe generation failure. Never return partial scans.
+      throw new Error(`RECIPE_GENERATION_FAILED: ${recipeFallbackReason || 'unknown reason'}`);
     }
 
-    const recipe = generatedRecipe.recipe ?? (
-      uploadedImage ? undefined : getRecipeById(generatedRecipe.recipeId) ?? fallback.recipe
-    );
-    const recipes = getGeneratedRecipes(generatedRecipe, recipe);
+    const recipe = generatedRecipe.recipe;
 
     if (!recipe) {
-      logAi('fallback_ai', { reason: 'recipe_missing' });
-      const fallbackResult = uploadedImage
-        ? createPartialScan({
-          analysis,
-          aiSource: 'fallback_ai',
-          config,
-          fallbackReason: 'recipe_missing',
-          partialReason: `Okyo recognized this as ${analysis.dishName}, but could not find a safe recipe result. Try again.`,
-          uploadedImage,
-        })
-        : createFallbackScan(input.mode, config, 'recipe_missing', uploadedImage);
-      await logScanEvaluationFromResult(fallbackResult, config);
-      logFinalScanResult(fallbackResult);
-
-      return fallbackResult;
+      // Fail-closed: throw when recipe is missing. Never return partial scans.
+      throw new Error('RECIPE_MISSING: Recipe object was not generated');
     }
 
     const costEstimate = estimateIngredientCosts({ analysis, recipe });
-    const seedScan = getScanById(analysis.candidateScanId) ?? fallback.scan;
-    if (!seedScan) {
-      const result = createRejectedScan({
-        aiSource: 'fallback_ai',
-        confidence: analysis.confidence,
-        config,
-        fallbackReason: 'seed_scan_missing',
-        rejectionReason: 'Okyo could not prepare a safe scan result. Try another photo.',
-        rejectionType: 'ai_failed',
-        status: 'failed',
-        uploadedImage,
-      });
-
-      await logScanEvaluationFromResult(result, config);
-      logFinalScanResult(result);
-      return result;
-    }
-
     const usedOpenRouterAnalysis = analysis.notes.includes('OpenRouter test output; verify before using.');
     const fallbackReason = recipeFallbackReason;
-    const aiSource = getScanAiSource(analysis.aiSource, generatedRecipe.aiSource, fallbackReason);
+    const aiSource = 'openrouter_ai' as const;
+
+    const scanId = `scan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const groceryListId = `grocery-${recipe.id}`;
+    const shareCardId = `share-${scanId}`;
+
     const scan: ScanResult = {
-      ...seedScan,
+      id: scanId,
+      dishName: analysis.dishName,
       bestGuessDishName: analysis.dishName,
       bestGuessNote: getBestGuessNote(analysis),
       possibleDishNames: analysis.possibleDishNames,
       confidence: getBlendedConfidence(analysis.confidence, generatedRecipe.confidence, costEstimate.confidence),
       difficulty: analysis.difficulty,
-      dishName: analysis.dishName,
       estimatedSavings: costEstimate.estimatedSavings,
       homemadeCost: costEstimate.homemadeCost,
       matchScore: analysis.matchScore,
@@ -609,187 +547,71 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       restaurantPrice: costEstimate.restaurantPrice,
       restaurantStyle: analysis.restaurantStyle,
       scanState: analysis.scanState,
+      recipeId: recipe.id,
+      groceryListId,
+      shareCardId,
+    };
+
+    const groceryList = getGroceryListForRecipe(recipe);
+    const shareCard: ShareCard = {
+      id: shareCardId,
+      scanResultId: scanId,
+      kind: 'scan-result',
+      headline: `${analysis.dishName} for $${costEstimate.homemadeCost.toFixed(2)}`,
+      subheadline: `Save ~$${costEstimate.estimatedSavings.toFixed(2)} vs restaurant`,
+      savedAmount: costEstimate.estimatedSavings,
+      matchScore: scan.matchScore,
+      footer: 'Made with Okyo',
     };
 
     const result = {
       status: 'success' as const,
       scan,
       recipe,
-      recipes,
-      groceryList: getGroceryListForRecipe(recipe, seedScan.groceryListId),
-      shareCard: getShareCard(seedScan.shareCardId),
+      groceryList,
+      shareCard,
       note: usedOpenRouterAnalysis
         ? 'AI provider output is for testing only. No image was stored; verify all food, cost, and recipe details.'
-        : 'Mock AI service output only. No image was stored and no AI provider was called.',
+        : 'AI provider generated this result.',
       ...createAiDebugMetadata(config, aiSource, scan.confidence, fallbackReason),
       scanState: analysis.scanState,
       uploadedImage,
     };
 
-    await logScanEvaluationFromResult(result, config);
+    // Fire-and-forget: analytics file I/O must not block the user's response.
+    void logScanEvaluationFromResult(result, config).catch(() => undefined);
     logFinalScanResult(result);
+
+    console.log('[scan_timing]', {
+      dish: analysis.dishName,
+      scanState: analysis.scanState,
+      visionMs,
+      recipeMs, // includes Epicure pre-call + recipe + structure/quality/component repairs
+      totalMs: Date.now() - scanStartedAt,
+    });
 
     return result;
   } catch (error) {
-    // A thrown error here means the provider call failed outright (rate limit,
-    // timeout, HTTP error) — this is an Okyo-side hiccup, not a bad photo, so the
-    // copy must never ask the user for a clearer image.
-    const providerReason = getFallbackReason(getFallbackLogDetails(error, config, config.openRouterVisionModel));
-    logAi('fallback_ai', {
-      errorMessage: error instanceof Error ? error.message : 'Unknown scan error.',
-      reason: 'ai_scan_failed',
-      providerReason,
+    // Fail-closed: throw on any provider error. Never return rejected scans.
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('api_scan_provider_failure', {
+      model: config.openRouterVisionModel,
+      errorMessage,
     });
-    logScanDebug('api_scan_failed_final', {
-      fallbackReason: 'ai_scan_failed',
-      providerReason,
-      rejectionType: 'ai_failed',
-      uploadedImage,
-    });
-    const fallbackResult = uploadedImage
-      ? createRejectedScan({
-        aiSource: 'fallback_ai',
-        confidence: 0,
-        config,
-        fallbackReason: 'ai_scan_failed',
-        rejectionReason: getAiFailureRejectionReason(providerReason),
-        rejectionType: 'ai_failed',
-        status: 'failed',
-        uploadedImage,
-      })
-      : createFallbackScan(input.mode, config, 'ai_scan_failed', uploadedImage);
-
-    await logScanEvaluationFromResult(fallbackResult, config);
-    logFinalScanResult(fallbackResult);
-
-    return fallbackResult;
+    throw error;
   }
 }
 
-export const createMockAiScan = createAiScan;
-
-function analyzeFoodImageWithMock(
-  input: AnalyzeFoodImageInput,
-  aiSource: AiSource = 'mock_ai',
-  fallbackReason?: string,
-): FoodImageAnalysis {
-  const scan = getSeedScan(input.image, input.source);
-  return foodImageAnalysisSchema.parse({
-    candidateScanId: scan.id,
-    aiSource,
-    dishName: scan.dishName,
-    broadDishCategory: 'pasta/noodles',
-    cuisine: scan.restaurantStyle,
-    restaurantStyle: scan.restaurantStyle,
-    confidence: input.image?.placeholder ? Math.min(scan.confidence, 0.72) : scan.confidence,
-    confidenceReason: 'Seeded mock analysis for local testing; dish identity is not verified.',
-    isFoodImage: true,
-    isRestaurantMeal: true,
-    scanState: scan.scanState ?? 'clear_food',
-    visibleIngredients: ['pasta', 'tomato sauce', 'cheese'],
-    likelyIngredients: ['rigatoni', 'tomato paste', 'cream', 'parmesan', 'red pepper flakes'],
-    possibleDishNames: [scan.dishName, 'Pasta Bowl', 'Noodle Bowl'],
-    visibleComponents: {
-      protein: '',
-      sauce: 'tomato cream sauce',
-      baseStarch: 'rigatoni pasta',
-      vegetables: '',
-      toppingsGarnish: 'cheese',
-      cookingMethod: 'sauced pasta',
-    },
-    restaurantPriceEstimate: scan.restaurantPrice,
-    homemadeCostEstimate: scan.homemadeCost,
-    matchScore: scan.matchScore,
-    difficulty: scan.difficulty,
-    fallbackReason,
-    modes: scan.modes,
-    notes: [
-      input.image?.uri ? 'Local image metadata was received.' : 'No stored image file was used.',
-      'Mock AI analysis only; dish identity is not verified.',
-    ],
-  });
-}
-
-function generateRecipeFromDishWithMock(
-  input: GenerateRecipeFromDishInput,
-  aiSource: AiSource = 'mock_ai',
-  fallbackReason?: string,
-): GeneratedRecipeOutput {
-  const recipe = getRecipeForAnalysis(input.analysis, input.mode);
-  const recipes = getRecipesForAnalysis(input.analysis);
-  const parsed = generatedRecipeOutputSchema.parse({
-    recipeId: recipe.id,
-    title: recipe.title,
-    mode: recipe.mode,
-    aiSource,
-    confidence: Math.min(input.analysis.confidence, 0.86),
-    confidenceNote: recipe.confidenceNote,
-    fallbackReason,
-  });
-
-  return {
-    ...parsed,
-    recipe,
-    recipes,
-  };
-}
-
-function generateRecipeFromDishWithStarterFallback(
-  input: GenerateRecipeFromDishInput,
-  fallbackReason?: string,
-): GeneratedRecipeOutput | undefined {
-  if (!canGenerateRecipeForAnalysis(input.analysis)) {
-    return undefined;
-  }
-
-  const recipes = recipeModes.map((mode) => (
-    createRecipeFromVariant(createStarterVariant(input.analysis, mode), input.analysis, mode, {
-      idPrefix: 'starter',
-      confidenceNotePrefix: 'Starter recipe generated after the AI recipe response failed.',
-    })
-  ));
-  const recipe = recipes.find((candidate) => candidate.mode === input.mode) ?? recipes[0];
-  const parsed = generatedRecipeOutputSchema.parse({
-    recipeId: recipe.id,
-    title: recipe.title,
-    mode: input.mode,
-    aiSource: 'fallback_ai',
-    confidence: Math.min(input.analysis.confidence, 0.72),
-    confidenceNote: recipe.confidenceNote,
-    fallbackReason,
-  });
-
-  return {
-    ...parsed,
-    recipe,
-    recipes,
-  };
-}
-
-function estimateIngredientCostsWithMock(input: EstimateIngredientCostsInput): IngredientCostEstimate {
-  const scan = getScanById(input.analysis.candidateScanId) ?? mockScanResults[0];
-  const homemadeCost = normalizeHomemadeCost(input.recipe.estimatedHomemadeCost, scan.restaurantPrice);
-  return ingredientCostEstimateSchema.parse({
-    restaurantPrice: scan.restaurantPrice,
-    homemadeCost,
-    estimatedSavings: Math.max(0, scan.restaurantPrice - homemadeCost),
-    confidence: Math.min(input.analysis.confidence, 0.82),
-    assumptions: [
-      'Uses seeded restaurant estimate.',
-      'Uses seeded homemade ingredient estimate.',
-    ],
-  });
-}
 
 function createRecipeFromOpenRouterOutput(
   output: OpenRouterRecipeOutput,
   analysis: FoodImageAnalysis,
   mode: RecipeMode,
 ): GeneratedRecipeOutput {
-  const recipes = recipeModes.map((recipeMode) => (
-    createRecipeFromVariant(getRecipeVariant(output, recipeMode), analysis, recipeMode)
-  ));
-  const recipe = recipes.find((candidate) => candidate.mode === mode) ?? recipes[0];
+  // One AI call -> one canonical recipe. The recipe is stamped with the mode the
+  // scan was generated under (origin metadata); Budget/Healthy are computed view
+  // projections in the UI, never separate generations.
+  const recipe = createRecipeFromVariant(output, analysis, mode);
 
   return {
     aiSource: 'openrouter_ai',
@@ -797,7 +619,6 @@ function createRecipeFromOpenRouterOutput(
     confidenceNote: `AI-assisted testing output. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
     mode,
     recipe,
-    recipes,
     recipeId: recipe.id,
     title: recipe.title,
   };
@@ -813,7 +634,9 @@ function createRecipeFromVariant(
   } = {},
 ): Recipe {
   const restaurantPrice = normalizeRestaurantPrice(analysis.restaurantPriceEstimate);
-  const homemadeCost = getModeHomemadeCost(analysis.homemadeCostEstimate, restaurantPrice, mode);
+  // Single canonical recipe: homemade cost is the AI estimate, normalized. No
+  // per-mode cost multipliers — Budget/Healthy are view projections, not data.
+  const homemadeCost = normalizeHomemadeCost(analysis.homemadeCostEstimate, restaurantPrice);
   const title = getRecipeTitle(variant.title, analysis.dishName, mode);
   const ingredients = getRecipeIngredients(variant.ingredients, analysis, mode);
   const prepTimeMinutes = parseMinutes(variant.prepTime, 15);
@@ -823,11 +646,12 @@ function createRecipeFromVariant(
   const servings = parseServings(variant.servings, 2);
   const skillLevel = normalizeDifficulty(variant.skillLevel || variant.difficulty);
   const steps = getRecipeSteps(variant.steps, analysis.dishName);
-  const structuredSteps = getStructuredSteps(variant.steps, steps, analysis);
+  const structuredSteps = getStructuredSteps(variant.steps, steps, analysis, ingredients.map((i) => i.name));
+  const isCompactRecipe = Array.isArray(variant.steps) && variant.steps.length > 0 && variant.steps.every((s) => typeof s === 'string');
   const ingredientGroups = getIngredientGroups(variant.ingredientGroups, ingredients, analysis);
   const spicePairings = getSpicePairings(variant.spicePairings, analysis);
   const cookingTerms = getCookingTerms(variant.cookingTerms, steps);
-  const groceryItems = getGroceryItems(ingredients, analysis, mode, variant.groceryItems);
+  const groceryItems = getGroceryItems(ingredients, analysis);
   const mistakeWarning = cleanRecipeCopy(getShortText(
     variant.mistakeWarning || variant.avoidMistake,
     getDefaultAvoidMistake(analysis),
@@ -858,16 +682,12 @@ function createRecipeFromVariant(
     ingredientGroups,
     steps,
     structuredSteps,
-    substitutions: getSafeList(variant.substitutions, getDefaultSubstitutions(mode), 3).map(cleanRecipeCopy),
-    pantryNote: cleanRecipeCopy(getShortText(variant.pantryNote, 'Assumes salt, pepper, and basic oil are on hand.', 90)),
+    substitutions: getSafeList(variant.substitutions, getDefaultSubstitutions(), 3).map(cleanRecipeCopy),
+    pantryNote: 'Assumes salt, pepper, and basic oil are on hand.',
     confidenceNote: `${options.confidenceNotePrefix ?? 'AI-assisted testing output.'} Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
-    mainIngredientsSummary: cleanRecipeCopy(getShortText(
-      variant.mainIngredientsSummary,
-      getDefaultMainIngredientsSummary(ingredients),
-      140,
-    )),
+    mainIngredientsSummary: getDefaultMainIngredientsSummary(ingredients),
     equipment: getSafeList(variant.equipment, getDefaultEquipment(analysis), 5).map(cleanRecipeCopy),
-    bestFor: cleanRecipeCopy(getShortText(variant.bestFor, getDefaultBestFor(mode), 70)),
+    bestFor: getDefaultBestFor(),
     avoidMistake: mistakeWarning,
     mistakeWarning,
     storageAndReheating: storage,
@@ -875,214 +695,29 @@ function createRecipeFromVariant(
     groceryItems,
     spicePairings,
     cookingTerms,
+    isCompactRecipe: isCompactRecipe || undefined,
   }, analysis);
 }
 
-function createFallbackScan(
-  mode: RecipeMode,
-  config: ReturnType<typeof getAiConfig> = getAiConfig(),
-  fallbackReason = 'fallback_scan',
-  uploadedImage = false,
-): AiScanSuccessResult {
-  const scan = mockScanResults[0];
-  const recipe = getRecipeForScan(scan, mode);
-  const recipes = getRecipesForScan(scan);
 
-  return {
-    status: 'success',
-    scan,
-    recipe,
-    recipes,
-    groceryList: getGroceryList(scan.groceryListId),
-    shareCard: getShareCard(scan.shareCardId),
-    note: 'Fallback mock scan only. AI-shaped output was missing or invalid.',
-    ...createAiDebugMetadata(config, 'fallback_ai', scan.confidence, fallbackReason),
-    scanState: scan.scanState ?? 'clear_food',
-    uploadedImage,
-  };
-}
-
-function createDemoMockScan(mode: RecipeMode, config: ReturnType<typeof getAiConfig>): AiScanSuccessResult {
-  const scan = mockScanResults[0];
-  const recipe = getRecipeForScan(scan, mode);
-  const recipes = getRecipesForScan(scan);
-
-  return {
-    status: 'success',
-    scan,
-    recipe,
-    recipes,
-    groceryList: getGroceryList(scan.groceryListId),
-    shareCard: getShareCard(scan.shareCardId),
-    note: 'Demo mock scan only. No AI provider was called.',
-    ...createAiDebugMetadata(config, 'mock_ai', scan.confidence),
-    scanState: scan.scanState ?? 'clear_food',
-    uploadedImage: false,
-  };
-}
-
-function createRejectedScan(input: {
-  aiSource: AiSource;
-  confidence: number;
-  config: ReturnType<typeof getAiConfig>;
-  fallbackReason?: string;
-  rejectionReason: string;
-  rejectionType: ScanRejectionType;
-  scanState?: ScanState;
-  status: 'rejected' | 'failed';
-  uploadedImage: boolean;
-}): AiScanRejectedResult {
-  return {
-    status: input.status,
-    scanId: `scan-${input.status}-${Date.now()}`,
-    note: input.rejectionReason,
-    rejectionType: input.rejectionType,
-    rejectionReason: input.rejectionReason,
-    scanState: input.scanState,
-    uploadedImage: input.uploadedImage,
-    ...createAiDebugMetadata(
-      input.config,
-      input.aiSource,
-      clampConfidence(input.confidence),
-      input.fallbackReason,
-    ),
-  };
-}
-
-function createPartialScan(input: {
-  analysis: FoodImageAnalysis;
-  aiSource: AiSource;
-  config: ReturnType<typeof getAiConfig>;
-  fallbackReason?: string;
-  partialReason: string;
-  uploadedImage: boolean;
-}): AiScanPartialResult {
-  const seedScan = getScanById(input.analysis.candidateScanId) ?? mockScanResults[0];
-  const restaurantPrice = normalizeRestaurantPrice(input.analysis.restaurantPriceEstimate);
-  const homemadeCost = normalizeHomemadeCost(input.analysis.homemadeCostEstimate, restaurantPrice);
-  const scan: ScanResult = {
-    ...seedScan,
-    bestGuessDishName: input.analysis.dishName,
-    bestGuessNote: getBestGuessNote(input.analysis),
-    possibleDishNames: input.analysis.possibleDishNames,
-    confidence: input.analysis.confidence,
-    difficulty: input.analysis.difficulty,
-    dishName: input.analysis.dishName,
-    estimatedSavings: Math.max(0, restaurantPrice - homemadeCost),
-    homemadeCost,
-    matchScore: input.analysis.matchScore,
-    modes: input.analysis.modes,
-    restaurantPrice,
-    restaurantStyle: input.analysis.restaurantStyle,
-    scanState: input.analysis.scanState,
-  };
-
-  return {
-    status: 'partial',
-    scan,
-    note: input.partialReason,
-    partialReason: input.partialReason,
-    ...createAiDebugMetadata(
-      input.config,
-      input.aiSource,
-      clampConfidence(input.analysis.confidence),
-      input.fallbackReason,
-    ),
-    scanState: input.analysis.scanState,
-    uploadedImage: input.uploadedImage,
-  };
-}
-
-async function logScanEvaluationFromResult(result: AiScanResult, config: ReturnType<typeof getAiConfig>) {
+async function logScanEvaluationFromResult(result: AiScanSuccessResult, config: ReturnType<typeof getAiConfig>) {
   await logScanEvaluation({
     aiSource: result.aiSource,
     config,
     fallbackReason: result.fallbackReason,
-    rejectionReason: result.status === 'rejected' || result.status === 'failed' ? result.rejectionReason : undefined,
-    rejectionType: result.status === 'rejected' || result.status === 'failed' ? result.rejectionType : undefined,
-    scan: result.status === 'success' || result.status === 'partial' ? result.scan : undefined,
-    scanId: result.status === 'success' || result.status === 'partial' ? result.scan.id : result.scanId,
-    scanState: result.status === 'success' || result.status === 'partial' ? result.scan.scanState : result.scanState,
-    status: result.status,
+    scan: result.scan,
+    scanId: result.scan.id,
+    scanState: result.scanState,
+    status: 'success',
     uploadedImage: result.uploadedImage,
   });
 }
 
-function getAnalysisRejection(
-  analysis: FoodImageAnalysis,
-  uploadedImage: boolean,
-): { rejectionReason: string; rejectionType: ScanRejectionType; status: 'rejected' | 'failed' } | undefined {
-  if (!uploadedImage) {
-    return undefined;
-  }
-
-  if (analysis.aiSource !== 'openrouter_ai') {
-    // The vision provider failed — this says nothing about the photo itself,
-    // so never blame the user with "clearer photo" copy here.
-    logScanDebug('api_scan_rejection_decision', {
-      branch: 'ai_failed',
-      fallbackReason: analysis.fallbackReason,
-    });
-    return {
-      status: 'failed',
-      rejectionType: 'ai_failed',
-      rejectionReason: getAiFailureRejectionReason(analysis.fallbackReason),
-    };
-  }
-
-  if (analysis.scanState === 'not_food' || (!analysis.isFoodImage && analysis.confidence >= notFoodConfidenceThreshold)) {
-    logScanDebug('api_scan_rejection_decision', {
-      branch: 'not_food',
-      confidence: analysis.confidence,
-      scanState: analysis.scanState,
-    });
-    return {
-      status: 'rejected',
-      rejectionType: 'not_food',
-      rejectionReason: analysis.rejectionReason || "This doesn't look like a food photo.",
-    };
-  }
-
-  // When the vision model says food is visible, a low confidence score means
-  // "uncertain dish", not "unclear photo" — let it through as a best guess.
-  const foodVisible = isFoodScanState(analysis.scanState);
-  if (
-    analysis.scanState === 'too_unclear' ||
-    (!foodVisible && !analysis.isFoodImage) ||
-    (!foodVisible && analysis.confidence < uploadedImageConfidenceThreshold)
-  ) {
-    logScanDebug('api_scan_rejection_decision', {
-      branch: 'unclear_image',
-      confidence: analysis.confidence,
-      foodVisible,
-      scanState: analysis.scanState,
-    });
-    return {
-      status: 'rejected',
-      rejectionType: 'unclear_image',
-      rejectionReason: analysis.rejectionReason || 'Okyo needs a clearer food photo before it can make a useful recipe.',
-    };
-  }
-
-  return undefined;
-}
-
-function getAiFailureRejectionReason(fallbackReason: string | undefined) {
-  if (fallbackReason?.includes('http_error')) {
-    return "Okyo's scanner is busy right now. It's not your photo — try the same one again in a minute.";
-  }
-  if (fallbackReason?.includes('timeout')) {
-    return 'The scan took too long and stopped. Try the same photo again.';
-  }
-
-  return "Okyo couldn't finish analyzing this photo. It's not your photo — try the same one again.";
-}
 
 function hasRealUploadedImage(input: AnalyzeFoodImageInput) {
   return Boolean(
     input.image &&
     !input.image.placeholder &&
-    input.source !== 'mock' &&
     (
       input.image.uri ||
       input.image.dataUrl ||
@@ -1093,10 +728,6 @@ function hasRealUploadedImage(input: AnalyzeFoodImageInput) {
       input.image.dataUrlSizeBytes
     ),
   );
-}
-
-function isDemoMockScan(input: AnalyzeFoodImageInput) {
-  return input.source === 'mock' || Boolean(input.image?.placeholder);
 }
 
 function isProviderVisibleImage(image: ScanImageMetadata | undefined) {
@@ -1133,61 +764,10 @@ function getUnavailableAiReason(config: ReturnType<typeof getAiConfig>) {
     return 'openrouter_missing_key';
   }
 
-  return 'mock_requested';
+  return 'ai_unavailable';
 }
 
-function getSeedScan(image: ScanImageMetadata | undefined, source: ScanSource) {
-  if (image?.placeholder || source === 'camera') {
-    return mockScanResults[0];
-  }
-
-  return mockScanResults[0];
-}
-
-function getRecipeForAnalysis(analysis: FoodImageAnalysis, mode: RecipeMode) {
-  const scan = getScanById(analysis.candidateScanId) ?? mockScanResults[0];
-  return getRecipeForScan(scan, mode);
-}
-
-function getRecipesForAnalysis(analysis: FoodImageAnalysis) {
-  const scan = getScanById(analysis.candidateScanId) ?? mockScanResults[0];
-  return getRecipesForScan(scan);
-}
-
-function getRecipeForScan(scan: ScanResult, mode: RecipeMode) {
-  return (
-    mockRecipes.find((recipe) => recipe.scanResultId === scan.id && recipe.mode === mode) ??
-    mockRecipes.find((recipe) => recipe.scanResultId === scan.id) ??
-    mockRecipes[0]
-  );
-}
-
-function getRecipesForScan(scan: ScanResult) {
-  return recipeModes
-    .map((mode) => getRecipeForScan(scan, mode))
-    .filter((recipe, index, recipes) => recipes.findIndex((candidate) => candidate.id === recipe.id) === index);
-}
-
-function getGeneratedRecipes(generatedRecipe: GeneratedRecipeOutput, selectedRecipe?: Recipe) {
-  if (generatedRecipe.recipes && generatedRecipe.recipes.length > 0) {
-    return generatedRecipe.recipes;
-  }
-  return selectedRecipe ? [selectedRecipe] : undefined;
-}
-
-function getScanById(scanId: string) {
-  return mockScanResults.find((scan) => scan.id === scanId);
-}
-
-function getRecipeById(recipeId: string) {
-  return mockRecipes.find((recipe) => recipe.id === recipeId);
-}
-
-function getGroceryList(groceryListId: string) {
-  return mockGroceryLists.find((list) => list.id === groceryListId);
-}
-
-function getGroceryListForRecipe(recipe: Recipe, fallbackGroceryListId: string): GroceryList | undefined {
+function getGroceryListForRecipe(recipe: Recipe): GroceryList | undefined {
   if (recipe.groceryItems && recipe.groceryItems.length > 0) {
     return {
       id: `grocery-${recipe.id}`,
@@ -1197,11 +777,7 @@ function getGroceryListForRecipe(recipe: Recipe, fallbackGroceryListId: string):
     };
   }
 
-  return getGroceryList(fallbackGroceryListId);
-}
-
-function getShareCard(shareCardId: string) {
-  return mockShareCards.find((card) => card.id === shareCardId);
+  return undefined;
 }
 
 function getBlendedConfidence(...scores: number[]) {
@@ -1229,17 +805,6 @@ function getBestGuessNote(analysis: FoodImageAnalysis) {
   }
 }
 
-function getRecipeVariant(output: OpenRouterRecipeOutput, mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return output.budget;
-    case 'Healthy':
-      return output.healthy;
-    case 'Restaurant Copy':
-      return output.restaurantCopy;
-  }
-}
-
 export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const confidence = normalizeConfidence(output.confidence);
   // A restaurant price guessed from a food photo is not real data. Savings must come
@@ -1255,13 +820,13 @@ export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const isRestaurantMeal = normalizeBoolean(output.isRestaurantMeal, isFoodImage);
   const visibleComponents = normalizeVisibleComponents(output.visibleComponents);
   const visibleComponentIngredients = getVisibleComponentValues(visibleComponents);
-  const explicitVisibleIngredients = getSafeList(output.visibleIngredients, [], 8);
-  const visibleIngredients = explicitVisibleIngredients.length > 0 ? explicitVisibleIngredients : visibleComponentIngredients.slice(0, 8);
-  const explicitLikelyIngredients = getSafeList(output.likelyIngredients, [], 8);
+  const explicitVisibleIngredients = getSafeList(output.visibleIngredients, [], 24);
+  const visibleIngredients = explicitVisibleIngredients.length > 0 ? explicitVisibleIngredients : visibleComponentIngredients.slice(0, 24);
+  const explicitLikelyIngredients = getSafeList(output.likelyIngredients, [], 12);
   const likelyIngredients = getSafeList(
     output.likelyIngredients,
     visibleIngredients.length > 0 ? visibleIngredients : [],
-    8,
+    12,
   );
   const rawDishName = getSafeTextValue(output.dishName, '');
   const broadDishCategory = normalizeBroadDishCategory(
@@ -1315,6 +880,7 @@ export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
     ),
     cuisine,
     dishName,
+    epicureSuggestions: output.epicureSuggestions,
     homemadeCostEstimate,
     isFoodImage: normalizedIsFoodImage,
     isRestaurantMeal: normalizedIsFoodImage ? isRestaurantMeal : false,
@@ -1600,19 +1166,6 @@ function normalizeHomemadeCost(value: unknown, restaurantPrice: number) {
   return roundMoney(clampNumber(cappedCost, 1, Math.max(1, restaurantPrice - 0.5)));
 }
 
-function getModeHomemadeCost(baseCost: number, restaurantPrice: number, mode: RecipeMode) {
-  const normalizedBase = normalizeHomemadeCost(baseCost, restaurantPrice);
-
-  switch (mode) {
-    case 'Budget':
-      return normalizeHomemadeCost(normalizedBase * 0.82, restaurantPrice);
-    case 'Healthy':
-      return normalizeHomemadeCost(normalizedBase * 1.08, restaurantPrice);
-    case 'Restaurant Copy':
-      return normalizedBase;
-  }
-}
-
 function normalizeDishName(value: unknown, cuisine: string, broadDishCategory: string, ingredients: string[]) {
   const text = getSafeTextValue(value, '');
   if (text && !isVagueDishName(text)) {
@@ -1796,372 +1349,6 @@ function getRecipeTitle(value: string, dishName: string, mode: RecipeMode) {
   return ensureInspiredTitle(getShortText(safeValue, fallbackTitle, 90));
 }
 
-type CommonDishKind = 'burger' | 'pizza' | 'noodles' | 'pasta' | 'bowl' | 'taco' | 'sandwich';
-
-function canGenerateRecipeForAnalysis(analysis: FoodImageAnalysis) {
-  return (
-    analysis.isFoodImage &&
-    analysis.confidence >= uploadedImageConfidenceThreshold &&
-    analysis.scanState !== 'not_food' &&
-    analysis.scanState !== 'too_unclear'
-  );
-}
-
-function getCommonDishKind(analysis: FoodImageAnalysis): CommonDishKind | undefined {
-  const text = getAnalysisText(analysis);
-  if (includesAny(text, ['burger', 'cheeseburger', 'patty'])) {
-    return 'burger';
-  }
-  if (text.includes('pizza')) {
-    return 'pizza';
-  }
-  if (includesAny(text, ['noodle', 'ramen', 'udon', 'lo mein', 'pad thai'])) {
-    return 'noodles';
-  }
-  if (includesAny(text, ['pasta', 'rigatoni', 'spaghetti', 'penne', 'fettuccine'])) {
-    return 'pasta';
-  }
-  if (includesAny(text, ['bowl', 'rice', 'grain', 'salad'])) {
-    return 'bowl';
-  }
-  if (includesAny(text, ['taco', 'burrito', 'quesadilla'])) {
-    return 'taco';
-  }
-  if (includesAny(text, ['sandwich', 'sub', 'wrap'])) {
-    return 'sandwich';
-  }
-
-  return undefined;
-}
-
-function createStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
-  const kind = getCommonDishKind(analysis);
-  switch (kind) {
-    case 'burger':
-      return createBurgerStarterVariant(analysis, mode);
-    case 'pizza':
-      return createPizzaStarterVariant(analysis, mode);
-    case 'noodles':
-      return createNoodleStarterVariant(analysis, mode);
-    case 'pasta':
-      return createPastaStarterVariant(analysis, mode);
-    case 'bowl':
-      return createBowlStarterVariant(analysis, mode);
-    case 'taco':
-      return createTacoStarterVariant(analysis, mode);
-    case 'sandwich':
-      return createSandwichStarterVariant(analysis, mode);
-    default:
-      return createGenericStarterVariant(analysis, mode);
-  }
-}
-
-function createBaseStarterVariant(input: {
-  analysis: FoodImageAnalysis;
-  bestFor: string;
-  cookTime: string;
-  description: string;
-  equipment: string[];
-  groceryItems?: OpenRouterRecipeVariant['groceryItems'];
-  ingredientGroups: OpenRouterRecipeVariant['ingredientGroups'];
-  ingredients: string[];
-  mistake: string;
-  mode: RecipeMode;
-  pantryNote?: string;
-  prepTime: string;
-  spicePairings?: string[];
-  steps: string[];
-  storage: string;
-  substitutions: string[];
-  title: string;
-}) {
-  const prepMinutes = parseMinutes(input.prepTime, 10);
-  const cookMinutes = parseMinutes(input.cookTime, 15);
-
-  return {
-    activeTime: `${Math.min(prepMinutes + cookMinutes, prepMinutes + 12)} min`,
-    avoidMistake: input.mistake,
-    bestFor: input.bestFor,
-    cookTime: input.cookTime,
-    cookingTerms: [],
-    description: input.description,
-    difficulty: 'Easy',
-    equipment: input.equipment.slice(0, 5),
-    groceryItems: (input.groceryItems ?? []).slice(0, 12),
-    ingredientGroups: input.ingredientGroups.slice(0, 4),
-    ingredients: input.ingredients.slice(0, 10),
-    mainIngredientsSummary: input.ingredients.slice(0, 5).join(', '),
-    mistakeWarning: input.mistake,
-    pantryNote: input.pantryNote ?? 'Assumes salt, pepper, and basic oil.',
-    prepTime: input.prepTime,
-    servings: 2,
-    skillLevel: 'Easy',
-    spicePairings: (input.spicePairings ?? []).slice(0, 3),
-    steps: input.steps.slice(0, 7),
-    storage: input.storage,
-    storageAndReheating: input.storage,
-    substitutions: input.substitutions.slice(0, 3),
-    title: getStarterTitle(input.title, input.mode),
-    totalTime: `${prepMinutes + cookMinutes} min`,
-  } satisfies OpenRouterRecipeVariant;
-}
-
-function createBurgerStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
-  const text = getAnalysisText(analysis);
-  const hasCheese = includesAny(text, ['cheese', 'cheeseburger', 'cheddar', 'american']);
-  const protein = mode === 'Healthy' ? '8 oz lean ground turkey or veggie patties' : '8 oz ground beef';
-  const title = hasCheese ? 'Cheeseburger Homemade Version' : 'Burger Homemade Version';
-  const ingredients = [
-    protein,
-    '1/2 tsp salt',
-    '1/4 tsp black pepper',
-    '2 burger buns',
-    ...(hasCheese ? ['2 slices cheddar or American cheese'] : []),
-    '2 tomato slices',
-    '2 lettuce leaves',
-    '2 tbsp mayonnaise',
-    '1 tsp ketchup',
-    '1 tsp mustard',
-  ];
-
-  return createBaseStarterVariant({
-    analysis,
-    bestFor: mode === 'Budget' ? 'cheap weeknight burger night' : 'weeknight dinner',
-    cookTime: '10 min',
-    description: 'A juicy restaurant-style burger with browned edges, cool toppings, and a simple sauce.',
-    equipment: ['skillet or grill pan', 'spatula', 'thermometer', 'small bowl', 'cutting board'],
-    groceryItems: [
-      createStarterGroceryItem('Protein', mode === 'Healthy' ? 'ground turkey or veggie patties' : 'ground beef', '8 oz or 1 small pack'),
-      createStarterGroceryItem('Bakery / Bread', 'burger buns', '1 pack'),
-      ...(hasCheese ? [createStarterGroceryItem('Dairy', 'sliced cheddar or American cheese', '2 slices or 1 small pack')] : []),
-      createStarterGroceryItem('Produce', 'tomato', '1'),
-      createStarterGroceryItem('Produce', 'romaine or lettuce', '1 small head or 1 bag'),
-      createStarterGroceryItem('Sauces / Condiments', 'mayonnaise, ketchup, or mustard', '', 'Small jar or bottle if needed.'),
-      createStarterGroceryItem('Spices', 'salt and black pepper', 'pantry check', undefined, true),
-    ],
-    ingredientGroups: [
-      { component: 'Patty', items: [protein, '1/2 tsp salt', '1/4 tsp black pepper'] },
-      { component: 'Sauce', items: ['2 tbsp mayonnaise', '1 tsp ketchup', '1 tsp mustard'] },
-      { component: 'Toppings', items: [...(hasCheese ? ['2 slices cheddar or American cheese'] : []), '2 tomato slices', '2 lettuce leaves'] },
-      { component: 'Assembly', items: ['2 burger buns'] },
-    ],
-    ingredients,
-    mistake: 'Do not press the patty repeatedly or it will lose juices.',
-    mode,
-    prepTime: '10 min',
-    spicePairings: ['pickle juice', 'smoked paprika', 'extra mustard'],
-    steps: [
-      'Season the meat for 1 minute, then shape 2 loose patties slightly wider than the buns.',
-      'Heat a skillet over medium-high for 2 minutes until a drop of water sizzles.',
-      'Cook patties 3-4 minutes per side until browned and 160°F / 71°C inside.',
-      'Rest patties 1 minute; while they rest, toast buns and stir the sauce.',
-      'Assemble buns with sauce, patty, cheese if using, tomato, lettuce, and extra sauce.',
-      'Taste and add a tiny pinch of salt, pepper, or mustard if the burger tastes flat.',
-    ],
-    storage: 'Store patties separately from buns and toppings. Reheat patties in a skillet and use within 3 days.',
-    substitutions: ['No mayo: use Greek yogurt.', 'No beef: use turkey or veggie patties.', 'No cheddar: use American, Swiss, or pepper jack.'],
-    title,
-  });
-}
-
-function createPizzaStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
-  return createBaseStarterVariant({
-    analysis,
-    bestFor: 'quick pizza night',
-    cookTime: '12 min',
-    description: 'A crisp-edged restaurant-style pizza with melty cheese and simple toppings.',
-    equipment: ['sheet pan', 'oven', 'knife or pizza cutter'],
-    ingredientGroups: [
-      { component: 'Crust', items: ['1 small pizza crust or flatbread'] },
-      { component: 'Sauce', items: ['1/3 cup pizza sauce'] },
-      { component: 'Cheese', items: ['1 cup shredded mozzarella'] },
-      { component: 'Toppings', items: ['1/2 cup visible toppings', '1 tsp olive oil'] },
-    ],
-    ingredients: ['1 small pizza crust or flatbread', '1/3 cup pizza sauce', '1 cup shredded mozzarella', '1/2 cup visible toppings', '1 tsp olive oil'],
-    mistake: 'Do not overload toppings or the crust can turn soggy.',
-    mode,
-    prepTime: '8 min',
-    steps: [
-      'Heat the oven to 450°F for at least 10 minutes so the crust crisps.',
-      'Spread sauce thinly over the crust, leaving a small bare edge.',
-      'Add cheese and toppings in an even layer so each slice cooks evenly.',
-      'Bake 8-12 minutes until the cheese bubbles and the crust edges brown.',
-      'Rest 2 minutes before slicing so the cheese settles.',
-    ],
-    storage: 'Store slices up to 3 days. Reheat in a skillet or oven until the crust crisps.',
-    substitutions: ['Use flatbread instead of dough.', 'Use provolone or parmesan with mozzarella.', 'Use any cooked protein or vegetables.'],
-    title: 'Restaurant-Style Pizza Homemade Version',
-  });
-}
-
-function createNoodleStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
-  return createBaseStarterVariant({
-    analysis,
-    bestFor: 'quick lunch or dinner',
-    cookTime: '12 min',
-    description: 'A glossy restaurant-style noodle bowl with savory sauce and flexible toppings.',
-    equipment: ['pot', 'skillet', 'tongs', 'small bowl'],
-    ingredientGroups: [
-      { component: 'Noodles', items: ['8 oz noodles'] },
-      { component: 'Sauce', items: ['2 tbsp soy sauce', '1 tbsp sauce base', '1 tsp sesame oil'] },
-      { component: 'Protein/veg', items: ['8 oz protein or vegetables'] },
-      { component: 'Garnish', items: ['2 scallions or herbs'] },
-    ],
-    ingredients: ['8 oz noodles', '2 tbsp soy sauce', '1 tbsp sauce base', '1 tsp sesame oil', '8 oz protein or vegetables', '2 scallions or herbs'],
-    mistake: 'Do not overcook the noodles or they will turn mushy in the sauce.',
-    mode,
-    prepTime: '10 min',
-    spicePairings: ['chili crisp', 'lime', 'sesame seeds'],
-    steps: [
-      'Cook noodles until just tender, then reserve 1/2 cup cooking water.',
-      'Stir sauce ingredients in a small bowl for 1 minute until smooth.',
-      'Cook protein or vegetables 4-6 minutes until browned or tender.',
-      'Toss noodles with sauce for 1-2 minutes until glossy and coated.',
-      'Loosen with splashes of cooking water, then finish with garnish.',
-    ],
-    storage: 'Store up to 3 days. Reheat with a splash of water to loosen the sauce.',
-    substitutions: ['Use rice instead of noodles.', 'Use tofu, chicken, or extra vegetables.', 'Use chili crisp for more heat.'],
-    title: 'Restaurant-Style Noodles Homemade Version',
-  });
-}
-
-function createPastaStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
-  const base = createNoodleStarterVariant(analysis, mode);
-  return {
-    ...base,
-    title: getStarterTitle('Restaurant-Style Pasta Homemade Version', mode),
-    description: 'A saucy restaurant-style pasta with a glossy finish and simple pantry-friendly flavor.',
-    ingredientGroups: [
-      { component: 'Pasta', items: ['8 oz pasta'] },
-      { component: 'Sauce', items: ['2 tbsp sauce base', '1/2 cup cream or broth', '1/4 cup cheese'] },
-      { component: 'Protein/veg', items: ['1 cup vegetables or 8 oz protein'] },
-      { component: 'Garnish', items: ['black pepper or herbs'] },
-    ],
-    ingredients: ['8 oz pasta', '2 tbsp sauce base', '1/2 cup cream or broth', '1/4 cup cheese', '1 cup vegetables or 8 oz protein', 'black pepper to taste'],
-    mistakeWarning: 'Do not drain all the pasta water; it helps the sauce cling.',
-    avoidMistake: 'Do not drain all the pasta water; it helps the sauce cling.',
-  };
-}
-
-function createBowlStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
-  return createBaseStarterVariant({
-    analysis,
-    bestFor: 'easy meal prep',
-    cookTime: '10 min',
-    description: 'A balanced restaurant-style bowl with a warm base, toppings, and a punchy sauce.',
-    equipment: ['skillet', 'cutting board', 'small bowl'],
-    ingredientGroups: [
-      { component: 'Base', items: ['2 cups cooked rice or grains'] },
-      { component: 'Protein/veg', items: ['8 oz protein or vegetables'] },
-      { component: 'Sauce', items: ['1/4 cup dressing or sauce'] },
-      { component: 'Garnish', items: ['herbs or crunchy topping'] },
-    ],
-    ingredients: ['2 cups cooked rice or grains', '8 oz protein or vegetables', '1/4 cup dressing or sauce', '1 cup greens or vegetables', 'herbs or crunchy topping'],
-    mistake: 'Do not skip the sauce; it ties the bowl together.',
-    mode,
-    prepTime: '10 min',
-    steps: [
-      'Warm the base for 2 minutes until steamy.',
-      'Cook protein or vegetables 4-6 minutes until browned or tender.',
-      'Stir sauce in a small bowl until smooth.',
-      'Layer base, greens, protein, and toppings in bowls.',
-      'Drizzle sauce and taste before adding extra salt or spice.',
-    ],
-    storage: 'Store components separately up to 3 days. Reheat warm items before assembling.',
-    substitutions: ['Use rice, quinoa, or greens as the base.', 'Use chicken, tofu, falafel, or beans.', 'Use any dressing you like.'],
-    title: 'Restaurant-Style Bowl Homemade Version',
-  });
-}
-
-function createTacoStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
-  return createBaseStarterVariant({
-    analysis,
-    bestFor: 'fast taco night',
-    cookTime: '10 min',
-    description: 'Restaurant-style tacos with seasoned filling, warm tortillas, and fresh toppings.',
-    equipment: ['skillet', 'spatula', 'cutting board'],
-    ingredientGroups: [
-      { component: 'Filling', items: ['8 oz protein or beans', '1 tsp taco seasoning'] },
-      { component: 'Tortillas', items: ['4 small tortillas'] },
-      { component: 'Toppings', items: ['1 cup lettuce or cabbage', '1 tomato or salsa'] },
-      { component: 'Sauce', items: ['2 tbsp crema or hot sauce'] },
-    ],
-    ingredients: ['8 oz protein or beans', '1 tsp taco seasoning', '4 small tortillas', '1 cup lettuce or cabbage', '1 tomato or salsa', '2 tbsp crema or hot sauce'],
-    mistake: 'Do not fill cold tortillas or they may crack.',
-    mode,
-    prepTime: '10 min',
-    steps: [
-      'Cook the filling 5-7 minutes until browned and hot.',
-      'Warm tortillas 30 seconds per side until flexible.',
-      'Prep toppings while the filling finishes cooking.',
-      'Fill each tortilla with filling, toppings, and sauce.',
-      'Taste one bite and add lime, salt, or hot sauce if flat.',
-    ],
-    storage: 'Store filling separately up to 3 days. Reheat before adding to fresh tortillas.',
-    substitutions: ['Use beans instead of meat.', 'Use cabbage instead of lettuce.', 'Use salsa instead of crema.'],
-    title: 'Restaurant-Style Tacos Homemade Version',
-  });
-}
-
-function createSandwichStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
-  return createBaseStarterVariant({
-    analysis,
-    bestFor: 'quick lunch',
-    cookTime: '6 min',
-    description: 'A restaurant-style sandwich with a toasted base, saucy spread, and crisp toppings.',
-    equipment: ['skillet or toaster', 'knife', 'cutting board', 'small bowl'],
-    ingredientGroups: [
-      { component: 'Bread', items: ['2 rolls or 4 bread slices'] },
-      { component: 'Filling', items: ['6-8 oz protein or vegetables'] },
-      { component: 'Sauce', items: ['2 tbsp mayo or dressing'] },
-      { component: 'Toppings', items: ['tomato slices', 'lettuce leaves'] },
-    ],
-    ingredients: ['2 rolls or 4 bread slices', '6-8 oz protein or vegetables', '2 tbsp mayo or dressing', '2 tomato slices', '2 lettuce leaves'],
-    mistake: 'Do not add wet toppings directly to bread without sauce or barrier ingredients.',
-    mode,
-    prepTime: '8 min',
-    steps: [
-      'Toast bread 1-2 minutes until lightly golden.',
-      'Warm or season the filling 3-4 minutes until hot or flavorful.',
-      'Stir sauce in a small bowl until smooth.',
-      'Layer sauce, filling, tomato, and lettuce on the bread.',
-      'Press gently, slice, and serve while the bread is crisp.',
-    ],
-    storage: 'Store filling separately up to 3 days. Assemble sandwiches fresh for best texture.',
-    substitutions: ['Use wraps instead of bread.', 'Use Greek yogurt instead of mayo.', 'Use any crisp lettuce or greens.'],
-    title: 'Restaurant-Style Sandwich Homemade Version',
-  });
-}
-
-function createGenericStarterVariant(analysis: FoodImageAnalysis, mode: RecipeMode): OpenRouterRecipeVariant {
-  const visibleMain = getVisibleMainIngredient(analysis);
-  const visibleSauce = analysis.visibleComponents.sauce || 'matching sauce or dressing';
-  const visibleToppings = analysis.visibleComponents.toppingsGarnish ||
-    analysis.visibleComponents.vegetables ||
-    'visible toppings or vegetables';
-
-  return createBaseStarterVariant({
-    analysis,
-    bestFor: 'weeknight dinner',
-    cookTime: '15 min',
-    description: `A flexible restaurant-style homemade version based on the visible ${analysis.dishName.toLowerCase()}.`,
-    equipment: getDefaultEquipment(analysis),
-    ingredientGroups: [
-      { component: 'Main', items: [visibleMain] },
-      { component: 'Sauce', items: [`2 tbsp ${visibleSauce}`] },
-      { component: 'Toppings', items: [`1 cup ${visibleToppings}`] },
-    ],
-    ingredients: [visibleMain, `2 tbsp ${visibleSauce}`, `1 cup ${visibleToppings}`, 'salt and pepper to taste'],
-    mistake: getDefaultAvoidMistake(analysis),
-    mode,
-    prepTime: '10 min',
-    steps: getDefaultRecipeSteps(analysis.dishName),
-    storage: getDefaultStorageAndReheating(analysis),
-    substitutions: getDefaultSubstitutions(mode),
-    title: `${analysis.dishName} Homemade Version`,
-  });
-}
-
 // Standalone words that are too vague to ever ship as an ingredient name or to
 // stand in for an actual ingredient in a step. Exact-match only, so real names
 // like "tomato sauce" or "mixed vegetables, chopped" are never caught.
@@ -2171,10 +1358,121 @@ const vagueIngredientWords = new Set([
   'veggies', 'sauce', 'sauces', 'sauce base', 'seasoning', 'seasonings', 'spice', 'spices',
   'topping', 'toppings', 'optional items', 'optional toppings', 'ingredients', 'filling',
   'fillings', 'cream stuff', 'food', 'dish', 'meal', 'stuff',
+  // Dish names that slip through as ingredient strings — blocked here so they never
+  // reach the ingredient list. "elote" is translated (not blocked) via DISH_NAME_TRANSLATIONS.
+  'burger', 'burgers', 'pizza', 'taco', 'tacos', 'sushi', 'gyoza', 'dumpling', 'dumplings',
+  'ramen bowl', 'pho bowl',
 ]);
 
 function isVagueIngredientWord(value: string) {
   return vagueIngredientWords.has(value.trim().toLowerCase());
+}
+
+// Culinary synonym groups — each group maps to a single canonical form (index 0).
+// Used to match equivalent ingredient names across different cuisines and dialects.
+// Plurals are included explicitly; auto-desingularization handles simple -s endings.
+const INGREDIENT_SYNONYM_GROUPS: string[][] = [
+  ['scallion', 'scallions', 'green onion', 'green onions', 'spring onion', 'spring onions'],
+  ['cilantro', 'coriander', 'fresh coriander'],
+  ['chickpea', 'chickpeas', 'garbanzo', 'garbanzo bean', 'garbanzo beans', 'garbanzos'],
+  ['zucchini', 'zucchinis', 'courgette', 'courgettes'],
+  ['eggplant', 'eggplants', 'aubergine', 'aubergines'],
+  ['bell pepper', 'bell peppers', 'capsicum', 'capsicums'],
+  ['cornstarch', 'corn starch', 'cornflour', 'corn flour'],
+  ['confectioners sugar', "confectioner's sugar", 'powdered sugar', 'icing sugar'],
+  ['caster sugar', 'castor sugar', 'superfine sugar'],
+  ['jalapeño', 'jalapeno', 'jalapeños', 'jalapenos'],
+  ['yogurt', 'yoghurt', 'yogurts', 'yoghurts'],
+  ['arugula', 'rocket', 'arugulas'],
+  ['shrimp', 'prawn', 'prawns', 'shrimps'],
+  ['ground meat', 'mince', 'minced meat', 'ground beef', 'minced beef'],
+];
+
+// Build a normalized alias → canonical index lookup at module load time.
+const INGREDIENT_SYNONYM_LOOKUP = new Map<string, number>(
+  INGREDIENT_SYNONYM_GROUPS.flatMap((group, idx) =>
+    group.map((alias) => [alias.toLowerCase().trim(), idx]),
+  ),
+);
+
+// Returns the canonical form of an ingredient name for comparison.
+// Handles synonyms and simple plural auto-stripping.
+function canonicalIngredientName(name: string): string {
+  const lower = name.toLowerCase().trim();
+  const direct = INGREDIENT_SYNONYM_LOOKUP.get(lower);
+  if (direct !== undefined) {
+    return INGREDIENT_SYNONYM_GROUPS[direct][0];
+  }
+  // Strip a trailing 's' for simple plurals not in the synonym map.
+  if (lower.endsWith('s') && lower.length > 3) {
+    const singular = lower.slice(0, -1);
+    const singularIdx = INGREDIENT_SYNONYM_LOOKUP.get(singular);
+    if (singularIdx !== undefined) {
+      return INGREDIENT_SYNONYM_GROUPS[singularIdx][0];
+    }
+  }
+  return lower;
+}
+
+// Returns true when two ingredient strings are considered the same after synonym
+// expansion and substring matching (e.g. "chicken breast" matches "chicken").
+function ingredientsMatch(recipeIngredient: string, stepIngredient: string): boolean {
+  const a = canonicalIngredientName(recipeIngredient);
+  const b = canonicalIngredientName(stepIngredient);
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+// Verb-to-tool mapping for high-confidence tool detection from step text.
+const TOOL_DETECTION_RULES: Array<{ verbs: RegExp; tools: string[] }> = [
+  { verbs: /\b(chop|dice|mince|slice|cut|halve|quarter|julienne|trim|peel)\b/, tools: ["chef's knife", 'cutting board'] },
+  { verbs: /\b(whisk|beat|stir vigorously|mix vigorously)\b/, tools: ['whisk', 'mixing bowl'] },
+  { verbs: /\b(bake|roast)\b/, tools: ['oven', 'baking sheet'] },
+  { verbs: /\b(drain|strain)\b/, tools: ['colander'] },
+  { verbs: /\b(grate|zest)\b/, tools: ['grater'] },
+  { verbs: /\b(blend|purée|puree)\b/, tools: ['blender'] },
+  { verbs: /\b(simmer|sauté|saute|fry|sear|brown)\b/, tools: ['skillet', 'spatula'] },
+  { verbs: /\b(boil)\b/, tools: ['pot', 'slotted spoon'] },
+  { verbs: /\b(measure)\b/, tools: ['measuring cup', 'measuring spoons'] },
+];
+
+// Detects tools required by a step based on cooking verb patterns.
+// Used as a fallback when the AI omits toolsUsed, and in audit warnings.
+function detectToolsFromStep(text: string): string[] {
+  const lower = text.toLowerCase();
+  const detected: string[] = [];
+  for (const rule of TOOL_DETECTION_RULES) {
+    if (rule.verbs.test(lower)) {
+      detected.push(...rule.tools);
+    }
+  }
+  return [...new Set(detected)];
+}
+
+// Cooking verbs used to classify steps as "cooking" for audit and weakness detection.
+// sauté/saute covers ~35–40% of real recipes that would otherwise be invisible to the repair loop.
+const PHASE_COOKING_VERBS_RE = /\b(sear|fry|roast|bake|boil|grill|simmer|saut[eé]|steam|poach|braise|brown|reduce|stir.?fry|caramelize|toast|deep.?fry|pan.?fry|air.?fry)\b/;
+
+// Visual and sensory vocabulary that indicates a lookFor/doneWhen is observable.
+const VISUAL_SIGNAL_VOCAB = /\b(golden|brown|browned|caramelized|caramelize|translucent|opaque|bubbling|sizzling|crispy|glossy|thicken|thickened|reduced|wilted|softened|darkened|pale|foamy|puffed|charred|seared|crusty|set|firmed?|separated|curled?|crisp|toasted?|melted?|coated?|golden.?brown|lightly.?brown|no.?pink|runs?.?clear|white.?throughout|pulls?.?away|falls?.?off)\b/;
+const SENSORY_SIGNAL_VOCAB = /\b(smell|aroma|sizzle|sizzling|fragrant|nutty|tender|jiggles?|springy|spring.?back|al.?dente|crunchy|sticky|resistance|caramel)\b/;
+// Temperature readings and physical doneness tests are equally valid completion
+// signals. The repair prompt (repairStepCoachingWithAI) already tells the model
+// these qualify — the detectors below MUST agree or a perfectly good
+// "Reads 165°F on a thermometer" gets wrongly flagged weak and triggers repair.
+// The `\d{2,3}\s*°` form requires the degree mark, so "12 cups" can't match.
+const TEMPERATURE_SIGNAL_VOCAB = /\b\d{2,3}\s*°|°\s*[fc]\b|\bdegrees?\b|\bthermometer\b|\binternal temp(?:erature)?\b/i;
+const PHYSICAL_TEST_VOCAB = /\bcoats?\b[^.]{0,25}\bspoon\b|\bfork[\s-]?tender\b|\bflakes?\b|\bknife\b[^.]{0,25}\b(?:slides?|inserts?|comes? out|clean)\b|\bpulls? apart\b/i;
+
+// A cue counts as observable when the cook can SEE, HEAR, SMELL, FEEL, or MEASURE
+// it — color, texture, sound, aroma, a physical test, or a temperature. A bare
+// timer ("cook 5 minutes") is deliberately excluded: it says WHEN to look, not
+// WHAT doneness looks like. Single source of truth for every lookFor/doneWhen check.
+function hasObservableSignal(text: string): boolean {
+  const lower = text.toLowerCase();
+  return VISUAL_SIGNAL_VOCAB.test(lower)
+    || SENSORY_SIGNAL_VOCAB.test(lower)
+    || TEMPERATURE_SIGNAL_VOCAB.test(lower)
+    || PHYSICAL_TEST_VOCAB.test(lower);
 }
 
 // A specific, honest best-guess noun for the dish's main component, derived from
@@ -2272,127 +1570,623 @@ function sanitizeRecipeVagueness(recipe: Recipe, analysis: FoodImageAnalysis): R
   };
 }
 
-function getVisibleMainIngredient(analysis: FoodImageAnalysis) {
-  if (analysis.visibleComponents.protein && !isVagueIngredientWord(analysis.visibleComponents.protein)) {
-    return `8 oz ${analysis.visibleComponents.protein}`;
-  }
-  if (analysis.visibleComponents.baseStarch && !isVagueIngredientWord(analysis.visibleComponents.baseStarch)) {
-    return `2 cups ${analysis.visibleComponents.baseStarch}`;
-  }
-  const firstVisible = analysis.visibleIngredients.find((item) => item && !isVagueIngredientWord(item));
-  if (firstVisible) {
-    return `2 servings ${firstVisible}`;
-  }
-  const firstLikely = analysis.likelyIngredients.find((item) => item && !isVagueIngredientWord(item));
-  if (firstLikely) {
-    return `2 servings ${firstLikely}`;
-  }
-
-  return `2 servings ${getCategoryMainIngredient(analysis.broadDishCategory, analysis.dishName).replace(/^the /, '')}`;
-}
-
-function getStarterTitle(title: string, mode: RecipeMode) {
-  if (mode === 'Budget') {
-    return `Budget ${title}`;
-  }
-  if (mode === 'Healthy') {
-    return `Lighter ${title}`;
-  }
-
-  return title;
-}
-
-function createStarterGroceryItem(
-  category: GroceryCategory,
-  name: string,
-  quantity: string,
-  shoppingNote = '',
-  pantryStaple = false,
-): OpenRouterRecipeVariant['groceryItems'][number] {
-  return {
-    category,
-    name,
-    pantryStaple,
-    quantity,
-    shoppingNote,
-    sourceIngredient: '',
-  };
-}
-
 function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mode: RecipeMode) {
   const usableLikely = analysis.likelyIngredients.filter((item) => item && !isVagueIngredientWord(item));
-  const fallback = usableLikely.length > 0
-    ? usableLikely
-    : getCategoryFallbackIngredients(analysis.broadDishCategory, analysis.dishName);
-
-  const ingredients = getSafeList(values, fallback, 12)
+  const ingredients = getSafeList(values, usableLikely, 12)
     .filter((value) => !isVagueIngredientWord(value))
-    .map(toRecipeIngredient);
-  return ensureCoreIngredients(ingredients, analysis, mode).slice(0, 12);
+    .map(toRecipeIngredient)
+    .filter((ing) => !isVagueIngredientWord(ing.name))  // catch "1 burger" → name:"burger" post-parse
+    .map((ing) => normalizeCheetosDust(ing, analysis));
+  const base = ensureCoreIngredients(ingredients, analysis).slice(0, 12);
+  return mode === 'Budget' ? base.map(normalizeBudgetIngredient) : base;
 }
 
-// Specific, buyable starter ingredients per dish family — used only when the
-// model returned nothing usable, so the list is never vague.
-function getCategoryFallbackIngredients(broadDishCategory: string, dishName: string): string[] {
-  const text = `${broadDishCategory} ${dishName}`.toLowerCase();
-  if (text.includes('pizza')) {
-    return ['1 pizza dough or crust', '1/2 cup tomato sauce', '1 1/2 cups shredded mozzarella', '1 tablespoon olive oil'];
+// Replace "hot cheetos dust" with "chili powder or Tajín" unless the dish context
+// explicitly features Hot Cheetos/Takis/Flamin' Hot as a visible ingredient.
+function normalizeCheetosDust(ingredient: RecipeIngredient, analysis: FoodImageAnalysis): RecipeIngredient {
+  if (!/hot.?cheeto|cheeto.*dust|flamin.*hot.*dust|takis.*dust/i.test(ingredient.name)) {
+    return ingredient;
   }
-  if (includesAny(text, ['cheeseburger', 'burger'])) {
-    return ['1 lb ground beef', '4 burger buns', '4 slices cheddar cheese', '1 cup shredded romaine lettuce', '1 tomato, sliced'];
+  const context = [analysis.dishName, ...analysis.visibleIngredients, ...analysis.likelyIngredients].join(' ');
+  if (/cheeto|takis|flamin.?hot|hot.?chip/i.test(context)) {
+    return ingredient; // intentional — keep it
   }
-  if (includesAny(text, ['pasta', 'rigatoni', 'spaghetti', 'penne', 'noodle'])) {
-    return ['8 oz pasta', '1 cup tomato sauce', '2 cloves garlic, minced', '1/4 cup grated parmesan', '1 tablespoon olive oil'];
-  }
-  if (includesAny(text, ['salad', 'greens'])) {
-    return ['4 cups mixed greens', '1 cup cherry tomatoes, halved', '1/2 cucumber, sliced', '3 tablespoons olive oil', '1 tablespoon lemon juice'];
-  }
-  if (includesAny(text, ['smoothie', 'shake', 'juice'])) {
-    return ['1 cup frozen fruit', '1 ripe banana', '3/4 cup milk or yogurt', '1 teaspoon honey'];
-  }
-  if (includesAny(text, ['rice', 'bowl', 'grain'])) {
-    return ['2 cups cooked rice', '8 oz cooked chicken', '1 cup steamed vegetables', '2 tablespoons soy sauce'];
-  }
+  return { ...ingredient, name: 'chili powder or tajín', quantity: ingredient.quantity || '1 tsp', pantryItem: true };
+}
 
-  return ['8 oz cooked chicken', '1 cup steamed vegetables', '2 tablespoons olive oil', '1/2 teaspoon kosher salt'];
+// Strip presentation-only modifiers that don't correspond to a grocery-store product.
+// Only applies to Budget mode — Restaurant Copy/Healthy may intentionally specify
+// particular cuts or presentations.
+function normalizeBudgetIngredient(ingredient: RecipeIngredient): RecipeIngredient {
+  const name = ingredient.name
+    .replace(/\biceberg lettuce\s+leaves\b/gi, 'lettuce')
+    .replace(/\b(?:crinkle-?cut|hand-?cut|house-?made|hand-?crafted|artisanal?|freshly-?cut|freshly-?ground)\b\s*/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return name === ingredient.name ? ingredient : { ...ingredient, name };
 }
 
 function getRecipeSteps(values: OpenRouterRecipeVariant['steps'], dishName: string) {
-  const fallbackSteps = getDefaultRecipeSteps(dishName);
+  // The provider fail-closes on structurally invalid steps, so by here the AI
+  // steps are real. No templated fallback — only clean and de-duplicate the
+  // model's own step text.
   const cleanValues = (Array.isArray(values) ? values : [])
     .map(getStepText)
     .map((value) => getShortText(value, '', 240))
-    .filter((value) => Boolean(value) && !isPlaceholderText(value));
-  const source = cleanValues.length > 0 ? cleanValues : fallbackSteps;
-  const steps = [...new Set(source)].slice(0, 16).map(cleanRecipeCopy);
-  const wordCount = steps.join(' ').split(/\s+/).filter(Boolean).length;
-  // Only fall back on truly degenerate output (too few steps or fragment-length
-  // steps). Crisp real steps like "Brush crust with olive oil." must survive.
-  const shouldUseFallback = steps.length < 4 || wordCount / Math.max(steps.length, 1) < 6;
+    .filter((value) => Boolean(value) && !isPlaceholderText(value))
+    .filter((value) => !isGenericGatherStep(value));
+  const steps = [...new Set(cleanValues)].slice(0, 16).map(cleanRecipeCopy);
 
-  return ensureSafetyTemperature(shouldUseFallback ? fallbackSteps : steps, dishName);
+  return ensureSafetyTemperature(steps, dishName);
+}
+
+function isGenericGatherStep(step: string) {
+  return /^gather\s+(?:all\s+)?(?:your\s+)?(?:the\s+)?ingredients/i.test(step.trim());
 }
 
 function getStructuredSteps(
   values: OpenRouterRecipeVariant['steps'],
   steps: string[],
   analysis: FoodImageAnalysis,
+  recipeIngredients?: string[],
 ): RecipeStep[] {
   const aiSteps = (Array.isArray(values) ? values : [])
     .map((value, index) => toStructuredStep(value, steps[index], analysis))
     .filter((step): step is RecipeStep => Boolean(step?.text))
     .slice(0, 16);
 
-  if (aiSteps.length >= 5) {
-    return ensureStructuredStepFallbacks(aiSteps, analysis);
+  const source = aiSteps.length >= 5
+    ? aiSteps
+    : steps
+      .map((step) => toStructuredStep(step, step, analysis))
+      .filter((step): step is RecipeStep => Boolean(step));
+
+  // Validate phase ordering using AI-assigned phase integers (falls back to keyword
+  // classification for steps without AI-assigned phase, e.g. old saved recipes).
+  const corrected = validateStepPhaseOrder(source) ? source : correctStepPhaseOrder(source);
+  if (!validateStepPhaseOrder(corrected)) {
+    console.warn('[recipe-validator] phase ordering could not be fully corrected', {
+      dishName: analysis.dishName,
+    });
   }
 
-  return ensureStructuredStepFallbacks(
-    steps
-      .map((step) => toStructuredStep(step, step, analysis))
-      .filter((step): step is RecipeStep => Boolean(step)),
-    analysis,
-  );
+  // Fix garnish/cheese/herb steps incorrectly assigned phase 6 by the AI.
+  // Those should be phase 5 (Finish); placing them in phase 6 leaves them after Serve.
+  const phase6Fixed = fixMisplacedPhase6Steps(corrected);
+
+  // Apply topological sort within each phase group based on creates/requires dependencies.
+  const causalCorrected = correctCausalOrder(phase6Fixed);
+
+  // Log any causality violations that survive correction (steps that require
+  // objects no earlier step has declared as created).
+  const violations = validateCausality(causalCorrected);
+  if (violations.length > 0) {
+    console.warn('[recipe-causality] dependency violations after correction', {
+      dishName: analysis.dishName,
+      violations,
+    });
+  }
+
+  // Deterministic timeline validation: move misplaced steps without modifying text.
+  const timelineValidated = validateTimeline(causalCorrected);
+
+  // Ensure ingredient prep (dice/chop/shred…) precedes the first step that uses that ingredient.
+  const ingredientValidated = validateIngredientTimeline(timelineValidated);
+
+  // Ensure the final step is always a serving action (phase 6).
+  const finalized = ensureServingStep(ingredientValidated, analysis.dishName ?? 'the dish');
+
+  const withFallbacks = ensureStructuredStepFallbacks(finalized, analysis);
+  auditStepCoachingQuality(withFallbacks, analysis, analysis.dishName ?? '', recipeIngredients);
+  return withFallbacks;
+}
+
+type CausalityViolation = {
+  stepIndex: number;
+  missingObject: string;
+};
+
+// Checks that every item in a step's "requires" was declared in "creates" by an earlier step.
+// Returns violations found — an empty array means the recipe has causal integrity.
+function validateCausality(steps: RecipeStep[]): CausalityViolation[] {
+  const created = new Set<string>();
+  const violations: CausalityViolation[] = [];
+  for (let i = 0; i < steps.length; i++) {
+    for (const obj of steps[i].requires ?? []) {
+      if (!created.has(obj)) {
+        violations.push({ stepIndex: i, missingObject: obj });
+      }
+    }
+    for (const obj of steps[i].creates ?? []) {
+      created.add(obj);
+    }
+  }
+  return violations;
+}
+
+// Stable topological sort of steps within a single phase group using Kahn's algorithm.
+// Steps with no dependency relationships stay in their original relative order.
+// If a cycle is detected (should never happen in valid AI output), returns original order.
+function topologicalSortWithinPhase(steps: RecipeStep[]): RecipeStep[] {
+  if (steps.length <= 1) {
+    return steps;
+  }
+
+  // Map: object_tag → index of step that creates it
+  const createsMap = new Map<string, number>();
+  steps.forEach((step, i) => {
+    (step.creates ?? []).forEach((obj) => createsMap.set(obj, i));
+  });
+
+  // Build adjacency: adj[i] = indices of steps that must come after step i
+  const inDegree = new Array(steps.length).fill(0);
+  const adj: number[][] = steps.map(() => []);
+  for (let j = 0; j < steps.length; j++) {
+    for (const obj of steps[j].requires ?? []) {
+      const i = createsMap.get(obj);
+      if (i !== undefined && i !== j) {
+        adj[i].push(j);
+        inDegree[j]++;
+      }
+    }
+  }
+
+  // Kahn's — FIFO queue preserves original relative order for independent steps
+  const queue: number[] = [];
+  for (let i = 0; i < steps.length; i++) {
+    if (inDegree[i] === 0) {
+      queue.push(i);
+    }
+  }
+
+  const result: RecipeStep[] = [];
+  while (queue.length > 0) {
+    const i = queue.shift()!;
+    result.push(steps[i]);
+    for (const j of adj[i]) {
+      inDegree[j]--;
+      if (inDegree[j] === 0) {
+        queue.push(j);
+      }
+    }
+  }
+
+  // Cycle detected — return original order rather than a partially sorted result
+  return result.length === steps.length ? result : steps;
+}
+
+// Applies topological sort within each phase group so that within a phase,
+// a step that creates something always appears before steps that require it.
+// Between-phase ordering from correctStepPhaseOrder is preserved.
+function correctCausalOrder(steps: RecipeStep[]): RecipeStep[] {
+  if (steps.length <= 1) {
+    return steps;
+  }
+
+  // Group steps into consecutive runs of the same effective phase.
+  // This preserves the between-phase ordering from correctStepPhaseOrder.
+  const runs: RecipeStep[][] = [];
+  let currentPhase = -1;
+  for (const step of steps) {
+    const p = getEffectivePhase(step) || 3;
+    if (p !== currentPhase) {
+      runs.push([step]);
+      currentPhase = p;
+    } else {
+      runs[runs.length - 1].push(step);
+    }
+  }
+
+  return runs.flatMap((run) => topologicalSortWithinPhase(run));
+}
+
+// Returns the effective phase number for a step.
+// Uses the AI-assigned phase integer if present and valid (1-6).
+// Falls back to keyword classification for steps from old data or plain-string recipes.
+function getEffectivePhase(step: RecipeStep): number {
+  const p = step.phase;
+  if (p && Number.isInteger(p) && p >= 1 && p <= 6) {
+    return p;
+  }
+  return getStepPhase(step.text);
+}
+
+// Returns true if all classified steps appear in non-decreasing phase order.
+function validateStepPhaseOrder(steps: RecipeStep[]): boolean {
+  let lastPhase = 0;
+  for (const step of steps) {
+    const phase = getEffectivePhase(step);
+    if (phase > 0 && phase < lastPhase) {
+      return false;
+    }
+    if (phase > 0) {
+      lastPhase = phase;
+    }
+  }
+  return true;
+}
+
+// Stable-sorts steps by effective phase number, preserving relative order within each phase.
+// Unclassified steps (phase 0) are placed after cooking (phase 3) as a safe default.
+function correctStepPhaseOrder(steps: RecipeStep[]): RecipeStep[] {
+  const byPhase = new Map<number, RecipeStep[]>();
+  steps.forEach((step) => {
+    const p = getEffectivePhase(step) || 3;
+    if (!byPhase.has(p)) {
+      byPhase.set(p, []);
+    }
+    byPhase.get(p)!.push(step);
+  });
+  const result: RecipeStep[] = [];
+  for (let p = 1; p <= 6; p++) {
+    if (byPhase.has(p)) {
+      result.push(...(byPhase.get(p) ?? []));
+    }
+  }
+  return result;
+}
+
+// Downgrades phase-6 steps that aren't actual serve/plate actions (e.g. garnish, added
+// cheese, fresh herbs) to phase 5, then re-sorts. This fixes the case where the AI
+// assigns phase 6 to finishing touches, which stable-sort leaves after the serve step.
+function fixMisplacedPhase6Steps(steps: RecipeStep[]): RecipeStep[] {
+  const SERVE_RE = /\b(serve|plate(?:\s+and\s+serve)?|enjoy|dish\s+up)\b/i;
+  let changed = false;
+  const fixed = steps.map((step) => {
+    if (step.phase === 6) {
+      const text = `${step.title ?? ''} ${step.text}`;
+      if (!SERVE_RE.test(text)) {
+        changed = true;
+        return { ...step, phase: 5 };
+      }
+    }
+    return step;
+  });
+  return changed ? correctStepPhaseOrder(fixed) : steps;
+}
+
+// Lightweight timeline validator. Pure deterministic — only reorders, never modifies text.
+// Runs after correctCausalOrder(), before ensureServingStep().
+// Rules enforced:
+//   2. Serve must be final: post-serve non-cleanup steps move before it
+//   3+4. Finishing touches and cooking steps cannot appear after serve
+//   5. Phase-1 prep steps cannot appear after phase-2+ cooking steps
+//   6. Rest must precede slice (conservative: only within a 5-step window)
+function validateTimeline(steps: RecipeStep[]): RecipeStep[] {
+  if (steps.length <= 2) return steps;
+
+  const SERVE_RE = /\b(serve|plate(?:\s+and\s+serve)?|enjoy(?:\s+immediately)?|dish\s+up)\b/i;
+  const CLEANUP_RE = /\b(clean\s*up|wash\s+(?:the\s+)?dishes?|store\s+leftovers?|refrigerat|freeze\s+(?:for|any))\b/i;
+  const COOK_RE = /\b(bake|fry|boil|simmer|saut[eé]|roast|grill|toast|cook|reduce|sear|steam|stir.?fry|caramelize)\b/i;
+  const FINISH_RE = /\b(garnish|drizzle|sprinkle|top\s+with|add\s+(?:fresh\s+|grated\s+)?(?:cheese|parmesan|parsley|basil|cilantro|herbs?|scallions?)|finish\s+with|squeeze\s+(?:fresh\s+)?(?:lemon|lime)|season\s+to\s+taste|taste\s+and\s+adjust)\b/i;
+
+  const text = (s: RecipeStep) => `${s.title ?? ''} ${s.text}`;
+
+  // Find the last serve step (phase 6 takes precedence; SERVE_RE is the fallback).
+  let serveIdx = -1;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (steps[i].phase === 6 || SERVE_RE.test(text(steps[i]))) {
+      serveIdx = i;
+      break;
+    }
+  }
+
+  let result = steps;
+
+  // Rules 2–4: move post-serve non-cleanup steps to before serve.
+  if (serveIdx !== -1 && serveIdx < steps.length - 1) {
+    const before = steps.slice(0, serveIdx);
+    const serveStep = steps[serveIdx];
+    const after = steps.slice(serveIdx + 1);
+
+    const toMove: RecipeStep[] = [];
+    const keepAfter: RecipeStep[] = [];
+    for (const s of after) {
+      (CLEANUP_RE.test(text(s)) ? keepAfter : toMove).push(s);
+    }
+
+    if (toMove.length > 0) {
+      // Sub-order: cooking steps first, then ambiguous, then finishing touches.
+      const cookMoved = toMove.filter(s => COOK_RE.test(text(s)) && !FINISH_RE.test(text(s)));
+      const finishMoved = toMove.filter(s => FINISH_RE.test(text(s)));
+      const otherMoved = toMove.filter(s => !COOK_RE.test(text(s)) && !FINISH_RE.test(text(s)));
+      result = [...before, ...cookMoved, ...otherMoved, ...finishMoved, serveStep, ...keepAfter];
+    }
+  }
+
+  // Rule 5: phase-1 prep steps appearing after phase-2+ cooking steps → move before first cook.
+  const firstCookIdx = result.findIndex(s => (s.phase ?? 0) >= 2);
+  if (firstCookIdx > 0) {
+    const latePreps = result.slice(firstCookIdx + 1).filter(s => s.phase === 1);
+    if (latePreps.length > 0) {
+      const prepSet = new Set(latePreps);
+      const without = result.filter(s => !prepSet.has(s));
+      result = [...without.slice(0, firstCookIdx), ...latePreps, ...without.slice(firstCookIdx)];
+    }
+  }
+
+  // Rule 6: slice appears before rest → move rest to just before slice (conservative).
+  const REST_RE = /\blet\s+(?:it\s+|the\s+\S+\s+)?rest\b|\brest\s+(?:for|the)\b/i;
+  const SLICE_RE = /\b(slice|carve)\b/i;
+  const restIdx = result.findIndex(s => REST_RE.test(text(s)));
+  const sliceIdx = result.findIndex(s => SLICE_RE.test(text(s)));
+  if (restIdx !== -1 && sliceIdx !== -1 && sliceIdx < restIdx && restIdx - sliceIdx <= 5) {
+    const copy = [...result];
+    const [restStep] = copy.splice(restIdx, 1);
+    copy.splice(sliceIdx, 0, restStep);
+    result = copy;
+  }
+
+  // Renumber only if anything moved.
+  if (result === steps) return steps;
+  return result.map((s, i) => ({ ...s, stepNumber: i + 1 }));
+}
+
+// Ensures ingredient prep steps (dice, chop, shred…) appear before any step that uses
+// that ingredient. Conservative: only moves steps that start with an explicit prep verb,
+// and only when the ingredient stem unambiguously appears in an earlier non-prep step.
+// No AI calls, no text modification. Renumbers only when steps actually move.
+function validateIngredientTimeline(steps: RecipeStep[]): RecipeStep[] {
+  if (steps.length <= 2) return steps;
+
+  const PREP_RE = /^(?:dice|chop|mince|slice|shred|grate|peel|trim|julienne|halve|quarter|zest|crush|pound|wash|rinse|drain|crumble|tear)\b/i;
+  const SKIP = new Set(['the','and','with','into','them','your','then','over','from','some','each','until','this','that','finely','roughly','thinly','small','large','fresh','dried','well','into','about']);
+
+  const txt = (s: RecipeStep) => `${s.title ?? ''} ${s.text}`;
+
+  // Returns a stable ingredient stem from the prep step text, or null if not a prep step.
+  function ingredientStem(s: RecipeStep): string | null {
+    if (!PREP_RE.test(s.text.trim())) return null;
+    const words = txt(s).toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/)
+      .filter(w => w.length >= 5 && !SKIP.has(w) && !PREP_RE.test(w));
+    const tok = words[0];
+    if (!tok) return null;
+    // Stem: drop last 2 chars to absorb -s/-es, but keep at least 5.
+    return tok.slice(0, Math.max(5, tok.length - 2));
+  }
+
+  let result = [...steps];
+  let anyMoved = false;
+
+  // Each pass fixes the first detected violation; bounded by steps.length.
+  for (let guard = 0; guard < steps.length; guard++) {
+    let moved = false;
+    for (let i = 1; i < result.length; i++) {
+      const stem = ingredientStem(result[i]);
+      if (!stem) continue;
+      const re = new RegExp(`\\b${stem}`, 'i');
+      for (let j = 0; j < i; j++) {
+        if (PREP_RE.test(result[j].text.trim())) continue; // skip other prep steps
+        if (re.test(txt(result[j]))) {
+          const [step] = result.splice(i, 1);
+          result.splice(j, 0, step);
+          anyMoved = true;
+          moved = true;
+          break;
+        }
+      }
+      if (moved) break;
+    }
+    if (!moved) break;
+  }
+
+  if (!anyMoved) return steps;
+  return result.map((s, i) => ({ ...s, stepNumber: i + 1 }));
+}
+
+// Ensures the recipe ends with a serving step (phase 6).
+// Only appends a generic serving step when no finish/serve step exists anywhere.
+function ensureServingStep(steps: RecipeStep[], dishName: string): RecipeStep[] {
+  if (steps.length === 0) {
+    return steps;
+  }
+  const lastPhase = getEffectivePhase(steps[steps.length - 1]);
+  if (lastPhase >= 5) {
+    return steps;
+  }
+  const hasServingStep = steps.some((s) => getEffectivePhase(s) >= 5);
+  if (hasServingStep) {
+    return steps;
+  }
+  return [...steps, {
+    phase: 6,
+    title: 'Serve and enjoy',
+    text: `Plate ${dishName} and serve immediately while hot.`,
+  }];
+}
+
+// Keyword-based phase classification — fallback only for steps without AI-assigned phase.
+// Used by getEffectivePhase() when step.phase is absent (old saved recipes, plain-string steps).
+//   1 = Preparation   (wash, slice, chop, mince, dice, measure, prep)
+//   2 = Setup / Cook  (heat, preheat, cook, fry, boil, roast, bake, sear, sauté)
+//   3 = Sauce         (whisk sauce, stir sauce, mix sauce, simmer sauce)
+//   4 = Assemble      (combine, build, layer, add to bowl, top with)
+//   5 = Finish        (drizzle, garnish, sprinkle, scatter, squeeze, fresh herb)
+//   6 = Serve         (serve, plate, enjoy)
+function getStepPhase(text: string): number {
+  const t = text.toLowerCase();
+  if (/\b(serve|plate and serve|enjoy immediately|serve immediately|serve warm|serve right away)\b/.test(t)) {
+    return 6;
+  }
+  if (/\bdrizzle\b|\bgarnish\b|\bscatter\b|\bsprinkle on top\b|\bsqueeze (?:fresh |a )?(lemon|lime|citrus)\b|\bfinish(?:ing)? with\b|\badd fresh (herbs?|basil|cilantro|parsley|scallions)\b/.test(t)) {
+    return 5;
+  }
+  if (/\b(combine|build|assemble|layer|add (?:the )?(?:chicken|beef|pork|shrimp|tempura|rice|noodles|veggies|vegetables|toppings) to (?:the )?(?:bowl|plate|dish|pan)|arrange|top with|place (?:on top|in (?:the )?bowl))\b/.test(t)) {
+    return 4;
+  }
+  if (/\b(whisk|stir together|mix together).{0,40}(sauce|dressing|glaze|marinade)\b|\b(sauce|dressing|glaze)\b.{0,30}\b(whisk|stir|mix|combine|simmer|reduce)\b/.test(t)) {
+    return 3;
+  }
+  if (/\b(cook|fry|boil|roast|bake|sear|sauté|saute|grill|steam|pan-fry|deep-fry|air-fry|toast|brown|caramelize|reduce|simmer).{0,60}\b(chicken|beef|pork|shrimp|tofu|tempura|fish|salmon|eggs?|noodles?|pasta|rice|vegetables?|veggies|onion|pepper|broccoli|spinach)\b|\b(heat|warm).{0,20}(oil|pan|skillet|wok|butter)\b|\b(chicken|beef|pork|shrimp|tofu|fish|salmon|eggs?|noodles?|pasta|rice|vegetables?|veggies)\b.{0,60}\b(cook|fry|boil|roast|bake|sear|golden|done|tender|crispy)\b/.test(t)) {
+    return 2;
+  }
+  if (/\b(wash|rinse|dry|pat dry|slice|chop|dice|mince|crush|grate|shred|peel|trim|cut|halve|quarter|zest|julienne|measure|set out|prep|combine.{0,20}(in a bowl|in a dish|in a cup)|mix together.{0,20}(seasoning|spice|rub))\b/.test(t)) {
+    return 1;
+  }
+  return 0; // unclassified — leave in place
+}
+
+// Merges coaching patches from the AI repair pass into existing structured steps.
+//
+// Safer merge: a patched field is applied ONLY if that field was flagged weak for
+// this step. The repair model is told to return only the requested fields, but it
+// sometimes volunteers extra ones — without this gate a repair could overwrite a
+// strong original (e.g. a good chefTip) with a weaker rewrite, and the aggregate
+// `finalScore >= initialScore` guard wouldn't catch it because scoring is
+// presence-based. Companion fields travel with their trigger: regenerating a
+// commonQuestion must bring its answer; a new decisionPoint must bring ifYes/ifNo.
+function applyCoachingPatches(
+  steps: RecipeStep[],
+  patches: StepCoachingPatch[],
+  weaknesses: { stepIndex: number; weakFields: string[] }[],
+): RecipeStep[] {
+  const weakByIndex = new Map(weaknesses.map((w) => [w.stepIndex, new Set(w.weakFields)]));
+
+  return steps.map((step, idx) => {
+    const patch = patches.find((p) => p.index === idx);
+    if (!patch) return step;
+
+    const weak = new Set(weakByIndex.get(idx) ?? []);
+    // Forward companion expansion only — never the reverse, so a missing answer
+    // alone can't trigger a rewrite of an otherwise-good question.
+    if (weak.has('commonQuestion')) weak.add('commonQuestionAnswer');
+    if (weak.has('decisionPoint')) { weak.add('ifYes'); weak.add('ifNo'); }
+
+    // Apply patch value only when (a) the field was flagged weak and (b) the
+    // patch actually provides non-empty text; otherwise keep the original.
+    const take = (field: string, patchVal?: string): string | undefined =>
+      (weak.has(field) && patchVal?.trim()) ? patchVal : undefined;
+
+    return {
+      ...step,
+      decisionPoint: take('decisionPoint', patch.decisionPoint) ?? step.decisionPoint,
+      ifYes: take('ifYes', patch.ifYes) ?? step.ifYes,
+      ifNo: take('ifNo', patch.ifNo) ?? step.ifNo,
+      why: take('why', patch.why) ?? step.why,
+      commonMistake: take('commonMistake', patch.commonMistake) ?? step.commonMistake,
+      chefTip: take('chefTip', patch.chefTip) ?? step.chefTip,
+      commonQuestion: take('commonQuestion', patch.commonQuestion) ?? step.commonQuestion,
+      commonQuestionAnswer: take('commonQuestionAnswer', patch.commonQuestionAnswer) ?? step.commonQuestionAnswer,
+      lookFor: take('lookFor', patch.lookFor) ?? step.lookFor,
+      doneWhen: take('doneWhen', patch.doneWhen) ?? step.doneWhen,
+    };
+  });
+}
+
+// Identifies steps with missing or weak coaching fields and returns a list of
+// targeted weaknesses for the repair loop. Avoids flagging every step in a phase
+// for the same field — only the first occurrence per phase is flagged so repairs
+// are focused rather than redundant.
+function identifyCoachingWeaknesses(
+  steps: RecipeStep[],
+): { stepIndex: number; weakFields: string[] }[] {
+  // Track which phases already have a question/decision in forward order —
+  // built during the loop, not pre-scanned. Pre-scanning caused a late-step
+  // question to protect earlier steps that chronologically lack one.
+  // Phased steps use the phase number; unphased steps use the sentinel -1.
+  const phasesWithQuestion = new Set<number>();
+  const phasesWithDecision = new Set<number>();
+
+  const weaknesses: { stepIndex: number; weakFields: string[] }[] = [];
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const weakFields: string[] = [];
+    const stepTextLower = `${step.title ?? ''} ${step.text}`.toLowerCase();
+    const isCookingStep = step.phase === 3 || PHASE_COOKING_VERBS_RE.test(stepTextLower);
+    const phaseKey = step.phase ?? -1;
+
+    // Mark this phase as covered before the gap checks so a step with both
+    // a question and a cooking verb doesn't flag itself.
+    if (step.commonQuestion) phasesWithQuestion.add(phaseKey);
+    if (step.decisionPoint) phasesWithDecision.add(phaseKey);
+
+    if (!step.why && !step.whyItMatters) {
+      weakFields.push('why');
+    }
+
+    if (!step.chefTip || step.chefTip.length < 20) {
+      weakFields.push('chefTip');
+    }
+
+    // Flag the first cooking step per phase (including unphased) that lacks commonQuestion.
+    if (isCookingStep && !step.commonQuestion && !phasesWithQuestion.has(phaseKey)) {
+      weakFields.push('commonQuestion');
+      phasesWithQuestion.add(phaseKey);
+    }
+
+    // Flag orphaned commonQuestion — renders as an unanswerable prompt in the UI.
+    if (step.commonQuestion && !step.commonQuestionAnswer) {
+      weakFields.push('commonQuestionAnswer');
+    }
+
+    // Flag the first cooking step per phase (including unphased) that lacks a decisionPoint.
+    if (isCookingStep && !step.decisionPoint && !phasesWithDecision.has(phaseKey)) {
+      weakFields.push('decisionPoint');
+      phasesWithDecision.add(phaseKey);
+    }
+
+    // Flag incomplete decisionPoint — branches are required for the score to count it.
+    if (step.decisionPoint && (!step.ifYes || !step.ifNo)) {
+      weakFields.push('ifYes');
+      weakFields.push('ifNo');
+    }
+
+    // A lookFor with text but no observable signal (color/texture/temp/physical
+    // test) is vague. Temperature readings now count, so "Reads 165°F" is kept.
+    if (step.lookFor && !hasObservableSignal(step.lookFor)) {
+      weakFields.push('lookFor');
+    }
+
+    // Flag timer-only doneWhen on active cooking steps — passive steps (rest,
+    // chill, marinate) are legitimately time-based and should not be flagged.
+    if (isCookingStep && step.doneWhen) {
+      const hasObservable = hasObservableSignal(step.doneWhen);
+      const hasOnlyTimer = !hasObservable && /\b\d+\s*(?:min|sec|minute|second|hour)/.test(step.doneWhen.toLowerCase());
+      if (hasOnlyTimer) {
+        weakFields.push('doneWhen');
+      }
+    }
+
+    if (weakFields.length > 0) {
+      weaknesses.push({ stepIndex: i, weakFields });
+    }
+  }
+
+  return weaknesses;
+}
+
+function logCoachingTrends(data: {
+  model: string;
+  category: string;
+  dishName: string;
+  initialScore: number;
+  finalScore: number;
+  repairApplied: boolean;
+  weakFieldTypes?: string[];
+}): void {
+  const delta = data.finalScore - data.initialScore;
+  console.log('[recipe-quality] coaching trends', {
+    model: data.model,
+    category: data.category,
+    dish: data.dishName,
+    initialScore: data.initialScore,
+    finalScore: data.finalScore,
+    delta: delta > 0 ? `+${delta}` : String(delta),
+    repairApplied: data.repairApplied,
+    ...(data.weakFieldTypes?.length ? { weakFieldTypes: [...new Set(data.weakFieldTypes)] } : {}),
+  });
+}
+
+function synthesizeStepImagePrompt(data: StepImagePromptData): string | undefined {
+  const { subject, action, vessel, visualState, cameraAngle, style } = data;
+  if (!subject || !action) return undefined;
+  const parts: string[] = [`${subject} ${action}`];
+  if (vessel) parts.push(`in a ${vessel}`);
+  if (visualState) parts.push(visualState);
+  if (cameraAngle) parts.push(`${cameraAngle} angle`);
+  if (style) parts.push(style);
+  return parts.join(', ');
 }
 
 function toStructuredStep(
@@ -2413,10 +2207,76 @@ function toStructuredStep(
       }
       : getContextCookingTerm(text);
 
+    const title = value.title ? cleanRecipeCopy(getShortText(value.title, '', 48)) : undefined;
+    const rawPhase = typeof value.phase === 'number' ? value.phase : undefined;
+    const phase = rawPhase && Number.isInteger(rawPhase) && rawPhase >= 1 && rawPhase <= 6
+      ? rawPhase
+      : undefined;
+    const creates = Array.isArray(value.creates)
+      ? value.creates.filter((s): s is string => typeof s === 'string' && s.trim().length > 0).slice(0, 8)
+      : undefined;
+    const requires = Array.isArray(value.requires)
+      ? value.requires.filter((s): s is string => typeof s === 'string' && s.trim().length > 0).slice(0, 8)
+      : undefined;
+    const lookFor = getOptionalStepText(value.lookFor, 180);
+    const doneWhen = getOptionalStepText(value.doneWhen, 220);
+    const chefTip = getOptionalStepText(value.chefTip, 200);
+    // Prefer the canonical per-step `ingredients`/`tools`; fall back to the
+    // legacy `ingredientsUsed`/`toolsUsed` names for older outputs.
+    const ingredientsSource = Array.isArray(value.ingredients) && value.ingredients.length
+      ? value.ingredients
+      : (Array.isArray(value.ingredientsUsed) ? value.ingredientsUsed : []);
+    const ingredientsUsed = ingredientsSource
+      .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+      .slice(0, 12);
+    const toolsSource = Array.isArray(value.tools) && value.tools.length
+      ? value.tools
+      : (Array.isArray(value.toolsUsed) ? value.toolsUsed : []);
+    const rawToolsUsed = toolsSource
+      .filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
+    const detectedTools = rawToolsUsed.length === 0 ? detectToolsFromStep(text) : [];
+    const toolsUsed = [...new Set([...rawToolsUsed, ...detectedTools])].slice(0, 6);
+    const rawPromptData = value.stepImagePromptData && typeof value.stepImagePromptData === 'object'
+      ? value.stepImagePromptData as StepImagePromptData
+      : undefined;
+    const stepImagePromptData = rawPromptData?.subject && rawPromptData?.action ? rawPromptData : undefined;
+    const stepImagePrompt = getOptionalStepText(value.stepImagePrompt, 220)
+      ?? (stepImagePromptData ? synthesizeStepImagePrompt(stepImagePromptData) : undefined);
+    const why = getOptionalStepText(value.why, 160);
+    const commonMistake = getOptionalStepText(value.commonMistake, 160);
+    const commonQuestion = getOptionalStepText(value.commonQuestion, 160);
+    const commonQuestionAnswer = getOptionalStepText(value.commonQuestionAnswer, 200);
+    const decisionPoint = getOptionalStepText(value.decisionPoint, 140);
+    const ifYes = getOptionalStepText(value.ifYes, 100);
+    const ifNo = getOptionalStepText(value.ifNo, 120);
+    const rawMinutes = typeof value.estimatedMinutes === 'number' ? value.estimatedMinutes : undefined;
+    const estimatedMinutes = rawMinutes && Number.isInteger(rawMinutes) && rawMinutes > 0 && rawMinutes <= 180
+      ? rawMinutes
+      : undefined;
+
     return {
+      phase,
+      title: title || undefined,
       text,
+      creates: creates?.length ? creates : undefined,
+      requires: requires?.length ? requires : undefined,
+      lookFor: lookFor ?? undefined,
+      doneWhen: doneWhen ?? undefined,
+      chefTip: chefTip ?? undefined,
+      ingredientsUsed: ingredientsUsed?.length ? ingredientsUsed : undefined,
+      toolsUsed: toolsUsed.length ? toolsUsed : undefined,
+      stepImagePrompt: stepImagePrompt ?? undefined,
+      stepImagePromptData: stepImagePromptData ?? undefined,
+      why: why ?? undefined,
+      commonMistake: commonMistake ?? undefined,
+      commonQuestion: commonQuestion ?? undefined,
+      commonQuestionAnswer: commonQuestionAnswer ?? undefined,
+      decisionPoint: decisionPoint ?? undefined,
+      ifYes: ifYes ?? undefined,
+      ifNo: ifNo ?? undefined,
+      estimatedMinutes,
       timeEstimate: cleanRecipeCopy(getShortText(value.timeEstimate, getStepTimeEstimate(text), 42)),
-      visualCue: cleanRecipeCopy(getShortText(value.visualCue, getStepVisualCue(text), 110)),
+      visualCue: getOptionalStepText(value.visualCue, 110) ?? getStepVisualCue(text),
       whyItMatters: getOptionalStepText(value.whyItMatters, 120),
       safetyNote: getOptionalStepText(value.safetyNote, 120) ?? getStepSafetyNote(text, analysis),
       flavorBoost: getOptionalStepText(value.flavorBoost, 120) ?? getStepFlavorBoost(text, analysis),
@@ -2426,12 +2286,52 @@ function toStructuredStep(
 
   return {
     text,
+    title: deriveTitleFromInstruction(text) || undefined,
     timeEstimate: getStepTimeEstimate(text),
     visualCue: getStepVisualCue(text),
     safetyNote: getStepSafetyNote(text, analysis),
     flavorBoost: getStepFlavorBoost(text, analysis),
     cookingTerm: getContextCookingTerm(text),
   };
+}
+
+// Scores a recipe 0-100 based on how many of the 11 key coaching fields are
+// populated per step. A score ≥ 75 indicates a well-coached recipe.
+// A doneWhen counts toward the coaching score only when it's a genuine completion
+// signal. Active cooking steps need an observable cue (color/texture/temp/physical
+// test); a bare timer does not qualify. Passive steps (rest, chill, marinate) may
+// legitimately rely on time, so for those, presence is enough.
+function doneWhenCountsTowardScore(step: RecipeStep): boolean {
+  if (!step.doneWhen) return false;
+  const stepTextLower = `${step.title ?? ''} ${step.text}`.toLowerCase();
+  const isCookingStep = step.phase === 3 || PHASE_COOKING_VERBS_RE.test(stepTextLower);
+  if (!isCookingStep) return true;
+  return hasObservableSignal(step.doneWhen);
+}
+
+export function calculateRecipeCoachingScore(steps: RecipeStep[]): number {
+  if (steps.length === 0) return 0;
+  let total = 0;
+  for (const step of steps) {
+    let score = 0;
+    if (step.title?.trim()) score++;
+    if (step.why || step.whyItMatters) score++;
+    if (step.commonMistake || step.safetyNote) score++;
+    if (step.lookFor) score++;
+    // doneWhen earns credit only when it's a real completion signal. On an active
+    // cooking step, a bare timer ("cook 5 minutes") is not — it would inflate the
+    // score without telling the cook what done looks like. Passive steps (rest,
+    // chill, marinate) legitimately use time, so they still count on presence.
+    if (step.doneWhen && doneWhenCountsTowardScore(step)) score++;
+    if (step.chefTip) score++;
+    if (step.commonQuestion && step.commonQuestionAnswer) score++;
+    if (step.ingredientsUsed?.length) score++;
+    if (step.toolsUsed?.length) score++;
+    if (step.stepImagePrompt) score++;
+    if (step.decisionPoint && step.ifYes && step.ifNo) score++;
+    total += (score / 11) * 100;
+  }
+  return Math.round(total / steps.length);
 }
 
 function ensureStructuredStepFallbacks(steps: RecipeStep[], analysis: FoodImageAnalysis) {
@@ -2450,7 +2350,8 @@ function getStepText(value: OpenRouterRecipeVariant['steps'][number] | undefined
     return value;
   }
   if (value && typeof value === 'object') {
-    return value.text;
+    // Prefer the canonical `step` field, then legacy `instruction`/`text`.
+    return value.step || value.instruction || value.text;
   }
 
   return '';
@@ -2467,7 +2368,7 @@ function getStepTimeEstimate(step: string) {
   return match?.[0] ?? 'about 2-5 minutes';
 }
 
-function getStepVisualCue(step: string) {
+function getStepVisualCue(step: string): string | undefined {
   const normalized = step.toLowerCase();
   if (includesAny(normalized, ['brown', 'browned', 'golden'])) {
     return 'Look for deep browning, not gray or pale spots.';
@@ -2482,7 +2383,7 @@ function getStepVisualCue(step: string) {
     return 'It should smell rich and toasted, not burnt.';
   }
 
-  return 'Use the look, smell, and texture cues in the step.';
+  return undefined;
 }
 
 function getStepSafetyNote(step: string, analysis: FoodImageAnalysis) {
@@ -2497,8 +2398,8 @@ function getStepSafetyNote(step: string, analysis: FoodImageAnalysis) {
   return undefined;
 }
 
-function getStepFlavorBoost(step: string, analysis: FoodImageAnalysis) {
-  const text = `${step} ${getAnalysisText(analysis)}`.toLowerCase();
+function getStepFlavorBoost(step: string, _analysis: FoodImageAnalysis) {
+  const text = step.toLowerCase();
   if (includesAny(text, ['sauce', 'mayo', 'mayonnaise', 'ketchup', 'mustard'])) {
     return 'Optional boost: add pickle juice, smoked paprika, or extra mustard for restaurant-style flavor.';
   }
@@ -2536,79 +2437,6 @@ function getContextCookingTerm(step: string): CookingTerm | undefined {
   return undefined;
 }
 
-function getDefaultRecipeSteps(dishName: string) {
-  const dishText = dishName.toLowerCase();
-
-  if (includesAny(dishText, ['smoothie', 'milkshake', 'shake', 'juice', 'frappe'])) {
-    return [
-      'Add 1 cup frozen fruit, 1 ripe banana, and 3/4 cup milk or yogurt to a blender.',
-      'Blend on high for 45-60 seconds until completely smooth, stopping once to scrape down the sides.',
-      'Check the thickness: add a splash of milk to thin it, or 3-4 ice cubes to thicken, then blend 10 more seconds.',
-      'Taste and adjust: add 1 teaspoon honey or maple syrup if the fruit is tart.',
-      'Pour into a tall glass and serve right away while cold.',
-    ];
-  }
-  if (includesAny(dishText, ['latte', 'matcha', 'iced coffee', 'cold brew', 'cappuccino'])) {
-    return [
-      'Fill a tall glass with ice cubes almost to the top.',
-      'Whisk 1 teaspoon matcha with 2 tablespoons warm water until smooth, or brew 1 shot of espresso or 1/2 cup strong coffee.',
-      'Pour 3/4 cup cold milk or a dairy-free swap over the ice.',
-      'Pour the matcha or coffee slowly over the milk so it layers.',
-      'Sweeten with 1-2 teaspoons honey or syrup if you like, stir, and serve right away.',
-    ];
-  }
-  if (dishText.includes('burger')) {
-    return [
-      'Mix the patty seasoning for 1 minute, then shape 2 loose patties slightly wider than the buns so they shrink into the right size.',
-      'Heat a skillet over medium-high heat for 2 minutes until a drop of water sizzles; add 1 tsp oil if the pan is not nonstick.',
-      'Cook the patties for 3-4 minutes per side until deeply browned outside and 160°F inside for ground beef or turkey.',
-      'While the patties rest for 1 minute, toast the buns cut-side down until lightly golden and mix the sauce.',
-      'Build each burger with sauce, patty, cheese if using, tomato slices, lettuce, and pickles or onion so every bite has crunch.',
-      'Taste a tiny bit of sauce or topping, then add a pinch of salt, pepper, or extra mustard if the burger tastes flat.',
-    ];
-  }
-  if (dishText.includes('pasta') || dishText.includes('rigatoni') || dishText.includes('noodle')) {
-    return [
-      'Bring a pot of salted water to a boil, then cook the pasta or noodles until just tender with a small bite, usually 1 minute less than the package says.',
-      'Save 1 cup cooking water before draining; the starch helps the sauce turn glossy instead of watery.',
-      'Warm 1 cup tomato or cream sauce in a skillet for 1-2 minutes until it smells rich and looks slightly darker.',
-      'Stir the sauce over low heat until smooth; lower heat keeps creamy sauces from splitting.',
-      'Toss the drained pasta in the sauce for 1-2 minutes, adding splashes of saved water until every piece is coated.',
-      'Finish with 1/4 cup grated parmesan and a pinch of red pepper flakes, taste, and adjust while hot.',
-    ];
-  }
-  if (dishText.includes('pizza')) {
-    return [
-      'Heat the oven to 475°F / 245°C with a rack in the upper third, and let it fully preheat for 15 minutes.',
-      'Stretch 1 pizza dough into a 12-inch round on a floured surface, pressing from the center outward.',
-      'Spread 1/2 cup tomato sauce over the dough, leaving a 1-inch border for the crust.',
-      'Scatter 1 1/2 cups shredded mozzarella evenly, then add any toppings you like.',
-      'Bake for 10-14 minutes, until the crust edges are golden and the cheese is bubbling and lightly browned.',
-      'Rest the pizza for 2 minutes, then slice and finish with fresh basil or a pinch of oregano.',
-    ];
-  }
-  if (includesAny(dishText, ['salad', 'greens', 'slaw'])) {
-    return [
-      'Rinse 4 cups of greens under cold water and dry them well in a towel or salad spinner.',
-      'Chop 1 cup cherry tomatoes and 1/2 cucumber into bite-size pieces and add them to a large bowl.',
-      'Whisk 3 tablespoons olive oil with 1 tablespoon lemon juice and 1/4 teaspoon salt until it looks blended.',
-      'Add the greens to the bowl and pour the dressing around the edges, not all in one spot.',
-      'Toss gently for 30 seconds with tongs until every leaf is lightly coated but not soggy.',
-      'Taste, add a pinch more salt if it tastes flat, and serve right away while crisp.',
-    ];
-  }
-
-  const mainIngredient = getCategoryMainIngredient(dishText, dishName);
-  return [
-    `Gather and chop everything for the ${dishName.toLowerCase()}, keeping sauces and toppings within reach so cooking stays calm.`,
-    `Cook ${mainIngredient} over medium-high heat for 3-5 minutes per side, until browned outside and cooked through.`,
-    'Warm 1/2 cup of your sauce for 1-2 minutes until glossy, then combine it with the cooked food.',
-    'While that cooks, prep the toppings, garnish, or serving bowls so the final assembly is quick.',
-    'Let hot meat or filling rest for 1 minute if it looks juicy; this keeps the final bite from turning watery.',
-    'Taste, adjust salt or spice in small pinches, and serve while warm.',
-  ];
-}
-
 function ensureSafetyTemperature(steps: string[], dishName: string) {
   const dishText = dishName.toLowerCase();
   if (isDrinkAnalysisText(dishText)) {
@@ -2642,10 +2470,10 @@ function getIngredientGroups(
   const aiGroups = (Array.isArray(values) ? values : [])
     .map((group) => ({
       component: titleCase(getShortText(group.component, '', 36)),
-      items: getSafeList(group.items, [], 8).map(toRecipeIngredient),
+      items: getSafeList(group.items, [], 15).map(toRecipeIngredient),
     }))
     .filter((group) => group.component && group.items.length > 0)
-    .slice(0, 4);
+    .slice(0, 12);
 
   if (aiGroups.length > 0) {
     return aiGroups;
@@ -2683,6 +2511,16 @@ function getDefaultComponents(dishText: string) {
   }
   if (dishText.includes('pizza')) {
     return ['Crust', 'Sauce', 'Cheese', 'Toppings'];
+  }
+  if (dishText.includes('sushi') || dishText.includes('nigiri') || dishText.includes('maki') || dishText.includes('roll')) {
+    return ['Sushi Rice', 'Nigiri', 'Rolls', 'Condiments & Sides'];
+  }
+  if (
+    dishText.includes('platter') || dishText.includes('board') || dishText.includes('bento') ||
+    dishText.includes('tapas') || dishText.includes('mezze') || dishText.includes('dim sum') ||
+    dishText.includes('charcuterie') || dishText.includes('spread')
+  ) {
+    return ['Main Items', 'Sides', 'Sauces & Dips', 'Garnish'];
   }
   if (dishText.includes('bowl') || dishText.includes('salad')) {
     return ['Base', 'Protein/veg', 'Sauce', 'Garnish'];
@@ -2774,15 +2612,8 @@ function getDefaultEquipment(analysis: FoodImageAnalysis) {
   return ['skillet or pot', 'knife and cutting board', 'mixing spoon'];
 }
 
-function getDefaultBestFor(mode: RecipeMode) {
-  if (mode === 'Budget') {
-    return 'saving money on a weeknight';
-  }
-  if (mode === 'Healthy') {
-    return 'a lighter homemade dinner';
-  }
-
-  return 'a restaurant-style night at home';
+function getDefaultBestFor() {
+  return 'home cooking';
 }
 
 function getDefaultAvoidMistake(analysis: FoodImageAnalysis) {
@@ -2823,38 +2654,14 @@ function getDefaultStorageAndReheating(analysis: FoodImageAnalysis) {
 function getGroceryItems(
   ingredients: RecipeIngredient[],
   analysis: FoodImageAnalysis,
-  mode: RecipeMode,
-  aiItems: OpenRouterRecipeVariant['groceryItems'] = [],
 ): GroceryListItem[] {
   const dishText = getAnalysisText(analysis);
-  const convertedItems = [
-    ...ingredients.flatMap((ingredient) => toGroceryItems(ingredient)),
-    ...getAiGroceryItems(aiItems),
-  ];
-  const withCoreItems = ensureCoreGroceryItems(convertedItems, dishText, mode);
+  const convertedItems = ingredients.flatMap((ingredient) => toGroceryItems(ingredient));
+  const withCoreItems = ensureCoreGroceryItems(convertedItems, dishText);
 
-  return dedupeGroceryItems(withCoreItems).slice(0, 12);
-}
-
-function getAiGroceryItems(values: OpenRouterRecipeVariant['groceryItems']) {
-  return (Array.isArray(values) ? values : [])
-    .map((item): GroceryListItem | undefined => {
-      const name = cleanRecipeCopy(getShortText(item.name, '', 70));
-      if (!name) {
-        return undefined;
-      }
-
-      return {
-        category: normalizeGroceryCategory(item.category, name),
-        name,
-        pantryItem: normalizeBoolean(item.pantryStaple, false),
-        pantryStaple: normalizeBoolean(item.pantryStaple, false),
-        quantity: cleanRecipeCopy(getShortText(item.quantity, '', 60)),
-        shoppingNote: getOptionalShortText(item.shoppingNote, 100),
-        sourceIngredient: getOptionalShortText(item.sourceIngredient, 90),
-      };
-    })
-    .filter((item): item is GroceryListItem => Boolean(item));
+  // ponytail: 12 for single dishes, 30 for platters; dedup handles the overlap
+  const isPlatter = ingredients.length > 12 || dishText.includes('platter') || dishText.includes('sushi') || dishText.includes('bento') || dishText.includes('board');
+  return dedupeGroceryItems(withCoreItems).slice(0, isPlatter ? 30 : 12);
 }
 
 function normalizeGroceryCategory(value: string, itemName: string): GroceryCategory {
@@ -2965,7 +2772,6 @@ function createGroceryItem(
 function ensureCoreGroceryItems(
   items: GroceryListItem[],
   dishText: string,
-  mode: RecipeMode,
 ) {
   const result = [...items];
 
@@ -2977,8 +2783,8 @@ function ensureCoreGroceryItems(
     });
     addGroceryItemIfMissing(result, ['beef', 'turkey', 'patty', 'patties'], {
       category: 'Protein',
-      name: mode === 'Healthy' ? 'ground turkey or veggie patties' : 'ground beef',
-      quantity: mode === 'Budget' ? '1 lb' : '8 oz or 2 patties',
+      name: 'ground beef or turkey',
+      quantity: '8 oz or 2 patties',
     });
     if (dishText.includes('cheese') || dishText.includes('cheeseburger')) {
       addGroceryItemIfMissing(result, ['cheese', 'cheddar', 'american'], {
@@ -3098,21 +2904,13 @@ function includesAny(value: string, keywords: string[]) {
   return keywords.some((keyword) => value.includes(keyword));
 }
 
-function getDefaultSubstitutions(mode: RecipeMode) {
-  if (mode === 'Budget') {
-    return ['Use store-brand staples where possible.'];
-  }
-  if (mode === 'Healthy') {
-    return ['Add extra vegetables or use a lighter sauce.'];
-  }
-
-  return ['Use similar pantry ingredients if needed.'];
+function getDefaultSubstitutions() {
+  return ['Adjust ingredients to taste or substitute similar pantry staples.'];
 }
 
 function ensureCoreIngredients(
   ingredients: RecipeIngredient[],
   analysis: FoodImageAnalysis,
-  mode: RecipeMode,
 ) {
   const dishText = [
     analysis.dishName,
@@ -3129,7 +2927,10 @@ function ensureCoreIngredients(
       name: 'burger buns',
       quantity: '2',
     });
-    addIngredientIfMissing(result, ['patty', 'beef', 'turkey', 'veggie patty', 'plant-based'], getBurgerProtein(mode));
+    addIngredientIfMissing(result, ['patty', 'beef', 'turkey', 'veggie patty', 'plant-based'], {
+      name: 'burger patties',
+      quantity: '2',
+    });
     if (dishText.includes('cheese')) {
       addIngredientIfMissing(result, ['cheese', 'cheddar', 'american'], {
         name: 'cheese slices',
@@ -3137,7 +2938,7 @@ function ensureCoreIngredients(
       });
     }
     addIngredientIfMissing(result, ['mayo', 'mayonnaise', 'ketchup', 'mustard', 'burger sauce', 'sauce'], {
-      name: mode === 'Healthy' ? 'Greek yogurt burger sauce' : 'burger sauce or mayonnaise',
+      name: 'burger sauce or mayonnaise',
       quantity: '2 tbsp',
     });
     addIngredientIfMissing(result, ['lettuce', 'romaine'], {
@@ -3181,19 +2982,71 @@ function ensureCoreIngredients(
     });
   }
 
+  if (dishText.includes('elote') || dishText.includes('mexican street corn') || dishText.includes('esquites')) {
+    addIngredientIfMissing(result, ['corn', 'ear', 'maiz'], { name: 'corn on the cob', quantity: '2 ears' });
+    addIngredientIfMissing(result, ['mayo', 'mayonnaise', 'crema', 'sour cream'], { name: 'mayonnaise or crema', quantity: '1/4 cup' });
+    addIngredientIfMissing(result, ['cotija', 'queso fresco', 'cheese'], { name: 'cotija cheese', quantity: '1/2 cup, crumbled' });
+    addIngredientIfMissing(result, ['lime'], { name: 'lime', quantity: '1' });
+    addIngredientIfMissing(result, ['chili', 'tajin', 'tajín', 'cayenne', 'powder'], {
+      name: 'chili powder or tajín',
+      quantity: '1 tsp',
+      pantryItem: true,
+    });
+    addIngredientIfMissing(result, ['salt'], { name: 'salt', quantity: 'to taste', pantryItem: true });
+  }
+
+  if (dishText.includes('ramen')) {
+    addIngredientIfMissing(result, ['noodle', 'ramen noodle'], { name: 'ramen noodles', quantity: '2 packs' });
+    addIngredientIfMissing(result, ['broth', 'stock', 'dashi', 'tare'], { name: 'broth', quantity: '4 cups' });
+    addIngredientIfMissing(result, ['soy sauce', 'miso', 'shoyu'], { name: 'soy sauce', quantity: '2 tbsp', pantryItem: true });
+    addIngredientIfMissing(result, ['egg', 'eggs'], { name: 'soft-boiled egg', quantity: '2' });
+    addIngredientIfMissing(result, ['onion', 'scallion', 'green onion', 'negi'], { name: 'scallions', quantity: '2' });
+  }
+
+  if (dishText.includes('taco') || dishText.includes('tacos')) {
+    addIngredientIfMissing(result, ['tortilla', 'shell', 'tostada'], { name: 'corn tortillas', quantity: '8 small' });
+    addIngredientIfMissing(result, [
+      'beef', 'chicken', 'pork', 'fish', 'shrimp', 'carnitas', 'al pastor',
+      'carne', 'barbacoa', 'chorizo', 'turkey',
+    ], { name: 'ground beef', quantity: '1 lb' });
+    addIngredientIfMissing(result, ['lime'], { name: 'lime', quantity: '2' });
+    addIngredientIfMissing(result, ['cilantro'], { name: 'fresh cilantro', quantity: '1/4 cup' });
+    addIngredientIfMissing(result, ['onion'], { name: 'white onion', quantity: '1/4, diced' });
+  }
+
+  if (dishText.includes('fried rice')) {
+    addIngredientIfMissing(result, ['rice', 'jasmine', 'white rice', 'day-old'], { name: 'cooked rice', quantity: '2 cups' });
+    addIngredientIfMissing(result, ['oil', 'sesame oil', 'vegetable oil', 'butter'], {
+      name: 'vegetable oil',
+      quantity: '2 tbsp',
+      pantryItem: true,
+    });
+    addIngredientIfMissing(result, ['soy sauce', 'tamari', 'oyster sauce'], {
+      name: 'soy sauce',
+      quantity: '2 tbsp',
+      pantryItem: true,
+    });
+    addIngredientIfMissing(result, ['egg', 'eggs'], { name: 'eggs', quantity: '2' });
+    addIngredientIfMissing(result, ['garlic', 'onion', 'scallion', 'shallot'], {
+      name: 'garlic',
+      quantity: '2 cloves',
+      pantryItem: true,
+    });
+  }
+
+  if (dishText.includes('salad') && !dishText.includes('pasta salad') && !dishText.includes('potato salad')) {
+    addIngredientIfMissing(result, [
+      'lettuce', 'romaine', 'spinach', 'arugula', 'kale', 'mixed greens', 'mesclun', 'radicchio',
+    ], { name: 'salad greens', quantity: '4 cups' });
+    addIngredientIfMissing(result, ['dressing', 'vinaigrette', 'ranch', 'caesar', 'tahini'], {
+      name: 'salad dressing',
+      quantity: '2 tbsp',
+    });
+  }
+
   return result;
 }
 
-function getBurgerProtein(mode: RecipeMode): RecipeIngredient {
-  if (mode === 'Healthy') {
-    return { name: 'lean turkey or veggie burger patties', quantity: '2' };
-  }
-  if (mode === 'Budget') {
-    return { name: 'ground beef or turkey', quantity: '1 lb' };
-  }
-
-  return { name: 'ground beef burger patties', quantity: '2' };
-}
 
 function addIngredientIfMissing(
   ingredients: RecipeIngredient[],
@@ -3347,13 +3200,28 @@ function toRecipeIngredient(value: string): RecipeIngredient {
   };
 }
 
+// Dish names the AI uses as ingredients → the actual grocery item to buy.
+const DISH_NAME_TRANSLATIONS: Record<string, string> = {
+  'elote': 'corn on the cob',
+  'elotes': 'corn on the cob',
+  'esquites': 'corn kernels',
+};
+
 function cleanIngredientName(value: string) {
-  return cleanRecipeCopy(value)
+  const cleaned = cleanRecipeCopy(value)
     .replace(/\s*\([^)]*\)\s*$/g, '')
     .replace(/\s*,?\s*(?:to taste|as needed)$/i, '')
+    // Fix "2 slices of tomato" → quantity parsed, name left as "of tomato"
+    .replace(/^of\s+/i, '')
+    // Strip decorative words that never affect what to buy
+    .replace(/\b(?:cute|bunny-?shaped|instagram-?style|restaurant-?style|premium|fancy|signature)\b\s*/gi, '')
+    // Strip trailing serving/presentation words when the food name remains complete
+    // e.g. "lime wedge" → "lime", "cilantro sprig" → "cilantro"
+    .replace(/\s+(?:wedges?|sprigs?)$/i, '')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+  return DISH_NAME_TRANSLATIONS[cleaned] ?? cleaned;
 }
 
 function normalizeQuantity(value: string) {
@@ -3546,6 +3414,349 @@ function titleCase(value: string) {
     .join(' ');
 }
 
+// Derives a short 2-word title from an instruction string for compact-retry steps that arrive
+// as plain strings (no AI-generated title field). Picks the first two non-article words.
+function deriveTitleFromInstruction(text: string): string {
+  const SKIP = new Set(['a', 'an', 'the', 'and', 'or', 'to', 'in', 'on', 'at', 'of', 'up', 'with', 'then', 'into', 'your', 'both', 'until', 'all', 'its', 'by', 'for', 'from']);
+  const words = text.replace(/[.,!?;:]+/g, ' ').split(/\s+/).slice(0, 12);
+  const key = words
+    .map((w) => w.replace(/[^a-zA-Z]/g, ''))
+    .filter((w) => w.length > 1 && !SKIP.has(w.toLowerCase()))
+    .slice(0, 2);
+  return key.map(titleCase).join(' ');
+}
+
+function tokenSimilarity(a: string, b: string): number {
+  const tokenize = (s: string) =>
+    new Set(s.toLowerCase().split(/\W+/).filter((t) => t.length > 3));
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  const intersection = [...ta].filter((t) => tb.has(t)).length;
+  const union = new Set([...ta, ...tb]).size;
+  return union > 0 ? intersection / union : 0;
+}
+
+export type CoachingWarning = { tag: string; ctx: object };
+export type CoachingWarningResult = {
+  score: number;
+  totalWarnings: number;
+  warnCounts: Record<string, number>;
+  warnings: CoachingWarning[];
+};
+
+// Pure detection pass: scans steps and returns every coaching-quality warning,
+// the per-tag counts, and the recipe's coaching score. No console output — the
+// caller decides whether to log (dev visibility) or persist (analytics), so the
+// same detection feeds both the audit logger and the analytics layer.
+function collectCoachingWarnings(
+  steps: RecipeStep[],
+  analysis: FoodImageAnalysis,
+  dishName: string,
+  recipeIngredients?: string[],
+): CoachingWarningResult {
+  const warnCounts: Record<string, number> = {};
+  const warnings: CoachingWarning[] = [];
+  const warn = (tag: string, ctx: object): void => {
+    warnings.push({ tag, ctx });
+    warnCounts[tag] = (warnCounts[tag] ?? 0) + 1;
+  };
+
+  const GENERIC_LOOK_FOR_PATTERNS = [
+    'the food looks',
+    'the dish is',
+    'the mixture is',
+    'everything is',
+    'it is ready',
+    'they are ready',
+    'looks ready',
+    'looks done',
+    'the protein',
+    'the vegetables',
+    'watch for color',
+    'it should look done',
+    'cook until done',
+  ];
+
+  const GENERIC_CHEF_TIP_PHRASES = [
+    'stir occasionally',
+    'cook evenly',
+    "don't overcook",
+    'dont overcook',
+    'season well',
+    'follow instructions',
+    'adjust as needed',
+    'watch carefully',
+    'cook thoroughly',
+    'watch the heat',
+    'use fresh ingredients',
+    'cook carefully',
+  ];
+
+  const GENERIC_WHY_PATTERNS = [
+    /\bthis (step|process) is important\b/,
+    /\bthis (ensures?|helps?|creates?|makes?)\b.{0,20}\b(better|best|good|great|properly|well)\b/,
+    /\bimportant for the (final |overall )?(dish|recipe|result|outcome)\b/,
+    /\bproper technique\b/,
+    /\bkey step\b/,
+    /\bcome together\b/,
+    /\boverall (dish|recipe|flavor)\b/,
+    /^this step (matters|is essential|is key)/,
+  ];
+
+  const GENERIC_MISTAKE_PATTERNS = [
+    /\bdon'?t mess this up\b/,
+    /\bbe careful\b(?! ?not to| of (the|your|how))/,
+    /\bwatch closely\b/,
+    /\bpay attention\b(?! to (the temperature|the color|whether|how|if))/,
+    /\bmake sure to (follow|do it|try)\b/,
+  ];
+
+  const GENERIC_QUESTION_PATTERNS = [
+    'what should i do',
+    'what do i do',
+    'can i make this differently',
+    'is this normal',
+    'is this okay',
+    'what now',
+    'am i done',
+  ];
+
+  const COOKING_TECHNIQUE_WORDS = new Set([
+    'crust', 'browning', 'searing', 'caramelization', 'caramelize', 'deglazing', 'deglaze',
+    'emulsion', 'resting', 'reduction', 'reduce', 'simmering', 'rendering', 'render',
+    'maillard', 'braising', 'sweating', 'blanching', 'folding', 'marinating',
+    'basting', 'glazing', 'tempering', 'blooming', 'toasting',
+  ]);
+
+  const PHASE_SERVING_VERBS = /\b(serve|plate|present)\b/;
+
+  const ingredientWords = new Set(
+    [...analysis.visibleIngredients, ...analysis.likelyIngredients, ...dishName.split(/\s+/)]
+      .flatMap((w) => w.toLowerCase().split(/\s+/))
+      .filter((w) => w.length >= 3),
+  );
+
+  const phasesWithQuestion = new Set<number>();
+  const phasesWithDecisionPoint = new Set<number>();
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const ctx = { dish: dishName, step: i + 1, label: step.title ?? step.text.slice(0, 40) };
+
+    // B1 — ingredientsUsed
+    if (!step.ingredientsUsed || step.ingredientsUsed.length === 0) {
+      warn('[recipe-quality] missing ingredientsUsed', ctx);
+    }
+
+    // B2 — toolsUsed
+    if (!step.toolsUsed || step.toolsUsed.length === 0) {
+      warn('[recipe-quality] missing toolsUsed', ctx);
+    }
+
+    // lookFor — missing entirely
+    if (!step.lookFor) {
+      warn('[recipe-quality] missing lookFor', ctx);
+    }
+
+    const stepTextLower = `${step.title ?? ''} ${step.text}`.toLowerCase();
+    const isCookingStep = step.phase === 3 || PHASE_COOKING_VERBS_RE.test(stepTextLower);
+
+    // doneWhen — missing on cooking steps (Phase 3 or contains cooking verbs)
+    if (!step.doneWhen && isCookingStep) {
+      warn('[recipe-quality] missing doneWhen on cooking step', ctx);
+    }
+
+    // commonQuestion without answer — renders as an unanswered question in UI
+    if (step.commonQuestion && !step.commonQuestionAnswer) {
+      warn('[recipe-quality] orphaned commonQuestion', ctx);
+    }
+
+    // chefTip — missing or too short
+    if (!step.chefTip) {
+      warn('[recipe-quality] missing chefTip', ctx);
+    } else if (step.chefTip.length < 20) {
+      warn('[recipe-quality] short chefTip', { ...ctx, chefTip: step.chefTip });
+    } else {
+      const tipLower = step.chefTip.toLowerCase();
+      if (GENERIC_CHEF_TIP_PHRASES.some((p) => tipLower.includes(p))) {
+        warn('[recipe-quality] generic chefTip', { ...ctx, chefTip: step.chefTip });
+      }
+      if (ingredientWords.size > 0) {
+        const hasIngredientRef = [...ingredientWords].some((w) => tipLower.includes(w));
+        const hasTechniqueRef = [...COOKING_TECHNIQUE_WORDS].some((t) => tipLower.includes(t));
+        if (!hasIngredientRef && !hasTechniqueRef) {
+          warn('[recipe-quality] chefTip missing ingredient reference', { ...ctx, chefTip: step.chefTip });
+        }
+      }
+    }
+
+    // lookFor — generic, or has text but no observable signal (color/texture/
+    // temperature/physical test). Uses the shared detector so temperature counts.
+    if (step.lookFor) {
+      const lower = step.lookFor.toLowerCase();
+      if (GENERIC_LOOK_FOR_PATTERNS.some((p) => lower.includes(p))) {
+        warn('[recipe-quality] generic lookFor', { ...ctx, lookFor: step.lookFor });
+      } else if (!hasObservableSignal(step.lookFor)) {
+        warn('[recipe-quality] non-visual lookFor', { ...ctx, lookFor: step.lookFor });
+      }
+    }
+
+    // doneWhen — on a cooking step, a bare timer is not a completion signal.
+    // Passive steps (rest/chill/marinate) may rely on time, so only cooking
+    // steps are warned. Shared detector keeps this consistent with scoring.
+    if (step.doneWhen && isCookingStep && !hasObservableSignal(step.doneWhen)) {
+      warn('[recipe-quality] non-observable doneWhen', { ...ctx, doneWhen: step.doneWhen });
+    }
+
+    // lookFor vs doneWhen — duplicate (0.45 threshold catches moderate overlap)
+    if (step.lookFor && step.doneWhen) {
+      const sim = tokenSimilarity(step.lookFor, step.doneWhen);
+      if (sim > 0.45) {
+        warn('[recipe-quality] duplicate lookFor and doneWhen', { ...ctx, similarity: sim.toFixed(2) });
+      }
+    }
+
+    // stepImagePrompt — too weak for image generation
+    if (step.stepImagePrompt) {
+      const words = step.stepImagePrompt.trim().split(/\s+/);
+      const promptLower = step.stepImagePrompt.toLowerCase();
+      const hasFood = ingredientWords.size > 0
+        ? [...ingredientWords].some((w) => promptLower.includes(w))
+        : /\b(chicken|beef|pork|lamb|duck|pasta|rice|sauce|bread|egg|fish|salmon|shrimp|tofu|garlic|onion|butter|oil|cream|cheese|tomato|potato|noodle|lentil|tempeh|quinoa|avocado|mushroom|cauliflower|eggplant|zucchini|coconut|tahini|edamame|mango|seafood|falafel|halloumi)\b/.test(promptLower);
+      const hasAction = /\b(searing|frying|boiling|roasting|baking|simmering|chopping|mixing|grilling|plating|garnishing|cooking|slicing|stirring|browning|drizzling|seared|fried|roasted|baked|sliced|arranged|plated|reduced|marinated|softened|translucent|golden|crispy|sizzling)\b/.test(promptLower);
+      const requiresAction = !step.phase || step.phase >= 3;
+      if (words.length < 6 || !hasFood || (requiresAction && !hasAction)) {
+        warn('[recipe-quality] weak stepImagePrompt', { ...ctx, wordCount: words.length, hasFood, hasAction, phase: step.phase });
+      }
+    }
+
+    // phase — suspicious assignment
+    if (step.phase !== undefined) {
+      const cookingInPrepPhase = step.phase === 1 && PHASE_COOKING_VERBS_RE.test(stepTextLower);
+      const servingInEarlyPhase = step.phase <= 2 && PHASE_SERVING_VERBS.test(stepTextLower);
+      const cookingInServingPhase = step.phase === 6 && PHASE_COOKING_VERBS_RE.test(stepTextLower);
+      if (cookingInPrepPhase || servingInEarlyPhase || cookingInServingPhase) {
+        warn('[recipe-quality] suspicious phase assignment', { ...ctx, phase: step.phase });
+      }
+    }
+
+    // title — missing or placeholder
+    if (!step.title || !step.title.trim()) {
+      warn('[recipe-quality] missing title', ctx);
+    } else {
+      const titleLower = step.title.toLowerCase().trim();
+      const SUSPICIOUS_TITLE_PATTERNS = [
+        /^step\s*\d+$/,
+        /^cook(ing)?$/,
+        /^prepare?(\s+ingredients?)?$/,
+        /^food\s+prep$/,
+        /^make\s+(the\s+)?(sauce|dish|meal|food|recipe)$/,
+        /^the\s+(sauce|protein|vegetables?|dish|meal|food|ingredients?)$/,
+      ];
+      if (SUSPICIOUS_TITLE_PATTERNS.some((p) => p.test(titleLower))) {
+        warn('[recipe-quality] suspicious title', { ...ctx, title: step.title });
+      }
+    }
+
+    // why — missing or generic
+    if (!step.why && !step.whyItMatters) {
+      warn('[recipe-quality] missing why', ctx);
+    } else {
+      const whyText = (step.why ?? step.whyItMatters ?? '').toLowerCase();
+      if (GENERIC_WHY_PATTERNS.some((p) => p.test(whyText))) {
+        warn('[recipe-quality] generic why', { ...ctx, why: step.why ?? step.whyItMatters });
+      }
+    }
+
+    // commonMistake — missing on cooking steps; generic when present
+    if (!step.commonMistake && !step.safetyNote && isCookingStep) {
+      warn('[recipe-quality] missing commonMistake on cooking step', ctx);
+    } else if (step.commonMistake) {
+      if (GENERIC_MISTAKE_PATTERNS.some((p) => p.test(step.commonMistake!.toLowerCase()))) {
+        warn('[recipe-quality] generic commonMistake', { ...ctx, commonMistake: step.commonMistake });
+      }
+    }
+
+    // commonQuestion — filler or too vague
+    if (step.commonQuestion) {
+      const questionLower = step.commonQuestion.toLowerCase();
+      const isTooShort = step.commonQuestion.trim().split(/\s+/).length < 6;
+      const isGeneric = GENERIC_QUESTION_PATTERNS.some((p) => questionLower.includes(p));
+      if (isTooShort || isGeneric) {
+        warn('[recipe-quality] generic commonQuestion', { ...ctx, question: step.commonQuestion });
+      }
+      if (step.phase !== undefined) {
+        phasesWithQuestion.add(step.phase);
+      }
+    }
+
+    // decisionPoint — track phase coverage; warn on incomplete branches
+    if (step.decisionPoint) {
+      if (!step.ifYes || !step.ifNo) {
+        warn('[recipe-quality] incomplete decisionPoint', { ...ctx, hasIfYes: Boolean(step.ifYes), hasIfNo: Boolean(step.ifNo) });
+      }
+      if (step.phase !== undefined) {
+        phasesWithDecisionPoint.add(step.phase);
+      }
+    }
+
+    // ingredient alias audit — step references ingredient not found in recipe
+    if (recipeIngredients && recipeIngredients.length > 0 && step.ingredientsUsed) {
+      for (const stepIng of step.ingredientsUsed) {
+        if (!recipeIngredients.some((ri) => ingredientsMatch(ri, stepIng))) {
+          warn('[recipe-quality] unknown ingredient reference', { ...ctx, ingredient: stepIng });
+        }
+      }
+    }
+  }
+
+  // Per-phase coverage — phases 3 (Cooking), 4 (Assembly), 5 (Finishing)
+  for (const requiredPhase of [3, 4, 5]) {
+    const hasPhaseSteps = steps.some((s) => s.phase === requiredPhase);
+    if (hasPhaseSteps) {
+      if (!phasesWithQuestion.has(requiredPhase)) {
+        warn('[recipe-quality] no commonQuestion in phase', { dish: dishName, phase: requiredPhase });
+      }
+      if (!phasesWithDecisionPoint.has(requiredPhase)) {
+        warn('[recipe-quality] no decisionPoint in phase', { dish: dishName, phase: requiredPhase });
+      }
+    }
+  }
+
+  const coachingScore = calculateRecipeCoachingScore(steps);
+  const totalWarnings = Object.values(warnCounts).reduce((a, b) => a + b, 0);
+  return { score: coachingScore, totalWarnings, warnCounts, warnings };
+}
+
+// Thin logging wrapper around collectCoachingWarnings — preserves the original
+// dev-console behavior (per-warning lines + a formatted recipe-quality summary)
+// and returns the detection result so callers can reuse it without re-scanning.
+function auditStepCoachingQuality(
+  steps: RecipeStep[],
+  analysis: FoodImageAnalysis,
+  dishName: string,
+  recipeIngredients?: string[],
+): CoachingWarningResult {
+  const result = collectCoachingWarnings(steps, analysis, dishName, recipeIngredients);
+  for (const { tag, ctx } of result.warnings) {
+    console.warn(tag, ctx);
+  }
+  const summaryLines = [
+    `[recipe-quality] Recipe Quality Summary — ${dishName}`,
+    `  Score: ${result.score}/100 (${steps.length} steps)`,
+  ];
+  if (result.totalWarnings > 0) {
+    summaryLines.push(`  Warnings (${result.totalWarnings} total):`);
+    for (const [tag, count] of Object.entries(result.warnCounts).sort((a, b) => b[1] - a[1])) {
+      summaryLines.push(`    ${tag.replace('[recipe-quality] ', '')} (${count})`);
+    }
+  } else {
+    summaryLines.push(`  No warnings — recipe is fully coached.`);
+  }
+  console.log(summaryLines.join('\n'));
+  return result;
+}
+
 function getDifficultyFromConfidence(confidence: number): Difficulty {
   if (confidence < 0.35) {
     return 'Medium';
@@ -3562,17 +3773,6 @@ function canUseOpenRouter(config: ReturnType<typeof getAiConfig>) {
   return config.enabled && config.provider === 'openrouter' && Boolean(config.openRouterApiKey);
 }
 
-function getMockReason(config: ReturnType<typeof getAiConfig>) {
-  if (!config.enabled) {
-    return { reason: 'ai_disabled' };
-  }
-  if (!config.openRouterApiKey) {
-    return { reason: 'openrouter_missing_key' };
-  }
-
-  return { reason: 'mock_requested' };
-}
-
 function clampConfidence(value: number) {
   if (!Number.isFinite(value)) {
     return 0.5;
@@ -3585,28 +3785,22 @@ function getMatchScoreFromConfidence(confidence: number) {
   return Math.max(3, Math.min(9.5, Number((confidence * 10).toFixed(1))));
 }
 
-function logFinalScanResult(result: AiScanResult) {
-  const isUsableResult = result.status === 'success' || result.status === 'partial';
-  const hasFoodEvidence = isUsableResult
-    ? hasScanFoodEvidence(result.scan, result.recipes)
-    : isFoodScanState((result.scanState ?? 'not_food') as ScanState);
+function logFinalScanResult(result: AiScanSuccessResult) {
+  const hasFoodEvidence = hasScanFoodEvidence(result.scan, result.recipe);
   logScanDebug('api_scan_final_dish_name', {
-    dishName: isUsableResult ? result.scan.dishName : undefined,
+    dishName: result.scan.dishName,
   });
-  logScanDebug('api_scan_final_recipes_length', {
-    recipesLength: isUsableResult ? result.recipes?.length ?? 0 : 0,
+  logScanDebug('api_scan_final_has_recipe', {
+    hasRecipe: Boolean(result.recipe),
   });
   logScanDebug('api_scan_final_has_food_evidence', { hasFoodEvidence });
-  logScanDebug('api_scan_final_status', { status: result.status });
+  logScanDebug('api_scan_final_status', { status: 'success' });
   logScanDebug('api_scan_final_response', {
-    status: result.status,
-    scanState: result.status === 'success' || result.status === 'partial' ? result.scan.scanState : result.scanState,
-    dishName: result.status === 'success' || result.status === 'partial' ? result.scan.dishName : undefined,
-    recipesLength: isUsableResult ? result.recipes?.length ?? 0 : 0,
-    hasRecipe: isUsableResult ? Boolean(result.recipe) : false,
+    status: 'success',
+    scanState: result.scan.scanState,
+    dishName: result.scan.dishName,
+    hasRecipe: Boolean(result.recipe),
     hasFoodEvidence,
-    rejectionType: result.status === 'rejected' || result.status === 'failed' ? result.rejectionType : undefined,
-    rejectionReason: result.status === 'rejected' || result.status === 'failed' ? result.rejectionReason : undefined,
     fallbackReason: result.fallbackReason,
     uploadedImage: result.uploadedImage,
   });
@@ -3616,12 +3810,12 @@ function getVisibleComponentsCount(components: FoodImageAnalysis['visibleCompone
   return Object.values(components).filter((value) => value.trim().length > 0).length;
 }
 
-function hasScanFoodEvidence(scan: ScanResult, recipes: Recipe[] | undefined) {
+function hasScanFoodEvidence(scan: ScanResult, recipe: Recipe | undefined) {
   return Boolean(
     isFoodScanState(scan.scanState ?? 'not_food') ||
     scan.dishName.trim().length > 0 ||
     scan.bestGuessDishName?.trim() ||
-    (recipes?.length ?? 0) > 0
+    recipe
   );
 }
 
@@ -3647,7 +3841,7 @@ function logScanDebug(event: string, details: Record<string, unknown>) {
   console.log(event, details);
 }
 
-function logAi(event: 'mock_ai' | 'openrouter_ai' | 'fallback_ai', details: Record<string, unknown>) {
+function logAi(event: 'openrouter_ai', details: Record<string, unknown>) {
   logScanDebug(event, details);
 }
 
@@ -3683,22 +3877,12 @@ function getFallbackLogDetails(
 }
 
 function getFallbackReason(details: Record<string, unknown>) {
-  return typeof details.reason === 'string' ? details.reason : 'openrouter_unknown_error';
-}
-
-function getScanAiSource(
-  analysisSource: AiSource,
-  recipeSource: AiSource,
-  fallbackReason: string | undefined,
-): AiSource {
-  if (fallbackReason || analysisSource === 'fallback_ai' || recipeSource === 'fallback_ai') {
-    return 'fallback_ai';
+  const reason = typeof details.reason === 'string' ? details.reason : 'openrouter_unknown_error';
+  const httpStatus = typeof details.httpStatus === 'number' ? details.httpStatus : undefined;
+  if (reason === 'openrouter_http_error' && httpStatus) {
+    return `openrouter_http_error_${httpStatus}`;
   }
-  if (analysisSource === 'openrouter_ai' && recipeSource === 'openrouter_ai') {
-    return 'openrouter_ai';
-  }
-
-  return 'mock_ai';
+  return reason;
 }
 
 function createAiDebugMetadata(
@@ -3715,4 +3899,205 @@ function createAiDebugMetadata(
     fallbackReason,
     confidence,
   };
+}
+
+// ── Platter component coverage ────────────────────────────────────────────────
+
+// Derive structured detected components from the flat visibleIngredients list.
+// All components get the same confidence as the overall scan — position in the
+// list does not reliably indicate certainty (the vision model may order by
+// prominence, spatial position, or quantity, not by confidence).
+// Parses optional leading quantity ("6 salmon nigiri" → estimatedQuantity 6).
+// A leading unit word ("1 tablespoon spicy mayo" → "Spicy Mayo") is stripped
+// so component names stay clean for coverage matching.
+function buildDetectedComponents(
+  visibleIngredients: string[],
+  baseConfidence: number,
+): DetectedComponent[] {
+  // ponytail: flat confidence per scan, not per position — no evidence ordering = certainty
+  const confidence = Math.min(0.99, baseConfidence);
+  return visibleIngredients
+    .filter((item) => item.trim().length > 0)
+    .map((item) => {
+      const quantityMatch = item.match(/^(\d+(?:\.\d+)?)\s+(.+)$/);
+      if (quantityMatch) {
+        const quantity = parseFloat(quantityMatch[1]);
+        const rawName = stripLeadingUnit(quantityMatch[2].trim());
+        return {
+          name: titleCase(rawName),
+          confidence,
+          estimatedQuantity: isFinite(quantity) ? quantity : undefined,
+        };
+      }
+      return { name: titleCase(item.trim()), confidence };
+    });
+}
+
+// Strip a leading unit word so "tablespoon spicy mayo" → "spicy mayo" and
+// "strips bacon" → "bacon". Matches culinary measure words only.
+const UNIT_WORDS = /^(tablespoon|teaspoon|tbsp|tsp|cup|ounce|oz|pound|lb|gram|g|ml|piece|pieces|slice|slices|strip|strips|sprig|sprigs|mound|dash|pinch|handful|clove|cloves|can|jar|bag|bunch)\s+/i;
+function stripLeadingUnit(value: string): string {
+  return value.replace(UNIT_WORDS, '').trim();
+}
+
+// Returns true when this scan looks like a multi-component platter meal where
+// every component should have its own ingredientGroup.
+function isPlatterStyleMeal(analysis: FoodImageAnalysis): boolean {
+  const text = `${analysis.dishName} ${analysis.broadDishCategory}`.toLowerCase();
+  const platterWords = ['platter', 'board', 'bento', 'sushi', 'dim sum', 'mezze', 'tapas', 'charcuterie', 'sampler', 'assortment', 'spread'];
+  return (
+    analysis.broadDishCategory === 'mixed platter' ||
+    platterWords.some((w) => text.includes(w)) ||
+    (analysis.detectedComponents?.length ?? 0) >= 4
+  );
+}
+
+function extractGeneratedComponents(recipe: Recipe): string[] {
+  return (recipe.ingredientGroups ?? [])
+    .map((g) => g.component)
+    .filter((c): c is string => Boolean(c));
+}
+
+function computeCoverage(
+  detected: DetectedComponent[],
+  generated: string[],
+): { coveragePercent: number; missingComponents: string[] } {
+  if (detected.length === 0) return { coveragePercent: 100, missingComponents: [] };
+  const missing = detected.filter((d) => !isComponentCovered(d.name, generated));
+  return {
+    coveragePercent: Math.round((1 - missing.length / detected.length) * 100),
+    missingComponents: missing.map((d) => d.name),
+  };
+}
+
+// A detected component is "covered" by a generated group when either:
+//   a) name-level containment: one name contains the other ("Nigiri" ⊂ "Salmon Nigiri")
+//   b) token overlap: ≥60% of the SHORTER name's tokens appear in the other name
+//      (bidirectional — catches "Salmon Nigiri" ↔ "Nigiri" AND "Patatas Bravas" ↔ "Bravas")
+// ponytail: no embeddings — token overlap is good enough until we have FP/FN data
+function isComponentCovered(detectedName: string, generatedComponents: string[]): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+  const dNorm = norm(detectedName);
+  return generatedComponents.some((g) => {
+    const gNorm = norm(g);
+    // Fast path: exact or substring containment in either direction
+    if (gNorm === dNorm || gNorm.includes(dNorm) || dNorm.includes(gNorm)) return true;
+    // Token overlap on the shorter side (bidirectional)
+    const dTokens = dNorm.split(' ').filter((t) => t.length > 2);
+    const gTokens = gNorm.split(' ').filter((t) => t.length > 2);
+    if (dTokens.length === 0 || gTokens.length === 0) return false;
+    const shorter = dTokens.length <= gTokens.length ? dTokens : gTokens;
+    const longer = dTokens.length <= gTokens.length ? gTokens : dTokens;
+    const hits = shorter.filter((t) => longer.some((lt) => lt.includes(t) || t.includes(lt)));
+    return hits.length >= Math.ceil(shorter.length * 0.6);
+  });
+}
+
+function mergeRepairIntoRecipe(
+  recipe: Recipe,
+  repair: ComponentRepairOutput,
+  analysis: FoodImageAnalysis,
+): Recipe {
+  // Deduplicate: skip repair groups whose component name already matches an
+  // existing group (same fuzzy rule as coverage matching — prevents double-groups
+  // when the matcher had a false negative and repair re-generated the same item).
+  const existingGroupNames = (recipe.ingredientGroups ?? []).map((g) => g.component);
+  const newGroups: RecipeIngredientGroup[] = repair.ingredientGroups
+    .filter((g) => g.component && g.items.length > 0 && !isComponentCovered(g.component, existingGroupNames))
+    .map((g) => ({ component: g.component, items: g.items.map(toRecipeIngredient) }));
+
+  const newIngredients = repair.ingredients.map(toRecipeIngredient);
+  const newStepTexts = repair.steps.map(getStepText).filter(Boolean) as string[];
+
+  // Renumber: repair steps arrive with stepNumber starting at 1. Offset them
+  // so structuredSteps has no duplicate stepNumbers after merge.
+  const stepOffset = recipe.structuredSteps?.length ?? 0;
+  const newStructuredSteps = repair.steps
+    .map((s, i) => toStructuredStep(s, newStepTexts[i] ?? '', analysis))
+    .filter((s): s is RecipeStep => Boolean(s?.text))
+    .map((s, i) => ({ ...s, stepNumber: stepOffset + i + 1 }));
+
+  const allIngredients = [...recipe.ingredients, ...newIngredients];
+
+  return {
+    ...recipe,
+    ingredientGroups: [...(recipe.ingredientGroups ?? []), ...newGroups],
+    ingredients: allIngredients,
+    steps: [...recipe.steps, ...newStepTexts],
+    structuredSteps: recipe.structuredSteps
+      ? [...recipe.structuredSteps, ...newStructuredSteps]
+      : recipe.structuredSteps,
+    groceryItems: getGroceryItems(allIngredients, analysis),
+  };
+}
+
+async function ensureComponentCoverage(
+  result: GeneratedRecipeOutput,
+  analysis: FoodImageAnalysis,
+  config: AiConfig,
+): Promise<GeneratedRecipeOutput> {
+  const detected = analysis.detectedComponents ?? [];
+  if (detected.length === 0) return result;
+
+  const recipe = result.recipe!;
+  const generated = extractGeneratedComponents(recipe);
+  const { coveragePercent, missingComponents } = computeCoverage(detected, generated);
+
+  const repairNeeded = coveragePercent < 90 && missingComponents.length > 0;
+  let repairAddedComponents = 0;
+  let repairedRecipe = recipe;
+
+  if (repairNeeded) {
+    console.log('[component-coverage] repair triggered', {
+      dish: analysis.dishName,
+      coveragePercent,
+      missing: missingComponents,
+    });
+    try {
+      const repairOutput = await callComponentRepairWithOpenRouter({
+        analysis,
+        config,
+        missingComponents,
+        existingIngredientGroups: recipe.ingredientGroups ?? [],
+      });
+      repairedRecipe = mergeRepairIntoRecipe(recipe, repairOutput, analysis);
+      // mergeRepairIntoRecipe appends steps after the serve step; re-run the
+      // timeline validator so component repair steps land before serve.
+      if (repairedRecipe.structuredSteps) {
+        repairedRecipe = {
+          ...repairedRecipe,
+          structuredSteps: validateTimeline(repairedRecipe.structuredSteps),
+        };
+      }
+      repairAddedComponents = repairOutput.ingredientGroups.length;
+    } catch (repairError) {
+      console.warn('[component-coverage] repair failed', {
+        dish: analysis.dishName,
+        reason: repairError instanceof OpenRouterProviderError ? repairError.failure.reason : 'unknown',
+      });
+    }
+  }
+
+  // Re-measure coverage on the final recipe so analytics reflect actual outcome.
+  const finalGenerated = extractGeneratedComponents(repairedRecipe);
+  const { coveragePercent: finalCoveragePercent } = computeCoverage(detected, finalGenerated);
+
+  void recordPlatterCoverage({
+    dish: analysis.dishName,
+    model: config.openRouterTextModel,
+    broadDishCategory: analysis.broadDishCategory,
+    detectedComponentCount: detected.length,
+    generatedComponentCount: generated.length,
+    missingComponentCount: missingComponents.length,
+    missingComponentNames: missingComponents,
+    coveragePercent,
+    finalCoveragePercent,
+    repairTriggered: repairNeeded,
+    repairAddedComponents,
+    repairSucceeded: repairNeeded && finalCoveragePercent > coveragePercent,
+  });
+
+  return repairNeeded && repairAddedComponents > 0
+    ? { ...result, recipe: repairedRecipe }
+    : result;
 }
