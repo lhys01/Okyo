@@ -198,11 +198,16 @@ export type AnalyzeFoodImageInput = {
   image?: ScanImageMetadata;
   source: ScanSource;
   mode: RecipeMode;
+  // Set only after the request-level opt-in header + FABLE_ENABLED + daily
+  // cap have already been validated upstream (server.ts). getAiConfig()
+  // still requires FABLE_ENABLED itself before honoring this.
+  fableActive?: boolean;
 };
 
 export type GenerateRecipeFromDishInput = {
   analysis: FoodImageAnalysis;
   mode: RecipeMode;
+  fableActive?: boolean;
 };
 
 export type EstimateIngredientCostsInput = {
@@ -246,7 +251,7 @@ export class FoodRejectionError extends Error {
 }
 
 export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<FoodImageAnalysis> {
-  const config = getAiConfig();
+  const config = getAiConfig({ fableActive: input.fableActive });
 
   logScanDebug('api_openrouter_call_start', {
     imageDataUrlExists: Boolean(input.image?.dataUrl),
@@ -310,7 +315,7 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
 export async function generateRecipeFromDish(
   input: GenerateRecipeFromDishInput,
 ): Promise<GeneratedRecipeOutput> {
-  const config = getAiConfig();
+  const config = getAiConfig({ fableActive: input.fableActive });
 
   const startedAt = Date.now();
   try {
@@ -456,7 +461,7 @@ export function estimateIngredientCosts(input: EstimateIngredientCostsInput): In
 }
 
 export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
-  const config = getAiConfig();
+  const config = getAiConfig({ fableActive: input.fableActive });
   const uploadedImage = hasRealUploadedImage(input);
   const providerVisible = isProviderVisibleImage(input.image);
   logScanDebug('api_scan_reliability_start', {
@@ -577,7 +582,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       scanState: analysis.scanState,
     });
     const recipeStartedAt = Date.now();
-    const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode });
+    const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive });
     const recipeMs = Date.now() - recipeStartedAt;
     const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
     logScanDebug('api_scan_recipe_result', {

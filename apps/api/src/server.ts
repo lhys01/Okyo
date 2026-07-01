@@ -2,10 +2,11 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 
-import { getPublicAiConfig } from './config/aiConfig.js';
+import { getAiConfig, getPublicAiConfig } from './config/aiConfig.js';
 import { getCostControlConfig } from './config/costControlConfig.js';
 import { validateEpicureConfigAtStartup } from './config/openRouter.js';
 import {
+  checkAndIncrementFableCap,
   checkAndIncrementGlobalAiCap,
   logCostEvent,
   scanRateLimitMiddleware,
@@ -112,11 +113,41 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
       return;
     }
 
+    // Fable 5 opt-in — private header only, never a user-facing toggle.
+    // Missing/mismatched header always falls through to the default
+    // OpenRouter path unchanged.
+    const fableRequested = request.get('x-okyo-model') === 'fable';
+    const fableEnabled = getAiConfig().fableEnabled;
+
+    if (fableRequested && !fableEnabled) {
+      console.log('[fable_route]', { requested: true, enabled: false, active: false, model: 'default', failClosed: true });
+      sendError(response.status(403), 'fable_not_enabled', 'Fable 5 is not enabled.');
+      return;
+    }
+
+    let fableActive = false;
+    if (fableRequested && fableEnabled) {
+      if (!checkAndIncrementFableCap()) {
+        console.log('[fable_route]', { requested: true, enabled: true, active: false, model: 'default', failClosed: true });
+        sendError(response.status(429), 'fable_daily_cap_exceeded', "Fable 5's daily limit has been reached. Try again tomorrow.");
+        return;
+      }
+      fableActive = true;
+    }
+    console.log('[fable_route]', {
+      requested: fableRequested,
+      enabled: fableEnabled,
+      active: fableActive,
+      model: fableActive ? getAiConfig({ fableActive: true }).fableModel : 'default',
+      failClosed: false,
+    });
+
     logScanRequest(body, request.get('content-type'));
     const result = await createAiScan({
       image: body.image,
       mode: body.mode,
       source: body.source,
+      fableActive,
     });
 
     sendOk(response.status(201), {

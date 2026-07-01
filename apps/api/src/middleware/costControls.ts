@@ -71,6 +71,40 @@ export function getGlobalAiRequestCount(): number {
   return globalDailyAiRequests;
 }
 
+// ─── Fable 5 Daily Request Cap ───────────────────────────────────────────────
+//
+// Separate counter from the global AI cap above — Fable 5 is opt-in and much
+// more expensive per request, so it must never share headroom with the
+// default OpenRouter cap. Same in-memory/midnight-UTC-reset pattern.
+
+let fableDailyRequests = 0;
+let fableDailyResetAt = 0;
+
+export function checkAndIncrementFableCap(): boolean {
+  const config = getCostControlConfig();
+  const now = Date.now();
+
+  if (now >= fableDailyResetAt) {
+    if (fableDailyRequests > 0) {
+      logCostEvent('fable_cap_daily_reset', { previousCount: fableDailyRequests });
+    }
+    fableDailyRequests = 0;
+    fableDailyResetAt = getNextMidnightUtc();
+  }
+
+  const exceeded = fableDailyRequests >= config.fableDailyRequestCap;
+  console.log('[fable_cap]', { count: fableDailyRequests, cap: config.fableDailyRequestCap, exceeded });
+
+  if (exceeded) {
+    logCostEvent('fable_cap_exceeded', { count: fableDailyRequests, cap: config.fableDailyRequestCap });
+    return false;
+  }
+
+  fableDailyRequests += 1;
+  logCostEvent('fable_cap_incremented', { count: fableDailyRequests, cap: config.fableDailyRequestCap });
+  return true;
+}
+
 // ─── Image Generation Kill Switch (scaffold) ─────────────────────────────────
 //
 // IMAGE_GEN_ENABLED=false blocks all future image generation calls.

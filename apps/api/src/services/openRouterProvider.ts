@@ -537,6 +537,13 @@ function storeRecipeCache(key: string, recipe: OpenRouterRecipeOutput, dish: str
 }
 
 function getRecipeModelChain(config: AiConfig): string[] {
+  // Fail-closed: Fable 5 never silently falls back to the cheap Gemini chain
+  // (or a paid fallback) on failure. If it fails, the scan fails — no
+  // cross-provider/cross-model downgrade happens without the user knowing.
+  if (config.isFableActive) {
+    return [config.openRouterTextModel];
+  }
+
   const models = [config.openRouterTextModel, ...RECIPE_FALLBACK_MODELS];
   const paid = process.env.RECIPE_PAID_FALLBACK_MODEL?.trim();
   if (paid) models.push(paid);
