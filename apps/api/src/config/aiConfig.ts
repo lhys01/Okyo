@@ -9,9 +9,10 @@ const repoRoot = resolve(apiRoot, '../..');
 loadDotenv({ path: resolve(repoRoot, '.env'), quiet: true });
 loadDotenv({ path: resolve(apiRoot, '.env'), quiet: true });
 
-const defaultOpenRouterModel = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free';
-const defaultTimeoutMs = 30000;
-const defaultMaxOutputTokens = 4096;
+const defaultVisionModel = 'openai/gpt-4o-mini';
+const defaultTextModel = 'openai/gpt-4o-mini';
+const defaultTimeoutMs = 45000;
+const defaultMaxOutputTokens = 1024;
 
 export type AiProviderName = 'openrouter';
 
@@ -38,10 +39,10 @@ export type PublicAiConfig = {
 export function getAiConfig(): AiConfig {
   return {
     enabled: process.env.AI_ENABLED === 'true',
-    provider: getProvider(process.env.AI_PROVIDER),
-    openRouterApiKey: getOptionalSecret(process.env.OPENROUTER_API_KEY),
-    openRouterVisionModel: process.env.OPENROUTER_VISION_MODEL?.trim() || defaultOpenRouterModel,
-    openRouterTextModel: process.env.OPENROUTER_TEXT_MODEL?.trim() || defaultOpenRouterModel,
+    provider: 'openrouter',
+    openRouterApiKey: process.env.OPENROUTER_API_KEY?.trim() || undefined,
+    openRouterVisionModel: process.env.OPENROUTER_VISION_MODEL?.trim() || defaultVisionModel,
+    openRouterTextModel: process.env.OPENROUTER_TEXT_MODEL?.trim() || defaultTextModel,
     timeoutMs: getTimeoutMs(process.env.AI_TIMEOUT_MS),
     maxOutputTokens: getPositiveInteger(process.env.AI_MAX_OUTPUT_TOKENS, defaultMaxOutputTokens),
   };
@@ -59,19 +60,6 @@ export function getPublicAiConfig(): PublicAiConfig {
     timeoutMs: config.timeoutMs,
     maxOutputTokens: config.maxOutputTokens,
   };
-}
-
-function getProvider(value: string | undefined): AiProviderName {
-  if (value === 'openrouter') {
-    return value;
-  }
-
-  return 'openrouter';
-}
-
-function getOptionalSecret(value: string | undefined) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
 }
 
 function getTimeoutMs(value: string | undefined) {

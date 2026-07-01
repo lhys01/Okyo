@@ -3,7 +3,7 @@ import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Camera, NavArrowLeft, Sparks } from 'iconoir-react-native';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
@@ -11,6 +11,7 @@ import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { getRealScanImageUri } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
 type AnalysisNavigation = NativeStackNavigationProp<RootStackParamList, 'AnalysisLoadingScreen'>;
@@ -21,7 +22,7 @@ const loadingSteps = [
   'Finding the best guess',
   'Building your recipe',
   'Making your grocery list',
-  'Checking the result',
+  'Almost ready',
 ];
 
 export function AnalysisLoadingScreen() {
@@ -34,6 +35,8 @@ export function AnalysisLoadingScreen() {
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const latestScanFailure = useOkyoStore((state) => state.latestScanFailure);
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
+  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
+  const scanImageUri = getRealScanImageUri(selectedScanImage);
   const [pulseIndex, setPulseIndex] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const didNavigate = useRef(false);
@@ -42,7 +45,7 @@ export function AnalysisLoadingScreen() {
   useEffect(() => {
     uiLog('AnalysisLoadingScreen', 'enter');
     const pulse = setInterval(() => {
-      setPulseIndex((currentIndex) => (currentIndex + 1) % loadingSteps.length);
+      setPulseIndex((currentIndex) => Math.min(currentIndex + 1, loadingSteps.length - 1));
       setElapsedSeconds((currentSeconds) => currentSeconds + 1);
     }, 1000);
 
@@ -142,6 +145,16 @@ export function AnalysisLoadingScreen() {
 
         <View style={styles.hero}>
           <KikoMascot pose="scanning" size={150} style={styles.heroMascot} />
+          {scanImageUri ? (
+            <View style={styles.scanImageWrap}>
+              <Image
+                resizeMode="cover"
+                source={{ uri: scanImageUri }}
+                style={styles.scanImageThumb}
+              />
+              <Text style={styles.scanImageCaption}>Your photo · analyzing</Text>
+            </View>
+          ) : null}
           <Text style={styles.kicker}>SCANNING</Text>
           <Text style={styles.title}>Kiko is reading your plate…</Text>
           <Text style={styles.subtitle}>
@@ -203,9 +216,9 @@ const styles = StyleSheet.create({
   },
   topBar: {
     alignItems: 'center',
-    height: 64,
     justifyContent: 'center',
     marginTop: 8,
+    minHeight: 64,
     position: 'relative',
   },
   backPill: {
@@ -250,6 +263,24 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: 18,
   },
+  scanImageWrap: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    marginBottom: 22,
+    marginTop: -8,
+  },
+  scanImageThumb: {
+    borderRadius: 20,
+    height: 96,
+    width: 96,
+  },
+  scanImageCaption: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 8,
+    textAlign: 'center',
+  },
   kicker: {
     color: colors.coral,
     fontSize: 15,
@@ -281,17 +312,8 @@ const styles = StyleSheet.create({
     marginTop: 40,
   },
   progressCard: {
-    backgroundColor: colors.card,
-    borderColor: '#f0e5d8',
-    borderRadius: 22,
-    borderWidth: 1,
     gap: 4,
     padding: 12,
-    shadowColor: '#7b5a38',
-    shadowOffset: { height: 12, width: 0 },
-    shadowOpacity: 0.08,
-    shadowRadius: 22,
-    elevation: 2,
   },
   stepRow: {
     alignItems: 'center',

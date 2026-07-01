@@ -4,7 +4,7 @@ import {
   NavArrowRight,
   Spark,
 } from 'iconoir-react-native';
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -18,7 +18,8 @@ import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { radius, shadows, spacing } from '../theme/okyoTheme';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
-import { uiLog } from '../utils/uiDebug';
+import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
+import { imageTraceLog, uiLog } from '../utils/uiDebug';
 import { useOpenRecommendation } from '../utils/useOpenRecommendation';
 
 type HomeNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -48,6 +49,29 @@ export function HomeScreen() {
   );
   const heroImageStatus = getRecipeImageStatus(heroRecipe);
   const hasActivity = Boolean(heroRecipe || heroImageUri || safeSavedRecipes.length > 0 || weeklyScanCount > 0);
+
+  const didTraceHero = useRef(false);
+  useEffect(() => {
+    if (didTraceHero.current) return;
+    didTraceHero.current = true;
+    const uri = heroImageUri ?? null;
+    const hasStampedUri = Boolean((heroRecipe as { imageUri?: string } | null)?.imageUri);
+    checkImageFileExists(uri).then((fileExists) => {
+      imageTraceLog('HomeScreen', {
+        screen: 'HomeScreen',
+        recipeId: heroRecipe?.id ?? null,
+        imageSource: hasStampedUri ? 'heroRecipe.imageUri'
+          : latestScanSession?.selectedScanImage ? 'latestScanSession.selectedScanImage'
+          : selectedScanImage ? 'selectedScanImage'
+          : 'none',
+        imageUri: uri,
+        fileExists: uri ? fileExists : 'n/a',
+        usingFallback: !hasStampedUri,
+        fallbackReason: !hasStampedUri && !uri ? 'no_hero_recipe_or_scan_image' : null,
+        storageLocation: getStorageLocation(uri),
+      });
+    });
+  }, []);
 
   const openScan = () => {
     uiLog('HomeScreen', 'scan_cta');
@@ -166,6 +190,11 @@ export function HomeScreen() {
                 <View style={styles.timelineMarker}>
                   <Text style={styles.timelineNumber}>{index + 1}</Text>
                 </View>
+                <FoodImage
+                  imageStatus={getRecipeImageStatus(recipe)}
+                  imageUrl={getRecipeImageUrl(recipe)}
+                  style={styles.timelineImage}
+                />
                 <View style={styles.timelineCopy}>
                   <Text numberOfLines={2} style={styles.timelineTitle}>{recipe.title}</Text>
                   <Text style={styles.timelineMeta}>
@@ -257,11 +286,9 @@ const styles = StyleSheet.create({
     maxWidth: 330,
   },
   heroCard: {
-    backgroundColor: colors.card,
     borderRadius: radius.hero,
     marginTop: 26,
     overflow: 'hidden',
-    ...shadows.hero,
   },
   heroImage: {
     aspectRatio: 1.15,
@@ -298,10 +325,6 @@ const styles = StyleSheet.create({
   },
   discoverPromptCard: {
     alignItems: 'center',
-    backgroundColor: '#fff8eb',
-    borderColor: '#f3dac1',
-    borderRadius: 20,
-    borderWidth: 1,
     flexDirection: 'row',
     gap: 12,
     marginTop: 16,
@@ -353,13 +376,10 @@ const styles = StyleSheet.create({
   },
   timelineItem: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
     flexDirection: 'row',
     gap: 14,
     minHeight: 82,
     padding: 16,
-    ...shadows.card,
   },
   timelineMarker: {
     alignItems: 'center',
@@ -368,6 +388,12 @@ const styles = StyleSheet.create({
     height: 36,
     justifyContent: 'center',
     width: 36,
+  },
+  timelineImage: {
+    backgroundColor: colors.cream,
+    borderRadius: 18,
+    height: 58,
+    width: 58,
   },
   timelineNumber: {
     color: colors.charcoal,
@@ -390,13 +416,10 @@ const styles = StyleSheet.create({
   },
   emptyRecent: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
     flexDirection: 'row',
     gap: 8,
     marginTop: 14,
     padding: 20,
-    ...shadows.card,
   },
   emptyMascot: {
     marginRight: 8,

@@ -86,9 +86,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   topBar: {
-    height: 44,
     justifyContent: 'center',
     marginTop: 6,
+    minHeight: 44,
   },
   backButton: {
     alignItems: 'center',

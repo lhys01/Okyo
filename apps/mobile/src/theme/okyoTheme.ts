@@ -56,7 +56,7 @@ export const typography = {
     fontSize: 40,
     fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 46,
+    lineHeight: 50,
   },
   title: {
     color: colors.charcoal,
@@ -64,7 +64,7 @@ export const typography = {
     fontSize: 28,
     fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 34,
+    lineHeight: 36,
   },
   heading: {
     color: colors.charcoal,

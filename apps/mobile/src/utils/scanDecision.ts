@@ -53,8 +53,11 @@ export function isUsableScan(input: ScanDecisionInput) {
     return true;
   }
 
-  if (status === 'partial' && foodEvidence) {
-    return true;
+  if (status === 'partial') {
+    // A partial scan is only usable when there is an actual recipe — food evidence
+    // alone without a recipe routes to the honest partial/failure UI.
+    const hasRecipe = Boolean(recipes.length > 0 || result?.recipe || input.latestScanRecipe);
+    return Boolean(foodEvidence && hasRecipe);
   }
 
   return Boolean(

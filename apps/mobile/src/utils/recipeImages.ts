@@ -8,11 +8,11 @@ export function getRecipeImageUrl(recipe: Recipe | null | undefined, fallbackUri
   }) | null | undefined;
 
   return getFirstString([
-    recipeWithImage?.imageUrl,
     recipeWithImage?.imageUri,
-    recipeWithImage?.image?.url,
     recipeWithImage?.image?.uri,
     fallbackUri,
+    recipeWithImage?.imageUrl,
+    recipeWithImage?.image?.url,
   ]);
 }
 

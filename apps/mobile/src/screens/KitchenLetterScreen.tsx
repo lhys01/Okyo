@@ -105,9 +105,9 @@ const styles = StyleSheet.create({
   },
   topBar: {
     alignItems: 'flex-end',
-    height: 44,
     justifyContent: 'center',
     marginTop: 6,
+    minHeight: 44,
   },
   closeButton: {
     alignItems: 'center',
@@ -116,7 +116,6 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     width: 40,
-    ...shadows.card,
   },
   heroCard: {
     alignItems: 'center',
@@ -143,12 +142,9 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   perks: {
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
     gap: 14,
     marginTop: 24,
     padding: 20,
-    ...shadows.card,
   },
   perkRow: {
     alignItems: 'center',

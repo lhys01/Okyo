@@ -4,6 +4,7 @@ import { FoodImage } from './FoodImage';
 import { colors } from './OkyoUI';
 import { radius, shadows } from '../theme/okyoTheme';
 import type { RecommendationRecipe } from '../data/recommendedRecipes';
+import { getRecipeImageUrl } from '../utils/recipeImages';
 
 type RecommendationCardProps = {
   recipe: RecommendationRecipe;
@@ -20,7 +21,7 @@ export function RecommendationCard({ recipe, onPress }: RecommendationCardProps)
       <FoodImage
         fallbackLabel={recipe.category}
         imageStatus={recipe.imageStatus}
-        imageUrl={recipe.imageUrl}
+        imageUrl={getRecipeImageUrl(recipe)}
         style={styles.art}
       >
         <View style={styles.categoryPill}>
@@ -38,11 +39,9 @@ export function RecommendationCard({ recipe, onPress }: RecommendationCardProps)
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.card,
     borderRadius: radius.card,
     overflow: 'hidden',
     width: '48%',
-    ...shadows.card,
   },
   art: {
     alignItems: 'center',

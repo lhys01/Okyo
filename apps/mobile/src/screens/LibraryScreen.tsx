@@ -18,11 +18,13 @@ import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
-import { getSafeRecipeMode, isRecipeMode, type Recipe, type RecipeMode } from '../mocks';
+import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { getModeChipPalette, getModeLabel } from '../utils/modeDisplay';
 import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
-import { uiLog } from '../utils/uiDebug';
+import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
+import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 type LibraryNavigation = NativeStackNavigationProp<RootStackParamList>;
 type LibraryFilter = 'recent' | 'restaurant' | 'budget' | 'lighter' | 'fast';
@@ -91,6 +93,20 @@ export function LibraryScreen() {
     }
 
     const mode = prepareRecipeContext(recipe);
+    const imageUri = getRecipeImageUrl(recipe) ?? null;
+    const hasStampedUri = Boolean((recipe as { imageUri?: string }).imageUri);
+    checkImageFileExists(imageUri).then((fileExists) => {
+      imageTraceLog('LibraryScreen', {
+        screen: 'LibraryScreen',
+        recipeId: recipe.id,
+        imageSource: hasStampedUri ? 'recipe.imageUri' : 'recipe.imageUrl',
+        imageUri,
+        fileExists: imageUri ? fileExists : 'n/a',
+        usingFallback: !hasStampedUri,
+        fallbackReason: !hasStampedUri ? 'recipe_imageUri_not_stamped' : null,
+        storageLocation: getStorageLocation(imageUri),
+      });
+    });
     uiLog('LibraryScreen', 'cook_again', { recipeId: recipe.id });
     navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
   };
@@ -274,7 +290,9 @@ function SavedRecipeCard({
   onGroceries: () => void;
   onRemove: () => void;
 }) {
-  const modeLabel = getModeLabel(getSafeRecipeMode(recipe.mode));
+  const mode = getSafeRecipeMode(recipe.mode);
+  const modeLabel = getModeLabel(mode);
+  const modePalette = getModeChipPalette(mode);
 
   return (
     <View style={styles.recipeCard}>
@@ -282,9 +300,9 @@ function SavedRecipeCard({
         <RecipeThumb recipe={recipe} />
         <View style={styles.recipeContent}>
           <View style={styles.cardTopRow}>
-            <View style={styles.modePill}>
-              <Cutlery color={colors.coral} height={13} strokeWidth={2.2} width={13} />
-              <Text numberOfLines={1} style={styles.modePillText}>{modeLabel}</Text>
+            <View style={[styles.modePill, { backgroundColor: modePalette.bg }]}>
+              <Cutlery color={modePalette.text} height={13} strokeWidth={2.2} width={13} />
+              <Text numberOfLines={1} style={[styles.modePillText, { color: modePalette.text }]}>{modeLabel}</Text>
             </View>
             <Pressable
               accessibilityRole="button"
@@ -423,18 +441,6 @@ function getFiniteNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-function getModeLabel(mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return 'Budget';
-    case 'Healthy':
-      return 'Lighter';
-    case 'Restaurant Copy':
-    default:
-      return 'Restaurant Style';
-  }
-}
-
 function cleanDisplayText(value: string) {
   const copyWord = `copy${'cat'}`;
   const copyStyle = `${copyWord}-style`;
@@ -475,15 +481,8 @@ const styles = StyleSheet.create({
     width: 48,
   },
   heroCard: {
-    backgroundColor: colors.card,
-    borderRadius: 28,
     minHeight: 142,
-    overflow: 'hidden',
     padding: 14,
-    shadowColor: '#3b2f20',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
   },
   heroCopy: {
     paddingRight: 66,
@@ -527,8 +526,6 @@ const styles = StyleSheet.create({
   },
   heroStats: {
     alignItems: 'stretch',
-    backgroundColor: colors.cream,
-    borderRadius: 18,
     flexDirection: 'row',
     gap: 4,
     justifyContent: 'space-between',
@@ -557,6 +554,7 @@ const styles = StyleSheet.create({
   heroStatValue: {
     color: colors.coral,
     fontSize: 14,
+    fontVariant: ['tabular-nums'],
     fontWeight: '800',
   },
   heroStatLabel: {
@@ -579,11 +577,6 @@ const styles = StyleSheet.create({
     gap: 10,
     minHeight: 50,
     paddingHorizontal: 14,
-    shadowColor: '#4a3a28',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 1,
   },
   searchInput: {
     color: colors.charcoal,
@@ -600,7 +593,7 @@ const styles = StyleSheet.create({
   },
   filterChip: {
     alignItems: 'center',
-    backgroundColor: colors.card,
+    backgroundColor: colors.cream,
     borderRadius: 999,
     justifyContent: 'center',
     minHeight: 36,
@@ -621,14 +614,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   recipeCard: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
     gap: 9,
     padding: 8,
-    shadowColor: '#3b2f20',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.05,
-    shadowRadius: 14,
   },
   recipeTop: {
     flexDirection: 'row',
@@ -703,6 +690,7 @@ const styles = StyleSheet.create({
   metaText: {
     color: colors.charcoal,
     fontSize: 11,
+    fontVariant: ['tabular-nums'],
     fontWeight: '700',
   },
   metaTextGreen: {
@@ -748,8 +736,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   noMatchesCard: {
-    backgroundColor: colors.card,
-    borderRadius: 20,
     padding: 20,
   },
   noMatchesTitle: {
@@ -765,16 +751,9 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: 26,
     gap: 14,
     marginTop: 24,
     padding: 24,
-    shadowColor: '#4a3a28',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
-    elevation: 2,
   },
   emptyMascot: {
     marginBottom: 2,

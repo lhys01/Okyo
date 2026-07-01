@@ -39,7 +39,8 @@ import {
 import type { RootStackParamList, ShareCardType } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getRecipeImageUrl } from '../utils/recipeImages';
-import { uiLog } from '../utils/uiDebug';
+import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
+import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 type ShareCardRoute = RouteProp<RootStackParamList, 'ShareCardPreviewScreen'>;
 type ShareCardNavigation = NativeStackNavigationProp<RootStackParamList, 'ShareCardPreviewScreen'>;
@@ -66,7 +67,6 @@ export function ShareCardPreviewScreen() {
   const cardType = getSafeCardType(route.params?.cardType);
   const storeMode = useOkyoStore((state) => state.selectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
-  const latestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
@@ -78,7 +78,7 @@ export function ShareCardPreviewScreen() {
   const shareImage = scanContext?.image ?? selectedScanImage;
   const isDemoScan = shareImage?.source === 'mock';
   const routeRecipe = scanContext?.recipe ?? null;
-  const recipe = getShareRecipe(selectedMode, latestScanRecipes, latestScanRecipe, routeRecipe, isDemoScan);
+  const recipe = getShareRecipe(selectedMode, latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, routeRecipe, isDemoScan);
   const scanResult = scanContext?.scanResult ?? latestScanResult ?? (isDemoScan ? defaultScanResult : null);
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
@@ -110,7 +110,7 @@ export function ShareCardPreviewScreen() {
   const hasScanShareContext = Boolean(
     cardType !== 'scan_result' ||
     recipe ||
-    (scanResult && (scanContext?.recipe || latestScanRecipe || latestScanRecipes.length > 0)) ||
+    (scanResult && (scanContext?.recipe || latestScanRecipe)) ||
     isDemoScan,
   );
   const missingScanResult = cardType === 'scan_result' && !hasScanShareContext;
@@ -132,7 +132,7 @@ export function ShareCardPreviewScreen() {
         selectedMode,
         recipe: cardRecipe,
         scanResult,
-        imageUri: shareImage?.uri ?? getRecipeImageUri(cardRecipe),
+        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
       challenge_result: {
@@ -145,7 +145,7 @@ export function ShareCardPreviewScreen() {
         selectedMode: latestChallenge?.mode ?? selectedMode,
         recipe: cardRecipe,
         scanResult: fallbackScanResult,
-        imageUri: shareImage?.uri ?? getRecipeImageUri(cardRecipe),
+        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
       ranking: {
@@ -158,7 +158,7 @@ export function ShareCardPreviewScreen() {
         selectedMode: topLeaderboardEntry.value,
         recipe: cardRecipe,
         scanResult: fallbackScanResult,
-        imageUri: shareImage?.uri ?? getRecipeImageUri(cardRecipe),
+        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
       badge: {
@@ -171,7 +171,7 @@ export function ShareCardPreviewScreen() {
         selectedMode,
         recipe: cardRecipe,
         scanResult: fallbackScanResult,
-        imageUri: shareImage?.uri ?? getRecipeImageUri(cardRecipe),
+        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
       restaurant_pack: {
@@ -184,7 +184,7 @@ export function ShareCardPreviewScreen() {
         selectedMode: packDish?.difficulty ?? 'Pack',
         recipe: cardRecipe,
         scanResult: fallbackScanResult,
-        imageUri: shareImage?.uri ?? getRecipeImageUri(cardRecipe),
+        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
     };
@@ -245,6 +245,26 @@ export function ShareCardPreviewScreen() {
       screen: 'ShareCardPreviewScreen',
     });
   }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, cardType, missingScanResult, selectedPack.name]);
+
+  useEffect(() => {
+    const imageUri = cardData.imageUri ?? null;
+    const usingFallback = Boolean(shareImage?.placeholder || !shareImage?.uri);
+    checkImageFileExists(imageUri).then((fileExists) => {
+      imageTraceLog('ShareCardPreviewScreen', {
+        screen: 'ShareCardPreviewScreen',
+        cardType,
+        recipeId: cardRecipe.id,
+        imageSource: !usingFallback ? 'shareImage.uri' : 'recipe.imageUri',
+        imageUri,
+        fileExists: imageUri ? fileExists : 'n/a',
+        usingFallback,
+        fallbackReason: usingFallback
+          ? (shareImage?.placeholder ? 'placeholder_image' : 'no_share_image_uri')
+          : null,
+        storageLocation: getStorageLocation(imageUri),
+      });
+    });
+  }, [cardData.imageUri, cardType]);
 
   const goBack = () => {
     if (navigation.canGoBack()) {
@@ -563,9 +583,14 @@ function getShareRecipe(
   routeRecipe: Recipe | null,
   isDemoScan: boolean,
 ) {
-  return (routeRecipe?.mode === mode ? routeRecipe : null) ??
+  // One canonical recipe per scan; the view mode is a lens. The explicit
+  // route/scan-context recipe wins; otherwise match by mode for legacy
+  // multi-recipe saves, then fall back to the single canonical recipe so sharing
+  // works under any view lens. Demo scans fall back to a mock.
+  return routeRecipe ??
     recipes.find((item) => item.mode === mode) ??
-    (fallbackRecipe?.mode === mode ? fallbackRecipe : null) ??
+    fallbackRecipe ??
+    recipes[0] ??
     (isDemoScan ? getSafeRecipeForMode(mode) : null);
 }
 

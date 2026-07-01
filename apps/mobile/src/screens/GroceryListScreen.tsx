@@ -34,6 +34,7 @@ import {
 } from '../mocks';
 import type { MainTabParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { getModeLabel } from '../utils/modeDisplay';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
@@ -73,14 +74,13 @@ export function GroceryListScreen() {
   const hasRecipeContext = Boolean(routeMode);
   const rawMode = routeMode ?? defaultScanResult.modes[0];
   const selectedMode = getSafeRecipeMode(rawMode);
-  const latestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
-  const recipe = getGroceryRecipe(selectedMode, latestScanRecipes, latestScanRecipe, isDemoScan);
+  const recipe = getGroceryRecipe(selectedMode, latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, isDemoScan);
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
   const items = useMemo(() => (recipe ? buildItems(recipe) : []), [recipe]);
@@ -480,14 +480,12 @@ function SavedRecipeGroceryCard({
                   <View style={[styles.checkbox, isChecked ? styles.checkboxChecked : null]}>
                     {isChecked ? <Check color="#fffdf8" height={14} strokeWidth={2.6} width={14} /> : null}
                   </View>
-                  <View style={styles.savedIngredientCopy}>
-                    <Text style={[styles.savedIngredientName, isChecked ? styles.itemTextChecked : null]}>
-                      {cleanDisplayText(item.name)}
-                    </Text>
-                    {getShoppingQuantity(item) ? (
-                      <Text style={styles.savedIngredientQuantity}>{getShoppingQuantity(item)}</Text>
-                    ) : null}
-                  </View>
+                  <Text style={[styles.savedIngredientName, isChecked ? styles.itemTextChecked : null]}>
+                    {cleanDisplayText(item.name)}
+                  </Text>
+                  {getShoppingQuantity(item) ? (
+                    <Text numberOfLines={1} style={styles.savedIngredientQuantity}>{getShoppingQuantity(item)}</Text>
+                  ) : null}
                 </Pressable>
               );
             })
@@ -819,26 +817,18 @@ function getRecipeTotalTime(recipe: Recipe) {
   return recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes;
 }
 
-function getModeLabel(mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return 'Budget';
-    case 'Healthy':
-      return 'Lighter';
-    case 'Restaurant Copy':
-    default:
-      return 'Restaurant Style';
-  }
-}
-
 function getGroceryRecipe(
   mode: RecipeMode,
   recipes: Recipe[],
   fallbackRecipe: Recipe | null,
   isDemoScan: boolean,
 ) {
+  // One canonical recipe per scan; the view mode is a lens. Match by mode for
+  // legacy multi-recipe saves, otherwise use the single canonical recipe so the
+  // grocery list renders under any view lens. Demo scans fall back to a mock.
   return recipes.find((recipe) => recipe.mode === mode) ??
-    (fallbackRecipe?.mode === mode ? fallbackRecipe : null) ??
+    fallbackRecipe ??
+    recipes[0] ??
     (isDemoScan ? getSafeRecipeForMode(mode) : null);
 }
 
@@ -873,8 +863,8 @@ const styles = StyleSheet.create({
   topBar: {
     alignItems: 'center',
     flexDirection: 'row',
-    height: 66,
     marginTop: 6,
+    minHeight: 66,
   },
   backButton: {
     alignItems: 'center',
@@ -923,16 +913,7 @@ const styles = StyleSheet.create({
     gap: 14,
     marginTop: 18,
   },
-  savedRecipeCard: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    overflow: 'hidden',
-    shadowColor: '#4a3a28',
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    elevation: 2,
-  },
+  savedRecipeCard: {},
   savedRecipeHeader: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -984,21 +965,22 @@ const styles = StyleSheet.create({
   savedIngredientRowLast: {
     borderBottomWidth: 0,
   },
-  savedIngredientCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
   savedIngredientName: {
     color: colors.charcoal,
+    flex: 1,
     fontSize: 15,
     fontWeight: '700',
     lineHeight: 20,
+    minWidth: 0,
   },
   savedIngredientQuantity: {
     color: colors.body,
     fontSize: 12,
+    fontVariant: ['tabular-nums'],
     fontWeight: '700',
-    marginTop: 3,
+    marginLeft: 12,
+    maxWidth: 130,
+    textAlign: 'right',
   },
   savedIngredientEmpty: {
     color: colors.body,
@@ -1022,16 +1004,9 @@ const styles = StyleSheet.create({
   },
   savedEmptyCard: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: 24,
     marginTop: 18,
     paddingHorizontal: 24,
     paddingVertical: 28,
-    shadowColor: '#4a3a28',
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    elevation: 2,
   },
   savedEmptyMascot: {
     marginBottom: 6,
@@ -1057,17 +1032,10 @@ const styles = StyleSheet.create({
   },
   recipeSummaryRow: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: 22,
     flexDirection: 'row',
     gap: 12,
     marginTop: 12,
     padding: 10,
-    shadowColor: '#4a3a28',
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    elevation: 1,
   },
   recipeSummaryImage: {
     borderRadius: 16,
@@ -1100,7 +1068,7 @@ const styles = StyleSheet.create({
   },
   tabButton: {
     alignItems: 'center',
-    backgroundColor: colors.card,
+    backgroundColor: colors.cream,
     borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
@@ -1154,15 +1122,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   categoryCard: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
     marginTop: 16,
     overflow: 'hidden',
-    shadowColor: '#4a3a28',
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    elevation: 2,
   },
   categoryHeader: {
     alignItems: 'center',
@@ -1227,15 +1188,8 @@ const styles = StyleSheet.create({
   },
   emptyTabCard: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: 24,
     marginTop: 16,
     padding: 20,
-    shadowColor: '#4a3a28',
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    elevation: 2,
   },
   emptyTabMascot: {
     marginBottom: 2,
@@ -1255,8 +1209,6 @@ const styles = StyleSheet.create({
   },
   allSetCard: {
     alignItems: 'center',
-    backgroundColor: colors.cream,
-    borderRadius: 24,
     marginTop: 28,
     paddingHorizontal: 22,
     paddingVertical: 28,
@@ -1299,15 +1251,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   issueCard: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
     marginTop: 18,
     padding: 18,
-    shadowColor: '#4a3a28',
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    elevation: 2,
   },
   issueTitle: {
     color: colors.charcoal,

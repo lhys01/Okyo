@@ -3,13 +3,11 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import {
-  Book,
   CameraSolid,
   Cart,
   Dollar,
   NavArrowRight,
   OpenBook,
-  Sparks,
   Upload,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
@@ -19,13 +17,16 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
+import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { sampleFoodImageUrls } from '../data/sampleFoodImages';
 import { colors } from '../components/OkyoUI';
-import { defaultScanResult, getSafeRecipeForMode, getSafeRecipeMode, type Recipe, type RecipeMode } from '../mocks';
+import { getSafeRecipeMode, type Recipe, type RecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore, type LatestScanFailure } from '../state/useOkyoStore';
+import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { hasFoodEvidence, isFoodScanState, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
+import { copyToDocuments } from '../utils/scanImageStorage';
 import { uiLog } from '../utils/uiDebug';
 
 type ScanNavigation = NativeStackNavigationProp<RootStackParamList, 'ScanScreen'>;
@@ -65,7 +66,6 @@ export function ScanScreen() {
       latestScanStatus: 'pending',
       latestScanFailure: null,
       latestScanResult: null,
-      latestScanRecipes: [],
       latestScanRecipe: null,
       selectedScanImage: previewImage,
       latestAiDebugMetadata: null,
@@ -82,14 +82,16 @@ export function ScanScreen() {
         }
 
         const status = result.status ?? 'success';
-        const responseImage = getPreviewImageMetadata(result.image ?? image);
+        // Prefer the user's original uploaded photo over the API-returned image.
+        // The API may return result.image with placeholder:true (e.g. on conversion
+        // error), which would cause getRealScanImageUri() to return null on all
+        // downstream screens even though the user's real photo URI is intact.
+        const imageForStorage = (!image?.placeholder && image?.uri) ? image : (result.image ?? image);
+        const responseImage = getPreviewImageMetadata(imageForStorage);
         const aiDebugMetadata = getAiDebugMetadata(result);
         logScanResponse(result, image);
         const foodEvidence = hasFoodEvidence({ result, status });
-        const initialRecipes = getScanRecipes(result);
-        const scanRecipes = result.scan && foodEvidence && initialRecipes.length === 0
-          ? createStarterRecipesFromScan(result.scan)
-          : initialRecipes;
+        const scanRecipes = getScanRecipes(result);
         const shouldUseSuccessPath = Boolean(
           result.scan &&
           isUsableScan({
@@ -111,7 +113,6 @@ export function ScanScreen() {
             latestScanStatus: storedStatus,
             latestScanFailure: null,
             latestScanResult: result.scan,
-            latestScanRecipes: scanRecipes,
             latestScanRecipe: selectedRecipe,
             selectedScanImage: responseImage,
             latestAiDebugMetadata: aiDebugMetadata,
@@ -131,7 +132,6 @@ export function ScanScreen() {
             latestScanStatus: failureStatus,
             latestScanFailure: failure,
             latestScanResult: null,
-            latestScanRecipes: [],
             latestScanRecipe: null,
             selectedScanImage: responseImage,
             latestAiDebugMetadata: aiDebugMetadata,
@@ -175,7 +175,6 @@ export function ScanScreen() {
             latestScanStatus: 'failed',
             latestScanFailure: failure,
             latestScanResult: null,
-            latestScanRecipes: [],
             latestScanRecipe: null,
             selectedScanImage: getPreviewImageMetadata(image),
             latestAiDebugMetadata: {
@@ -188,31 +187,33 @@ export function ScanScreen() {
           });
           logStoreAfterResponse('failed', null, null, [], image, scanSessionId);
         } else {
-          const demoRecipes = getDemoRecipes();
-          const demoRecipe = getScanRecipeForMode(demoRecipes, selectedMode);
+          const failure = {
+            status: 'failed',
+            rejectionType: 'ai_failed',
+            rejectionReason: getUploadFailureReasonFromError(error),
+          } as const;
           writeLatestScanSession({
             scanSessionId,
-            latestScanStatus: 'success',
-            latestScanFailure: null,
-            latestScanResult: defaultScanResult,
-            latestScanRecipes: demoRecipes,
-            latestScanRecipe: demoRecipe,
+            latestScanStatus: 'failed',
+            latestScanFailure: failure,
+            latestScanResult: null,
+            latestScanRecipe: null,
             selectedScanImage: getPreviewImageMetadata(image),
             latestAiDebugMetadata: {
               aiSource: 'fallback_ai',
               fallbackReason: 'mobile_api_unavailable',
-              confidence: defaultScanResult.confidence,
+              confidence: 0,
             },
             source,
-            reason: 'ScanScreen.api_error_demo_fallback',
+            reason: 'ScanScreen.api_error',
           });
-          logStoreAfterResponse('success', defaultScanResult, demoRecipe, demoRecipes, image, scanSessionId);
+          logStoreAfterResponse('failed', null, null, [], image, scanSessionId);
         }
         logScanRouteDecision('failed', {
-          rejectionReason: uploadedImage ? getUploadFailureReasonFromError(error) : 'Demo scan API unavailable.',
+          rejectionReason: getUploadFailureReasonFromError(error),
           rejectionType: 'ai_failed',
           status: 'failed',
-        }, uploadedImage ? 'api_error_path' : 'result_success_path');
+        }, 'api_error_path');
       });
   };
 
@@ -240,7 +241,8 @@ export function ScanScreen() {
         return;
       }
 
-      startScan('camera', await getImageMetadata(result.assets[0], 'camera'));
+      const cameraImage = await getImageMetadata(result.assets[0], 'camera');
+      startScan('camera', await copyToDocuments(cameraImage));
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Camera unavailable.',
@@ -253,10 +255,6 @@ export function ScanScreen() {
         'Camera isn’t available in this simulator. Use Upload From Photos instead.',
       );
     }
-  };
-
-  const tryDemoScan = () => {
-    startScan('mock', createPlaceholderImage('mock'));
   };
 
   const uploadFromPhotos = async () => {
@@ -273,7 +271,8 @@ export function ScanScreen() {
         return;
       }
 
-      startScan('photos', await getImageMetadata(result.assets[0], 'photos'));
+      const photosImage = await getImageMetadata(result.assets[0], 'photos');
+      startScan('photos', await copyToDocuments(photosImage));
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Image picker failed.',
@@ -283,7 +282,7 @@ export function ScanScreen() {
       uiLog('ScanScreen', 'photo_picker_error');
       Alert.alert(
         'Photo upload unavailable',
-        'Okyo could not open your photo library. Try again or use the demo scan.',
+        'Okyo could not open your photo library. Try again.',
       );
     }
   };
@@ -347,11 +346,6 @@ export function ScanScreen() {
               label="Upload food photo"
               onPress={uploadFromPhotos}
             />
-            <ScanActionButton
-              icon={<Sparks color={colors.coral} height={25} strokeWidth={2.15} width={25} />}
-              label="Try demo scan"
-              onPress={tryDemoScan}
-            />
           </View>
         </View>
 
@@ -397,9 +391,11 @@ export function ScanScreen() {
               onPress={openRecentRecipe}
               style={({ pressed }) => [styles.recentCard, pressed ? styles.pressed : null]}
             >
-              <View style={styles.recentIcon}>
-                <Book color={colors.coral} height={28} strokeWidth={2.2} width={28} />
-              </View>
+              <FoodImage
+                imageStatus={getRecipeImageStatus(recentRecipe)}
+                imageUrl={getRecipeImageUrl(recentRecipe)}
+                style={styles.recentImage}
+              />
               <View style={styles.recentCopy}>
                 <Text numberOfLines={1} style={styles.recentRecipeTitle}>
                   {cleanPublicText(recentRecipe.title)}
@@ -468,15 +464,6 @@ function ScanActionButton({ icon, label, onPress, tone = 'secondary' }: ScanActi
       </Text>
     </Pressable>
   );
-}
-
-function createPlaceholderImage(source: ScanSource): ScanImageMetadata {
-  return {
-    fileName: `${source}-mock-placeholder.jpg`,
-    mimeType: 'image/jpeg',
-    placeholder: true,
-    source,
-  };
 }
 
 async function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: ScanSource): Promise<ScanImageMetadata> {
@@ -674,149 +661,12 @@ function getSampleImageUrlForDish(dishName: string) {
   return sampleFoodImageUrls.bowl;
 }
 
-function getDemoRecipes() {
-  return defaultScanResult.modes.map((mode) => getSafeRecipeForMode(mode));
-}
-
-function createStarterRecipesFromScan(scan: NonNullable<CreateScanResult['scan']>) {
-  const modes: RecipeMode[] = scan.modes?.length ? scan.modes : ['Restaurant Copy', 'Budget', 'Healthy'];
-  return modes.map((mode) => createStarterRecipeFromScan(scan, mode));
-}
-
-function createStarterRecipeFromScan(scan: NonNullable<CreateScanResult['scan']>, mode: RecipeMode): Recipe {
-  const dishName = cleanPublicText(scan.dishName || scan.bestGuessDishName || 'Restaurant-Style Food Plate');
-  const titlePrefix = mode === 'Budget'
-    ? 'Budget'
-    : mode === 'Healthy'
-      ? 'Lighter'
-      : 'Restaurant-Style';
-  const ingredientName = getStarterIngredientName(dishName);
-  const homemadeCost = getModeStarterCost(scan.homemadeCost, scan.restaurantPrice, mode);
-
-  return {
-    id: `scan-starter-${slugify(dishName)}-${slugify(mode)}`,
-    scanResultId: scan.id,
-    title: `${titlePrefix} ${dishName}`,
-    mode,
-    description: `A flexible inspired-by starter recipe based on the visible food in your photo.`,
-    prepTimeMinutes: 10,
-    cookTimeMinutes: 18,
-    totalTimeMinutes: 28,
-    activeTimeMinutes: 20,
-    servings: 2,
-    skillLevel: 'Easy',
-    difficulty: 'Easy',
-    estimatedHomemadeCost: homemadeCost,
-    estimatedSavings: Math.max(0, scan.restaurantPrice - homemadeCost),
-    ingredients: [
-      { name: ingredientName, quantity: '2 servings' },
-      { name: 'matching sauce or dressing', quantity: '1/4 cup' },
-      { name: 'fresh garnish or vegetables', quantity: '1 cup' },
-      { name: 'salt, pepper, and cooking oil', quantity: 'pantry check', pantryItem: true },
-    ],
-    ingredientGroups: [
-      { component: 'Main', items: [{ name: ingredientName, quantity: '2 servings' }] },
-      { component: 'Sauce', items: [{ name: 'matching sauce or dressing', quantity: '1/4 cup' }] },
-      { component: 'Finish', items: [{ name: 'fresh garnish or vegetables', quantity: '1 cup' }] },
-    ],
-    steps: [
-      `Prep the ${ingredientName} for ${dishName}, cutting or portioning into even pieces.`,
-      `Cook the ${ingredientName} with oil, salt, and pepper until hot and browned where appropriate.`,
-      'Warm or stir together the sauce so it can coat the food evenly.',
-      'Combine the base, sauce, and toppings, then taste and adjust seasoning.',
-      'Serve right away with garnish or a bright squeeze of lemon if it fits.',
-    ],
-    structuredSteps: [
-      {
-        text: `Prep the ${ingredientName} for ${dishName}, cutting or portioning into even pieces.`,
-        timeEstimate: '5 min',
-        visualCue: 'Ingredients are cut or portioned.',
-        whyItMatters: 'A flexible starter keeps the result useful without pretending to know the exact restaurant recipe.',
-      },
-      {
-        text: `Cook the ${ingredientName} with oil, salt, and pepper until hot and browned where appropriate.`,
-        timeEstimate: '8-12 min',
-        visualCue: 'Food is hot, browned, or tender.',
-      },
-      {
-        text: 'Combine with sauce and toppings, then taste before serving.',
-        timeEstimate: '3 min',
-        visualCue: 'Everything is coated and seasoned.',
-      },
-    ],
-    substitutions: [
-      'Use any matching protein, vegetable, or grain you already have.',
-      'Use bottled sauce, dressing, or a simple pan sauce.',
-      'Swap garnish for herbs, scallions, sesame seeds, or cheese if they fit.',
-    ],
-    pantryNote: 'Assumes salt, pepper, and basic cooking oil are on hand.',
-    confidenceNote: 'Starter recipe based on visible food evidence from the scan, not an official restaurant recipe.',
-    mainIngredientsSummary: ingredientName,
-    equipment: ['skillet or sheet pan', 'knife', 'cutting board', 'mixing bowl'],
-    bestFor: 'a quick best-guess homemade version',
-    avoidMistake: 'Do not treat this as the exact restaurant recipe; adjust based on what you can see.',
-    mistakeWarning: `Do not overcook the ${ingredientName} while recreating the visible dish.`,
-    storageAndReheating: 'Store leftovers up to 3 days and reheat gently.',
-    storage: 'Store leftovers up to 3 days and reheat gently.',
-    groceryItems: [
-      { category: 'Protein', name: ingredientName, quantity: '2 servings', sourceIngredient: ingredientName },
-      { category: 'Sauces / Condiments', name: 'matching sauce or dressing', quantity: '1 small bottle' },
-      { category: 'Produce', name: 'fresh garnish or vegetables', quantity: '1 small bunch or bag' },
-      { category: 'Pantry', name: 'salt, pepper, and cooking oil', quantity: 'pantry check', pantryStaple: true },
-    ],
-    spicePairings: ['black pepper', 'chili flakes', 'garlic powder'],
-    cookingTerms: [
-      { term: 'Best guess', meaning: 'A useful recipe direction based on visible food evidence.' },
-    ],
-  };
-}
-
 function getScanRecipeForMode(
   recipes: Recipe[],
   mode: RecipeMode,
   fallbackRecipe: Recipe | null | undefined = null,
 ) {
   return recipes.find((recipe) => recipe.mode === mode) ?? fallbackRecipe ?? null;
-}
-
-function getStarterIngredientName(dishName: string) {
-  const normalized = dishName.toLowerCase();
-  if (normalized.includes('pizza')) {
-    return 'pizza crust, sauce, and cheese';
-  }
-  if (normalized.includes('rice') || normalized.includes('bowl')) {
-    return 'cooked rice or grain base';
-  }
-  if (normalized.includes('noodle') || normalized.includes('pasta')) {
-    return 'noodles or pasta';
-  }
-  if (normalized.includes('burger') || normalized.includes('sandwich')) {
-    return 'bun, filling, and toppings';
-  }
-  if (normalized.includes('salad')) {
-    return 'greens, toppings, and dressing';
-  }
-  if (normalized.includes('smoothie') || normalized.includes('shake') || normalized.includes('juice')) {
-    return 'fruit, yogurt, and ice';
-  }
-
-  const cleaned = dishName.trim().toLowerCase();
-  return cleaned ? `${cleaned} ingredients` : 'visible ingredients';
-}
-
-function getModeStarterCost(homemadeCost: number, restaurantPrice: number, mode: RecipeMode) {
-  const baseCost = Number.isFinite(homemadeCost) && homemadeCost > 0
-    ? homemadeCost
-    : Math.max(3, restaurantPrice * 0.45);
-  const multiplier = mode === 'Budget' ? 0.82 : mode === 'Healthy' ? 1.08 : 1;
-  return Number(Math.max(2, baseCost * multiplier).toFixed(2));
-}
-
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '') || 'food';
 }
 
 function logScanResponse(result: CreateScanResult, image?: ScanImageMetadata) {
@@ -951,9 +801,6 @@ function getRouteReason(status: string, result: Partial<CreateScanResult>, route
 function getPublicScanSource(source: ScanSource) {
   if (source === 'photos') {
     return 'upload';
-  }
-  if (source === 'mock') {
-    return 'demo';
   }
 
   return 'camera';
@@ -1310,12 +1157,10 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     elevation: 2,
   },
-  recentIcon: {
-    alignItems: 'center',
+  recentImage: {
     backgroundColor: colors.cream,
-    borderRadius: 16,
+    borderRadius: 18,
     height: 72,
-    justifyContent: 'center',
     width: 72,
   },
   recentCopy: {

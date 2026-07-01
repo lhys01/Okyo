@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { getPublicAiConfig } from './config/aiConfig.js';
 import { getCostControlConfig } from './config/costControlConfig.js';
+import { validateEpicureConfigAtStartup } from './config/openRouter.js';
 import {
   checkAndIncrementGlobalAiCap,
   logCostEvent,
@@ -22,7 +23,7 @@ import {
   getXpDefinitions,
   saveRecipe,
 } from './store.js';
-import { createAiScan } from './services/aiService.js';
+import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
 import type { ApiFailure, ApiResponse } from './types.js';
 
 const port = Number(process.env.PORT ?? 8081);
@@ -31,7 +32,7 @@ const maxImageDataUrlChars = 12_000_000;
 const jsonBodyLimit = '16mb';
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
-const scanSourceSchema = z.enum(['camera', 'photos', 'mock']);
+const scanSourceSchema = z.enum(['camera', 'photos']);
 const imageDataUrlSchema = z.string()
   .min(1)
   .max(maxImageDataUrlChars)
@@ -52,7 +53,7 @@ const scanImageMetadataSchema = z.object({
   conversionError: z.string().min(1).max(120).optional(),
 }).strict();
 const scanRequestSchema = z.object({
-  source: scanSourceSchema.optional().default('mock'),
+  source: scanSourceSchema.optional().default('camera'),
   mode: recipeModeSchema.optional().default('Restaurant Copy'),
   image: scanImageMetadataSchema.optional(),
 });
@@ -104,8 +105,8 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
       return;
     }
 
-    // Global daily AI request cap — only counts real uploaded images, not mock scans.
-    const isRealAiScan = body.source !== 'mock' && Boolean(body.image) && !body.image?.placeholder;
+    // Global daily AI request cap — only counts real uploaded images.
+    const isRealAiScan = Boolean(body.image) && !body.image?.placeholder;
     if (isRealAiScan && !checkAndIncrementGlobalAiCap()) {
       sendError(response.status(429), 'ai_daily_cap_exceeded', "Okyo has reached its daily scan limit. Try again tomorrow.");
       return;
@@ -196,6 +197,19 @@ app.get('/v1/rankings/weekly', (_request, response) => {
   sendOk(response, getWeeklyRankings());
 });
 
+app.post('/v1/recipes/:recipeId/coaching', async (request, response, next) => {
+  try {
+    const result = await enrichRecipeCoaching(request.params.recipeId);
+    if (!result) {
+      sendNotFound(response, 'recipe_not_found', 'Recipe not found or expired. Please scan again.');
+      return;
+    }
+    sendOk(response, result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/v1/restaurant-packs', (_request, response) => {
   sendOk(response, { packs: getRestaurantPacks() });
 });
@@ -212,6 +226,16 @@ app.get('/v1/restaurant-packs/:packId', (request, response) => {
 });
 
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+  if (error instanceof FoodRejectionError) {
+    sendError(
+      response.status(422),
+      error.rejectionType,
+      error.message,
+      { rejectionType: error.rejectionType, scanState: error.scanState, confidence: error.confidence },
+    );
+    return;
+  }
+
   if (isPayloadTooLargeError(error)) {
     sendError(
       response.status(413),
@@ -231,6 +255,9 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
 
 app.listen(port, () => {
   console.log(`Okyo API listening on http://localhost:${port}`);
+  // Best-effort startup warning if the Epicure enrichment layer is misconfigured.
+  // Never fatal — the API boots regardless and enrichment simply stays off.
+  validateEpicureConfigAtStartup();
 });
 
 function parseRequest<TSchema extends z.ZodTypeAny>(schema: TSchema, value: unknown): z.infer<TSchema> {

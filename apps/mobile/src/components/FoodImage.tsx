@@ -1,5 +1,5 @@
 import { Spark } from 'iconoir-react-native';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import {
   Image,
   StyleSheet,
@@ -28,14 +28,22 @@ export function FoodImage({
   showFallbackLabel = false,
   style,
 }: FoodImageProps) {
-  const safeImageUrl = typeof imageUrl === 'string' && imageUrl.trim().length > 0
-    ? imageUrl.trim()
-    : null;
+  // Track which URL most recently failed so the fallback fires on network errors
+  // (404, timeout, CDN removal) while still attempting any new/different URL.
+  const [errorUrl, setErrorUrl] = useState<string | null>(null);
+
+  const trimmed = typeof imageUrl === 'string' ? imageUrl.trim() : '';
+  const safeImageUrl = trimmed.length > 0 && trimmed !== errorUrl ? trimmed : null;
 
   return (
     <View style={[styles.frame, style]}>
       {safeImageUrl ? (
-        <Image source={{ uri: safeImageUrl }} resizeMode="cover" style={styles.image} />
+        <Image
+          onError={() => setErrorUrl(safeImageUrl)}
+          resizeMode="cover"
+          source={{ uri: safeImageUrl }}
+          style={styles.image}
+        />
       ) : (
         <View style={styles.fallbackContent}>
           <View style={styles.fallbackIcon}>

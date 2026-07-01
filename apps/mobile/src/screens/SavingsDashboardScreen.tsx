@@ -25,6 +25,7 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore, type CompletedChallenge } from '../state/useOkyoStore';
+import { getModeChipPalette, getModeLabel } from '../utils/modeDisplay';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
@@ -352,7 +353,7 @@ function RecentWinRow({ entry, onPress }: { entry: SavingsEntry; onPress?: () =>
       <SavingsThumb imageStatus={entry.imageStatus} title={entry.title} uri={entry.imageUri} />
       <View style={styles.recentCopy}>
         <Text numberOfLines={2} style={styles.recentDish}>{cleanDisplayText(entry.title)}</Text>
-        <Text numberOfLines={1} style={styles.recentMode}>{getModeLabel(entry.mode)}</Text>
+        <ModeChip mode={entry.mode} />
       </View>
       <Text adjustsFontSizeToFit minimumFontScale={0.82} numberOfLines={1} style={styles.recentAmount}>
         {formatCurrency(entry.savings)}
@@ -373,6 +374,19 @@ function RecentWinRow({ entry, onPress }: { entry: SavingsEntry; onPress?: () =>
     >
       {content}
     </Pressable>
+  );
+}
+
+// Mode is a fixed-set categorical value, so it reads as a chip — and the chip
+// color is driven by the data (the mode itself), not decoration.
+function ModeChip({ mode }: { mode: RecipeMode }) {
+  const palette = getModeChipPalette(mode);
+  return (
+    <View style={[styles.modeChip, { backgroundColor: palette.bg }]}>
+      <Text numberOfLines={1} style={[styles.modeChipText, { color: palette.text }]}>
+        {getModeLabel(mode)}
+      </Text>
+    </View>
   );
 }
 
@@ -442,18 +456,6 @@ function getOptionalDate(recipe: Recipe) {
     (recipe as Recipe & { savedAt?: unknown; createdAt?: unknown }).createdAt;
 
   return typeof maybeSavedAt === 'string' && maybeSavedAt.trim().length > 0 ? maybeSavedAt : null;
-}
-
-function getModeLabel(mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return 'Budget';
-    case 'Healthy':
-      return 'Lighter';
-    case 'Restaurant Copy':
-    default:
-      return 'Restaurant Style';
-  }
 }
 
 function cleanDisplayText(value: string) {
@@ -559,10 +561,8 @@ const styles = StyleSheet.create({
     width: 78,
   },
   periodTabs: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
+    backgroundColor: colors.cream,
     borderRadius: 24,
-    borderWidth: 1,
     flexDirection: 'row',
     padding: 4,
   },
@@ -587,15 +587,7 @@ const styles = StyleSheet.create({
     color: '#fffdf8',
   },
   biggestCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 20,
-    borderWidth: 1,
     padding: 14,
-    shadowColor: '#3b2f20',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.05,
-    shadowRadius: 14,
   },
   sectionKicker: {
     color: colors.green,
@@ -655,10 +647,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   periodEmptyCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 20,
-    borderWidth: 1,
     padding: 18,
   },
   periodEmptyTitle: {
@@ -679,10 +667,6 @@ const styles = StyleSheet.create({
   },
   statTile: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
     flexBasis: '48%',
     flexDirection: 'row',
     flexGrow: 1,
@@ -710,6 +694,7 @@ const styles = StyleSheet.create({
   statValue: {
     color: '#174d1f',
     fontSize: 20,
+    fontVariant: ['tabular-nums'],
     fontWeight: '700',
     marginTop: 3,
   },
@@ -790,10 +775,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   recentCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 20,
-    borderWidth: 1,
     padding: 14,
   },
   recentTitle: {
@@ -823,24 +804,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  recentMode: {
-    color: colors.body,
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: 4,
+  modeChip: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    marginTop: 6,
+    maxWidth: '100%',
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  modeChipText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   recentAmount: {
     color: colors.green,
     fontSize: 16,
+    fontVariant: ['tabular-nums'],
     fontWeight: '700',
     maxWidth: 82,
+    textAlign: 'right',
   },
   emptyCard: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 26,
-    borderWidth: 1,
     gap: 14,
     marginTop: 24,
     padding: 24,

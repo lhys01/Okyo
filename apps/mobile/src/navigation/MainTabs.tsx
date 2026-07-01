@@ -195,7 +195,15 @@ export function MainTabs() {
   return (
     <Tab.Navigator
       initialRouteName="HomeScreen"
-      tabBar={(props) => <FloatingTabBar {...props} />}
+      tabBar={(props) => {
+        const focusedRoute = props.state.routes[props.state.index];
+
+        if (focusedRoute.name === 'RecipeStepsScreen') {
+          return null;
+        }
+
+        return <FloatingTabBar {...props} />;
+      }}
       screenOptions={{
         animation: 'shift',
         headerShown: false,
@@ -209,7 +217,7 @@ export function MainTabs() {
       <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Plan' }} />
       <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />
       <Tab.Screen name="RecipeDetailScreen" component={RecipeDetailScreen} options={{ title: 'Recipe' }} />
-      <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps' }} />
+      <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps', tabBarStyle: { display: 'none' } }} />
       <Tab.Screen name="GroceryListScreen" component={GroceryListScreen} options={{ title: 'Grocery' }} />
     </Tab.Navigator>
   );

@@ -156,13 +156,10 @@ const styles = StyleSheet.create({
   },
   headerCard: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: radius.hero,
     flexDirection: 'row',
     gap: 16,
     marginTop: 8,
     padding: 20,
-    ...shadows.hero,
   },
   avatar: {
     alignItems: 'center',
@@ -192,11 +189,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   progressCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
     marginTop: 18,
     padding: 18,
-    ...shadows.card,
   },
   progressHeader: {
     flexDirection: 'row',
@@ -232,12 +226,9 @@ const styles = StyleSheet.create({
     marginTop: 18,
   },
   statCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
     minHeight: 86,
     padding: 16,
     width: '48%',
-    ...shadows.card,
   },
   statLabel: {
     color: colors.muted,
@@ -254,11 +245,7 @@ const styles = StyleSheet.create({
     marginTop: 9,
   },
   menu: {
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
     marginTop: spacing.section,
-    overflow: 'hidden',
-    ...shadows.card,
   },
   row: {
     alignItems: 'center',

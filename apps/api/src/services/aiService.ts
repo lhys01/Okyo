@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { z } from 'zod';
 
 import { getAiConfig } from '../config/aiConfig.js';
@@ -38,6 +40,22 @@ import {
 import { logScanEvaluation } from './scanEvalLogger.js';
 import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
 import { getGeneratedRecipe, storeGeneratedRecipe } from '../store.js';
+
+// Bump when the vision/recipe prompt or post-processing pipeline changes substantially.
+// Any cached scan result with a different version is automatically stale.
+const RECIPE_PIPELINE_VERSION = 'v3';
+const SCAN_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 h success cache
+const SCAN_REJECTION_CACHE_TTL_MS = 60 * 60 * 1000; // 1 h rejection cache
+
+type ScanCacheEntry =
+  | { kind: 'success'; result: AiScanSuccessResult; expiresAt: number }
+  | { kind: 'rejection'; error: FoodRejectionError; expiresAt: number };
+// ponytail: in-memory only; add Redis/disk when multi-process deployment matters
+const scanCache = new Map<string, ScanCacheEntry>();
+
+function getScanCacheKey(dataUrl: string, mode: string): string {
+  return createHash('sha1').update(dataUrl).digest('hex') + ':' + mode + ':' + RECIPE_PIPELINE_VERSION;
+}
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
 const difficultySchema = z.enum(['Easy', 'Medium', 'Hard']);
@@ -208,6 +226,24 @@ export type AiScanSuccessResult = {
   scanState: ScanState;
   uploadedImage: boolean;
 };
+
+export type FoodRejectionType = 'no_food_detected' | 'unclear_food';
+
+export class FoodRejectionError extends Error {
+  readonly rejectionType: FoodRejectionType;
+  readonly scanState: ScanState;
+  readonly confidence: number;
+  readonly dishName: string;
+
+  constructor(args: { rejectionType: FoodRejectionType; scanState: ScanState; confidence: number; dishName: string }) {
+    super("I couldn't find a clear meal in this photo. Try scanning a plated dish, snack, or restaurant food.");
+    this.name = 'FoodRejectionError';
+    this.rejectionType = args.rejectionType;
+    this.scanState = args.scanState;
+    this.confidence = args.confidence;
+    this.dishName = args.dishName;
+  }
+}
 
 export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<FoodImageAnalysis> {
   const config = getAiConfig();
@@ -470,6 +506,22 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
   }
 
 
+  // Scan-level cache: same image + mode + pipeline version returns the cached result
+  // without re-running vision or recipe generation. Only keyed when a real dataUrl
+  // is present; placeholder / URI-only scans fall through to live generation.
+  const scanCacheKey = input.image?.dataUrl
+    ? getScanCacheKey(input.image.dataUrl, input.mode)
+    : null;
+  if (scanCacheKey) {
+    const cached = scanCache.get(scanCacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      console.log('[scan_cache]', { hit: true, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8), ttl: 'valid' });
+      if (cached.kind === 'success') return cached.result;
+      throw cached.error;
+    }
+    console.log('[scan_cache]', { hit: false, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8) });
+  }
+
   // [scan_timing] orchestration timers. Per-OpenRouter-call timing is logged
   // separately by callOpenRouterJson ([token_usage].durationMs, keyed by stage);
   // this gives the end-to-end and deterministic-stage breakdown.
@@ -491,6 +543,33 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
     });
     logScanDebug('api_scan_first_dish_name', { dishName: analysis.dishName });
     logScanDebug('api_scan_first_confidence', { confidence: analysis.confidence });
+
+    // Hard food gate: reject non-food/unclear images before Epicure or recipe generation.
+    const rejection = getFoodGateRejection(analysis, uploadedImage);
+    const foodGatePassed = rejection === null;
+    console.log('[food_gate]', {
+      passed: foodGatePassed,
+      scanState: analysis.scanState,
+      confidence: analysis.confidence,
+      dishName: analysis.dishName,
+      visionModel: config.openRouterVisionModel,
+      epicureSkipped: !foodGatePassed,
+      recipeSkipped: !foodGatePassed,
+    });
+    if (rejection) {
+      console.log('[scan_timing]', {
+        dish: analysis.dishName,
+        scanState: analysis.scanState,
+        visionMs,
+        recipeMs: 0,
+        totalMs: Date.now() - scanStartedAt,
+        rejected: rejection.rejectionType,
+      });
+      if (scanCacheKey) {
+        scanCache.set(scanCacheKey, { kind: 'rejection', error: rejection, expiresAt: Date.now() + SCAN_REJECTION_CACHE_TTL_MS });
+      }
+      throw rejection;
+    }
 
     logScanDebug('api_scan_recipe_start', {
       dishName: analysis.dishName,
@@ -590,6 +669,9 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       totalMs: Date.now() - scanStartedAt,
     });
 
+    if (scanCacheKey) {
+      scanCache.set(scanCacheKey, { kind: 'success', result, expiresAt: Date.now() + SCAN_CACHE_TTL_MS });
+    }
     return result;
   } catch (error) {
     // Fail-closed: throw on any provider error. Never return rejected scans.
@@ -713,6 +795,26 @@ async function logScanEvaluationFromResult(result: AiScanSuccessResult, config: 
   });
 }
 
+
+// Returns a FoodRejectionError if the vision analysis indicates non-food or unclear food,
+// null if generation should proceed. Only gates real uploaded images — demo/mock mode passes through.
+function getFoodGateRejection(analysis: FoodImageAnalysis, uploadedImage: boolean): FoodRejectionError | null {
+  if (!uploadedImage) return null;
+
+  if (analysis.scanState === 'not_food') {
+    return new FoodRejectionError({ rejectionType: 'no_food_detected', scanState: analysis.scanState, confidence: analysis.confidence, dishName: analysis.dishName });
+  }
+  if (analysis.scanState === 'too_unclear') {
+    return new FoodRejectionError({ rejectionType: 'unclear_food', scanState: analysis.scanState, confidence: analysis.confidence, dishName: analysis.dishName });
+  }
+  // Extra guard: food scan state but completely generic dish name + low confidence
+  // catches cases where the vision model hallucinated a food state for a non-food image.
+  if (isGenericDishName(analysis.dishName) && analysis.confidence < uploadedImageConfidenceThreshold) {
+    return new FoodRejectionError({ rejectionType: 'unclear_food', scanState: analysis.scanState, confidence: analysis.confidence, dishName: analysis.dishName });
+  }
+
+  return null;
+}
 
 function hasRealUploadedImage(input: AnalyzeFoodImageInput) {
   return Boolean(
@@ -863,11 +965,14 @@ export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const normalizedIsFoodImage = scanState === 'not_food' || scanState === 'too_unclear'
     ? false
     : isFoodImage || isFoodScanState(scanState);
-  const dishName = normalizeDishName(output.dishName, cuisine, broadDishCategory, [
-    ...getVisibleComponentValues(visibleComponents),
-    ...visibleIngredients,
-    ...likelyIngredients,
-  ]);
+  const dishName = maybeRenameMusubi(
+    normalizeDishName(output.dishName, cuisine, broadDishCategory, [
+      ...getVisibleComponentValues(visibleComponents),
+      ...visibleIngredients,
+      ...likelyIngredients,
+    ]),
+    [...visibleIngredients, ...likelyIngredients].join(' '),
+  );
   const possibleDishNames = normalizePossibleDishNames(output.possibleDishNames, dishName, broadDishCategory);
 
   return {
@@ -1339,12 +1444,12 @@ function cleanDishName(value: string) {
 }
 
 function getRecipeTitle(value: string, dishName: string, mode: RecipeMode) {
-  const fallbackTitle = mode === 'Budget'
-    ? `Budget ${dishName} Inspired-by`
-    : mode === 'Healthy'
-      ? `Lighter ${dishName} Inspired-by`
-      : `${dishName} Inspired-by`;
-  const safeValue = typeof value === 'string' && !isPlaceholderText(value) ? value : '';
+  const prefix = mode === 'Budget' ? 'Budget ' : mode === 'Healthy' ? 'Lighter ' : '';
+  const fallbackTitle = `${prefix}${dishName}`;
+  // Strip "Homemade" before isGenericDishName check so "Homemade Restaurant-Style Food Plate"
+  // falls through to the fallback instead of surfacing as a title.
+  const stripped = typeof value === 'string' ? value.replace(/^homemade\s+/i, '').trim() : '';
+  const safeValue = stripped && !isPlaceholderText(stripped) && !isGenericDishName(stripped) ? stripped : '';
 
   return ensureInspiredTitle(getShortText(safeValue, fallbackTitle, 90));
 }
@@ -1361,6 +1466,7 @@ const vagueIngredientWords = new Set([
   // Dish names that slip through as ingredient strings — blocked here so they never
   // reach the ingredient list. "elote" is translated (not blocked) via DISH_NAME_TRANSLATIONS.
   'burger', 'burgers', 'pizza', 'taco', 'tacos', 'sushi', 'gyoza', 'dumpling', 'dumplings',
+  'wonton', 'wontons', 'potsticker', 'potstickers', 'pot sticker', 'pot stickers', 'mandu',
   'ramen bowl', 'pho bowl',
 ]);
 
@@ -1572,13 +1678,31 @@ function sanitizeRecipeVagueness(recipe: Recipe, analysis: FoodImageAnalysis): R
 
 function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mode: RecipeMode) {
   const usableLikely = analysis.likelyIngredients.filter((item) => item && !isVagueIngredientWord(item));
-  const ingredients = getSafeList(values, usableLikely, 12)
+  const ingredients = getSafeList(values, usableLikely, 16)
     .filter((value) => !isVagueIngredientWord(value))
     .map(toRecipeIngredient)
     .filter((ing) => !isVagueIngredientWord(ing.name))  // catch "1 burger" → name:"burger" post-parse
-    .map((ing) => normalizeCheetosDust(ing, analysis));
-  const base = ensureCoreIngredients(ingredients, analysis).slice(0, 12);
-  return mode === 'Budget' ? base.map(normalizeBudgetIngredient) : base;
+    .map((ing) => normalizeCheetosDust(ing, analysis))
+    .map((ing) => normalizeSuspiciousSauce(ing, analysis))
+    .map((ing) => normalizeRareProtein(ing));
+  const beforeNames = ingredients.map((ing) => ing.name);
+  const base = ensureCoreIngredients(ingredients, analysis, mode).slice(0, 16);
+  const modeNormalized = mode === 'Budget' ? base.map(normalizeBudgetIngredient) : base;
+  const dedupedList = dedupeIngredientConcepts(modeNormalized, analysis);
+  const quantityFixed = dedupedList.map(normalizeBadQuantities);
+  const simpleNormalized = normalizeSimpleFruitIngredients(quantityFixed, analysis);
+  // Mango sticky rice: 5-8 ingredients max — coconut + mango + sticky rice + sugar + salt fits well inside.
+  const finalList = isMangoStickyRiceDish(analysis.dishName ?? '')
+    ? simpleNormalized.slice(0, 8)
+    : simpleNormalized;
+  console.log('[ingredient_quality]', {
+    dish: analysis.dishName,
+    mode,
+    beforeCount: beforeNames.length,
+    afterCount: finalList.length,
+    added: finalList.map((ing) => ing.name).filter((name) => !beforeNames.includes(name)),
+  });
+  return finalList;
 }
 
 // Replace "hot cheetos dust" with "chili powder or Tajín" unless the dish context
@@ -1594,6 +1718,35 @@ function normalizeCheetosDust(ingredient: RecipeIngredient, analysis: FoodImageA
   return { ...ingredient, name: 'chili powder or tajín', quantity: ingredient.quantity || '1 tsp', pantryItem: true };
 }
 
+// Replace sauces that make no sense for the dish (e.g. "berry sauce" on octopus).
+// Only fires when the sauce keyword is clearly off-context — never for desserts.
+const SUSPICIOUS_SAUCE_RE = /\b(berry|berries|fruit|strawberry|blueberry|raspberry|mango|peach)\s+sauce\b/i;
+const DESSERT_DISH_RE = /\b(cake|dessert|cheesecake|waffle|pancake|crepe|ice cream|brownie|pudding|tart)\b/i;
+
+function normalizeSuspiciousSauce(ingredient: RecipeIngredient, analysis: FoodImageAnalysis): RecipeIngredient {
+  if (!SUSPICIOUS_SAUCE_RE.test(ingredient.name)) return ingredient;
+  const ctx = [analysis.dishName, analysis.broadDishCategory, ...analysis.visibleIngredients].join(' ');
+  if (DESSERT_DISH_RE.test(ctx)) return ingredient;
+  const lower = ctx.toLowerCase();
+  let replacement = 'lemon garlic sauce';
+  if (includesAny(lower, ['wonton', 'dumpling', 'gyoza', 'potsticker'])) replacement = 'soy dipping sauce';
+  else if (includesAny(lower, ['burger', 'sandwich'])) replacement = 'burger sauce or mayo';
+  else if (includesAny(lower, ['taco', 'mexican', 'burrito'])) replacement = 'salsa';
+  else if (includesAny(lower, ['pasta', 'noodle', 'ramen'])) replacement = 'sauce base';
+  return { ...ingredient, name: replacement };
+}
+
+// Swap rare/expensive proteins that are unlikely in a home kitchen.
+// Fires in all modes — shark is a hallucination on novelty foods, not a real ingredient.
+function normalizeRareProtein(ingredient: RecipeIngredient): RecipeIngredient {
+  const name = ingredient.name;
+  if (/\bshark\b/i.test(name)) {
+    const replacement = /\bfillet/i.test(name) ? 'white fish fillets' : 'white fish';
+    return { ...ingredient, name: name.replace(/\bshark(?:\s+fillets?)?\b/gi, replacement) };
+  }
+  return ingredient;
+}
+
 // Strip presentation-only modifiers that don't correspond to a grocery-store product.
 // Only applies to Budget mode — Restaurant Copy/Healthy may intentionally specify
 // particular cuts or presentations.
@@ -1603,7 +1756,89 @@ function normalizeBudgetIngredient(ingredient: RecipeIngredient): RecipeIngredie
     .replace(/\b(?:crinkle-?cut|hand-?cut|house-?made|hand-?crafted|artisanal?|freshly-?cut|freshly-?ground)\b\s*/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
+  // Budget-only: swap expensive proteins for affordable alternatives.
+  if (/\blobster\b/i.test(name)) return { ...ingredient, name: name.replace(/\blobster\b/gi, 'shrimp') };
+  if (/\b(?:swordfish|monkfish)\b/i.test(name)) return { ...ingredient, name: name.replace(/\b(?:swordfish|monkfish)\b/gi, 'white fish') };
   return name === ingredient.name ? ingredient : { ...ingredient, name };
+}
+
+// Plain fruit / minimally-prepped whole foods — dish needs 1-4 ingredients, not a salad.
+// Excludes dishes that explicitly name complex additions (feta, yogurt, salad, etc.).
+const PLAIN_FRUIT_RE = /\b(watermelon|cantaloupe|honeydew|melon|berries|blueberr(?:ies|y)|strawberr(?:ies|y)|raspberr(?:ies|y)|blackberr(?:ies|y)|grapes?|banana|pineapple|mango\s+(?:slice|cube|chunk)s?|orange\s+slices?|apple\s+slices?|kiwi\s+slices?|fruit\s+(?:cup|bowl|plate|platter|tray))\b/i;
+const COMPLEX_FRUIT_RE = /\b(salad|feta|prosciutto|yogurt|granola|chocolate|sorbet|smoothie|tart|pie|cake|parfait|crumble|pudding|dressing|sauce)\b/i;
+
+function isPlainFruitDish(dishName: string): boolean {
+  const n = dishName.toLowerCase();
+  return PLAIN_FRUIT_RE.test(n) && !COMPLEX_FRUIT_RE.test(n);
+}
+
+// Ingredients the model adds to "elevate" plain fruit into a composed dish — strip when not visible.
+const FRUIT_CHEF_ADDITION_RE = /\b(feta|goat\s+cheese|cream\s+cheese|brie|camembert|fresh\s+mint|mint\s+leaves?|basil\s+leaves?|honey\b|agave|maple\s+syrup|granola|greek\s+yogurt|yogurt|almonds?|pistachios?|walnuts?|pecans?|cashews?|chia\s+seeds?|coconut\s+flakes?|chocolate\b|dark\s+chocolate|balsamic|balsamic\s+glaze|whipped\s+cream)\b/i;
+
+function normalizeSimpleFruitIngredients(
+  ingredients: RecipeIngredient[],
+  analysis: FoodImageAnalysis,
+): RecipeIngredient[] {
+  if (!isPlainFruitDish(analysis.dishName ?? '')) return ingredients;
+  // Only treat explicitly visible items as authorized additions.
+  const visibleText = [analysis.dishName, ...analysis.visibleIngredients].join(' ').toLowerCase();
+  return ingredients.filter((ing) => {
+    const m = FRUIT_CHEF_ADDITION_RE.exec(ing.name.toLowerCase());
+    if (!m) return true; // not a chef addition, keep it
+    return visibleText.includes(m[0]); // only keep if actually visible
+  });
+}
+
+// Cap absurd quantities the model consistently over-estimates.
+function normalizeBadQuantities(ingredient: RecipeIngredient): RecipeIngredient {
+  const n = ingredient.name.toLowerCase();
+  const q = (ingredient.quantity ?? '').toLowerCase().trim();
+  if (/\bwasabi\b/.test(n) && /^(?:\d+\s+)?(?:1\/[234]|3\/4|1|2)\s*cups?/.test(q)) {
+    return { ...ingredient, quantity: '1 tsp' };
+  }
+  if (/\btartar sauce\b/.test(n) && /\b1\s*cup\b/.test(q)) {
+    return { ...ingredient, quantity: '1/4 cup' };
+  }
+  return ingredient;
+}
+
+// Return a canonical concept key for deduplication. '__skip__' means drop the ingredient.
+function isMangoStickyRiceDish(dishName: string): boolean {
+  const n = dishName.toLowerCase();
+  return /\bmango\b.{0,25}\bsticky rice\b|\bsticky rice\b.{0,25}\bmango\b|\bthai mango\b|\bmango coconut rice\b/i.test(n);
+}
+
+function getIngredientConceptKey(name: string, hasSeasonedRiceVinegar: boolean, isMangoRice = false): string {
+  const n = name.toLowerCase().trim();
+  if (/\bsoy sauce\b/.test(n) || /\btamari\b/.test(n)) return 'soy_sauce';
+  if (/\bnori\b/.test(n)) return 'nori';
+  if (/\b(scallion|green onion|spring onion)\b/.test(n)) return 'scallion';
+  if (/\bchili (oil|crisp)\b/.test(n) || /^spicy chili\b/.test(n)) return 'chili_oil';
+  // Seasoned rice vinegar already bundles vinegar+sugar+salt — plain rice vinegar is redundant.
+  if (hasSeasonedRiceVinegar && /^rice vinegar$/.test(n)) return '__skip__';
+  // Mango sticky rice: merge duplicated fruit, coconut, sugar, salt, and rice variants.
+  if (isMangoRice) {
+    if (/\bmango\b/.test(n)) return 'mango';
+    if (/\bcoconut (milk|cream)\b/.test(n)) return 'coconut_base';
+    if (/^(sugar|granulated sugar|palm sugar|white sugar|cane sugar)$/.test(n)) return 'sugar';
+    if (/^(salt|sea salt|kosher salt|fine salt)$/.test(n)) return 'salt';
+    if (/\b(sticky rice|glutinous rice|sweet rice)\b/.test(n)) return 'sticky_rice';
+  }
+  return n;
+}
+
+// Drop semantic duplicates: soy sauce x2, nori variants, scallion/green onion, etc.
+function dedupeIngredientConcepts(ingredients: RecipeIngredient[], analysis?: FoodImageAnalysis): RecipeIngredient[] {
+  const hasSeasonedRiceVinegar = ingredients.some((i) => /seasoned rice vinegar/i.test(i.name));
+  const isMangoRice = analysis ? isMangoStickyRiceDish(analysis.dishName ?? '') : false;
+  const seen = new Set<string>();
+  return ingredients.filter((ing) => {
+    const key = getIngredientConceptKey(ing.name, hasSeasonedRiceVinegar, isMangoRice);
+    if (key === '__skip__') return false;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function getRecipeSteps(values: OpenRouterRecipeVariant['steps'], dishName: string) {
@@ -1624,6 +1859,38 @@ function isGenericGatherStep(step: string) {
   return /^gather\s+(?:all\s+)?(?:your\s+)?(?:the\s+)?ingredients/i.test(step.trim());
 }
 
+// Rename "Spam Sushi" → "Spam Musubi" when spam+nori evidence is present.
+function maybeRenameMusubi(dishName: string, ingredientText: string): string {
+  const name = dishName.toLowerCase();
+  if (/\bmusubi\b/.test(name)) return dishName; // already correct
+  if (!(/\bspam\b/.test(name) && /\b(sushi|maki)\b/.test(name))) return dishName;
+  const text = ingredientText.toLowerCase();
+  if (/\bspam\b/.test(text) && /\bnori\b/.test(text)) return 'Spam Musubi';
+  return dishName;
+}
+
+const GENERIC_STEP_TITLE_RE = /^(combine\s+ingredients?|heat\s+mixture|cool\s+and\s+store|cool\s*&\s*store|gather\s+(?:all\s+)?ingredients?|prepare?\s+ingredients?)$/i;
+const MUSUBI_WRONG_STEP_RE = /\bslice\b.{0,25}\b(roll|maki)\b/i;
+
+// Remove generic micro-steps and musubi-incompatible roll steps.
+function compressGenericSteps(steps: RecipeStep[], analysis: FoodImageAnalysis): RecipeStep[] {
+  const dishText = getAnalysisText(analysis);
+  const isMusubi = /musubi/i.test(dishText);
+  return steps.filter((step) => {
+    const title = (step.title ?? '').trim();
+    const text = step.text;
+    if (isGenericGatherStep(text)) return false;
+    if (isMusubi && (MUSUBI_WRONG_STEP_RE.test(text) || MUSUBI_WRONG_STEP_RE.test(title))) return false;
+    // Keep generic-titled steps only when the body contains specific ingredient/amount content.
+    if (GENERIC_STEP_TITLE_RE.test(title)) {
+      const hasSpecificContent = /\b\d+\s*(tbsp|tsp|cup|oz|lb|g|ml|min|sec|°[FC]|hours?)\b/i.test(text) ||
+        /\b(soy sauce|rice vinegar|sugar|mirin|garlic|ginger|sesame|spam|nori|rice|flour|butter|cream|egg)\b/i.test(text);
+      if (!hasSpecificContent) return false;
+    }
+    return true;
+  });
+}
+
 function getStructuredSteps(
   values: OpenRouterRecipeVariant['steps'],
   steps: string[],
@@ -1641,9 +1908,12 @@ function getStructuredSteps(
       .map((step) => toStructuredStep(step, step, analysis))
       .filter((step): step is RecipeStep => Boolean(step));
 
+  // Remove generic micro-steps (gather ingredients, roll-slicing for musubi, etc.) before ordering.
+  const compressed = compressGenericSteps(source, analysis);
+
   // Validate phase ordering using AI-assigned phase integers (falls back to keyword
   // classification for steps without AI-assigned phase, e.g. old saved recipes).
-  const corrected = validateStepPhaseOrder(source) ? source : correctStepPhaseOrder(source);
+  const corrected = validateStepPhaseOrder(compressed) ? compressed : correctStepPhaseOrder(compressed);
   if (!validateStepPhaseOrder(corrected)) {
     console.warn('[recipe-validator] phase ordering could not be fully corrected', {
       dishName: analysis.dishName,
@@ -2911,6 +3181,7 @@ function getDefaultSubstitutions() {
 function ensureCoreIngredients(
   ingredients: RecipeIngredient[],
   analysis: FoodImageAnalysis,
+  mode: RecipeMode = 'Restaurant Copy',
 ) {
   const dishText = [
     analysis.dishName,
@@ -3032,6 +3303,136 @@ function ensureCoreIngredients(
       quantity: '2 cloves',
       pantryItem: true,
     });
+  }
+
+  if (includesAny(dishText, ['wonton', 'dumpling', 'gyoza', 'potsticker', 'pot sticker', 'mandu', 'dim sum'])) {
+    // Pick ONE coherent strategy so the list never mixes "frozen dumplings" with raw filling.
+    // Shortcut = frozen base (no wrapper/filling); from-scratch = wrappers + filling.
+    const hasFrozen = result.some((i) => /frozen\s+dumpling|frozen\s+wonton|frozen\s+gyoza|frozen\s+potsticker/i.test(i.name));
+    const hasWrapper = result.some((i) => /wrapper/i.test(i.name));
+    const shortcut = hasFrozen || (mode === 'Budget' && !hasWrapper);
+
+    if (shortcut) {
+      // Replace any wrapper the model added so we don't end up half-shortcut, half-scratch.
+      addIngredientIfMissing(result, ['frozen dumpling', 'frozen wonton', 'frozen gyoza', 'frozen potsticker'], {
+        name: 'frozen dumplings',
+        quantity: '1 lb (about 20)',
+      });
+    } else {
+      addIngredientIfMissing(result, ['wrapper', 'wonton wrapper', 'dumpling wrapper'], {
+        name: dishText.includes('wonton') ? 'wonton wrappers' : 'dumpling wrappers',
+        quantity: '1 package',
+      });
+      addIngredientIfMissing(result, ['pork', 'beef', 'chicken', 'shrimp', 'meat', 'turkey', 'tofu'], { name: 'ground pork', quantity: '1/2 lb' });
+      addIngredientIfMissing(result, ['cabbage', 'napa'], { name: 'napa cabbage', quantity: '1 cup, minced' });
+      addIngredientIfMissing(result, ['white pepper'], { name: 'white pepper', quantity: '1/4 tsp', pantryItem: true });
+      addIngredientIfMissing(result, ['salt'], { name: 'salt', quantity: 'to taste', pantryItem: true });
+      addIngredientIfMissing(result, ['cooking oil', 'vegetable oil', 'canola'], { name: 'vegetable oil', quantity: '2 tbsp', pantryItem: true });
+    }
+
+    // Aromatics + sauce — needed for both strategies (the sauce is the dish).
+    addIngredientIfMissing(result, ['ginger'], { name: 'fresh ginger', quantity: '1 tsp, grated', pantryItem: true });
+    addIngredientIfMissing(result, ['garlic'], { name: 'garlic', quantity: '2 cloves', pantryItem: true });
+    addIngredientIfMissing(result, ['soy sauce', 'tamari'], { name: 'soy sauce', quantity: '2 tbsp', pantryItem: true });
+    addIngredientIfMissing(result, ['sesame oil'], { name: 'sesame oil', quantity: '1 tsp', pantryItem: true });
+    addIngredientIfMissing(result, ['scallion', 'green onion', 'spring onion'], { name: 'green onions', quantity: '2 stalks' });
+
+    // Chili oil dumplings: ensure the glossy sauce components.
+    if (includesAny(dishText, ['chili oil', 'chili crisp', 'chilli oil', 'spicy', 'la-yu', 'lao gan ma'])) {
+      addIngredientIfMissing(result, ['chili oil', 'chili crisp', 'chilli oil'], { name: 'chili oil', quantity: '2 tbsp' });
+      addIngredientIfMissing(result, ['rice vinegar', 'black vinegar', 'vinegar'], { name: 'rice vinegar', quantity: '1 tbsp', pantryItem: true });
+      addIngredientIfMissing(result, ['sesame seed'], { name: 'sesame seeds', quantity: '1 tsp', pantryItem: true });
+      addIngredientIfMissing(result, ['sugar', 'honey'], { name: 'sugar', quantity: '1 tsp', pantryItem: true });
+    }
+  }
+
+  if (includesAny(dishText, ['octopus', 'pulpo', 'calamari', 'squid', 'tentacle'])) {
+    addIngredientIfMissing(result, ['garlic'], { name: 'garlic', quantity: '3 cloves', pantryItem: true });
+    addIngredientIfMissing(result, ['olive oil', 'oil'], { name: 'olive oil', quantity: '2 tbsp', pantryItem: true });
+    addIngredientIfMissing(result, ['lemon', 'lime', 'citrus'], { name: 'lemon', quantity: '1' });
+    addIngredientIfMissing(result, ['salt'], { name: 'salt', quantity: 'to taste', pantryItem: true });
+    addIngredientIfMissing(result, ['pepper', 'black pepper'], { name: 'black pepper', quantity: 'to taste', pantryItem: true });
+    addIngredientIfMissing(result, ['paprika', 'smoked paprika', 'pimentón'], { name: 'smoked paprika', quantity: '1 tsp', pantryItem: true });
+    addIngredientIfMissing(result, ['parsley', 'herb', 'thyme', 'oregano', 'cilantro'], { name: 'fresh parsley', quantity: '2 tbsp' });
+  }
+
+  if (includesAny(dishText, ['cream bun', 'custard bun', 'bao bun', 'milk bun', 'brioche bun', 'filled bun', 'donut', 'doughnut', 'eclair', 'cream puff', 'profiterole', 'choux', 'danish', 'mochi', 'pastry'])) {
+    addIngredientIfMissing(result, ['bun', 'bao', 'roll', 'brioche', 'dough', 'bread', 'pastry shell', 'choux', 'mochi'], { name: 'store-bought soft buns or bao buns', quantity: '6' });
+    addIngredientIfMissing(result, ['cream cheese', 'whipped cream', 'heavy cream', 'mascarpone', 'cream filling', 'ricotta', 'cream', 'creme', 'crème'], { name: 'cream cheese', quantity: '4 oz', pantryItem: true });
+    addIngredientIfMissing(result, ['powdered sugar', 'icing sugar', 'confectioner', 'granulated sugar', 'honey', 'maple syrup'], { name: 'powdered sugar', quantity: '1/2 cup', pantryItem: true });
+    addIngredientIfMissing(result, ['vanilla', 'vanilla extract', 'vanilla bean'], { name: 'vanilla extract', quantity: '1 tsp', pantryItem: true });
+    addIngredientIfMissing(result, ['jam', 'compote', 'preserve', 'curd', 'berry', 'blueberry', 'strawberry', 'raspberry', 'mango', 'peach', 'fruit filling', 'lemon curd'], { name: 'fruit jam or compote', quantity: '1/3 cup' });
+  }
+
+  if (includesAny(dishText, ['fried fish', 'fish and chips', 'fish n chips', 'fish-shaped', 'fish fillet', 'battered fish', 'crispy fish', 'beer battered'])) {
+    addIngredientIfMissing(result, ['white fish', 'cod', 'haddock', 'tilapia', 'pollock', 'catfish', 'fish', 'shark'], { name: 'white fish fillets', quantity: '1 lb' });
+    addIngredientIfMissing(result, ['flour', 'all-purpose flour'], { name: 'all-purpose flour', quantity: '1 cup', pantryItem: true });
+    addIngredientIfMissing(result, ['cornstarch', 'corn starch'], { name: 'cornstarch', quantity: '1/4 cup', pantryItem: true });
+    addIngredientIfMissing(result, ['baking powder'], { name: 'baking powder', quantity: '1 tsp', pantryItem: true });
+    addIngredientIfMissing(result, ['sparkling water', 'soda water', 'beer', 'cold water', 'egg'], { name: 'cold sparkling water', quantity: '3/4 cup' });
+    addIngredientIfMissing(result, ['salt'], { name: 'salt', quantity: '1 tsp', pantryItem: true });
+    addIngredientIfMissing(result, ['black pepper', 'pepper'], { name: 'black pepper', quantity: '1/2 tsp', pantryItem: true });
+    addIngredientIfMissing(result, ['paprika', 'smoked paprika'], { name: 'paprika', quantity: '1 tsp', pantryItem: true });
+    addIngredientIfMissing(result, ['garlic powder', 'garlic'], { name: 'garlic powder', quantity: '1/2 tsp', pantryItem: true });
+    addIngredientIfMissing(result, ['oil', 'vegetable oil', 'canola oil', 'frying oil'], { name: 'vegetable oil for frying', quantity: '2 cups', pantryItem: true });
+    addIngredientIfMissing(result, ['tartar sauce', 'aioli', 'remoulade', 'mayo'], { name: 'tartar sauce', quantity: '1/4 cup' });
+    addIngredientIfMissing(result, ['lemon', 'lime'], { name: 'lemon', quantity: '1' });
+    addIngredientIfMissing(result, ['fries', 'french fries', 'potato', 'chips'], { name: 'frozen fries', quantity: '1 lb' });
+  }
+
+  if (isMangoStickyRiceDish(dishText)) {
+    addIngredientIfMissing(result, ['sticky rice', 'glutinous rice', 'sweet rice'], {
+      name: 'sticky rice (glutinous)',
+      quantity: '1 cup uncooked',
+    });
+    addIngredientIfMissing(result, ['mango', 'mangoes', 'ripe mango', 'ripe mangoes', 'sliced mango', 'diced mango'], {
+      name: 'ripe mangoes',
+      quantity: '2',
+    });
+    // Prefer coconut milk; block coconut cream from being added separately.
+    if (!result.some((i) => /coconut (milk|cream)/i.test(i.name))) {
+      result.push({ name: 'coconut milk', quantity: '1 can (400ml)', pantryItem: false });
+    }
+    addIngredientIfMissing(result, ['sugar', 'palm sugar', 'granulated sugar', 'white sugar'], {
+      name: 'sugar',
+      quantity: '3 tbsp',
+      pantryItem: true,
+    });
+    addIngredientIfMissing(result, ['salt'], { name: 'salt', quantity: '1/2 tsp', pantryItem: true });
+  }
+
+  if (includesAny(dishText, ['musubi', 'spam musubi'])) {
+    addIngredientIfMissing(result, ['spam', 'luncheon meat', 'canned pork', 'canned meat'], {
+      name: 'Spam (canned)',
+      quantity: '1 can',
+    });
+    addIngredientIfMissing(result, ['sushi rice', 'japanese rice', 'short grain rice', 'sticky rice', 'rice'], {
+      name: 'sushi rice',
+      quantity: '1 cup uncooked',
+    });
+    addIngredientIfMissing(result, ['nori', 'seaweed', 'dried seaweed'], {
+      name: 'nori sheets',
+      quantity: '2 full sheets',
+    });
+    addIngredientIfMissing(result, ['soy sauce', 'tamari'], {
+      name: 'soy sauce',
+      quantity: '2 tbsp',
+      pantryItem: true,
+    });
+    addIngredientIfMissing(result, ['sugar', 'honey', 'mirin'], {
+      name: 'sugar',
+      quantity: '1 tbsp',
+      pantryItem: true,
+    });
+    // Prefer "seasoned rice vinegar" (1 ingredient) over the 3-ingredient breakdown.
+    if (!result.some((i) => /seasoned rice vinegar/i.test(i.name))) {
+      addIngredientIfMissing(result, ['rice vinegar', 'vinegar', 'mirin'], {
+        name: 'rice vinegar',
+        quantity: '1 tbsp',
+        pantryItem: true,
+      });
+    }
+    addIngredientIfMissing(result, ['salt'], { name: 'salt', quantity: '1/2 tsp', pantryItem: true });
   }
 
   if (dishText.includes('salad') && !dishText.includes('pasta salad') && !dishText.includes('potato salad')) {
@@ -3182,7 +3583,7 @@ function toRecipeIngredient(value: string): RecipeIngredient {
     };
   }
 
-  const quantityMatch = withoutBadAsNeeded.match(/^((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|one|two|three|four|five|six|a|an)\s*(?:cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|ml|clove|cloves|slice|slices|can|cans|bunch|bunches|stalk|stalks|piece|pieces|large|medium|small)?)\s+(.+)$/i);
+  const quantityMatch = withoutBadAsNeeded.match(/^((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|one|two|three|four|five|six|a|an)\s*(?:cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|ml|clove|cloves|slice|slices|can|cans|bunch|bunches|stalk|stalks|piece|pieces|package|packages|bottle|bottles|jar|jars|bag|bags|box|boxes|large|medium|small)?)\s+(.+)$/i);
   if (quantityMatch) {
     const name = cleanIngredientName(quantityMatch[2]);
     return {
@@ -3218,6 +3619,8 @@ function cleanIngredientName(value: string) {
     // Strip trailing serving/presentation words when the food name remains complete
     // e.g. "lime wedge" → "lime", "cilantro sprig" → "cilantro"
     .replace(/\s+(?:wedges?|sprigs?)$/i, '')
+    // Fix malformed nori names: "sheets nori strips" → "nori sheets"
+    .replace(/^sheets?\s+nori\s+strips?\b/i, 'nori sheets')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
@@ -3341,21 +3744,19 @@ function cleanRecipeCopy(value: string) {
 }
 
 function ensureInspiredTitle(value: string) {
-  const cleaned = cleanRecipeCopy(value);
-  if (cleaned.toLowerCase().includes('inspired') || cleaned.toLowerCase().includes('restaurant-style')) {
-    return cleaned;
-  }
-
-  return `${cleaned} Inspired-by`;
+  // Strip "Inspired-by" / "Inspired by" variants — the UI badge handles that copy, not the title.
+  // Also strip leading "Homemade" and normalize shark → fish (common hallucination on novelty foods).
+  return cleanRecipeCopy(value)
+    .replace(/^homemade\s+/i, '')
+    .replace(/\bshark\b/gi, 'fish')
+    .replace(/\s*[-–]\s*inspired[\s-]?by\b/gi, '')
+    .replace(/\s+inspired[\s-]?by\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function ensureInspiredCopy(value: string) {
-  const cleaned = cleanRecipeCopy(value);
-  if (cleaned.toLowerCase().includes('inspired') || cleaned.toLowerCase().includes('restaurant-style')) {
-    return cleaned;
-  }
-
-  return `${cleaned} This is an inspired-by estimate for a home kitchen.`;
+  return cleanRecipeCopy(value);
 }
 
 function getSafeList(values: string[] | undefined, fallback: string[], maxItems: number) {

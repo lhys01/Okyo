@@ -246,10 +246,8 @@ export function PackCard({ pack, label, description, averageSavings, topDish, on
 
 export const sharedStyles = StyleSheet.create({
   card: {
-    backgroundColor: colors.card,
     borderRadius: radius.card,
     padding: spacing.card,
-    ...shadows.card,
   },
   row: {
     alignItems: 'center',
@@ -323,12 +321,11 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     alignItems: 'center',
-    backgroundColor: colors.card,
+    backgroundColor: colors.cream,
     borderRadius: radius.button,
     minHeight: 56,
     justifyContent: 'center',
     paddingHorizontal: 26,
-    ...shadows.card,
   },
   secondaryButtonText: {
     color: colors.charcoal,
@@ -378,12 +375,10 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
   },
   statCard: {
-    backgroundColor: colors.card,
     borderRadius: radius.panel,
     minHeight: 82,
     padding: 16,
     width: '48%',
-    ...shadows.card,
   },
   statCardSavings: {
     backgroundColor: colors.greenSoft,
