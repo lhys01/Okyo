@@ -1,5 +1,7 @@
 import type { GroceryList, Recipe, RecipeMode, ScanResult, ScanState, ShareCard } from '../mocks';
 
+export type OkyoModelOverride = 'fable';
+
 export type ApiResponse<T> =
   | {
       ok: true;
