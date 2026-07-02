@@ -2,6 +2,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
+import * as Sharing from 'expo-sharing';
 import {
   ArrowRight,
   Camera,
@@ -17,6 +18,7 @@ import {
 } from 'iconoir-react-native';
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { Alert, Image, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { captureRef } from 'react-native-view-shot';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
@@ -36,7 +38,9 @@ import {
 } from '../mocks';
 import type { RootStackParamList, ShareCardType } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { uiLog } from '../utils/uiDebug';
+import { getRecipeImageUrl } from '../utils/recipeImages';
+import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
+import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 type ShareCardRoute = RouteProp<RootStackParamList, 'ShareCardPreviewScreen'>;
 type ShareCardNavigation = NativeStackNavigationProp<RootStackParamList, 'ShareCardPreviewScreen'>;
@@ -63,7 +67,6 @@ export function ShareCardPreviewScreen() {
   const cardType = getSafeCardType(route.params?.cardType);
   const storeMode = useOkyoStore((state) => state.selectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
-  const latestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
@@ -75,7 +78,7 @@ export function ShareCardPreviewScreen() {
   const shareImage = scanContext?.image ?? selectedScanImage;
   const isDemoScan = shareImage?.source === 'mock';
   const routeRecipe = scanContext?.recipe ?? null;
-  const recipe = getShareRecipe(selectedMode, latestScanRecipes, latestScanRecipe, routeRecipe, isDemoScan);
+  const recipe = getShareRecipe(selectedMode, latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, routeRecipe, isDemoScan);
   const scanResult = scanContext?.scanResult ?? latestScanResult ?? (isDemoScan ? defaultScanResult : null);
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
@@ -107,7 +110,7 @@ export function ShareCardPreviewScreen() {
   const hasScanShareContext = Boolean(
     cardType !== 'scan_result' ||
     recipe ||
-    (scanResult && (scanContext?.recipe || latestScanRecipe || latestScanRecipes.length > 0)) ||
+    (scanResult && (scanContext?.recipe || latestScanRecipe)) ||
     isDemoScan,
   );
   const missingScanResult = cardType === 'scan_result' && !hasScanShareContext;
@@ -129,7 +132,7 @@ export function ShareCardPreviewScreen() {
         selectedMode,
         recipe: cardRecipe,
         scanResult,
-        imageUri: shareImage?.uri ?? getRecipeImageUri(cardRecipe),
+        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
       challenge_result: {
@@ -142,7 +145,7 @@ export function ShareCardPreviewScreen() {
         selectedMode: latestChallenge?.mode ?? selectedMode,
         recipe: cardRecipe,
         scanResult: fallbackScanResult,
-        imageUri: shareImage?.uri ?? getRecipeImageUri(cardRecipe),
+        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
       ranking: {
@@ -155,7 +158,7 @@ export function ShareCardPreviewScreen() {
         selectedMode: topLeaderboardEntry.value,
         recipe: cardRecipe,
         scanResult: fallbackScanResult,
-        imageUri: shareImage?.uri ?? getRecipeImageUri(cardRecipe),
+        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
       badge: {
@@ -168,7 +171,7 @@ export function ShareCardPreviewScreen() {
         selectedMode,
         recipe: cardRecipe,
         scanResult: fallbackScanResult,
-        imageUri: shareImage?.uri ?? getRecipeImageUri(cardRecipe),
+        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
       restaurant_pack: {
@@ -181,7 +184,7 @@ export function ShareCardPreviewScreen() {
         selectedMode: packDish?.difficulty ?? 'Pack',
         recipe: cardRecipe,
         scanResult: fallbackScanResult,
-        imageUri: shareImage?.uri ?? getRecipeImageUri(cardRecipe),
+        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
     };
@@ -215,6 +218,7 @@ export function ShareCardPreviewScreen() {
   ]);
   const shareStats = useMemo(() => getShareStats(cardData.recipe), [cardData.recipe]);
   const didTrackGenerated = useRef(false);
+  const cardRef = useRef<View | null>(null);
 
   useEffect(() => {
     if (didTrackGenerated.current) {
@@ -242,6 +246,26 @@ export function ShareCardPreviewScreen() {
     });
   }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, cardType, missingScanResult, selectedPack.name]);
 
+  useEffect(() => {
+    const imageUri = cardData.imageUri ?? null;
+    const usingFallback = Boolean(shareImage?.placeholder || !shareImage?.uri);
+    checkImageFileExists(imageUri).then((fileExists) => {
+      imageTraceLog('ShareCardPreviewScreen', {
+        screen: 'ShareCardPreviewScreen',
+        cardType,
+        recipeId: cardRecipe.id,
+        imageSource: !usingFallback ? 'shareImage.uri' : 'recipe.imageUri',
+        imageUri,
+        fileExists: imageUri ? fileExists : 'n/a',
+        usingFallback,
+        fallbackReason: usingFallback
+          ? (shareImage?.placeholder ? 'placeholder_image' : 'no_share_image_uri')
+          : null,
+        storageLocation: getStorageLocation(imageUri),
+      });
+    });
+  }, [cardData.imageUri, cardType]);
+
   const goBack = () => {
     if (navigation.canGoBack()) {
       navigation.goBack();
@@ -260,6 +284,19 @@ export function ShareCardPreviewScreen() {
         savings: cardData.estimatedSavings,
         screen: 'ShareCardPreviewScreen',
       });
+      const didShareImage = await shareImageCard();
+      if (didShareImage) {
+        awardXPOnce(`share-card-${cardType}-${selectedMode}`, 20);
+        track(analyticsEvents.SHARE_COMPLETED, {
+          cardType,
+          dishName: cardData.dishName,
+          savings: cardData.estimatedSavings,
+          screen: 'ShareCardPreviewScreen',
+          source: 'image',
+        });
+        return;
+      }
+
       const result = await Share.share({ message: cardData.caption, title: 'Okyo share card' });
       if (result.action !== Share.sharedAction) {
         return;
@@ -271,9 +308,37 @@ export function ShareCardPreviewScreen() {
         dishName: cardData.dishName,
         savings: cardData.estimatedSavings,
         screen: 'ShareCardPreviewScreen',
+        source: 'caption',
       });
     } catch {
       Alert.alert('Share unavailable', 'This device could not open the native share sheet.');
+    }
+  };
+
+  const shareImageCard = async () => {
+    try {
+      if (!cardRef.current || !(await Sharing.isAvailableAsync())) {
+        return false;
+      }
+
+      const uri = await captureRef(cardRef, {
+        format: 'png',
+        quality: 1,
+        result: 'tmpfile',
+      });
+
+      await Sharing.shareAsync(uri, {
+        dialogTitle: 'Share Okyo card',
+        mimeType: 'image/png',
+        UTI: 'public.png',
+      });
+
+      return true;
+    } catch (error) {
+      uiLog('ShareCardPreviewScreen', 'share_image_unavailable', {
+        errorMessage: error instanceof Error ? error.message : 'Image share unavailable.',
+      });
+      return false;
     }
   };
 
@@ -314,7 +379,7 @@ export function ShareCardPreviewScreen() {
       </View>
 
       <View style={styles.cardShell}>
-        <View style={styles.shareCard}>
+        <View ref={cardRef} collapsable={false} style={styles.shareCard}>
           <Text adjustsFontSizeToFit minimumFontScale={0.62} numberOfLines={2} style={styles.cardTitle}>
             {cleanDisplayText(cardData.dishName)}
           </Text>
@@ -368,7 +433,7 @@ export function ShareCardPreviewScreen() {
       </View>
 
       <View style={styles.actions}>
-        <PrimaryAction icon={<ShareAndroid color="#fffdf8" height={21} strokeWidth={2.2} width={21} />} label="Share" onPress={shareCard} />
+        <PrimaryAction icon={<ShareAndroid color="#fffdf8" height={21} strokeWidth={2.2} width={21} />} label="Share Image" onPress={shareCard} />
         <SecondaryAction icon={<ClipboardCheck color={colors.coral} height={20} strokeWidth={2.2} width={20} />} label="Copy Caption" onPress={copyCaption} />
       </View>
     </ShareFrame>
@@ -518,9 +583,14 @@ function getShareRecipe(
   routeRecipe: Recipe | null,
   isDemoScan: boolean,
 ) {
-  return (routeRecipe?.mode === mode ? routeRecipe : null) ??
+  // One canonical recipe per scan; the view mode is a lens. The explicit
+  // route/scan-context recipe wins; otherwise match by mode for legacy
+  // multi-recipe saves, then fall back to the single canonical recipe so sharing
+  // works under any view lens. Demo scans fall back to a mock.
+  return routeRecipe ??
     recipes.find((item) => item.mode === mode) ??
-    (fallbackRecipe?.mode === mode ? fallbackRecipe : null) ??
+    fallbackRecipe ??
+    recipes[0] ??
     (isDemoScan ? getSafeRecipeForMode(mode) : null);
 }
 
@@ -734,9 +804,7 @@ function getModeLabel(mode: RecipeMode | string) {
 }
 
 function getRecipeImageUri(recipe: Recipe) {
-  const recipeWithImage = recipe as Recipe & { imageUri?: unknown; image?: { uri?: unknown } };
-  const uri = recipeWithImage.imageUri ?? recipeWithImage.image?.uri;
-  return typeof uri === 'string' && uri.trim().length > 0 ? uri : null;
+  return getRecipeImageUrl(recipe);
 }
 
 function getHomemadeImageUri(recipe: Recipe) {
@@ -777,7 +845,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     gap: 12,
-    padding: 16,
+    padding: 24,
     paddingTop: 18,
     paddingBottom: 92,
   },
@@ -790,9 +858,7 @@ const styles = StyleSheet.create({
   backButton: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 4,
     minHeight: 40,
@@ -801,13 +867,13 @@ const styles = StyleSheet.create({
   backText: {
     color: colors.coral,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   topTitle: {
     color: colors.charcoal,
     flex: 1,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   topSpacer: {
@@ -820,19 +886,19 @@ const styles = StyleSheet.create({
   previewKicker: {
     color: colors.coral,
     fontSize: 11,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
   },
   previewTitle: {
     color: colors.charcoal,
     fontSize: 23,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   previewBody: {
     color: colors.body,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '500',
     lineHeight: 18,
     maxWidth: 300,
     textAlign: 'center',
@@ -841,12 +907,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   shareCard: {
-    backgroundColor: '#fff8ef',
-    borderColor: '#ecd8be',
+    backgroundColor: '#fffdf8',
     borderRadius: 24,
-    borderWidth: 1,
     maxWidth: 326,
-    padding: 12,
+    padding: 14,
     shadowColor: '#3b2f20',
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.1,
@@ -857,7 +921,7 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     fontFamily: undefined,
     fontSize: 26,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     lineHeight: 30,
     textAlign: 'center',
@@ -878,7 +942,7 @@ const styles = StyleSheet.create({
   remadeText: {
     color: '#6e755a',
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
@@ -914,9 +978,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     aspectRatio: 1.82,
     backgroundColor: '#fff1df',
-    borderColor: '#f2d8b8',
     borderRadius: 18,
-    borderWidth: 1,
     justifyContent: 'center',
     marginTop: 12,
     padding: 14,
@@ -924,12 +986,12 @@ const styles = StyleSheet.create({
   photoInitials: {
     color: colors.coral,
     fontSize: 30,
-    fontWeight: '900',
+    fontWeight: '800',
   },
   photoArtText: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
     marginTop: 8,
     textAlign: 'center',
   },
@@ -937,9 +999,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'center',
     backgroundColor: '#fff8ef',
-    borderColor: '#d8a66f',
-    borderRadius: 14,
-    borderWidth: 1.5,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 8,
     marginTop: -18,
@@ -949,7 +1009,7 @@ const styles = StyleSheet.create({
   transformText: {
     color: '#59634d',
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
@@ -961,9 +1021,7 @@ const styles = StyleSheet.create({
   },
   shareStat: {
     backgroundColor: '#fffaf3',
-    borderColor: '#efd7ba',
     borderRadius: 14,
-    borderWidth: 1,
     flexBasis: '48%',
     flexGrow: 1,
     minHeight: 74,
@@ -989,14 +1047,14 @@ const styles = StyleSheet.create({
   shareStatLabel: {
     color: '#68725d',
     fontSize: 10,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0.3,
     textTransform: 'uppercase',
   },
   shareStatValue: {
     color: colors.charcoal,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 2,
   },
   shareStatTrack: {
@@ -1024,7 +1082,7 @@ const styles = StyleSheet.create({
   },
   okyoText: {
     color: colors.coral,
-    fontWeight: '900',
+    fontWeight: '800',
   },
   footerBadge: {
     alignItems: 'center',
@@ -1037,9 +1095,7 @@ const styles = StyleSheet.create({
   priceSummary: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
@@ -1053,12 +1109,12 @@ const styles = StyleSheet.create({
   priceLabel: {
     color: colors.body,
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   priceValue: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 3,
   },
   savingsPill: {
@@ -1070,13 +1126,13 @@ const styles = StyleSheet.create({
   savingsPillLabel: {
     color: colors.green,
     fontSize: 11,
-    fontWeight: '900',
+    fontWeight: '700',
     textTransform: 'uppercase',
   },
   savingsPillValue: {
     color: colors.green,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   actions: {
     gap: 10,
@@ -1084,7 +1140,7 @@ const styles = StyleSheet.create({
   primaryAction: {
     alignItems: 'center',
     backgroundColor: colors.coral,
-    borderRadius: 16,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'center',
@@ -1094,14 +1150,12 @@ const styles = StyleSheet.create({
   primaryActionText: {
     color: '#fffdf8',
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   secondaryAction: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'center',
@@ -1111,17 +1165,20 @@ const styles = StyleSheet.create({
   secondaryActionText: {
     color: colors.coral,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   emptyCard: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
     borderRadius: 26,
-    borderWidth: 1,
     gap: 14,
     marginTop: 24,
     padding: 24,
+    shadowColor: '#4a3a28',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    elevation: 2,
   },
   emptyMascot: {
     marginBottom: 2,
@@ -1129,7 +1186,7 @@ const styles = StyleSheet.create({
   emptyTitle: {
     color: colors.charcoal,
     fontSize: 26,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 31,
     textAlign: 'center',
   },

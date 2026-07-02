@@ -31,3 +31,17 @@ export function uiLog(screen: string, action: string, props?: unknown) {
     // swallow logging errors
   }
 }
+
+// Always active in __DEV__. Used specifically for image ownership and persistence
+// tracing — separate from the general uiLog which is gated by shouldLogUiDebug.
+export function imageTraceLog(screen: string, fields: Record<string, unknown>) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+  try {
+    // eslint-disable-next-line no-console
+    console.log('[Okyo ImageTrace]', { screen, ...fields, ts: new Date().toISOString() });
+  } catch {
+    // swallow logging errors
+  }
+}

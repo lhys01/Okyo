@@ -6,13 +6,15 @@ import {
   Cutlery,
   DollarCircle,
   MoneySquare,
+  NavArrowLeft,
   NavArrowRight,
   StatsUpSquare,
 } from 'iconoir-react-native';
 import { useMemo, useState, type ReactNode } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import {
@@ -23,6 +25,8 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore, type CompletedChallenge } from '../state/useOkyoStore';
+import { getModeChipPalette, getModeLabel } from '../utils/modeDisplay';
+import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
 type SavingsNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -36,6 +40,7 @@ type SavingsEntry = {
   restaurantCost: number;
   completedAt?: string | null;
   recipe?: Recipe;
+  imageStatus?: string;
   imageUri?: string | null;
 };
 
@@ -61,10 +66,13 @@ export function SavingsDashboardScreen() {
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id) : [];
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeStoredMoneySaved = getFiniteNumber(storedMoneySaved);
-  const latestImageUri = selectedScanImage?.uri ?? null;
+  const latestImageUri = getRealScanImageUri(selectedScanImage);
 
   const recipeEntries = useMemo(
-    () => safeSavedRecipes.map((recipe) => toRecipeEntry(recipe, recipe.id === latestScanRecipe?.id ? latestImageUri : null)),
+    () => safeSavedRecipes.map((recipe) => toRecipeEntry(
+      recipe,
+      getRecipeImageUrl(recipe, recipe.id === latestScanRecipe?.id ? latestImageUri : null),
+    )),
     [latestImageUri, latestScanRecipe?.id, safeSavedRecipes],
   );
   const challengeEntries = useMemo(
@@ -115,6 +123,16 @@ export function SavingsDashboardScreen() {
     navigation.navigate('MainTabs', { screen: 'ScanScreen' });
   };
 
+  // Savings is pushed from Home/Profile with its native header hidden, so it
+  // needs its own back affordance to avoid stranding the user.
+  const goBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
+  };
+
   const openSavedRecipe = (recipe: Recipe) => {
     const mode = getSafeRecipeMode(recipe.mode);
     uiLog('SavingsDashboardScreen', 'open_recent_win', { recipeId: recipe.id });
@@ -126,14 +144,22 @@ export function SavingsDashboardScreen() {
     if (isRecipeMode(recipe.mode)) {
       setSelectedMode(recipe.mode);
     }
-    navigation.navigate('RecipeDetailScreen', { mode });
+    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
   };
 
   if (!hasSavingsData) {
     return (
       <SavingsFrame>
         <View style={styles.brandHeader}>
-          <Text style={styles.logoText}>okyo</Text>
+          <Pressable
+            accessibilityLabel="Back"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={goBack}
+            style={({ pressed }) => [styles.backButton, pressed ? styles.pressed : null]}
+          >
+            <NavArrowLeft color={colors.charcoal} height={24} strokeWidth={2.2} width={24} />
+          </Pressable>
           <Text style={styles.screenTitle}>Savings</Text>
           <View style={styles.headerSpacer} />
         </View>
@@ -151,7 +177,15 @@ export function SavingsDashboardScreen() {
   return (
     <SavingsFrame>
       <View style={styles.brandHeader}>
-        <Text style={styles.logoText}>okyo</Text>
+        <Pressable
+          accessibilityLabel="Back"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={goBack}
+          style={({ pressed }) => [styles.backButton, pressed ? styles.pressed : null]}
+        >
+          <NavArrowLeft color={colors.charcoal} height={24} strokeWidth={2.2} width={24} />
+        </Pressable>
         <Text style={styles.screenTitle}>Savings</Text>
         <View style={styles.headerSpacer} />
       </View>
@@ -200,7 +234,7 @@ export function SavingsDashboardScreen() {
         <View style={styles.biggestCard}>
           <Text style={styles.sectionKicker}>Biggest win</Text>
           <View style={styles.biggestBody}>
-            <SavingsThumb title={biggestWin.title} uri={biggestWin.imageUri} />
+            <SavingsThumb imageStatus={biggestWin.imageStatus} title={biggestWin.title} uri={biggestWin.imageUri} />
             <View style={styles.biggestCopy}>
               <Text style={styles.biggestTitle}>{cleanDisplayText(biggestWin.title)}</Text>
               <Text style={styles.biggestSavings}>Saved about {formatCurrency(biggestWin.savings)}</Text>
@@ -302,25 +336,24 @@ function StatTile({ icon, label, value }: { icon: ReactNode; label: string; valu
   );
 }
 
-function SavingsThumb({ title, uri }: { title: string; uri?: string | null }) {
-  if (uri) {
-    return <Image source={{ uri }} style={styles.thumbImage} />;
-  }
-
+function SavingsThumb({ imageStatus, title, uri }: { imageStatus?: string; title: string; uri?: string | null }) {
   return (
-    <View style={styles.thumbArt}>
-      <Text style={styles.thumbInitials}>{getInitials(title)}</Text>
-    </View>
+    <FoodImage
+      fallbackLabel={getInitials(title)}
+      imageStatus={imageStatus}
+      imageUrl={uri}
+      style={styles.thumbImage}
+    />
   );
 }
 
 function RecentWinRow({ entry, onPress }: { entry: SavingsEntry; onPress?: () => void }) {
   const content = (
     <>
-      <SavingsThumb title={entry.title} uri={entry.imageUri} />
+      <SavingsThumb imageStatus={entry.imageStatus} title={entry.title} uri={entry.imageUri} />
       <View style={styles.recentCopy}>
         <Text numberOfLines={2} style={styles.recentDish}>{cleanDisplayText(entry.title)}</Text>
-        <Text numberOfLines={1} style={styles.recentMode}>{getModeLabel(entry.mode)}</Text>
+        <ModeChip mode={entry.mode} />
       </View>
       <Text adjustsFontSizeToFit minimumFontScale={0.82} numberOfLines={1} style={styles.recentAmount}>
         {formatCurrency(entry.savings)}
@@ -344,6 +377,19 @@ function RecentWinRow({ entry, onPress }: { entry: SavingsEntry; onPress?: () =>
   );
 }
 
+// Mode is a fixed-set categorical value, so it reads as a chip — and the chip
+// color is driven by the data (the mode itself), not decoration.
+function ModeChip({ mode }: { mode: RecipeMode }) {
+  const palette = getModeChipPalette(mode);
+  return (
+    <View style={[styles.modeChip, { backgroundColor: palette.bg }]}>
+      <Text numberOfLines={1} style={[styles.modeChipText, { color: palette.text }]}>
+        {getModeLabel(mode)}
+      </Text>
+    </View>
+  );
+}
+
 function toRecipeEntry(recipe: Recipe, imageUri?: string | null): SavingsEntry {
   const savings = getFiniteNumber(recipe.estimatedSavings);
   const homeCost = getFiniteNumber(recipe.estimatedHomemadeCost);
@@ -357,6 +403,7 @@ function toRecipeEntry(recipe: Recipe, imageUri?: string | null): SavingsEntry {
     restaurantCost: homeCost + savings,
     completedAt: getOptionalDate(recipe),
     recipe,
+    imageStatus: getRecipeImageStatus(recipe),
     imageUri,
   };
 }
@@ -411,18 +458,6 @@ function getOptionalDate(recipe: Recipe) {
   return typeof maybeSavedAt === 'string' && maybeSavedAt.trim().length > 0 ? maybeSavedAt : null;
 }
 
-function getModeLabel(mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return 'Budget';
-    case 'Healthy':
-      return 'Lighter';
-    case 'Restaurant Copy':
-    default:
-      return 'Restaurant Style';
-  }
-}
-
 function cleanDisplayText(value: string) {
   const copyWord = `copy${'cat'}`;
   const copyStyle = `${copyWord}-style`;
@@ -447,8 +482,8 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     gap: 14,
-    padding: 18,
-    paddingBottom: 220,
+    padding: 20,
+    paddingBottom: 132,
   },
   brandHeader: {
     alignItems: 'center',
@@ -459,18 +494,24 @@ const styles = StyleSheet.create({
   logoText: {
     color: colors.coral,
     fontSize: 25,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
   },
   screenTitle: {
     color: colors.charcoal,
     flex: 1,
     fontSize: 27,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     textAlign: 'center',
   },
   headerSpacer: {
+    width: 76,
+  },
+  backButton: {
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    minHeight: 44,
     width: 76,
   },
   heroCard: {
@@ -496,7 +537,7 @@ const styles = StyleSheet.create({
   heroTitle: {
     color: '#0e5528',
     fontSize: 22,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     lineHeight: 27,
   },
@@ -520,10 +561,8 @@ const styles = StyleSheet.create({
     width: 78,
   },
   periodTabs: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
+    backgroundColor: colors.cream,
     borderRadius: 24,
-    borderWidth: 1,
     flexDirection: 'row',
     padding: 4,
   },
@@ -548,20 +587,12 @@ const styles = StyleSheet.create({
     color: '#fffdf8',
   },
   biggestCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 20,
-    borderWidth: 1,
     padding: 14,
-    shadowColor: '#3b2f20',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.05,
-    shadowRadius: 14,
   },
   sectionKicker: {
     color: colors.green,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0.6,
     marginBottom: 10,
     textTransform: 'uppercase',
@@ -578,7 +609,7 @@ const styles = StyleSheet.create({
   biggestTitle: {
     color: colors.charcoal,
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 21,
   },
   biggestSavings: {
@@ -613,19 +644,15 @@ const styles = StyleSheet.create({
   thumbInitials: {
     color: colors.coral,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   periodEmptyCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 20,
-    borderWidth: 1,
     padding: 18,
   },
   periodEmptyTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   periodEmptyBody: {
     color: colors.body,
@@ -640,10 +667,6 @@ const styles = StyleSheet.create({
   },
   statTile: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 16,
-    borderWidth: 1,
     flexBasis: '48%',
     flexDirection: 'row',
     flexGrow: 1,
@@ -671,7 +694,8 @@ const styles = StyleSheet.create({
   statValue: {
     color: '#174d1f',
     fontSize: 20,
-    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+    fontWeight: '700',
     marginTop: 3,
   },
   goalCard: {
@@ -700,7 +724,7 @@ const styles = StyleSheet.create({
   goalTitle: {
     color: colors.charcoal,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 20,
   },
   progressTrack: {
@@ -732,7 +756,7 @@ const styles = StyleSheet.create({
   goalPercent: {
     color: colors.coral,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   goalButton: {
     alignItems: 'center',
@@ -748,19 +772,15 @@ const styles = StyleSheet.create({
   goalButtonText: {
     color: colors.green,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   recentCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 20,
-    borderWidth: 1,
     padding: 14,
   },
   recentTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 8,
   },
   recentList: {
@@ -782,26 +802,31 @@ const styles = StyleSheet.create({
   recentDish: {
     color: colors.charcoal,
     fontSize: 14,
-    fontWeight: '900',
-  },
-  recentMode: {
-    color: colors.body,
-    fontSize: 12,
     fontWeight: '700',
-    marginTop: 4,
+  },
+  modeChip: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    marginTop: 6,
+    maxWidth: '100%',
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  modeChipText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   recentAmount: {
     color: colors.green,
     fontSize: 16,
-    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+    fontWeight: '700',
     maxWidth: 82,
+    textAlign: 'right',
   },
   emptyCard: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 26,
-    borderWidth: 1,
     gap: 14,
     marginTop: 24,
     padding: 24,
@@ -812,7 +837,7 @@ const styles = StyleSheet.create({
   emptyTitle: {
     color: colors.charcoal,
     fontSize: 26,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 31,
     textAlign: 'center',
   },
@@ -836,7 +861,7 @@ const styles = StyleSheet.create({
   primaryActionText: {
     color: '#fffdf8',
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.72,

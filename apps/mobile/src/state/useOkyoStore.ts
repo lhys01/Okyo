@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
@@ -18,6 +19,14 @@ export type OnboardingGoal =
   | 'Recreate restaurant meals'
   | 'Learn to cook'
   | 'Make food content';
+
+export type OnboardingWeeklyGoal = '1_meal' | '3_meals' | '5_meals' | '7_meals';
+export type OnboardingMealRoutinePreference =
+  | 'quick_easy'
+  | 'high_protein'
+  | 'budget_meals'
+  | 'restaurant_style';
+export type OnboardingNotificationChoice = 'remind_me' | 'not_now';
 
 export type CompletedChallenge = {
   id: string;
@@ -44,7 +53,6 @@ export type LatestScanSession = {
   scanSessionId: string;
   latestScanStatus: ScanStatus | 'pending';
   latestScanResult: ScanResult | null;
-  latestScanRecipes: Recipe[];
   latestScanFailure: LatestScanFailure | null;
   latestScanRecipe: Recipe | null;
   selectedScanImage: ScanImageMetadata | null;
@@ -70,11 +78,17 @@ type SavedRecipeContextWrite = {
 
 type OkyoState = {
   hasCompletedOnboarding: boolean;
+  hasSeenOnboarding: boolean;
   onboardingGoal: OnboardingGoal | null;
+  weeklyGoal: OnboardingWeeklyGoal | null;
+  mealRoutinePreference: OnboardingMealRoutinePreference | null;
+  notificationChoice: OnboardingNotificationChoice | null;
+  firstOnboardingScanCompleted: boolean;
+  firstOnboardingResultSeen: boolean;
+  paywallShown: boolean;
   scanSessionId: string | null;
   latestScanSession: LatestScanSession | null;
   latestScanResult: ScanResult | null;
-  latestScanRecipes: Recipe[];
   latestScanStatus: ScanStatus | 'pending' | null;
   latestScanFailure: LatestScanFailure | null;
   latestScanRecipe: Recipe | null;
@@ -94,12 +108,17 @@ type OkyoState = {
   completeOnboarding: () => void;
   resetOnboarding: () => void;
   setGoal: (goal: OnboardingGoal) => void;
+  setWeeklyGoal: (goal: OnboardingWeeklyGoal) => void;
+  setMealRoutinePreference: (preference: OnboardingMealRoutinePreference) => void;
+  setNotificationChoice: (choice: OnboardingNotificationChoice) => void;
+  markFirstOnboardingScanCompleted: () => void;
+  markFirstOnboardingResultSeen: () => void;
+  markPaywallShown: () => void;
   beginLatestScanSession: (scanSession: LatestScanSessionWrite) => void;
   writeLatestScanSession: (scanSession: LatestScanSessionWrite) => void;
   clearLatestScan: (clear: LatestScanClear) => void;
   writeSavedRecipeContext: (context: SavedRecipeContextWrite) => void;
   setLatestScanResult: (scanResult: ScanResult | null) => void;
-  setLatestScanRecipes: (recipes: Recipe[]) => void;
   setLatestScanStatus: (status: ScanStatus | 'pending' | null) => void;
   setLatestScanFailure: (failure: LatestScanFailure | null) => void;
   setLatestScanRecipe: (recipe: Recipe | null) => void;
@@ -123,11 +142,17 @@ export const useOkyoStore = create<OkyoState>()(
   persist(
     (set) => ({
       hasCompletedOnboarding: false,
+      hasSeenOnboarding: false,
       onboardingGoal: null,
+      weeklyGoal: null,
+      mealRoutinePreference: null,
+      notificationChoice: null,
+      firstOnboardingScanCompleted: false,
+      firstOnboardingResultSeen: false,
+      paywallShown: false,
       scanSessionId: null,
       latestScanSession: null,
       latestScanResult: null,
-      latestScanRecipes: [],
       latestScanStatus: null,
       latestScanFailure: null,
       latestScanRecipe: null,
@@ -144,11 +169,29 @@ export const useOkyoStore = create<OkyoState>()(
       recentBadgeUnlock: null,
       awardedXpEvents: [],
       leaderboardEntries: mockLeaderboardEntries,
-      completeOnboarding: () => set({ hasCompletedOnboarding: true }),
-      resetOnboarding: () => set({ hasCompletedOnboarding: false }),
+      completeOnboarding: () => set({ hasCompletedOnboarding: true, hasSeenOnboarding: true }),
+      resetOnboarding: () =>
+        set({
+          hasCompletedOnboarding: false,
+          hasSeenOnboarding: false,
+          weeklyGoal: null,
+          mealRoutinePreference: null,
+          notificationChoice: null,
+          firstOnboardingScanCompleted: false,
+          firstOnboardingResultSeen: false,
+          paywallShown: false,
+        }),
       setGoal: (goal) => set({ onboardingGoal: goal }),
-      beginLatestScanSession: (scanSession) =>
+      setWeeklyGoal: (goal) => set({ weeklyGoal: goal, hasSeenOnboarding: true }),
+      setMealRoutinePreference: (preference) => set({ mealRoutinePreference: preference }),
+      setNotificationChoice: (choice) => set({ notificationChoice: choice }),
+      markFirstOnboardingScanCompleted: () => set({ firstOnboardingScanCompleted: true }),
+      markFirstOnboardingResultSeen: () => set({ firstOnboardingResultSeen: true }),
+      markPaywallShown: () => set({ paywallShown: true }),
+      beginLatestScanSession: (scanSession) => {
+        let outgoingScanImageUri: string | undefined;
         set((state) => {
+          outgoingScanImageUri = getScanImageUriForCleanup(state);
           if (hasAnyLatestScanState(state)) {
             logScanStateClear({
               previousScanSessionId: state.scanSessionId,
@@ -164,7 +207,11 @@ export const useOkyoStore = create<OkyoState>()(
           return {
             ...getLatestScanSessionState(latestScanSession),
           };
-        }),
+        });
+        if (outgoingScanImageUri) {
+          deleteUnusedScanImage(outgoingScanImageUri, useOkyoStore.getState().savedRecipes);
+        }
+      },
       writeLatestScanSession: (scanSession) =>
         set((state) => {
           if (state.scanSessionId && state.scanSessionId !== scanSession.scanSessionId) {
@@ -200,8 +247,10 @@ export const useOkyoStore = create<OkyoState>()(
             ...getLatestScanSessionState(latestScanSession),
           };
         }),
-      clearLatestScan: (clear) =>
+      clearLatestScan: (clear) => {
+        let outgoingScanImageUri: string | undefined;
         set((state) => {
+          outgoingScanImageUri = getScanImageUriForCleanup(state);
           logScanStateClear({
             previousScanSessionId: state.scanSessionId,
             previousStatus: state.latestScanStatus,
@@ -210,7 +259,11 @@ export const useOkyoStore = create<OkyoState>()(
           });
 
           return getClearedLatestScanState();
-        }),
+        });
+        if (outgoingScanImageUri) {
+          deleteUnusedScanImage(outgoingScanImageUri, useOkyoStore.getState().savedRecipes);
+        }
+      },
       writeSavedRecipeContext: (context) =>
         set((state) => {
           logScanStateClear({
@@ -226,14 +279,13 @@ export const useOkyoStore = create<OkyoState>()(
             latestAiDebugMetadata: null,
             latestScanFailure: null,
             latestScanRecipe: context.recipe,
-            latestScanRecipes: [context.recipe],
             latestScanResult: null,
             latestScanStatus: null,
+            latestScanSession: null,
             selectedScanImage: null,
           };
         }),
       setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
-      setLatestScanRecipes: (recipes) => set({ latestScanRecipes: recipes }),
       setLatestScanStatus: (status) => set({ latestScanStatus: status }),
       setLatestScanFailure: (failure) => set({ latestScanFailure: failure }),
       setLatestScanRecipe: (recipe) => set({ latestScanRecipe: recipe }),
@@ -241,15 +293,38 @@ export const useOkyoStore = create<OkyoState>()(
       setLatestAiDebugMetadata: (metadata) => set({ latestAiDebugMetadata: metadata }),
       setSelectedMode: (mode) => set({ selectedMode: mode }),
       saveRecipe: (recipe) =>
-        set((state) => ({
-          savedRecipes: state.savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id)
-            ? state.savedRecipes
-            : [...state.savedRecipes, recipe],
-        })),
-      removeSavedRecipe: (recipeId) =>
-        set((state) => ({
-          savedRecipes: state.savedRecipes.filter((recipe) => recipe.id !== recipeId),
-        })),
+        set((state) => {
+          const existingRecipe = state.savedRecipes.find((savedRecipe) => savedRecipe.id === recipe.id);
+          if (!existingRecipe) {
+            return { savedRecipes: [...state.savedRecipes, recipe] };
+          }
+
+          const realRecipeImageUri = getRecipeRealImageUri(recipe);
+          if (!realRecipeImageUri) {
+            return { savedRecipes: state.savedRecipes };
+          }
+
+          return {
+            savedRecipes: state.savedRecipes.map((savedRecipe) =>
+              savedRecipe.id === recipe.id
+                ? attachRecipeImageUri(savedRecipe, realRecipeImageUri)
+                : savedRecipe,
+            ),
+          };
+        }),
+      removeSavedRecipe: (recipeId) => {
+        let imageUri: string | undefined;
+        set((state) => {
+          const recipe = state.savedRecipes.find((r) => r.id === recipeId);
+          imageUri = recipe?.imageUri;
+          return { savedRecipes: state.savedRecipes.filter((r) => r.id !== recipeId) };
+        });
+        if (imageUri?.includes('/okyo-scan-images/')) {
+          FileSystem.deleteAsync(imageUri, { idempotent: true }).catch((error: unknown) => {
+            logDev('okyo_scan_image_delete_failed', { recipeId, uri: imageUri, error: String(error) });
+          });
+        }
+      },
       completeChallenge: (challenge) =>
         set((state) => ({
           completedChallenges: state.completedChallenges.some(
@@ -282,8 +357,9 @@ export const useOkyoStore = create<OkyoState>()(
 
           track(analyticsEvents.XP_EVENT_RECORDED, { eventId, xpAmount: points });
 
+          const newEvents = [...state.awardedXpEvents, eventId];
           return {
-            awardedXpEvents: [...state.awardedXpEvents, eventId],
+            awardedXpEvents: newEvents.length > 5000 ? newEvents.slice(-5000) : newEvents,
             xp: state.xp + points,
           };
         }),
@@ -302,7 +378,7 @@ export const useOkyoStore = create<OkyoState>()(
         }),
       clearRecentBadgeUnlock: () => set({ recentBadgeUnlock: null }),
       setPremium: (isPremium) => set({ isPremium }),
-      clearSavedData: () =>
+      clearSavedData: () => {
         set((state) => {
           logScanStateClear({
             previousScanSessionId: state.scanSessionId,
@@ -321,18 +397,29 @@ export const useOkyoStore = create<OkyoState>()(
             awardedXpEvents: [],
             ...getClearedLatestScanState(),
           };
-        }),
+        });
+        const dir = `${FileSystem.documentDirectory}okyo-scan-images/`;
+        FileSystem.deleteAsync(dir, { idempotent: true }).catch((error: unknown) => {
+          logDev('okyo_scan_images_dir_delete_failed', { dir, error: String(error) });
+        });
+      },
     }),
     {
       name: 'okyo-local-state',
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         hasCompletedOnboarding: state.hasCompletedOnboarding,
+        hasSeenOnboarding: state.hasSeenOnboarding,
         onboardingGoal: state.onboardingGoal,
+        weeklyGoal: state.weeklyGoal,
+        mealRoutinePreference: state.mealRoutinePreference,
+        notificationChoice: state.notificationChoice,
+        firstOnboardingScanCompleted: state.firstOnboardingScanCompleted,
+        firstOnboardingResultSeen: state.firstOnboardingResultSeen,
+        paywallShown: state.paywallShown,
         scanSessionId: state.scanSessionId,
         latestScanSession: state.latestScanSession,
         latestScanResult: state.latestScanResult,
-        latestScanRecipes: state.latestScanRecipes,
         latestScanStatus: state.latestScanStatus,
         latestScanFailure: state.latestScanFailure,
         latestScanRecipe: state.latestScanRecipe,
@@ -354,11 +441,43 @@ export const useOkyoStore = create<OkyoState>()(
 );
 
 function createLatestScanSession(scanSession: LatestScanSessionWrite): LatestScanSession {
+  const realScanImageUri = getRealScanImageUri(scanSession.selectedScanImage);
+  const latestScanRecipe = attachScanImageUri(scanSession.latestScanRecipe, realScanImageUri);
+
   return {
     ...scanSession,
-    latestScanRecipes: Array.isArray(scanSession.latestScanRecipes) ? scanSession.latestScanRecipes : [],
+    latestScanRecipe,
     updatedAt: new Date().toISOString(),
   };
+}
+
+function getRealScanImageUri(image: ScanImageMetadata | null | undefined) {
+  return typeof image?.uri === 'string' && image.uri.trim().length > 0 && !image.placeholder
+    ? image.uri.trim()
+    : null;
+}
+
+function attachScanImageUri<T extends Recipe | null>(recipe: T, imageUri: string | null): T {
+  if (!recipe || !imageUri) {
+    return recipe;
+  }
+
+  return attachRecipeImageUri(recipe, imageUri) as T;
+}
+
+function attachRecipeImageUri(recipe: Recipe, imageUri: string): Recipe {
+  return {
+    ...recipe,
+    imageStatus: 'ready',
+    imageUri,
+    imageUrl: imageUri,
+  };
+}
+
+function getRecipeRealImageUri(recipe: Recipe) {
+  return typeof recipe.imageUri === 'string' && recipe.imageUri.trim().length > 0
+    ? recipe.imageUri.trim()
+    : null;
 }
 
 function getLatestScanSessionState(latestScanSession: LatestScanSession) {
@@ -366,7 +485,6 @@ function getLatestScanSessionState(latestScanSession: LatestScanSession) {
     scanSessionId: latestScanSession.scanSessionId,
     latestScanSession,
     latestScanResult: latestScanSession.latestScanResult,
-    latestScanRecipes: latestScanSession.latestScanRecipes,
     latestScanStatus: latestScanSession.latestScanStatus,
     latestScanFailure: latestScanSession.latestScanFailure,
     latestScanRecipe: latestScanSession.latestScanRecipe,
@@ -381,7 +499,6 @@ function getClearedLatestScanState() {
     latestScanSession: null,
     latestScanFailure: null,
     latestScanResult: null,
-    latestScanRecipes: [],
     latestScanStatus: null,
     latestScanRecipe: null,
     selectedScanImage: null,
@@ -394,7 +511,6 @@ function hasAnyLatestScanState(state: Pick<
   | 'scanSessionId'
   | 'latestScanSession'
   | 'latestScanResult'
-  | 'latestScanRecipes'
   | 'latestScanStatus'
   | 'latestScanRecipe'
   | 'selectedScanImage'
@@ -403,7 +519,6 @@ function hasAnyLatestScanState(state: Pick<
     state.scanSessionId ||
     state.latestScanSession ||
     state.latestScanResult ||
-    state.latestScanRecipes.length > 0 ||
     state.latestScanStatus ||
     state.latestScanRecipe ||
     state.selectedScanImage
@@ -416,7 +531,6 @@ function getLatestScanSessionSummary(scanSession: LatestScanSession) {
     status: scanSession.latestScanStatus,
     scanResultExists: Boolean(scanSession.latestScanResult),
     recipeExists: Boolean(scanSession.latestScanRecipe),
-    recipesLength: scanSession.latestScanRecipes.length,
     selectedScanImageExists: Boolean(scanSession.selectedScanImage),
     source: scanSession.source,
   };
@@ -441,5 +555,38 @@ function logScanStateClear(details: Record<string, unknown>) {
     source: details.source,
     previousScanSessionId: details.previousScanSessionId,
     previousStatus: details.previousStatus,
+  });
+}
+
+function logDev(label: string, details: Record<string, unknown>) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) {
+    return;
+  }
+
+  console.log(label, details);
+}
+
+// Returns the current scan image URI only if it is a file we own in Documents.
+// Used to clean up unsaved scan images when a session ends.
+function getScanImageUriForCleanup(state: Pick<OkyoState, 'selectedScanImage'>): string | undefined {
+  const uri = state.selectedScanImage?.uri;
+  if (!uri || state.selectedScanImage?.placeholder) {
+    return undefined;
+  }
+  return uri.includes('/okyo-scan-images/') ? uri : undefined;
+}
+
+// Deletes a scan image file from Documents if no saved recipe references it.
+// Called when a scan session ends (scan again, new scan, back to scan).
+function deleteUnusedScanImage(uri: string, savedRecipes: Recipe[]) {
+  const isReferenced = savedRecipes.some(
+    (recipe) => (recipe as Recipe & { imageUri?: string }).imageUri === uri,
+  );
+  if (isReferenced) {
+    logDev('okyo_scan_image_cleanup_skipped', { uri, reason: 'referenced_by_saved_recipe' });
+    return;
+  }
+  FileSystem.deleteAsync(uri, { idempotent: true }).catch((error: unknown) => {
+    logDev('okyo_scan_image_cleanup_failed', { uri, error: String(error) });
   });
 }

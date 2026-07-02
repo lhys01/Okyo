@@ -23,6 +23,7 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { sampleFoodImageUrls } from '../data/sampleFoodImages';
 
 type RestaurantPackDetailNavigation = NativeStackNavigationProp<RootStackParamList, 'RestaurantPackDetailScreen'>;
 type RestaurantPackDetailRoute = RouteProp<RootStackParamList, 'RestaurantPackDetailScreen'>;
@@ -61,6 +62,8 @@ function makePackRecipe(pack: RestaurantPack, dish: RestaurantPackDish): Recipe 
   return {
     id: `pack-recipe-${dish.id}`,
     scanResultId: dish.id,
+    imageStatus: 'ready',
+    imageUrl: getPackDishImageUrl(dish),
     title: `${dish.dishName} Okyo-style`,
     mode,
     description: `Inspired-by ${pack.name} dupe made for home kitchens.`,
@@ -71,17 +74,35 @@ function makePackRecipe(pack: RestaurantPack, dish: RestaurantPackDish): Recipe 
     estimatedHomemadeCost: dish.homemadeCost,
     estimatedSavings: dish.estimatedSavings,
     ingredients: [
-      { name: 'main ingredients', quantity: '1 set' },
-      { name: 'sauce or seasoning', quantity: 'to taste', pantryItem: true },
+      { name: `${dish.dishName.toLowerCase()} ingredients`, quantity: '1 set' },
+      { name: 'a matching sauce or dressing', quantity: 'to taste', pantryItem: true },
     ],
     steps: [
-      'Use this pack recipe as a saved placeholder.',
-      'Follow the closest matching Okyo mock recipe when starting a challenge.',
+      `Open the full ${dish.dishName} recipe to see the exact ingredients and steps.`,
+      'Start a challenge to cook it with Okyo step by step.',
     ],
     substitutions: ['Adjust protein, sauce, or base ingredients based on what you have.'],
     pantryNote: 'Assumes salt, pepper, oil, and basic seasonings are available.',
     confidenceNote: 'Static inspired-by pack recipe using estimated costs and savings.',
   };
+}
+
+function getPackDishImageUrl(dish: RestaurantPackDish) {
+  const name = dish.dishName.toLowerCase();
+  if (name.includes('pasta') || name.includes('rigatoni') || name.includes('noodle')) {
+    return sampleFoodImageUrls.pasta;
+  }
+  if (name.includes('burger') || name.includes('sandwich') || name.includes('biscuit')) {
+    return sampleFoodImageUrls.burger;
+  }
+  if (name.includes('salad')) {
+    return sampleFoodImageUrls.salad;
+  }
+  if (name.includes('cake') || name.includes('cookie') || name.includes('dessert')) {
+    return sampleFoodImageUrls.dessert;
+  }
+
+  return sampleFoodImageUrls.bowl;
 }
 
 export function RestaurantPackDetailScreen() {
@@ -121,7 +142,7 @@ export function RestaurantPackDetailScreen() {
   if (!pack) {
     return (
       <ScreenContainer scroll={false} centered>
-        <Text style={styles.kicker}>Restaurant Pack</Text>
+        <Text style={styles.kicker}>Discover</Text>
         <Text style={styles.title}>Pack not found</Text>
         <Text style={styles.description}>
           This inspired-by pack is not available in the mock data yet.
@@ -170,7 +191,7 @@ export function RestaurantPackDetailScreen() {
 
   return (
     <ScreenContainer>
-      <Text style={styles.kicker}>Restaurant Pack</Text>
+      <Text style={styles.kicker}>Discover</Text>
       <Text style={styles.title}>{pack.name}</Text>
       <Text style={styles.disclaimer}>Inspired-by recipes made for home kitchens.</Text>
       <Text style={styles.description}>{getPackDescription(pack.name)}</Text>
@@ -234,22 +255,24 @@ const styles = StyleSheet.create({
   kicker: {
     color: colors.coral,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
+    letterSpacing: 1,
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   title: {
     color: colors.charcoal,
     fontSize: 32,
-    fontWeight: '900',
+    fontWeight: '700',
+    letterSpacing: -0.6,
     lineHeight: 37,
   },
   disclaimer: {
     backgroundColor: colors.cream,
-    borderRadius: 16,
+    borderRadius: 20,
     color: '#5c4528',
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '600',
     lineHeight: 19,
     marginTop: 12,
     padding: 12,
@@ -270,19 +293,19 @@ const styles = StyleSheet.create({
   summaryLabel: {
     color: colors.body,
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '600',
     textTransform: 'uppercase',
   },
   summaryValue: {
     color: colors.charcoal,
     fontSize: 24,
-    fontWeight: '900',
+    fontWeight: '800',
     marginTop: 4,
   },
   savings: {
     color: colors.green,
     fontSize: 24,
-    fontWeight: '900',
+    fontWeight: '800',
     marginTop: 4,
   },
   primaryAction: {
@@ -303,7 +326,7 @@ const styles = StyleSheet.create({
   dishName: {
     color: colors.charcoal,
     fontSize: 21,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 26,
   },
   priceGrid: {
@@ -321,18 +344,18 @@ const styles = StyleSheet.create({
   priceLabel: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   priceValue: {
     color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 4,
   },
   dishSavings: {
     color: colors.green,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 4,
   },
   actions: {

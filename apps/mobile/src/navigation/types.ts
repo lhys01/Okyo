@@ -21,8 +21,6 @@ export type RootStackParamList = {
   ScanScreen: undefined;
   AnalysisLoadingScreen: { scanSessionId?: string } | undefined;
   ResultSummaryScreen: { scanSessionId?: string } | undefined;
-  RecipeDetailScreen: { mode?: RecipeMode } | undefined;
-  GroceryListScreen: { mode?: RecipeMode } | undefined;
   ShareCardPreviewScreen:
     | { cardType?: ShareCardType; mode?: RecipeMode; packId?: string; dishId?: string; scanContext?: ShareScanContext }
     | undefined;
@@ -30,14 +28,21 @@ export type RootStackParamList = {
   ChallengeCompleteScreen: { challengeId?: string } | undefined;
   RestaurantPackDetailScreen: { packId?: string } | undefined;
   PaywallScreen: undefined;
+  SavingsDashboardScreen: undefined;
+  RankingsScreen: undefined;
+  SettingsScreen: undefined;
+  RecommendationCategoryScreen: { category?: string } | undefined;
+  KitchenLetterScreen: undefined;
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
 };
 
 export type MainTabParamList = {
+  HomeScreen: undefined;
+  RestaurantPacksScreen: undefined;
   ScanScreen: undefined;
   LibraryScreen: undefined;
-  SavingsDashboardScreen: undefined;
-  RankingsScreen: undefined;
-  RestaurantPacksScreen: undefined;
-  SettingsScreen: undefined;
+  ProfileScreen: undefined;
+  RecipeDetailScreen: { mode?: RecipeMode } | undefined;
+  RecipeStepsScreen: { mode?: RecipeMode } | undefined;
+  GroceryListScreen: { mode?: RecipeMode } | undefined;
 };

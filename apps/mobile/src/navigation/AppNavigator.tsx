@@ -7,12 +7,15 @@ import { AnalysisLoadingScreen } from '../screens/AnalysisLoadingScreen';
 import { ChallengeCompleteScreen } from '../screens/ChallengeCompleteScreen';
 import { DupeChallengeScreen } from '../screens/DupeChallengeScreen';
 import { GoalScreen } from '../screens/GoalScreen';
-import { GroceryListScreen } from '../screens/GroceryListScreen';
 import { PaywallScreen } from '../screens/PaywallScreen';
-import { RecipeDetailScreen } from '../screens/RecipeDetailScreen';
 import { RestaurantPackDetailScreen } from '../screens/RestaurantPackDetailScreen';
 import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
+import { KitchenLetterScreen } from '../screens/KitchenLetterScreen';
+import { RankingsScreen } from '../screens/RankingsScreen';
+import { RecommendationCategoryScreen } from '../screens/RecommendationCategoryScreen';
+import { SavingsDashboardScreen } from '../screens/SavingsDashboardScreen';
 import { ScanScreen } from '../screens/ScanScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { useOkyoStore } from '../state/useOkyoStore';
@@ -81,19 +84,9 @@ export function AppNavigator() {
         options={{ headerShown: false, title: 'Result' }}
       />
       <Stack.Screen
-        name="RecipeDetailScreen"
-        component={RecipeDetailScreen}
-        options={{ headerShown: false, title: 'Recipe' }}
-      />
-      <Stack.Screen
-        name="GroceryListScreen"
-        component={GroceryListScreen}
-        options={{ headerShown: false, title: 'Grocery List' }}
-      />
-      <Stack.Screen
         name="ShareCardPreviewScreen"
         component={ShareCardPreviewScreen}
-        options={{ headerShown: false, title: 'Share Preview' }}
+        options={{ headerShown: false, presentation: 'modal', title: 'Share Preview' }}
       />
       <Stack.Screen
         name="DupeChallengeScreen"
@@ -111,6 +104,23 @@ export function AppNavigator() {
         options={{ title: 'Pack Detail' }}
       />
       <Stack.Screen name="PaywallScreen" component={PaywallScreen} options={{ title: 'Okyo Plus' }} />
+      <Stack.Screen
+        name="SavingsDashboardScreen"
+        component={SavingsDashboardScreen}
+        options={{ headerShown: false, title: 'Savings' }}
+      />
+      <Stack.Screen name="RankingsScreen" component={RankingsScreen} options={{ title: 'Rankings' }} />
+      <Stack.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
+      <Stack.Screen
+        name="RecommendationCategoryScreen"
+        component={RecommendationCategoryScreen}
+        options={{ headerShown: false, title: 'Food Ideas' }}
+      />
+      <Stack.Screen
+        name="KitchenLetterScreen"
+        component={KitchenLetterScreen}
+        options={{ headerShown: false, presentation: 'modal', title: 'Kitchen Letter' }}
+      />
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false, title: 'Okyo' }} />
     </Stack.Navigator>
   );

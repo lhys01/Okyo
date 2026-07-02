@@ -11,16 +11,20 @@ import {
   ThreePointsCircle,
 } from 'iconoir-react-native';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
-import { getSafeRecipeMode, isRecipeMode, type Recipe, type RecipeMode } from '../mocks';
+import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { uiLog } from '../utils/uiDebug';
+import { getModeChipPalette, getModeLabel } from '../utils/modeDisplay';
+import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
+import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 type LibraryNavigation = NativeStackNavigationProp<RootStackParamList>;
 type LibraryFilter = 'recent' | 'restaurant' | 'budget' | 'lighter' | 'fast';
@@ -89,8 +93,22 @@ export function LibraryScreen() {
     }
 
     const mode = prepareRecipeContext(recipe);
+    const imageUri = getRecipeImageUrl(recipe) ?? null;
+    const hasStampedUri = Boolean((recipe as { imageUri?: string }).imageUri);
+    checkImageFileExists(imageUri).then((fileExists) => {
+      imageTraceLog('LibraryScreen', {
+        screen: 'LibraryScreen',
+        recipeId: recipe.id,
+        imageSource: hasStampedUri ? 'recipe.imageUri' : 'recipe.imageUrl',
+        imageUri,
+        fileExists: imageUri ? fileExists : 'n/a',
+        usingFallback: !hasStampedUri,
+        fallbackReason: !hasStampedUri ? 'recipe_imageUri_not_stamped' : null,
+        storageLocation: getStorageLocation(imageUri),
+      });
+    });
     uiLog('LibraryScreen', 'cook_again', { recipeId: recipe.id });
-    navigation.navigate('RecipeDetailScreen', { mode });
+    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
   };
 
   const openGroceries = (recipe: Recipe | null | undefined) => {
@@ -100,7 +118,7 @@ export function LibraryScreen() {
 
     const mode = prepareRecipeContext(recipe);
     uiLog('LibraryScreen', 'open_groceries', { recipeId: recipe.id });
-    navigation.navigate('GroceryListScreen', { mode });
+    navigation.navigate('MainTabs', { screen: 'GroceryListScreen', params: { mode } });
   };
 
   const goToScan = () => {
@@ -129,7 +147,7 @@ export function LibraryScreen() {
   if (safeSavedRecipes.length === 0) {
     return (
       <LibraryFrame>
-        <TopBar title="Library" />
+        <TopBar title="Plan" />
         <View style={styles.emptyCard}>
           <KikoMascot pose="wave" size={118} style={styles.emptyMascot} />
           <Text style={styles.emptyTitle}>Saved meals worth remaking will live here.</Text>
@@ -144,7 +162,7 @@ export function LibraryScreen() {
 
   return (
     <LibraryFrame>
-      <TopBar title="Library" />
+      <TopBar title="Plan" />
 
       <View style={styles.heroCard}>
         <View style={styles.heroCopy}>
@@ -272,18 +290,19 @@ function SavedRecipeCard({
   onGroceries: () => void;
   onRemove: () => void;
 }) {
-  const imageUri = getRecipeImageUri(recipe);
-  const modeLabel = getModeLabel(getSafeRecipeMode(recipe.mode));
+  const mode = getSafeRecipeMode(recipe.mode);
+  const modeLabel = getModeLabel(mode);
+  const modePalette = getModeChipPalette(mode);
 
   return (
     <View style={styles.recipeCard}>
       <View style={styles.recipeTop}>
-        <RecipeThumb recipe={recipe} uri={imageUri} />
+        <RecipeThumb recipe={recipe} />
         <View style={styles.recipeContent}>
           <View style={styles.cardTopRow}>
-            <View style={styles.modePill}>
-              <Cutlery color={colors.coral} height={13} strokeWidth={2.2} width={13} />
-              <Text numberOfLines={1} style={styles.modePillText}>{modeLabel}</Text>
+            <View style={[styles.modePill, { backgroundColor: modePalette.bg }]}>
+              <Cutlery color={modePalette.text} height={13} strokeWidth={2.2} width={13} />
+              <Text numberOfLines={1} style={[styles.modePillText, { color: modePalette.text }]}>{modeLabel}</Text>
             </View>
             <Pressable
               accessibilityRole="button"
@@ -323,17 +342,13 @@ function SavedRecipeCard({
   );
 }
 
-function RecipeThumb({ recipe, uri }: { recipe: Recipe; uri?: string | null }) {
-  if (uri) {
-    return <Image source={{ uri }} style={styles.recipeImage} />;
-  }
-
+function RecipeThumb({ recipe }: { recipe: Recipe }) {
   return (
-    <View style={styles.recipeArt}>
-      <Cutlery color={colors.coral} height={24} strokeWidth={1.9} width={24} />
-      <Text style={styles.recipeArtText}>Saved meal</Text>
-      <View style={styles.recipeArtDot} />
-    </View>
+    <FoodImage
+      imageStatus={getRecipeImageStatus(recipe)}
+      imageUrl={getRecipeImageUrl(recipe)}
+      style={styles.recipeImage}
+    />
   );
 }
 
@@ -408,12 +423,6 @@ function getSavedTime(recipe: Recipe) {
   return Number.isFinite(date.getTime()) ? date.getTime() : 0;
 }
 
-function getRecipeImageUri(recipe: Recipe) {
-  const recipeWithImage = recipe as Recipe & { imageUri?: unknown; image?: { uri?: unknown } };
-  const uri = recipeWithImage.imageUri ?? recipeWithImage.image?.uri;
-  return typeof uri === 'string' && uri.trim().length > 0 ? uri : null;
-}
-
 function getSearchText(recipe: Recipe) {
   const ingredientText = recipe.ingredients?.map((ingredient) => ingredient.name).join(' ') ?? '';
   return `${recipe.title} ${recipe.description} ${recipe.mode} ${ingredientText}`.toLowerCase();
@@ -430,18 +439,6 @@ function getDifficulty(recipe: Recipe) {
 
 function getFiniteNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-function getModeLabel(mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return 'Budget';
-    case 'Healthy':
-      return 'Lighter';
-    case 'Restaurant Copy':
-    default:
-      return 'Restaurant Style';
-  }
 }
 
 function cleanDisplayText(value: string) {
@@ -463,8 +460,8 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     gap: 12,
-    padding: 16,
-    paddingBottom: 220,
+    padding: 24,
+    paddingBottom: 132,
   },
   topBar: {
     alignItems: 'center',
@@ -476,7 +473,7 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     flex: 1,
     fontSize: 26,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     textAlign: 'center',
   },
@@ -484,17 +481,8 @@ const styles = StyleSheet.create({
     width: 48,
   },
   heroCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 22,
-    borderWidth: 1,
     minHeight: 142,
-    overflow: 'hidden',
     padding: 14,
-    shadowColor: '#3b2f20',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
   },
   heroCopy: {
     paddingRight: 66,
@@ -502,7 +490,7 @@ const styles = StyleSheet.create({
   heroKicker: {
     color: colors.coral,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0.4,
     marginBottom: 6,
     textTransform: 'uppercase',
@@ -510,7 +498,7 @@ const styles = StyleSheet.create({
   heroTitle: {
     color: colors.charcoal,
     fontSize: 23,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     lineHeight: 27,
   },
@@ -520,16 +508,14 @@ const styles = StyleSheet.create({
   heroBody: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
     lineHeight: 17,
     marginTop: 6,
   },
   recipeMascotCard: {
     alignItems: 'center',
     backgroundColor: '#fff1df',
-    borderColor: '#f4d6b0',
     borderRadius: 20,
-    borderWidth: 1,
     justifyContent: 'center',
     height: 82,
     padding: 3,
@@ -540,13 +526,11 @@ const styles = StyleSheet.create({
   },
   heroStats: {
     alignItems: 'stretch',
-    borderTopColor: '#efe3d6',
-    borderTopWidth: 1,
     flexDirection: 'row',
     gap: 4,
     justifyContent: 'space-between',
     marginTop: 10,
-    paddingTop: 10,
+    padding: 10,
   },
   heroStat: {
     alignItems: 'center',
@@ -570,12 +554,13 @@ const styles = StyleSheet.create({
   heroStatValue: {
     color: colors.coral,
     fontSize: 14,
-    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+    fontWeight: '800',
   },
   heroStatLabel: {
     color: colors.body,
     fontSize: 9,
-    fontWeight: '800',
+    fontWeight: '600',
     textAlign: 'center',
   },
   searchRow: {
@@ -586,9 +571,7 @@ const styles = StyleSheet.create({
   searchBox: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 999,
     flex: 1,
     flexDirection: 'row',
     gap: 10,
@@ -599,7 +582,7 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     flex: 1,
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '500',
     minWidth: 0,
     paddingVertical: 0,
   },
@@ -610,22 +593,19 @@ const styles = StyleSheet.create({
   },
   filterChip: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
+    backgroundColor: colors.cream,
+    borderRadius: 999,
     justifyContent: 'center',
     minHeight: 36,
     paddingHorizontal: 12,
   },
   filterChipSelected: {
     backgroundColor: '#fff2e8',
-    borderColor: '#ffb293',
   },
   filterText: {
     color: colors.charcoal,
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   filterTextSelected: {
     color: colors.coral,
@@ -634,16 +614,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   recipeCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
     gap: 9,
     padding: 8,
-    shadowColor: '#3b2f20',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.05,
-    shadowRadius: 14,
   },
   recipeTop: {
     flexDirection: 'row',
@@ -652,38 +624,9 @@ const styles = StyleSheet.create({
   },
   recipeImage: {
     backgroundColor: colors.cream,
-    borderRadius: 14,
-    height: 82,
-    width: 74,
-  },
-  recipeArt: {
-    alignItems: 'center',
-    backgroundColor: '#fff1df',
-    borderColor: '#f3d6b0',
-    borderRadius: 14,
-    borderWidth: 1,
-    height: 82,
-    justifyContent: 'center',
-    overflow: 'hidden',
-    width: 74,
-  },
-  recipeArtText: {
-    color: colors.coral,
-    fontSize: 8,
-    fontWeight: '900',
-    marginTop: 4,
-    textAlign: 'center',
-    textTransform: 'uppercase',
-  },
-  recipeArtDot: {
-    backgroundColor: '#ffd5aa',
-    borderRadius: 999,
-    height: 42,
-    opacity: 0.55,
-    position: 'absolute',
-    right: -18,
-    top: -12,
-    width: 42,
+    borderRadius: 16,
+    height: 80,
+    width: 80,
   },
   recipeContent: {
     flex: 1,
@@ -710,7 +653,7 @@ const styles = StyleSheet.create({
     color: colors.coral,
     flexShrink: 1,
     fontSize: 10,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   moreButton: {
     alignItems: 'center',
@@ -721,7 +664,7 @@ const styles = StyleSheet.create({
   recipeTitle: {
     color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
     letterSpacing: 0,
     lineHeight: 20,
     marginTop: 5,
@@ -729,7 +672,7 @@ const styles = StyleSheet.create({
   recipeSubtitle: {
     color: colors.body,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
     marginTop: 3,
   },
   recipeMetaRow: {
@@ -747,11 +690,12 @@ const styles = StyleSheet.create({
   metaText: {
     color: colors.charcoal,
     fontSize: 11,
+    fontVariant: ['tabular-nums'],
     fontWeight: '700',
   },
   metaTextGreen: {
     color: colors.green,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   cardActions: {
     alignItems: 'center',
@@ -762,7 +706,7 @@ const styles = StyleSheet.create({
   cookButton: {
     alignItems: 'center',
     backgroundColor: colors.coral,
-    borderRadius: 12,
+    borderRadius: 999,
     justifyContent: 'center',
     flex: 1,
     minHeight: 38,
@@ -772,13 +716,12 @@ const styles = StyleSheet.create({
   cookButtonText: {
     color: '#fffdf8',
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   groceryButton: {
     alignItems: 'center',
-    borderColor: colors.border,
-    borderRadius: 12,
-    borderWidth: 1,
+    backgroundColor: colors.cream,
+    borderRadius: 999,
     flex: 1,
     flexDirection: 'row',
     gap: 6,
@@ -790,19 +733,15 @@ const styles = StyleSheet.create({
   groceryButtonText: {
     color: colors.coral,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   noMatchesCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 20,
-    borderWidth: 1,
     padding: 20,
   },
   noMatchesTitle: {
     color: colors.charcoal,
     fontSize: 19,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   noMatchesBody: {
     color: colors.body,
@@ -812,10 +751,6 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 26,
-    borderWidth: 1,
     gap: 14,
     marginTop: 24,
     padding: 24,
@@ -826,7 +761,7 @@ const styles = StyleSheet.create({
   emptyTitle: {
     color: colors.charcoal,
     fontSize: 26,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 31,
     textAlign: 'center',
   },
@@ -840,7 +775,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'stretch',
     backgroundColor: colors.coral,
-    borderRadius: 16,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'center',
@@ -850,7 +785,7 @@ const styles = StyleSheet.create({
   primaryActionText: {
     color: '#fffdf8',
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.72,

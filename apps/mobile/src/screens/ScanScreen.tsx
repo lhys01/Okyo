@@ -3,11 +3,11 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import {
-  Book,
   CameraSolid,
+  Cart,
   Dollar,
   NavArrowRight,
-  Sparks,
+  OpenBook,
   Upload,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
@@ -17,12 +17,16 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
+import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
+import { sampleFoodImageUrls } from '../data/sampleFoodImages';
 import { colors } from '../components/OkyoUI';
-import { defaultScanResult, getSafeRecipeForMode, getSafeRecipeMode, type Recipe, type RecipeMode } from '../mocks';
+import { getSafeRecipeMode, type Recipe, type RecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore, type LatestScanFailure } from '../state/useOkyoStore';
+import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { hasFoodEvidence, isFoodScanState, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
+import { copyToDocuments } from '../utils/scanImageStorage';
 import { uiLog } from '../utils/uiDebug';
 
 type ScanNavigation = NativeStackNavigationProp<RootStackParamList, 'ScanScreen'>;
@@ -62,7 +66,6 @@ export function ScanScreen() {
       latestScanStatus: 'pending',
       latestScanFailure: null,
       latestScanResult: null,
-      latestScanRecipes: [],
       latestScanRecipe: null,
       selectedScanImage: previewImage,
       latestAiDebugMetadata: null,
@@ -79,14 +82,16 @@ export function ScanScreen() {
         }
 
         const status = result.status ?? 'success';
-        const responseImage = getPreviewImageMetadata(result.image ?? image);
+        // Prefer the user's original uploaded photo over the API-returned image.
+        // The API may return result.image with placeholder:true (e.g. on conversion
+        // error), which would cause getRealScanImageUri() to return null on all
+        // downstream screens even though the user's real photo URI is intact.
+        const imageForStorage = (!image?.placeholder && image?.uri) ? image : (result.image ?? image);
+        const responseImage = getPreviewImageMetadata(imageForStorage);
         const aiDebugMetadata = getAiDebugMetadata(result);
         logScanResponse(result, image);
         const foodEvidence = hasFoodEvidence({ result, status });
-        const initialRecipes = getScanRecipes(result);
-        const scanRecipes = result.scan && foodEvidence && initialRecipes.length === 0
-          ? createStarterRecipesFromScan(result.scan)
-          : initialRecipes;
+        const scanRecipes = getScanRecipes(result);
         const shouldUseSuccessPath = Boolean(
           result.scan &&
           isUsableScan({
@@ -98,13 +103,16 @@ export function ScanScreen() {
         );
         if (shouldUseSuccessPath && result.scan) {
           const selectedRecipe = getScanRecipeForMode(scanRecipes, selectedMode, result.recipe);
-          const storedStatus = selectedRecipe || foodEvidence ? 'success' : status;
+          const storedStatus = status === 'partial'
+            ? 'partial'
+            : selectedRecipe || foodEvidence
+              ? 'success'
+              : status;
           writeLatestScanSession({
             scanSessionId,
             latestScanStatus: storedStatus,
             latestScanFailure: null,
             latestScanResult: result.scan,
-            latestScanRecipes: scanRecipes,
             latestScanRecipe: selectedRecipe,
             selectedScanImage: responseImage,
             latestAiDebugMetadata: aiDebugMetadata,
@@ -124,7 +132,6 @@ export function ScanScreen() {
             latestScanStatus: failureStatus,
             latestScanFailure: failure,
             latestScanResult: null,
-            latestScanRecipes: [],
             latestScanRecipe: null,
             selectedScanImage: responseImage,
             latestAiDebugMetadata: aiDebugMetadata,
@@ -168,7 +175,6 @@ export function ScanScreen() {
             latestScanStatus: 'failed',
             latestScanFailure: failure,
             latestScanResult: null,
-            latestScanRecipes: [],
             latestScanRecipe: null,
             selectedScanImage: getPreviewImageMetadata(image),
             latestAiDebugMetadata: {
@@ -181,31 +187,33 @@ export function ScanScreen() {
           });
           logStoreAfterResponse('failed', null, null, [], image, scanSessionId);
         } else {
-          const demoRecipes = getDemoRecipes();
-          const demoRecipe = getScanRecipeForMode(demoRecipes, selectedMode);
+          const failure = {
+            status: 'failed',
+            rejectionType: 'ai_failed',
+            rejectionReason: getUploadFailureReasonFromError(error),
+          } as const;
           writeLatestScanSession({
             scanSessionId,
-            latestScanStatus: 'success',
-            latestScanFailure: null,
-            latestScanResult: defaultScanResult,
-            latestScanRecipes: demoRecipes,
-            latestScanRecipe: demoRecipe,
+            latestScanStatus: 'failed',
+            latestScanFailure: failure,
+            latestScanResult: null,
+            latestScanRecipe: null,
             selectedScanImage: getPreviewImageMetadata(image),
             latestAiDebugMetadata: {
               aiSource: 'fallback_ai',
               fallbackReason: 'mobile_api_unavailable',
-              confidence: defaultScanResult.confidence,
+              confidence: 0,
             },
             source,
-            reason: 'ScanScreen.api_error_demo_fallback',
+            reason: 'ScanScreen.api_error',
           });
-          logStoreAfterResponse('success', defaultScanResult, demoRecipe, demoRecipes, image, scanSessionId);
+          logStoreAfterResponse('failed', null, null, [], image, scanSessionId);
         }
         logScanRouteDecision('failed', {
-          rejectionReason: uploadedImage ? getUploadFailureReasonFromError(error) : 'Demo scan API unavailable.',
+          rejectionReason: getUploadFailureReasonFromError(error),
           rejectionType: 'ai_failed',
           status: 'failed',
-        }, uploadedImage ? 'api_error_path' : 'result_success_path');
+        }, 'api_error_path');
       });
   };
 
@@ -233,7 +241,8 @@ export function ScanScreen() {
         return;
       }
 
-      startScan('camera', await getImageMetadata(result.assets[0], 'camera'));
+      const cameraImage = await getImageMetadata(result.assets[0], 'camera');
+      startScan('camera', await copyToDocuments(cameraImage));
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Camera unavailable.',
@@ -246,10 +255,6 @@ export function ScanScreen() {
         'Camera isn’t available in this simulator. Use Upload From Photos instead.',
       );
     }
-  };
-
-  const tryDemoScan = () => {
-    startScan('mock', createPlaceholderImage('mock'));
   };
 
   const uploadFromPhotos = async () => {
@@ -266,7 +271,8 @@ export function ScanScreen() {
         return;
       }
 
-      startScan('photos', await getImageMetadata(result.assets[0], 'photos'));
+      const photosImage = await getImageMetadata(result.assets[0], 'photos');
+      startScan('photos', await copyToDocuments(photosImage));
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Image picker failed.',
@@ -276,7 +282,7 @@ export function ScanScreen() {
       uiLog('ScanScreen', 'photo_picker_error');
       Alert.alert(
         'Photo upload unavailable',
-        'Okyo could not open your photo library. Try again or use the demo scan.',
+        'Okyo could not open your photo library. Try again.',
       );
     }
   };
@@ -296,7 +302,7 @@ export function ScanScreen() {
       source: 'ScanScreen.openRecentRecipe',
     });
     setSelectedMode(mode);
-    navigation.navigate('RecipeDetailScreen', { mode });
+    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
   };
 
   const openLibrary = () => {
@@ -316,10 +322,10 @@ export function ScanScreen() {
             numberOfLines={2}
             style={styles.headline}
           >
-            Turn a food photo into a homemade recipe.
+            What are we remaking today?
           </Text>
           <Text style={styles.subtitle}>
-            Upload a food photo. Okyo makes a best-guess recipe from what it can see, then you can edit it if it’s off.
+            Snap a restaurant meal and Okyo turns it into a homemade recipe, savings estimate, and grocery list.
           </Text>
         </View>
 
@@ -340,10 +346,28 @@ export function ScanScreen() {
               label="Upload food photo"
               onPress={uploadFromPhotos}
             />
-            <ScanActionButton
-              icon={<Sparks color={colors.coral} height={25} strokeWidth={2.15} width={25} />}
-              label="Try demo scan"
-              onPress={tryDemoScan}
+          </View>
+        </View>
+
+        <View style={styles.howItWorks}>
+          <Text style={styles.howTitle}>How Okyo works</Text>
+          <View style={styles.howCard}>
+            <HowStep
+              caption="Snap the dish"
+              icon={<CameraSolid color={colors.coral} height={24} width={24} />}
+              label="Scan"
+            />
+            <NavArrowRight color={colors.creamDeep} height={22} strokeWidth={2.6} width={22} />
+            <HowStep
+              caption="Homemade version"
+              icon={<OpenBook color={colors.coral} height={24} strokeWidth={2.1} width={24} />}
+              label="Recipe"
+            />
+            <NavArrowRight color={colors.creamDeep} height={22} strokeWidth={2.6} width={22} />
+            <HowStep
+              caption="Shop and cook"
+              icon={<Cart color={colors.coral} height={24} strokeWidth={2.1} width={24} />}
+              label="Groceries"
             />
           </View>
         </View>
@@ -367,9 +391,11 @@ export function ScanScreen() {
               onPress={openRecentRecipe}
               style={({ pressed }) => [styles.recentCard, pressed ? styles.pressed : null]}
             >
-              <View style={styles.recentIcon}>
-                <Book color={colors.coral} height={28} strokeWidth={2.2} width={28} />
-              </View>
+              <FoodImage
+                imageStatus={getRecipeImageStatus(recentRecipe)}
+                imageUrl={getRecipeImageUrl(recentRecipe)}
+                style={styles.recentImage}
+              />
               <View style={styles.recentCopy}>
                 <Text numberOfLines={1} style={styles.recentRecipeTitle}>
                   {cleanPublicText(recentRecipe.title)}
@@ -377,7 +403,9 @@ export function ScanScreen() {
                 <Text style={styles.recentMeta}>Saved recipe</Text>
                 <View style={styles.savedPill}>
                   <Dollar color={colors.green} height={17} strokeWidth={2.2} width={17} />
-                  <Text style={styles.savedPillText}>Saved recipe</Text>
+                  <Text style={styles.savedPillText}>
+                    Home est. {formatOptionalCurrency(recentRecipe.estimatedHomemadeCost)}
+                  </Text>
                 </View>
               </View>
               <NavArrowRight color={colors.body} height={26} strokeWidth={2.2} width={26} />
@@ -386,6 +414,22 @@ export function ScanScreen() {
         ) : null}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+type HowStepProps = {
+  caption: string;
+  icon: ReactNode;
+  label: string;
+};
+
+function HowStep({ caption, icon, label }: HowStepProps) {
+  return (
+    <View style={styles.howStep}>
+      <View style={styles.howIcon}>{icon}</View>
+      <Text style={styles.howLabel}>{label}</Text>
+      <Text numberOfLines={2} style={styles.howCaption}>{caption}</Text>
+    </View>
   );
 }
 
@@ -420,15 +464,6 @@ function ScanActionButton({ icon, label, onPress, tone = 'secondary' }: ScanActi
       </Text>
     </Pressable>
   );
-}
-
-function createPlaceholderImage(source: ScanSource): ScanImageMetadata {
-  return {
-    fileName: `${source}-mock-placeholder.jpg`,
-    mimeType: 'image/jpeg',
-    placeholder: true,
-    source,
-  };
 }
 
 async function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: ScanSource): Promise<ScanImageMetadata> {
@@ -470,6 +505,9 @@ async function getProcessedImage(asset: ImagePicker.ImagePickerAsset) {
     { compress: 0.78, maxWidth: maxProcessedImageWidth },
     { compress: 0.64, maxWidth: 1200 },
     { compress: 0.52, maxWidth: 1000 },
+    { compress: 0.42, maxWidth: 850 },
+    { compress: 0.34, maxWidth: 720 },
+    { compress: 0.28, maxWidth: 600 },
   ];
   let latestResult: {
     base64?: string;
@@ -575,108 +613,52 @@ function getAiDebugMetadata(result: CreateScanResult): AiDebugMetadata | null {
 }
 
 function getScanRecipes(result: CreateScanResult) {
+  const decorateRecipe = shouldUseSampleRecipeImages(result)
+    ? addSampleImageUrl
+    : (recipe: Recipe) => recipe;
+
   if (Array.isArray(result.recipes) && result.recipes.length > 0) {
-    return result.recipes;
+    return result.recipes.map(decorateRecipe);
   }
 
-  return result.recipe ? [result.recipe] : [];
+  return result.recipe ? [decorateRecipe(result.recipe)] : [];
 }
 
-function getDemoRecipes() {
-  return defaultScanResult.modes.map((mode) => getSafeRecipeForMode(mode));
+function shouldUseSampleRecipeImages(result: CreateScanResult) {
+  return result.source === 'mock' || result.image?.placeholder === true;
 }
 
-function createStarterRecipesFromScan(scan: NonNullable<CreateScanResult['scan']>) {
-  const modes: RecipeMode[] = scan.modes?.length ? scan.modes : ['Restaurant Copy', 'Budget', 'Healthy'];
-  return modes.map((mode) => createStarterRecipeFromScan(scan, mode));
-}
-
-function createStarterRecipeFromScan(scan: NonNullable<CreateScanResult['scan']>, mode: RecipeMode): Recipe {
-  const dishName = cleanPublicText(scan.dishName || scan.bestGuessDishName || 'Restaurant-Style Food Plate');
-  const titlePrefix = mode === 'Budget'
-    ? 'Budget'
-    : mode === 'Healthy'
-      ? 'Lighter'
-      : 'Restaurant-Style';
-  const ingredientName = getStarterIngredientName(dishName);
-  const homemadeCost = getModeStarterCost(scan.homemadeCost, scan.restaurantPrice, mode);
+function addSampleImageUrl(recipe: Recipe): Recipe {
+  if (recipe.imageUrl || recipe.imageUri) {
+    return recipe;
+  }
 
   return {
-    id: `scan-starter-${slugify(dishName)}-${slugify(mode)}`,
-    scanResultId: scan.id,
-    title: `${titlePrefix} ${dishName}`,
-    mode,
-    description: `A flexible inspired-by starter recipe based on the visible food in your photo.`,
-    prepTimeMinutes: 10,
-    cookTimeMinutes: 18,
-    totalTimeMinutes: 28,
-    activeTimeMinutes: 20,
-    servings: 2,
-    skillLevel: 'Easy',
-    difficulty: 'Easy',
-    estimatedHomemadeCost: homemadeCost,
-    estimatedSavings: Math.max(0, scan.restaurantPrice - homemadeCost),
-    ingredients: [
-      { name: ingredientName, quantity: '2 servings' },
-      { name: 'matching sauce or dressing', quantity: '1/4 cup' },
-      { name: 'fresh garnish or vegetables', quantity: '1 cup' },
-      { name: 'salt, pepper, and cooking oil', quantity: 'pantry check', pantryItem: true },
-    ],
-    ingredientGroups: [
-      { component: 'Main', items: [{ name: ingredientName, quantity: '2 servings' }] },
-      { component: 'Sauce', items: [{ name: 'matching sauce or dressing', quantity: '1/4 cup' }] },
-      { component: 'Finish', items: [{ name: 'fresh garnish or vegetables', quantity: '1 cup' }] },
-    ],
-    steps: [
-      `Prep the visible main ingredients for ${dishName}.`,
-      'Cook the main ingredient with oil, salt, and pepper until hot and browned where appropriate.',
-      'Warm or stir together the sauce so it can coat the food evenly.',
-      'Combine the base, sauce, and toppings, then taste and adjust seasoning.',
-      'Serve right away with garnish or a bright squeeze of lemon if it fits.',
-    ],
-    structuredSteps: [
-      {
-        text: `Prep the visible main ingredients for ${dishName}.`,
-        timeEstimate: '5 min',
-        visualCue: 'Ingredients are cut or portioned.',
-        whyItMatters: 'A flexible starter keeps the result useful without pretending to know the exact restaurant recipe.',
-      },
-      {
-        text: 'Cook the main ingredient with oil, salt, and pepper until hot and browned where appropriate.',
-        timeEstimate: '8-12 min',
-        visualCue: 'Food is hot, browned, or tender.',
-      },
-      {
-        text: 'Combine with sauce and toppings, then taste before serving.',
-        timeEstimate: '3 min',
-        visualCue: 'Everything is coated and seasoned.',
-      },
-    ],
-    substitutions: [
-      'Use any matching protein, vegetable, or grain you already have.',
-      'Use bottled sauce, dressing, or a simple pan sauce.',
-      'Swap garnish for herbs, scallions, sesame seeds, or cheese if they fit.',
-    ],
-    pantryNote: 'Assumes salt, pepper, and basic cooking oil are on hand.',
-    confidenceNote: 'Starter recipe based on visible food evidence from the scan, not an official restaurant recipe.',
-    mainIngredientsSummary: ingredientName,
-    equipment: ['skillet or sheet pan', 'knife', 'cutting board', 'mixing bowl'],
-    bestFor: 'a quick best-guess homemade version',
-    avoidMistake: 'Do not treat this as the exact restaurant recipe; adjust based on what you can see.',
-    mistakeWarning: 'Do not overcook the main ingredient while recreating the visible dish.',
-    storageAndReheating: 'Store leftovers up to 3 days and reheat gently.',
-    storage: 'Store leftovers up to 3 days and reheat gently.',
-    groceryItems: [
-      { category: 'Protein', name: ingredientName, quantity: '2 servings', sourceIngredient: ingredientName },
-      { category: 'Sauces / Condiments', name: 'matching sauce or dressing', quantity: '1 small bottle' },
-      { category: 'Produce', name: 'fresh garnish or vegetables', quantity: '1 small bunch or bag' },
-      { category: 'Pantry', name: 'salt, pepper, and cooking oil', quantity: 'pantry check', pantryStaple: true },
-    ],
-    spicePairings: ['black pepper', 'chili flakes', 'garlic powder'],
-    cookingTerms: [
-      { term: 'Best guess', meaning: 'A useful recipe direction based on visible food evidence.' },
-    ],
+    ...recipe,
+    imageStatus: 'ready',
+    imageUrl: getSampleImageUrlForDish(recipe.title),
   };
+}
+
+function getSampleImageUrlForDish(dishName: string) {
+  const normalized = dishName.toLowerCase();
+  if (normalized.includes('pasta') || normalized.includes('rigatoni') || normalized.includes('noodle') || normalized.includes('spaghetti')) {
+    return sampleFoodImageUrls.pasta;
+  }
+  if (normalized.includes('burger') || normalized.includes('sandwich') || normalized.includes('biscuit')) {
+    return sampleFoodImageUrls.burger;
+  }
+  if (normalized.includes('salad')) {
+    return sampleFoodImageUrls.salad;
+  }
+  if (normalized.includes('cake') || normalized.includes('cookie') || normalized.includes('dessert')) {
+    return sampleFoodImageUrls.dessert;
+  }
+  if (normalized.includes('egg') || normalized.includes('toast') || normalized.includes('breakfast')) {
+    return sampleFoodImageUrls.breakfast;
+  }
+
+  return sampleFoodImageUrls.bowl;
 }
 
 function getScanRecipeForMode(
@@ -685,42 +667,6 @@ function getScanRecipeForMode(
   fallbackRecipe: Recipe | null | undefined = null,
 ) {
   return recipes.find((recipe) => recipe.mode === mode) ?? fallbackRecipe ?? null;
-}
-
-function getStarterIngredientName(dishName: string) {
-  const normalized = dishName.toLowerCase();
-  if (normalized.includes('pizza')) {
-    return 'pizza crust, sauce, and cheese';
-  }
-  if (normalized.includes('rice') || normalized.includes('bowl')) {
-    return 'cooked rice or grain base';
-  }
-  if (normalized.includes('noodle') || normalized.includes('pasta')) {
-    return 'noodles or pasta';
-  }
-  if (normalized.includes('burger') || normalized.includes('sandwich')) {
-    return 'bun, filling, and toppings';
-  }
-  if (normalized.includes('salad')) {
-    return 'greens, toppings, and dressing';
-  }
-
-  return 'visible main ingredient';
-}
-
-function getModeStarterCost(homemadeCost: number, restaurantPrice: number, mode: RecipeMode) {
-  const baseCost = Number.isFinite(homemadeCost) && homemadeCost > 0
-    ? homemadeCost
-    : Math.max(3, restaurantPrice * 0.45);
-  const multiplier = mode === 'Budget' ? 0.82 : mode === 'Healthy' ? 1.08 : 1;
-  return Number(Math.max(2, baseCost * multiplier).toFixed(2));
-}
-
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '') || 'food';
 }
 
 function logScanResponse(result: CreateScanResult, image?: ScanImageMetadata) {
@@ -855,9 +801,6 @@ function getRouteReason(status: string, result: Partial<CreateScanResult>, route
 function getPublicScanSource(source: ScanSource) {
   if (source === 'photos') {
     return 'upload';
-  }
-  if (source === 'mock') {
-    return 'demo';
   }
 
   return 'camera';
@@ -1035,43 +978,42 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
   },
   hero: {
-    marginTop: 18,
-    paddingBottom: 18,
+    marginTop: 20,
+    paddingBottom: 22,
   },
   headline: {
     color: colors.charcoal,
-    fontSize: 44,
-    fontWeight: '900',
-    lineHeight: 50,
+    fontSize: 40,
+    fontWeight: '700',
+    letterSpacing: 0,
+    lineHeight: 46,
     maxWidth: 360,
   },
   subtitle: {
     color: colors.body,
-    fontSize: 18,
-    lineHeight: 27,
-    marginTop: 16,
+    fontSize: 16,
+    lineHeight: 24,
+    marginTop: 12,
     maxWidth: 370,
   },
   scanCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 24,
-    borderWidth: 1,
-    padding: 14,
-    shadowColor: '#7b5a38',
+    borderRadius: 32,
+    padding: 16,
+    shadowColor: '#4a3a28',
     shadowOffset: { height: 12, width: 0 },
-    shadowOpacity: 0.08,
-    shadowRadius: 22,
+    shadowOpacity: 0.09,
+    shadowRadius: 24,
     elevation: 2,
   },
   illustrationPanel: {
     alignItems: 'center',
-    aspectRatio: 1.84,
+    aspectRatio: 2.35,
     backgroundColor: colors.cream,
-    borderRadius: 20,
+    borderRadius: 26,
     justifyContent: 'center',
     overflow: 'hidden',
     position: 'relative',
@@ -1080,31 +1022,29 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   scanActions: {
-    gap: 12,
-    marginTop: 18,
+    gap: 10,
+    marginTop: 16,
   },
   scanButton: {
     alignItems: 'center',
-    borderRadius: 18,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 12,
     justifyContent: 'center',
-    minHeight: 64,
+    minHeight: 58,
     minWidth: 0,
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
   },
   scanButtonPrimary: {
     backgroundColor: colors.coral,
-    shadowColor: colors.coral,
+    shadowColor: colors.coralDark,
     shadowOffset: { height: 8, width: 0 },
     shadowOpacity: 0.18,
     shadowRadius: 18,
     elevation: 3,
   },
   scanButtonSecondary: {
-    backgroundColor: '#fffdf8',
-    borderColor: colors.coral,
-    borderWidth: 1.5,
+    backgroundColor: colors.cream,
   },
   scanButtonIcon: {
     alignItems: 'center',
@@ -1114,8 +1054,8 @@ const styles = StyleSheet.create({
   },
   scanButtonText: {
     flexShrink: 1,
-    fontSize: 18,
-    fontWeight: '900',
+    fontSize: 16,
+    fontWeight: '700',
     minWidth: 0,
     textAlign: 'center',
   },
@@ -1125,8 +1065,59 @@ const styles = StyleSheet.create({
   scanButtonTextSecondary: {
     color: colors.coralDark,
   },
+  howItWorks: {
+    marginTop: 28,
+  },
+  howTitle: {
+    color: colors.charcoal,
+    fontSize: 20,
+    fontWeight: '600',
+    letterSpacing: 0,
+    marginBottom: 12,
+  },
+  howCard: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 18,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
+  },
+  howStep: {
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+  },
+  howIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.cream,
+    borderRadius: 999,
+    height: 52,
+    justifyContent: 'center',
+    width: 52,
+  },
+  howLabel: {
+    color: colors.charcoal,
+    fontSize: 15,
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  howCaption: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '600',
+    lineHeight: 15,
+    marginTop: 2,
+    textAlign: 'center',
+  },
   recentSection: {
-    marginTop: 22,
+    marginTop: 26,
   },
   recentHeader: {
     alignItems: 'center',
@@ -1136,8 +1127,8 @@ const styles = StyleSheet.create({
   },
   recentTitle: {
     color: colors.charcoal,
-    fontSize: 22,
-    fontWeight: '900',
+    fontSize: 20,
+    fontWeight: '600',
   },
   seeAllButton: {
     alignItems: 'center',
@@ -1149,26 +1140,27 @@ const styles = StyleSheet.create({
   seeAllText: {
     color: colors.coral,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   recentCard: {
     alignItems: 'center',
     backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 24,
     flexDirection: 'row',
     gap: 12,
     minHeight: 106,
     minWidth: 0,
     padding: 14,
+    shadowColor: '#4a3a28',
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2,
   },
-  recentIcon: {
-    alignItems: 'center',
+  recentImage: {
     backgroundColor: colors.cream,
-    borderRadius: 16,
+    borderRadius: 18,
     height: 72,
-    justifyContent: 'center',
     width: 72,
   },
   recentCopy: {
@@ -1178,12 +1170,12 @@ const styles = StyleSheet.create({
   recentRecipeTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   recentMeta: {
     color: colors.body,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '500',
     marginTop: 4,
   },
   savedPill: {
@@ -1202,7 +1194,7 @@ const styles = StyleSheet.create({
     color: colors.green,
     flexShrink: 1,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.78,

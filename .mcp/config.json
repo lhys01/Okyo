@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "ponytail": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "github:DietrichGebert/ponytail"
+      ]
+    }
+  }
+}
+

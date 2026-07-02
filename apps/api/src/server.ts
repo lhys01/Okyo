@@ -2,7 +2,15 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 
-import { getPublicAiConfig } from './config/aiConfig.js';
+import { getAiConfig, getPublicAiConfig } from './config/aiConfig.js';
+import { getCostControlConfig } from './config/costControlConfig.js';
+import { validateEpicureConfigAtStartup } from './config/openRouter.js';
+import {
+  checkAndIncrementFableCap,
+  checkAndIncrementGlobalAiCap,
+  logCostEvent,
+  scanRateLimitMiddleware,
+} from './middleware/costControls.js';
 import {
   awardXp,
   createChallenge,
@@ -16,7 +24,7 @@ import {
   getXpDefinitions,
   saveRecipe,
 } from './store.js';
-import { createAiScan } from './services/aiService.js';
+import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
 import type { ApiFailure, ApiResponse } from './types.js';
 
 const port = Number(process.env.PORT ?? 8081);
@@ -25,7 +33,7 @@ const maxImageDataUrlChars = 12_000_000;
 const jsonBodyLimit = '16mb';
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
-const scanSourceSchema = z.enum(['camera', 'photos', 'mock']);
+const scanSourceSchema = z.enum(['camera', 'photos']);
 const imageDataUrlSchema = z.string()
   .min(1)
   .max(maxImageDataUrlChars)
@@ -46,7 +54,7 @@ const scanImageMetadataSchema = z.object({
   conversionError: z.string().min(1).max(120).optional(),
 }).strict();
 const scanRequestSchema = z.object({
-  source: scanSourceSchema.optional().default('mock'),
+  source: scanSourceSchema.optional().default('camera'),
   mode: recipeModeSchema.optional().default('Restaurant Copy'),
   image: scanImageMetadataSchema.optional(),
 });
@@ -78,17 +86,68 @@ app.get('/health', (_request, response) => {
 });
 
 app.get('/debug/ai-config', (_request, response) => {
+  if (process.env.NODE_ENV === 'production') {
+    sendError(response.status(404), 'not_found', 'Not found.');
+    return;
+  }
   sendOk(response, getPublicAiConfig());
 });
 
-app.post('/v1/scans', async (request, response, next) => {
+app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) => {
   try {
     const body = parseRequest(scanRequestSchema, normalizeScanRequestInput(request.body));
+
+    // Configurable image size guard (secondary check; Zod schema is the primary).
+    const imageSizeBytes = body.image?.dataUrlSizeBytes ?? body.image?.dataUrl?.length ?? 0;
+    const maxScanImageBytes = getCostControlConfig().maxScanImageBytes;
+    if (imageSizeBytes > maxScanImageBytes) {
+      logCostEvent('scan_image_too_large', { imageSizeBytes, maxScanImageBytes });
+      sendError(response.status(413), 'image_payload_too_large', 'This photo was too large to scan. Try a smaller image.');
+      return;
+    }
+
+    // Global daily AI request cap — only counts real uploaded images.
+    const isRealAiScan = Boolean(body.image) && !body.image?.placeholder;
+    if (isRealAiScan && !checkAndIncrementGlobalAiCap()) {
+      sendError(response.status(429), 'ai_daily_cap_exceeded', "Okyo has reached its daily scan limit. Try again tomorrow.");
+      return;
+    }
+
+    // Fable 5 opt-in — private header only, never a user-facing toggle.
+    // Missing/mismatched header always falls through to the default
+    // OpenRouter path unchanged.
+    const fableRequested = request.get('x-okyo-model') === 'fable';
+    const fableEnabled = getAiConfig().fableEnabled;
+
+    if (fableRequested && !fableEnabled) {
+      console.log('[fable_route]', { requested: true, enabled: false, active: false, model: 'default', failClosed: true });
+      sendError(response.status(403), 'fable_not_enabled', 'Fable 5 is not enabled.');
+      return;
+    }
+
+    let fableActive = false;
+    if (fableRequested && fableEnabled) {
+      if (!checkAndIncrementFableCap()) {
+        console.log('[fable_route]', { requested: true, enabled: true, active: false, model: 'default', failClosed: true });
+        sendError(response.status(429), 'fable_daily_cap_exceeded', "Fable 5's daily limit has been reached. Try again tomorrow.");
+        return;
+      }
+      fableActive = true;
+    }
+    console.log('[fable_route]', {
+      requested: fableRequested,
+      enabled: fableEnabled,
+      active: fableActive,
+      model: fableActive ? getAiConfig({ fableActive: true }).fableModel : 'default',
+      failClosed: false,
+    });
+
     logScanRequest(body, request.get('content-type'));
     const result = await createAiScan({
       image: body.image,
       mode: body.mode,
       source: body.source,
+      fableActive,
     });
 
     sendOk(response.status(201), {
@@ -169,6 +228,19 @@ app.get('/v1/rankings/weekly', (_request, response) => {
   sendOk(response, getWeeklyRankings());
 });
 
+app.post('/v1/recipes/:recipeId/coaching', async (request, response, next) => {
+  try {
+    const result = await enrichRecipeCoaching(request.params.recipeId);
+    if (!result) {
+      sendNotFound(response, 'recipe_not_found', 'Recipe not found or expired. Please scan again.');
+      return;
+    }
+    sendOk(response, result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/v1/restaurant-packs', (_request, response) => {
   sendOk(response, { packs: getRestaurantPacks() });
 });
@@ -185,6 +257,16 @@ app.get('/v1/restaurant-packs/:packId', (request, response) => {
 });
 
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+  if (error instanceof FoodRejectionError) {
+    sendError(
+      response.status(422),
+      error.rejectionType,
+      error.message,
+      { rejectionType: error.rejectionType, scanState: error.scanState, confidence: error.confidence },
+    );
+    return;
+  }
+
   if (isPayloadTooLargeError(error)) {
     sendError(
       response.status(413),
@@ -204,6 +286,9 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
 
 app.listen(port, () => {
   console.log(`Okyo API listening on http://localhost:${port}`);
+  // Best-effort startup warning if the Epicure enrichment layer is misconfigured.
+  // Never fatal — the API boots regardless and enrichment simply stays off.
+  validateEpicureConfigAtStartup();
 });
 
 function parseRequest<TSchema extends z.ZodTypeAny>(schema: TSchema, value: unknown): z.infer<TSchema> {

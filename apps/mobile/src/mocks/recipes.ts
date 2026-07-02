@@ -1,9 +1,12 @@
 import type { Recipe, RecipeMode } from './types';
+import { sampleFoodImageUrls } from '../data/sampleFoodImages';
 
 export const mockRecipes: Recipe[] = [
   {
     id: 'recipe-spicy-vodka-rigatoni-restaurant-copy',
     scanResultId: '001',
+    imageStatus: 'ready',
+    imageUrl: sampleFoodImageUrls.pasta,
     title: 'Spicy Vodka Rigatoni Inspired-by',
     mode: 'Restaurant Copy',
     description: 'A creamy tomato rigatoni with parmesan, gentle heat, and a glossy restaurant-style sauce.',
@@ -75,6 +78,8 @@ export const mockRecipes: Recipe[] = [
   {
     id: 'recipe-spicy-vodka-rigatoni-budget',
     scanResultId: '001',
+    imageStatus: 'ready',
+    imageUrl: sampleFoodImageUrls.pasta,
     title: 'Budget Spicy Tomato Rigatoni',
     mode: 'Budget',
     description: 'A lower-cost version that keeps the creamy tomato feel with fewer premium ingredients.',
@@ -108,6 +113,8 @@ export const mockRecipes: Recipe[] = [
   {
     id: 'recipe-spicy-vodka-rigatoni-healthy',
     scanResultId: '001',
+    imageStatus: 'ready',
+    imageUrl: sampleFoodImageUrls.pasta,
     title: 'Lighter Spicy Vodka Rigatoni',
     mode: 'Healthy',
     description: 'A lighter take with extra vegetables and Greek yogurt for a creamy finish.',
@@ -141,6 +148,8 @@ export const mockRecipes: Recipe[] = [
   {
     id: 'recipe-cheddar-biscuits-restaurant-copy',
     scanResultId: '002',
+    imageStatus: 'ready',
+    imageUrl: sampleFoodImageUrls.burger,
     title: 'Cheddar-style Biscuits',
     mode: 'Restaurant Copy',
     description: 'Tender cheddar biscuits brushed with garlic butter.',
@@ -169,6 +178,8 @@ export const mockRecipes: Recipe[] = [
   {
     id: 'recipe-cava-grain-bowl-healthy',
     scanResultId: '003',
+    imageStatus: 'ready',
+    imageUrl: sampleFoodImageUrls.bowl,
     title: 'Cava-style Grain Bowl',
     mode: 'Healthy',
     description: 'A fresh grain bowl with greens, protein, hummus, and harissa dressing.',

@@ -284,14 +284,14 @@ const styles = StyleSheet.create({
   kicker: {
     color: colors.coral,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   title: {
     color: colors.charcoal,
     fontSize: 32,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 37,
   },
   description: {
@@ -314,7 +314,7 @@ const styles = StyleSheet.create({
   lowActivityTitle: {
     color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   lowActivityText: {
     color: colors.body,
@@ -329,12 +329,12 @@ const styles = StyleSheet.create({
   xpLabel: {
     color: colors.charcoal,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   xpValue: {
     color: colors.green,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   progressTrack: {
     backgroundColor: colors.border,
@@ -364,13 +364,13 @@ const styles = StyleSheet.create({
   unlockLabel: {
     color: colors.green,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     textTransform: 'uppercase',
   },
   unlockTitle: {
     color: colors.green,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     marginTop: 2,
   },
   dismissButton: {
@@ -383,7 +383,7 @@ const styles = StyleSheet.create({
   dismissText: {
     color: colors.green,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   section: {
     ...sharedStyles.card,
@@ -393,7 +393,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: colors.charcoal,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
     marginBottom: 12,
   },
   badgeGrid: {
@@ -414,7 +414,7 @@ const styles = StyleSheet.create({
   badgeName: {
     color: colors.charcoal,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   badgeStatus: {
     color: colors.body,
@@ -444,7 +444,7 @@ const styles = StyleSheet.create({
   rank: {
     color: colors.coral,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
     width: 36,
   },
   leaderInfo: {
@@ -453,7 +453,7 @@ const styles = StyleSheet.create({
   leaderName: {
     color: colors.charcoal,
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   leaderValue: {
     color: colors.body,
@@ -463,6 +463,6 @@ const styles = StyleSheet.create({
   leaderXp: {
     color: colors.green,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
   },
 });

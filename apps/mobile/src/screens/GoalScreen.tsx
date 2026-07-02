@@ -51,6 +51,7 @@ const styles = StyleSheet.create({
   },
   goalButton: {
     ...sharedStyles.card,
+    backgroundColor: colors.cream,
     minHeight: 52,
     justifyContent: 'center',
     paddingHorizontal: 16,
@@ -61,6 +62,6 @@ const styles = StyleSheet.create({
   goalText: {
     color: colors.charcoal,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
   },
 });

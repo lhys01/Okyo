@@ -1,4 +1,4 @@
-import { OKYO_API_BASE_URL, OKYO_API_TIMEOUT_MS } from './config';
+import { OKYO_API_BASE_URL, OKYO_API_TIMEOUT_MS, OKYO_DEV_MODEL_OVERRIDE } from './config';
 import type { ApiResponse, CreateScanRequest, CreateScanResult } from './types';
 
 export async function createMockScan(request: CreateScanRequest): Promise<CreateScanResult> {
@@ -14,9 +14,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   try {
     const response = await fetch(`${OKYO_API_BASE_URL}${path}`, {
       body: requestBody,
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getJsonHeaders(path),
       method: 'POST',
       signal: controller.signal,
     });
@@ -33,6 +31,18 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function getJsonHeaders(path: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (path === '/v1/scans' && OKYO_DEV_MODEL_OVERRIDE === 'fable') {
+    headers['x-okyo-model'] = 'fable';
+  }
+
+  return headers;
 }
 
 function logApiRequest(path: string, requestBody: string, body: unknown) {

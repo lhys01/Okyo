@@ -21,6 +21,24 @@ const savedRecipes: Recipe[] = [];
 const completedChallenges: CompletedChallenge[] = [];
 const awardedXpEvents: AwardedXpEvent[] = [];
 
+// Deferred coaching store: recipes awaiting on-demand coaching enrichment.
+// Keyed by recipe.id. TTL = 1 day (survives the typical user session).
+const GENERATED_RECIPE_TTL_MS = 24 * 60 * 60 * 1000;
+const generatedRecipeStore = new Map<string, { recipe: Recipe; expiresAt: number }>();
+
+export function storeGeneratedRecipe(recipe: Recipe): void {
+  generatedRecipeStore.set(recipe.id, { recipe, expiresAt: Date.now() + GENERATED_RECIPE_TTL_MS });
+}
+
+export function getGeneratedRecipe(recipeId: string): Recipe | null {
+  const entry = generatedRecipeStore.get(recipeId);
+  if (!entry || Date.now() > entry.expiresAt) {
+    generatedRecipeStore.delete(recipeId);
+    return null;
+  }
+  return entry.recipe;
+}
+
 export function getScan(scanId: string) {
   return mockScanResults.find((scan) => scan.id === scanId);
 }
@@ -30,29 +48,6 @@ export function getRecipe(recipeId: string) {
     mockRecipes.find((recipe) => recipe.id === recipeId) ??
     mockRecipes.find((recipe) => recipe.id.startsWith(`${recipeId}-`))
   );
-}
-
-export function getRecipeForScan(scan: ScanResult, mode: RecipeMode = 'Restaurant Copy') {
-  return (
-    mockRecipes.find((recipe) => recipe.scanResultId === scan.id && recipe.mode === mode) ??
-    mockRecipes.find((recipe) => recipe.scanResultId === scan.id) ??
-    mockRecipes[0]
-  );
-}
-
-export function createMockScan(mode: RecipeMode = 'Restaurant Copy') {
-  const scan = mockScanResults[0];
-  const recipe = getRecipeForScan(scan, mode);
-  const groceryList = mockGroceryLists.find((list) => list.id === scan.groceryListId);
-  const shareCard = mockShareCards.find((card) => card.id === scan.shareCardId);
-
-  return {
-    scan,
-    recipe,
-    groceryList,
-    shareCard,
-    note: 'Mock scan only. No image was stored and no AI provider was called.',
-  };
 }
 
 export function saveRecipe(recipe: Recipe) {

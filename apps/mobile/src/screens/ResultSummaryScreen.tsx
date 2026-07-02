@@ -8,7 +8,6 @@ import {
   CheckCircle,
   Clock,
   Cutlery,
-  Leaf,
   NavArrowLeft,
   OpenBook,
   PlusCircle,
@@ -23,10 +22,14 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { uiLog } from '../utils/uiDebug';
+import { attachRealScanImage } from '../utils/savedRecipeImage';
+import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
+import { imageTraceLog, uiLog } from '../utils/uiDebug';
+import { KikoMascot } from '../components/KikoMascot';
 import {
   PrimaryButton,
   colors,
+  fontFamilies,
 } from '../components/OkyoUI';
 import {
   defaultScanResult,
@@ -39,6 +42,8 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { recipeColors, recipeShadows } from '../theme/recipeTheme';
+import { getRealScanImageUri } from '../utils/recipeImages';
 import { isUsableScan } from '../utils/scanDecision';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
@@ -54,7 +59,6 @@ export function ResultSummaryScreen() {
   const scanSessionId = useOkyoStore((state) => state.scanSessionId);
   const latestScanSession = useOkyoStore((state) => state.latestScanSession);
   const storedLatestScanResult = useOkyoStore((state) => state.latestScanResult);
-  const storedLatestScanRecipes = useOkyoStore((state) => state.latestScanRecipes);
   const storedLatestScanStatus = useOkyoStore((state) => state.latestScanStatus);
   const storedLatestScanFailure = useOkyoStore((state) => state.latestScanFailure);
   const storedLatestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
@@ -72,11 +76,14 @@ export function ResultSummaryScreen() {
   const routeScanSessionId = route.params?.scanSessionId;
   const stateSource = latestScanSession ? 'latest_scan_session' : 'legacy_latest_scan_fields';
   const latestScanResult = latestScanSession?.latestScanResult ?? storedLatestScanResult;
-  const latestScanRecipes = latestScanSession?.latestScanRecipes ?? storedLatestScanRecipes;
   const latestScanStatus = latestScanSession?.latestScanStatus ?? storedLatestScanStatus;
   const latestScanFailure = latestScanSession?.latestScanFailure ?? storedLatestScanFailure;
   const latestScanRecipe = latestScanSession?.latestScanRecipe ?? storedLatestScanRecipe;
+  // Single canonical recipe. The view mode (Restaurant/Budget/Healthy) is a lens,
+  // not a separate recipe — kept as a 1-element list for the view selectors/tabs.
+  const latestScanRecipes = latestScanRecipe ? [latestScanRecipe] : [];
   const selectedScanImage = latestScanSession?.selectedScanImage ?? storedSelectedScanImage;
+  const selectedScanImageUri = getRealScanImageUri(selectedScanImage);
   const latestAiDebugMetadata = latestScanSession?.latestAiDebugMetadata ?? storedLatestAiDebugMetadata;
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
@@ -88,7 +95,6 @@ export function ResultSummaryScreen() {
     typeof scanResult?.matchScore === 'number' ? scanResult.matchScore / 10 : undefined,
   );
   const didTrackResultView = useRef(false);
-  const [showStarterRecipe, setShowStarterRecipe] = useState(false);
   const [dishNameOverride, setDishNameOverride] = useState('');
   const [isEditingDishName, setIsEditingDishName] = useState(false);
   const [dishGuessConfirmed, setDishGuessConfirmed] = useState(false);
@@ -106,7 +112,7 @@ export function ResultSummaryScreen() {
   const shouldShowPartial = isPartialScan && !hasUsableScan;
   const isRealScan = !isDemoScan;
   const failureCopy = getScanFailureCopy(latestScanFailure);
-  const partialStarterRecipe = shouldShowPartial && scanResult ? getStarterRecipe(scanResult.dishName) : null;
+  const failureGuidance = getFailureGuidance(latestScanFailure?.rejectionType);
   const selectedModeUi = getModeUi(selectedMode);
   const totalTimeMinutes = selectedRecipe
     ? selectedRecipe.totalTimeMinutes ?? selectedRecipe.prepTimeMinutes + selectedRecipe.cookTimeMinutes
@@ -130,29 +136,35 @@ export function ResultSummaryScreen() {
     setDishNameOverride('');
     setDishGuessConfirmed(false);
     setIsEditingDishName(false);
-    setRestaurantPriceInput('');
-  }, [scanResult?.id]);
+    // Pre-fill with the AI's restaurant price estimate for real scans so the
+    // savings section shows immediately without requiring user input.
+    const priceHint =
+      !isDemoScan && scanResult?.restaurantPrice && scanResult.restaurantPrice > 0
+        ? scanResult.restaurantPrice.toFixed(2)
+        : '';
+    setRestaurantPriceInput(priceHint);
+  }, [scanResult?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     logResultStateSource({
       activeScanSessionId: scanSessionId,
-      legacyRecipesLength: storedLatestScanRecipes.length,
+      legacyRecipesLength: storedLatestScanRecipe ? 1 : 0,
       legacyStatus: storedLatestScanStatus,
       routeScanSessionId,
       sessionExists: Boolean(latestScanSession),
-      sessionRecipesLength: latestScanSession?.latestScanRecipes.length ?? 0,
+      sessionRecipesLength: latestScanSession?.latestScanRecipe ? 1 : 0,
       sessionStatus: latestScanSession?.latestScanStatus,
       stateSource,
     });
     if (
       latestScanSession?.latestScanStatus === 'success' &&
-      (!storedLatestScanStatus || storedLatestScanRecipes.length === 0)
+      (!storedLatestScanStatus || !storedLatestScanRecipe)
     ) {
       logPreserveSuccessState({
-        legacyRecipesLength: storedLatestScanRecipes.length,
+        legacyRecipesLength: storedLatestScanRecipe ? 1 : 0,
         legacyStatus: storedLatestScanStatus,
         scanSessionId: latestScanSession.scanSessionId,
-        sessionRecipesLength: latestScanSession.latestScanRecipes.length,
+        sessionRecipesLength: latestScanSession.latestScanRecipe ? 1 : 0,
       });
     }
     logResultDecision({
@@ -187,7 +199,7 @@ export function ResultSummaryScreen() {
     shouldShowFailure,
     shouldShowPartial,
     stateSource,
-    storedLatestScanRecipes.length,
+    storedLatestScanRecipe,
     storedLatestScanStatus,
   ]);
 
@@ -197,6 +209,25 @@ export function ResultSummaryScreen() {
     }
 
     uiLog('ResultSummaryScreen', 'enter', { mode: selectedMode });
+    const _traceUri = selectedScanImageUri ?? null;
+    const _tracePlaceholder = selectedScanImage?.placeholder ?? null;
+    const _traceSource = latestScanSession?.selectedScanImage ? 'latestScanSession' : 'storedSelectedScanImage';
+    checkImageFileExists(_traceUri).then((fileExists) => {
+      imageTraceLog('ResultSummaryScreen', {
+        screen: 'ResultSummaryScreen',
+        recipeId: selectedRecipe?.id ?? null,
+        imageSource: _traceSource,
+        imageUri: _traceUri,
+        fileExists: _traceUri ? fileExists : 'n/a',
+        usingFallback: !_traceUri,
+        fallbackReason: !_traceUri
+          ? (_tracePlaceholder ? 'placeholder_image' : 'no_scan_image')
+          : null,
+        storageLocation: getStorageLocation(_traceUri),
+        selectedScanImageSource: selectedScanImage?.source,
+        selectedScanImagePlaceholder: _tracePlaceholder,
+      });
+    });
 
     if (latestScanStatus === 'pending') {
       return;
@@ -238,7 +269,6 @@ export function ResultSummaryScreen() {
 
   const chooseMode = (mode: RecipeMode) => {
     setSelectedMode(mode);
-    setShowStarterRecipe(false);
     uiLog('ResultSummaryScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
       dishName: scanResult?.dishName ?? 'Missing scan',
@@ -254,7 +284,7 @@ export function ResultSummaryScreen() {
 
     const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === selectedRecipe.id);
     uiLog('ResultSummaryScreen', 'save_recipe', { recipeId: selectedRecipe.id });
-    saveRecipe(selectedRecipe);
+    saveRecipe(attachRealScanImage(selectedRecipe, selectedScanImage));
     if (!alreadySaved) {
       awardXPOnce(`save-recipe-${selectedRecipe.id}`, 5);
     }
@@ -285,7 +315,6 @@ export function ResultSummaryScreen() {
   };
 
   const goToScan = () => {
-    setShowStarterRecipe(false);
     clearLatestScan({
       reason: 'user_tapped_scan_again',
       source: 'ResultSummaryScreen.goToScan',
@@ -294,7 +323,6 @@ export function ResultSummaryScreen() {
   };
 
   const goBackToScanTab = () => {
-    setShowStarterRecipe(false);
     clearLatestScan({
       reason: 'user_tapped_back_to_scan',
       source: 'ResultSummaryScreen.goBackToScanTab',
@@ -303,7 +331,7 @@ export function ResultSummaryScreen() {
   };
 
   const openSettings = () => {
-    navigation.navigate('MainTabs', { screen: 'SettingsScreen' });
+    navigation.navigate('SettingsScreen');
   };
 
   if (shouldShowFailure) {
@@ -313,66 +341,17 @@ export function ResultSummaryScreen() {
         <Text style={styles.failureHeadline}>{failureCopy.title}</Text>
         <Text style={styles.subtitle}>{failureCopy.body}</Text>
 
-        {selectedScanImage?.uri ? (
-          <Image source={{ uri: selectedScanImage.uri }} resizeMode="contain" style={styles.standaloneScanPreview} />
+        {selectedScanImageUri ? (
+          <Image source={{ uri: selectedScanImageUri }} resizeMode="contain" style={styles.standaloneScanPreview} />
         ) : null}
 
         <View style={styles.failureCard}>
-          <Text style={styles.failureTitle}>Try uploading a clearer food photo.</Text>
-          <Text style={styles.failureBody}>
-            Use a well-lit restaurant meal photo where the main dish is centered and visible.
-          </Text>
+          <Text style={styles.failureTitle}>{failureGuidance.title}</Text>
+          <Text style={styles.failureBody}>{failureGuidance.body}</Text>
         </View>
 
         <View style={styles.actions}>
-          <PrimaryButton onPress={goToScan}>Try Another Photo</PrimaryButton>
-          <ActionButton label="Back to Scan" onPress={goBackToScanTab} />
-        </View>
-      </ResultFrame>
-    );
-  }
-
-  if (shouldShowPartial && scanResult) {
-    return (
-      <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
-        <Text style={styles.kicker}>Almost there</Text>
-        <Text style={styles.failureHeadline}>{cleanDisplayText(scanResult.dishName)}</Text>
-        <Text style={styles.subtitle}>
-          We recognized this as {cleanDisplayText(scanResult.dishName)}. Recipe generation had a hiccup.
-        </Text>
-
-        {selectedScanImage?.uri ? (
-          <Image source={{ uri: selectedScanImage.uri }} resizeMode="contain" style={styles.standaloneScanPreview} />
-        ) : null}
-
-        <View style={styles.partialCard}>
-          <Text style={styles.failureTitle}>Useful scan, incomplete recipe.</Text>
-          <Text style={styles.failureBody}>
-            Confidence: {formatPercent(confidencePercent)}. Try again, or use a quick starter inspired-by recipe while Okyo keeps the result honest.
-          </Text>
-        </View>
-
-        {showStarterRecipe && partialStarterRecipe ? (
-          <View style={styles.starterCard}>
-            <Text style={styles.starterLabel}>Starter inspired-by recipe</Text>
-            <Text style={styles.starterTitle}>{partialStarterRecipe.title}</Text>
-            <Text style={styles.starterBody}>{partialStarterRecipe.body}</Text>
-            {partialStarterRecipe.steps.map((step, index) => (
-              <Text key={`${partialStarterRecipe.title}-${step}`} style={styles.starterStep}>
-                {index + 1}. {step}
-              </Text>
-            ))}
-            <Text style={styles.starterNote}>
-              This is a safe starter, not a fully generated AI recipe. Costs and savings are not shown for this partial result.
-            </Text>
-          </View>
-        ) : null}
-
-        <View style={styles.actions}>
-          {partialStarterRecipe ? (
-            <PrimaryButton onPress={() => setShowStarterRecipe(true)}>Use Starter Recipe</PrimaryButton>
-          ) : null}
-          <ActionButton label="Try Again" onPress={goToScan} />
+          <PrimaryButton onPress={goToScan}>{failureGuidance.primaryLabel}</PrimaryButton>
           <ActionButton label="Back to Scan" onPress={goBackToScanTab} />
         </View>
       </ResultFrame>
@@ -407,8 +386,8 @@ export function ResultSummaryScreen() {
             ? `Okyo recognized ${cleanDisplayText(scanResult?.dishName ?? 'this dish')}, but no safe ${selectedModeUi.label} recipe came back for this real scan.`
             : 'Okyo needs a completed scan before it can show a real recipe.'}
         </Text>
-        {selectedScanImage?.uri ? (
-          <Image source={{ uri: selectedScanImage.uri }} resizeMode="contain" style={styles.standaloneScanPreview} />
+        {selectedScanImageUri ? (
+          <Image source={{ uri: selectedScanImageUri }} resizeMode="contain" style={styles.standaloneScanPreview} />
         ) : null}
         <View style={styles.failureCard}>
           <Text style={styles.failureTitle}>No unrelated recipe shown.</Text>
@@ -442,8 +421,16 @@ export function ResultSummaryScreen() {
 
   return (
     <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
+      <FoodImageCard
+        dishName={displayDishName || 'Scanned dish'}
+        imageUri={selectedScanImageUri ?? undefined}
+        isDemoScan={isDemoScan}
+      />
+
       <View style={styles.headerSection}>
-        <Text style={styles.kicker}>SCAN RESULT</Text>
+        <Text style={styles.kicker}>
+          {isUncertainResult ? 'Okyo made a best guess' : 'Okyo understood your food'}
+        </Text>
         <Text
           adjustsFontSizeToFit
           minimumFontScale={0.82}
@@ -465,12 +452,6 @@ export function ResultSummaryScreen() {
           <Text style={styles.bestGuessNote}>{bestGuessNote}</Text>
         ) : null}
       </View>
-
-      <FoodImageCard
-        dishName={displayDishName || 'Scanned dish'}
-        imageUri={selectedScanImage?.uri}
-        isDemoScan={isDemoScan}
-      />
 
       {shouldShowDishConfirmation && scanResult ? (
         <View style={styles.confirmCard}>
@@ -546,8 +527,8 @@ export function ResultSummaryScreen() {
           </View>
           <Text style={styles.confirmNote}>
             {dishGuessConfirmed
-              ? 'Using this guess for the recipe shown below.'
-              : 'You can edit this if it’s off. Recipe regeneration from edits is next.'}
+              ? 'Dish name updated. The recipe content follows the original scan.'
+              : 'Edit if the name is off. Recipe content follows the original scan.'}
           </Text>
         </View>
       ) : null}
@@ -555,11 +536,11 @@ export function ResultSummaryScreen() {
       <View style={styles.savingsHero}>
         <View style={styles.savingsTopRow}>
           <View style={styles.savingsBadge}>
-            <Leaf color={colors.green} height={28} strokeWidth={2.3} width={28} />
+            <KikoMascot pose="celebrating" size={44} />
           </View>
           <View style={styles.savingsAmountGroup}>
             <Text style={styles.savingsHeroLabel}>
-              {canShowSavings ? (isDemoScan ? 'DEMO SAVINGS' : 'ESTIMATED SAVINGS') : 'HOMEMADE ESTIMATE'}
+              {canShowSavings ? (isDemoScan ? 'Example savings' : 'Estimated savings') : 'Homemade estimate'}
             </Text>
             <Text
               adjustsFontSizeToFit
@@ -576,7 +557,7 @@ export function ResultSummaryScreen() {
         {isDemoScan ? (
           <View style={styles.priceCompareRow}>
             <View style={styles.priceColumn}>
-              <Text numberOfLines={1} style={styles.priceLabel}>Demo restaurant</Text>
+              <Text numberOfLines={1} style={styles.priceLabel}>Restaurant</Text>
               <Text
                 adjustsFontSizeToFit
                 minimumFontScale={0.82}
@@ -588,7 +569,7 @@ export function ResultSummaryScreen() {
             </View>
             <ArrowRight color={colors.green} height={28} strokeWidth={2.6} width={28} />
             <View style={styles.priceColumn}>
-              <Text numberOfLines={1} style={styles.priceLabel}>Demo home</Text>
+              <Text numberOfLines={1} style={styles.priceLabel}>Home</Text>
               <Text
                 adjustsFontSizeToFit
                 minimumFontScale={0.82}
@@ -683,7 +664,7 @@ export function ResultSummaryScreen() {
       </View>
 
       <View style={styles.actions}>
-        <ResultPrimaryButton onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })}>
+        <ResultPrimaryButton onPress={() => navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: selectedMode } })}>
           <OpenBook color="#fffdf8" height={25} strokeWidth={2.15} width={25} />
           <Text style={styles.resultPrimaryButtonText}>View recipe</Text>
         </ResultPrimaryButton>
@@ -701,7 +682,7 @@ export function ResultSummaryScreen() {
           <ActionButton
             icon={<Cart color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
             label="Groceries"
-            onPress={() => navigation.navigate('GroceryListScreen', { mode: selectedMode })}
+            onPress={() => navigation.navigate('MainTabs', { screen: 'GroceryListScreen', params: { mode: selectedMode } })}
           />
         </View>
       </View>
@@ -789,7 +770,7 @@ function FoodImageCard({ dishName, imageUri, isDemoScan }: FoodImageCardProps) {
             <Camera color={colors.coral} height={25} strokeWidth={2.2} width={25} />
           </View>
           <Text style={styles.photoUnavailableTitle}>{dishName}</Text>
-          <Text style={styles.photoUnavailableBody}>Demo scan result shown without a saved food photo.</Text>
+          <Text style={styles.photoUnavailableBody}>Example result shown without a saved food photo.</Text>
         </View>
       </View>
     );
@@ -1136,20 +1117,26 @@ function getPossibleDishNames(scanResult: ScanResult | null, displayDishName: st
 
 function getFallbackDishAlternatives(scanResult: ScanResult) {
   const text = `${scanResult.dishName} ${scanResult.restaurantStyle}`.toLowerCase();
+  if (text.includes('smoothie') || text.includes('shake') || text.includes('juice') || text.includes('latte') || text.includes('matcha')) {
+    return ['Berry Smoothie', 'Fruit Smoothie', 'Iced Latte'];
+  }
   if (text.includes('grill') || text.includes('meat') || text.includes('char')) {
-    return ['Mixed Restaurant Plate', 'Grilled Meat Plate', 'Restaurant-Style Food Plate'];
+    return ['Grilled Meat Plate', 'Grilled Chicken Plate', 'Charred Grill Plate'];
   }
   if (text.includes('rice') || text.includes('bowl')) {
-    return ['Saucy Rice Bowl', 'Mixed Restaurant Plate', 'Stir-Fry Plate'];
+    return ['Saucy Rice Bowl', 'Grilled Chicken Rice Bowl', 'Stir-Fry Plate'];
   }
   if (text.includes('noodle') || text.includes('pasta')) {
     return ['Noodle Bowl', 'Pasta Bowl', 'Saucy Noodles'];
   }
   if (text.includes('burger') || text.includes('sandwich')) {
-    return ['Loaded Sandwich', 'Loaded Burger', 'Restaurant-Style Food Plate'];
+    return ['Loaded Sandwich', 'Loaded Burger', 'Cheeseburger'];
+  }
+  if (text.includes('salad')) {
+    return ['Loaded Salad', 'Chopped Salad', 'Mediterranean-Style Salad'];
   }
 
-  return ['Mixed Restaurant Plate', 'Saucy Rice Bowl', 'Loaded Sandwich'];
+  return ['Saucy Rice Bowl', 'Loaded Sandwich', 'Noodle Bowl'];
 }
 
 function getPercentValue(value: number | null | undefined) {
@@ -1171,29 +1158,27 @@ function formatScore(value: number | null | undefined) {
 
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: colors.background,
+    backgroundColor: recipeColors.background,
     flex: 1,
   },
   screenContent: {
-    backgroundColor: colors.background,
+    backgroundColor: recipeColors.background,
     flexGrow: 1,
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
     paddingTop: 8,
   },
   topBar: {
     alignItems: 'center',
-    height: 60,
     justifyContent: 'center',
     marginBottom: 16,
     marginTop: 8,
+    minHeight: 60,
     position: 'relative',
   },
   scanAgainButton: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
+    backgroundColor: recipeColors.card,
     borderRadius: 999,
-    borderWidth: 1,
     flexDirection: 'row',
     gap: 5,
     left: 0,
@@ -1205,10 +1190,11 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   scanAgainText: {
-    color: colors.coral,
+    color: recipeColors.orange,
     flexShrink: 1,
+    fontFamily: fontFamilies.bold,
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   topTitleWrap: {
     alignItems: 'center',
@@ -1220,17 +1206,16 @@ const styles = StyleSheet.create({
     top: 0,
   },
   topTitle: {
-    color: colors.charcoal,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 20,
-    fontWeight: '900',
+    fontWeight: '800',
     textAlign: 'center',
   },
   settingsButton: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
+    backgroundColor: recipeColors.card,
     borderRadius: 999,
-    borderWidth: 1,
     height: 44,
     justifyContent: 'center',
     position: 'absolute',
@@ -1240,45 +1225,51 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   headerSection: {
-    marginBottom: 14,
+    marginBottom: 22,
+    marginTop: 26,
     minWidth: 0,
   },
   kicker: {
-    color: colors.coral,
-    fontSize: 14,
-    fontWeight: '900',
-    marginBottom: 8,
+    color: recipeColors.orange,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0,
+    marginBottom: 10,
     textTransform: 'uppercase',
   },
   title: {
-    color: colors.charcoal,
-    fontSize: 37,
-    fontWeight: '900',
-    lineHeight: 42,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.display,
+    fontSize: 42,
+    fontWeight: '800',
+    letterSpacing: 0,
+    lineHeight: 47,
     minWidth: 0,
   },
   failureHeadline: {
-    color: colors.charcoal,
-    fontSize: 29,
-    fontWeight: '900',
-    lineHeight: 34,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.display,
+    fontSize: 31,
+    fontWeight: '800',
+    letterSpacing: 0,
+    lineHeight: 36,
     minWidth: 0,
   },
   subtitle: {
-    color: colors.body,
-    fontSize: 17,
-    fontWeight: '700',
-    lineHeight: 23,
-    marginTop: 4,
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 18,
+    fontWeight: '400',
+    lineHeight: 27,
+    marginTop: 10,
     minWidth: 0,
   },
   matchPill: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: colors.greenSoft,
-    borderColor: '#bfdcc8',
+    backgroundColor: recipeColors.greenSoft,
     borderRadius: 999,
-    borderWidth: 1,
     flexDirection: 'row',
     gap: 8,
     marginTop: 10,
@@ -1286,34 +1277,29 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   matchPillText: {
-    color: colors.green,
-    fontSize: 15,
-    fontWeight: '900',
+    color: recipeColors.green,
+    fontFamily: fontFamilies.bold,
+    fontSize: 14,
+    fontWeight: '700',
   },
   bestGuessNote: {
-    color: colors.body,
-    fontSize: 14,
-    fontWeight: '800',
-    lineHeight: 20,
-    marginTop: 10,
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 15,
+    fontWeight: '400',
+    lineHeight: 22,
+    marginTop: 12,
   },
   foodImageCard: {
     alignItems: 'center',
-    aspectRatio: 1.73,
-    backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    aspectRatio: 0.96,
+    backgroundColor: recipeColors.cream,
+    borderRadius: 32,
     justifyContent: 'center',
-    maxHeight: 220,
-    minHeight: 170,
+    maxHeight: 390,
+    minHeight: 318,
     overflow: 'hidden',
     width: '100%',
-    shadowColor: '#7b5a38',
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    elevation: 2,
   },
   foodImage: {
     height: '100%',
@@ -1327,50 +1313,51 @@ const styles = StyleSheet.create({
   },
   photoEmptyIcon: {
     alignItems: 'center',
-    backgroundColor: '#fff1df',
+    backgroundColor: recipeColors.orangeSoft,
     borderRadius: 999,
     height: 54,
     justifyContent: 'center',
     width: 54,
   },
   photoUnavailableTitle: {
-    color: colors.charcoal,
-    fontSize: 17,
-    fontWeight: '900',
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 19,
+    fontWeight: '800',
     maxWidth: '90%',
     textAlign: 'center',
   },
   photoUnavailableBody: {
-    color: colors.body,
-    fontSize: 13,
-    lineHeight: 20,
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 15,
+    lineHeight: 22,
     maxWidth: 260,
     textAlign: 'center',
   },
   confirmCard: {
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    marginTop: 14,
-    padding: 16,
+    marginTop: 18,
+    padding: 20,
   },
   confirmLabel: {
-    color: colors.coral,
+    color: recipeColors.orange,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     textTransform: 'uppercase',
   },
   confirmTitle: {
-    color: colors.charcoal,
-    fontSize: 19,
-    fontWeight: '900',
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 21,
+    fontWeight: '800',
     marginTop: 6,
   },
   confirmDishName: {
-    color: colors.charcoal,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.display,
     fontSize: 24,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 29,
     marginTop: 8,
   },
@@ -1381,24 +1368,22 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   alternativeChip: {
-    backgroundColor: '#fff5ef',
-    borderColor: '#ffcab9',
+    backgroundColor: recipeColors.orangeSoft,
     borderRadius: 999,
-    borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   alternativeChipText: {
-    color: colors.coral,
+    color: recipeColors.orangeDeep,
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   dishNameInput: {
-    backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    color: colors.charcoal,
+    backgroundColor: recipeColors.card,
+    borderRadius: 16,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 17,
     fontWeight: '800',
     marginTop: 12,
@@ -1412,8 +1397,8 @@ const styles = StyleSheet.create({
   },
   confirmPrimary: {
     alignItems: 'center',
-    backgroundColor: colors.coral,
-    borderRadius: 14,
+    backgroundColor: recipeColors.orange,
+    borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
     minHeight: 48,
@@ -1421,44 +1406,41 @@ const styles = StyleSheet.create({
   },
   confirmPrimaryText: {
     color: '#fffdf8',
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   confirmSecondary: {
     alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
+    backgroundColor: recipeColors.cream,
+    borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
     minHeight: 48,
     paddingHorizontal: 10,
   },
   confirmSecondaryText: {
-    color: colors.charcoal,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   confirmNote: {
-    color: colors.body,
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '500',
     lineHeight: 19,
     marginTop: 10,
   },
   savingsHero: {
     alignItems: 'stretch',
-    backgroundColor: '#eef8ee',
-    borderColor: '#bee1c5',
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: 12,
-    marginTop: 14,
+    gap: 14,
+    marginTop: 18,
     minWidth: 0,
-    padding: 14,
+    padding: 20,
   },
   savingsTopRow: {
     alignItems: 'center',
@@ -1468,7 +1450,7 @@ const styles = StyleSheet.create({
   },
   savingsBadge: {
     alignItems: 'center',
-    backgroundColor: '#d9efd9',
+    backgroundColor: recipeColors.greenSoft,
     borderRadius: 999,
     height: 50,
     justifyContent: 'center',
@@ -1479,25 +1461,27 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   savingsHeroLabel: {
-    color: colors.green,
-    fontSize: 13,
-    fontWeight: '900',
+    color: recipeColors.green,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0,
     textTransform: 'uppercase',
   },
   savingsHeroValue: {
-    color: colors.green,
-    fontSize: 33,
-    fontWeight: '900',
+    color: recipeColors.green,
+    fontFamily: fontFamilies.display,
+    fontSize: 38,
+    fontWeight: '800',
+    letterSpacing: 0,
     includeFontPadding: false,
     lineHeight: 36,
     marginTop: 2,
   },
   priceCompareRow: {
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 253, 248, 0.72)',
-    borderColor: '#d5eadb',
-    borderRadius: 14,
-    borderWidth: 1,
+    backgroundColor: recipeColors.greenSoft,
+    borderRadius: 22,
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'space-between',
@@ -1510,31 +1494,33 @@ const styles = StyleSheet.create({
     minWidth: 88,
   },
   priceLabel: {
-    color: colors.body,
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
     fontWeight: '700',
   },
   priceValue: {
-    color: colors.charcoal,
-    fontSize: 17,
-    fontWeight: '900',
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 18,
+    fontWeight: '800',
     marginTop: 4,
   },
   priceHint: {
-    color: colors.body,
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 17,
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 13,
+    fontWeight: '400',
+    lineHeight: 19,
     marginTop: 5,
   },
   priceInput: {
-    backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    color: colors.charcoal,
+    backgroundColor: recipeColors.card,
+    borderRadius: 999,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 17,
-    fontWeight: '900',
+    fontWeight: '700',
     minHeight: 50,
     minWidth: 94,
     paddingHorizontal: 12,
@@ -1542,15 +1528,11 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
     flexDirection: 'row',
-    marginTop: 14,
+    marginTop: 18,
     minWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 16,
   },
   statTile: {
     alignItems: 'center',
@@ -1562,7 +1544,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   statDivider: {
-    backgroundColor: colors.border,
+    backgroundColor: recipeColors.border,
     height: 56,
     width: 1,
   },
@@ -1578,27 +1560,27 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   metricLabel: {
-    color: colors.body,
-    fontSize: 13,
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.bold,
+    fontSize: 12,
     fontWeight: '700',
     textAlign: 'center',
   },
   metricValue: {
-    color: colors.charcoal,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '800',
     lineHeight: 22,
     marginTop: 1,
     textAlign: 'center',
   },
   modeTabs: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    backgroundColor: recipeColors.cream,
+    borderRadius: 999,
     flexDirection: 'row',
-    marginTop: 12,
+    marginTop: 16,
     minWidth: 0,
     padding: 5,
   },
@@ -1609,7 +1591,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   modeDivider: {
-    backgroundColor: colors.border,
+    backgroundColor: recipeColors.border,
     height: 32,
     width: 1,
   },
@@ -1623,34 +1605,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   modeTabSelected: {
-    backgroundColor: '#fffdf8',
-    borderColor: '#ffb39a',
-    borderWidth: 1,
+    backgroundColor: recipeColors.card,
   },
   modeTabText: {
-    color: colors.body,
+    color: recipeColors.muted,
     flexShrink: 1,
+    fontFamily: fontFamilies.bold,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '700',
     minWidth: 0,
     textAlign: 'center',
   },
   modeTabTextSelected: {
-    color: colors.coral,
+    color: recipeColors.orange,
   },
   matchCard: {
-    backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    marginTop: 12,
+    marginTop: 16,
     minWidth: 0,
-    padding: 14,
-    shadowColor: '#7b5a38',
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: 0.05,
-    shadowRadius: 18,
-    elevation: 1,
+    padding: 20,
   },
   matchTopRow: {
     alignItems: 'center',
@@ -1662,19 +1634,17 @@ const styles = StyleSheet.create({
   modeBadge: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: '#fff5ef',
-    borderColor: '#ffcab9',
+    backgroundColor: recipeColors.orangeSoft,
     borderRadius: 999,
-    borderWidth: 1,
     maxWidth: '74%',
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
   modeBadgeText: {
-    color: colors.coral,
+    color: recipeColors.orangeDeep,
     flexShrink: 1,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   matchBodyRow: {
     alignItems: 'flex-start',
@@ -1688,15 +1658,17 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   matchTitle: {
-    color: colors.charcoal,
-    fontSize: 20,
-    fontWeight: '900',
-    lineHeight: 25,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 22,
+    fontWeight: '800',
+    lineHeight: 28,
   },
   matchScoreLine: {
-    color: colors.coral,
+    color: recipeColors.orange,
+    fontFamily: fontFamilies.display,
     fontSize: 19,
-    fontWeight: '900',
+    fontWeight: '800',
     lineHeight: 24,
     marginTop: 6,
   },
@@ -1704,14 +1676,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   matchNote: {
-    color: colors.body,
-    fontSize: 14,
-    lineHeight: 20,
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 16,
+    lineHeight: 24,
     marginTop: 7,
   },
   matchAward: {
     alignItems: 'center',
-    backgroundColor: '#fff5ef',
+    backgroundColor: recipeColors.orangeSoft,
     borderRadius: 999,
     height: 60,
     justifyContent: 'center',
@@ -1725,10 +1698,8 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   infoChip: {
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
+    backgroundColor: recipeColors.cream,
     borderRadius: 999,
-    borderWidth: 1,
     flex: 1,
     justifyContent: 'center',
     minHeight: 42,
@@ -1737,125 +1708,76 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   infoChipText: {
-    color: colors.green,
+    color: recipeColors.green,
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     includeFontPadding: false,
     lineHeight: 18,
     textAlign: 'center',
   },
   standaloneScanPreview: {
-    backgroundColor: '#fffaf3',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    backgroundColor: recipeColors.cream,
+    borderRadius: 24,
     height: 170,
     marginTop: 14,
     width: '100%',
   },
   failureCard: {
-    backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    marginTop: 14,
-    padding: 16,
-  },
-  partialCard: {
-    backgroundColor: '#fff7d8',
-    borderColor: '#eadc91',
-    borderRadius: 18,
-    borderWidth: 1,
-    marginTop: 14,
-    padding: 16,
-  },
-  starterCard: {
-    backgroundColor: '#ffffff',
-    borderColor: '#eadc91',
-    borderRadius: 18,
-    borderWidth: 1,
     marginTop: 14,
     padding: 18,
   },
-  starterLabel: {
-    color: colors.coral,
-    fontSize: 12,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  starterTitle: {
-    color: colors.charcoal,
-    fontSize: 20,
-    fontWeight: '900',
-    marginTop: 6,
-  },
-  starterBody: {
-    color: colors.body,
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 8,
-  },
-  starterStep: {
-    color: colors.charcoal,
-    fontSize: 14,
-    fontWeight: '700',
-    lineHeight: 21,
-    marginTop: 8,
-  },
-  starterNote: {
-    color: colors.body,
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 18,
-    marginTop: 12,
+  partialCard: {
+    backgroundColor: recipeColors.yellowSoft,
+    borderRadius: 24,
+    marginTop: 14,
+    padding: 18,
   },
   loadingMiniCard: {
-    backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
     marginTop: 20,
     padding: 18,
   },
   loadingMiniText: {
-    color: colors.charcoal,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '700',
     textAlign: 'center',
   },
   failureTitle: {
-    color: colors.charcoal,
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 18,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   failureBody: {
-    color: colors.body,
-    fontSize: 14,
-    lineHeight: 20,
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 15,
+    lineHeight: 22,
     marginTop: 8,
   },
   actions: {
-    gap: 12,
-    marginTop: 16,
+    gap: 14,
+    marginTop: 22,
   },
   secondaryRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
     minWidth: 0,
   },
   actionButton: {
     alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: colors.border,
-    borderRadius: 16,
+    backgroundColor: recipeColors.cream,
+    borderColor: 'rgba(232, 220, 203, 0.8)',
+    borderRadius: 22,
     borderWidth: 1,
     flex: 1,
-    flexDirection: 'row',
-    gap: 6,
+    gap: 5,
     justifyContent: 'center',
-    minHeight: 50,
+    minHeight: 64,
     minWidth: 0,
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
   },
   actionButtonIcon: {
     alignItems: 'center',
@@ -1864,32 +1786,34 @@ const styles = StyleSheet.create({
     width: 20,
   },
   actionButtonText: {
-    color: colors.charcoal,
+    color: recipeColors.charcoal,
     flexShrink: 1,
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '700',
     minWidth: 0,
     textAlign: 'center',
   },
   resultPrimaryButton: {
     alignItems: 'center',
-    backgroundColor: colors.coral,
-    borderRadius: 20,
+    backgroundColor: recipeColors.orange,
+    borderRadius: 24,
     flexDirection: 'row',
     gap: 12,
     justifyContent: 'center',
     minHeight: 60,
     paddingHorizontal: 18,
-    shadowColor: colors.coral,
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
+    shadowColor: recipeColors.orangeDeep,
+    shadowOffset: { height: 10, width: 0 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
     elevation: 3,
   },
   resultPrimaryButtonText: {
     color: '#fffdf8',
-    fontSize: 17,
-    fontWeight: '900',
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 18,
+    fontWeight: '800',
   },
   pressed: {
     opacity: 0.78,
@@ -1959,9 +1883,37 @@ function getScanFailureCopy(failure: { rejectionType?: string; rejectionReason?:
     };
   }
 
+  // ai_failed: the scanner hiccuped (rate limit, timeout, provider error). This
+  // is not about the photo, so the copy must not ask for a clearer one.
   return {
-    title: 'Okyo had trouble scanning this photo.',
-    body: friendlyReason ?? 'Try again in a second.',
+    title: 'That scan didn’t go through.',
+    body: friendlyReason ?? 'It’s not your photo — Okyo’s scanner hit a snag. Try the same photo again.',
+  };
+}
+
+// The guidance card under the headline. Only the genuinely photo-related
+// rejections should suggest a clearer photo; provider hiccups should not.
+function getFailureGuidance(rejectionType: string | undefined) {
+  if (rejectionType === 'not_food') {
+    return {
+      title: 'Point Okyo at a dish.',
+      body: 'Okyo works best on a clear photo of food or a drink.',
+      primaryLabel: 'Try a Food Photo',
+    };
+  }
+
+  if (rejectionType === 'unclear_image') {
+    return {
+      title: 'Try uploading a clearer food photo.',
+      body: 'Use a well-lit photo where the main dish is centered and visible.',
+      primaryLabel: 'Try Another Photo',
+    };
+  }
+
+  return {
+    title: 'Mind trying that again?',
+    body: 'The scanner had a momentary hiccup. The same photo will usually work on a second try.',
+    primaryLabel: 'Try Again',
   };
 }
 
@@ -1980,50 +1932,6 @@ function getPublicFailureReason(reason: string | null | undefined) {
   }
 
   return cleanedReason;
-}
-
-function getStarterRecipe(dishName: string) {
-  const normalized = dishName.toLowerCase();
-  if (!dishName.trim()) {
-    return null;
-  }
-
-  if (normalized.includes('pizza')) {
-    return {
-      title: `${dishName} starter`,
-      body: 'A simple inspired-by pizza path using store-bought dough or flatbread.',
-      steps: [
-        'Spread tomato sauce over dough or flatbread.',
-        'Add mozzarella and a small drizzle of olive oil.',
-        'Bake until the crust is crisp and the cheese is bubbling.',
-        'Finish with basil, oregano, or chili flakes if you have them.',
-      ],
-    };
-  }
-
-  if (normalized.includes('spaghetti') || normalized.includes('noodle') || normalized.includes('pasta')) {
-    return {
-      title: `${dishName} starter`,
-      body: 'A simple inspired-by pasta path using pantry sauce and a short noodle.',
-      steps: [
-        'Boil pasta until just tender and reserve a little pasta water.',
-        'Warm tomato, cream, or broth-based sauce in a pan.',
-        'Toss pasta with sauce and loosen with pasta water as needed.',
-        'Finish with cheese, herbs, or chili flakes if they fit the dish.',
-      ],
-    };
-  }
-
-  return {
-    title: `${dishName} starter`,
-    body: 'A simple inspired-by cooking path based on the recognized dish name.',
-    steps: [
-      'Identify the main protein, grain, or vegetable base.',
-      'Cook the main ingredient simply with salt, pepper, and oil.',
-      'Add a sauce or seasoning that matches the dish style.',
-      'Taste and adjust before serving.',
-    ],
-  };
 }
 
 function getStoredRecipeForMode(
