@@ -406,6 +406,17 @@ export const useOkyoStore = create<OkyoState>()(
     }),
     {
       name: 'okyo-local-state',
+      version: 1,
+      // Defensive: if AsyncStorage returns a corrupted/unexpected shape (bad
+      // JSON survived parsing as e.g. a string or array), fall back to
+      // defaults rather than crashing app startup. Future version bumps add
+      // real migration steps here.
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== 'object' || Array.isArray(persistedState)) {
+          return {};
+        }
+        return persistedState;
+      },
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         hasCompletedOnboarding: state.hasCompletedOnboarding,

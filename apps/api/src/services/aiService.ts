@@ -56,9 +56,29 @@ type ScanCacheEntry =
   | { kind: 'rejection'; error: FoodRejectionError; expiresAt: number };
 // ponytail: in-memory only; add Redis/disk when multi-process deployment matters
 const scanCache = new Map<string, ScanCacheEntry>();
+const SCAN_CACHE_MAX_ENTRIES = 2000;
 
 function getScanCacheKey(dataUrl: string, mode: string): string {
   return createHash('sha1').update(dataUrl).digest('hex') + ':' + mode + ':' + RECIPE_PIPELINE_VERSION;
+}
+
+// Lazily sweeps expired entries and, if still oversized, drops the oldest
+// (first-inserted) entries. Called on every insert so the cache never needs
+// its own timer/interval.
+function sweepScanCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of scanCache) {
+    if (entry.expiresAt <= now) {
+      scanCache.delete(key);
+    }
+  }
+  if (scanCache.size > SCAN_CACHE_MAX_ENTRIES) {
+    const overflow = scanCache.size - SCAN_CACHE_MAX_ENTRIES;
+    const oldestKeys = [...scanCache.keys()].slice(0, overflow);
+    for (const key of oldestKeys) {
+      scanCache.delete(key);
+    }
+  }
 }
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
@@ -391,6 +411,10 @@ export async function generateRecipeFromDish(
       }
     }
 
+    if (finalResult.recipe?.steps?.length) {
+      logUnsafeCookingHeuristic(finalResult.recipe.id, finalResult.recipe.steps);
+    }
+
     return finalResult;
   } catch (error) {
     // Fail-closed: throw on recipe generation failure. Never return a fabricated result.
@@ -607,6 +631,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       });
       if (scanCacheKey) {
         scanCache.set(scanCacheKey, { kind: 'rejection', error: rejection, expiresAt: Date.now() + SCAN_REJECTION_CACHE_TTL_MS });
+        sweepScanCache();
       }
       throw rejection;
     }
@@ -711,6 +736,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
 
     if (scanCacheKey) {
       scanCache.set(scanCacheKey, { kind: 'success', result, expiresAt: Date.now() + SCAN_CACHE_TTL_MS });
+      sweepScanCache();
     }
     return result;
   } catch (error) {
@@ -3722,14 +3748,57 @@ function isPantryIngredient(value: string) {
   ].some((keyword) => normalized.includes(keyword));
 }
 
+// Prompt-injection phrasing that should never surface as recipe copy, even if
+// the model echoes it back. Matched loosely (case-insensitive substrings).
+const promptInjectionPhrases = [
+  /ignore (?:all )?(?:previous|prior|above) instructions/gi,
+  /disregard (?:all )?(?:previous|prior|above) instructions/gi,
+  /you are now/gi,
+  /system prompt/gi,
+  /as an ai (?:language model|assistant)/gi,
+];
+
 function cleanRecipeCopy(value: string) {
   return value
+    .replace(/<[^>]*>/g, '') // strip HTML/markup tags
+    .replace(/\bhttps?:\/\/\S+/gi, '') // strip URLs
+    .replace(/\bwww\.\S+/gi, '') // strip bare www. URLs
+    .replace(promptInjectionPhrases[0], '')
+    .replace(promptInjectionPhrases[1], '')
+    .replace(promptInjectionPhrases[2], '')
+    .replace(promptInjectionPhrases[3], '')
+    .replace(promptInjectionPhrases[4], '')
     .replace(/\bcipycat\b/gi, 'inspired-by')
     .replace(/\bcopy\s*cat\b/gi, 'inspired-by')
     .replace(/\bcopycat(?:-style)?\b/gi, 'inspired-by')
     .replace(/\bofficial\b/gi, 'restaurant-style')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// Log-only heuristic: flags recipe steps that read as unsafe cooking advice
+// (undercooked meat/eggs, sealed-container microwave instructions) so we have
+// visibility into how often the model produces this. Does not block or alter
+// the recipe — food-safety UX gating is a separate, larger decision.
+const unsafeCookingPatterns = [
+  /raw chicken/gi,
+  /undercooked (?:chicken|pork|meat|poultry)/gi,
+  /rare (?:chicken|pork)/gi,
+  /raw (?:egg|eggs)(?! plant)/gi,
+  /seal(?:ed)? (?:container|bag|jar).{0,30}microwave/gi,
+  /microwave.{0,30}seal(?:ed)? (?:container|bag|jar)/gi,
+];
+
+function logUnsafeCookingHeuristic(recipeId: string, steps: string[]) {
+  const joined = steps.join(' \n ');
+  const matches = unsafeCookingPatterns
+    .map((pattern) => joined.match(pattern))
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .flat();
+
+  if (matches.length > 0) {
+    console.warn('[food_safety_heuristic]', { recipeId, matchCount: matches.length, samples: matches.slice(0, 3) });
+  }
 }
 
 function ensureInspiredTitle(value: string) {

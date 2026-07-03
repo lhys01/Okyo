@@ -25,6 +25,7 @@ import {
   saveRecipe,
 } from './store.js';
 import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
+import { validatePaidFallbackAtStartup } from './services/openRouterProvider.js';
 import type { ApiFailure, ApiResponse } from './types.js';
 
 const port = Number(process.env.PORT ?? 8081);
@@ -303,6 +304,8 @@ app.listen(port, () => {
   // Best-effort startup warning if the Epicure enrichment layer is misconfigured.
   // Never fatal — the API boots regardless and enrichment simply stays off.
   validateEpicureConfigAtStartup();
+  // Loud, non-fatal warning if a paid recipe fallback model is configured.
+  validatePaidFallbackAtStartup();
 });
 
 function parseRequest<TSchema extends z.ZodTypeAny>(schema: TSchema, value: unknown): z.infer<TSchema> {

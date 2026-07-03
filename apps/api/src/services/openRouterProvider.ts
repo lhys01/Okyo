@@ -564,6 +564,7 @@ function addStepImagePrompts(recipe: OpenRouterRecipeOutput, dishName: string): 
 function storeRecipeCache(key: string, recipe: OpenRouterRecipeOutput, dish: string): OpenRouterRecipeOutput {
   const processed = addStepImagePrompts(recipe, dish);
   recipeCache.set(key, { recipe: processed, expiresAt: Date.now() + RECIPE_CACHE_TTL_MS });
+  sweepRecipeCache();
   logOpenRouterDebug('recipe_cache_store', { key: key.slice(0, 8), dish });
   return processed;
 }
@@ -578,7 +579,10 @@ function getRecipeModelChain(config: AiConfig): string[] {
 
   const models = [config.openRouterTextModel, ...RECIPE_FALLBACK_MODELS];
   const paid = process.env.RECIPE_PAID_FALLBACK_MODEL?.trim();
-  if (paid) models.push(paid);
+  if (paid) {
+    console.warn('[cost] paid fallback model is in this request\'s chain (last resort):', paid);
+    models.push(paid);
+  }
   return [...new Set(models)];
 }
 

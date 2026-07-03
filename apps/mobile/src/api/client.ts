@@ -1,6 +1,24 @@
 import { OKYO_API_BASE_URL, OKYO_API_TIMEOUT_MS, OKYO_DEV_MODEL_OVERRIDE } from './config';
 import type { ApiResponse, CreateScanRequest, CreateScanResult } from './types';
 
+// Thrown for any non-2xx or `{ ok: false }` API response. `code` is the
+// server's stable error code (e.g. "fable_not_enabled", "rate_limit_exceeded")
+// — callers should branch on this, not on `message` text, since copy can
+// change without warning.
+export class ApiError extends Error {
+  readonly code: string;
+  readonly httpStatus: number;
+  readonly details?: unknown;
+
+  constructor(args: { code: string; message: string; httpStatus: number; details?: unknown }) {
+    super(args.message);
+    this.name = 'ApiError';
+    this.code = args.code;
+    this.httpStatus = args.httpStatus;
+    this.details = args.details;
+  }
+}
+
 export async function createMockScan(request: CreateScanRequest): Promise<CreateScanResult> {
   return postJson<CreateScanResult>('/v1/scans', request);
 }
@@ -23,8 +41,15 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     logApiResponse(path, response.status, payload);
 
     if (!response.ok || !payload.ok) {
-      const message = payload.ok ? `Request failed with ${response.status}` : payload.error.message;
-      throw new Error(message);
+      if (payload.ok) {
+        throw new ApiError({ code: 'http_error', message: `Request failed with ${response.status}`, httpStatus: response.status });
+      }
+      throw new ApiError({
+        code: payload.error.code,
+        message: payload.error.message,
+        httpStatus: response.status,
+        details: payload.error.details,
+      });
     }
 
     return payload.data;

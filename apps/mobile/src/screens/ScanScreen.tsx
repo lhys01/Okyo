@@ -15,7 +15,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { createMockScan } from '../api/client';
+import { ApiError, createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
@@ -907,6 +907,25 @@ function getMimeTypeFromFileName(fileName: string | null | undefined) {
 }
 
 function getUploadFailureReasonFromError(error: unknown) {
+  // Classify by the server's stable error code first — message text is UI
+  // copy and can change without warning, so it should never drive branching.
+  if (error instanceof ApiError) {
+    switch (error.code) {
+      case 'image_payload_too_large':
+        return 'This photo was too large to scan. Try a smaller image.';
+      case 'fable_not_enabled':
+        return 'Fable 5 is not available right now. Try a normal scan.';
+      case 'fable_daily_cap_exceeded':
+        return "Fable 5's daily limit has been reached. Try again tomorrow.";
+      case 'ai_daily_cap_exceeded':
+        return 'Okyo has reached its daily scan limit. Try again tomorrow.';
+      case 'rate_limit_exceeded':
+        return 'Too many scan requests. Please wait a moment before trying again.';
+      default:
+        return 'Okyo had trouble scanning this photo. Try again in a second.';
+    }
+  }
+
   const message = error instanceof Error ? error.message : '';
   if (message.toLowerCase().includes('too large')) {
     return 'This photo was too large to scan. Try a smaller image.';
