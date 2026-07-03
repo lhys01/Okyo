@@ -34,6 +34,7 @@ import {
 } from '../mocks';
 import type { MainTabParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { ingredientNameMatchesList } from '../utils/ingredientMatching';
 import { getModeLabel } from '../utils/modeDisplay';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
@@ -621,19 +622,35 @@ function getCategory(item: Pick<RecipeIngredient, 'name' | 'pantryItem'> & { pan
 
 function buildItems(recipe: Recipe): GroceryItem[] {
   const groceryItems = Array.isArray(recipe.groceryItems) ? recipe.groceryItems : [];
+  const recipeIngredients = (Array.isArray(recipe.ingredients) ? recipe.ingredients : [])
+    .filter((ingredient) => ingredient?.name?.trim());
   if (groceryItems.length > 0) {
-    return groceryItems.map((item) => ({
-      ...item,
-      category: getDisplayCategory(item.category),
-      id: `${recipe.id}-${item.category}-${item.name}`,
-      pantryItem: isPantryItem(item),
-      pantryStaple: item.pantryStaple ?? isPantryItem(item),
-    }));
+    // recipe.ingredients is the source of truth: drop grocery entries that do
+    // not resolve to a recipe ingredient. Protects against legacy saved recipes
+    // with model-invented grocery items.
+    const consistentItems = groceryItems.filter((item) => isRecipeBackedGroceryItem(item, recipeIngredients));
+    if (consistentItems.length > 0) {
+      return consistentItems.map((item) => ({
+        ...item,
+        category: getDisplayCategory(item.category),
+        id: `${recipe.id}-${item.category}-${item.name}`,
+        pantryItem: isPantryItem(item),
+        pantryStaple: item.pantryStaple ?? isPantryItem(item),
+      }));
+    }
+    // Every grocery entry failed the consistency check — rebuild from ingredients below.
   }
 
-  const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+  return recipeIngredients.flatMap((ingredient) => toFallbackGroceryItems(recipe.id, ingredient));
+}
 
-  return ingredients.flatMap((ingredient) => toFallbackGroceryItems(recipe.id, ingredient));
+function isRecipeBackedGroceryItem(item: GroceryListItem, recipeIngredients: RecipeIngredient[]) {
+  if (recipeIngredients.length === 0) {
+    return false;
+  }
+
+  return ingredientNameMatchesList(item.name, recipeIngredients) ||
+    (item.sourceIngredient ? ingredientNameMatchesList(item.sourceIngredient, recipeIngredients) : false);
 }
 
 function buildListText(recipe: Recipe, items: GroceryItem[]) {

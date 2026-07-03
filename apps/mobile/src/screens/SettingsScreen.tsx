@@ -29,7 +29,7 @@ export function SettingsScreen() {
   };
 
   const confirmResetOnboarding = () => {
-    Alert.alert('Reset onboarding?', 'You will see the Okyo onboarding flow again.', [
+    Alert.alert('Reset onboarding?', 'You will see the Okyo onboarding flow again. Your saved recipes are kept.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Reset',

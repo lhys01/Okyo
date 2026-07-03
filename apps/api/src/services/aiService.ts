@@ -37,6 +37,10 @@ import {
   type OpenRouterVisionOutput,
   type StepCoachingPatch,
 } from './openRouterProvider.js';
+import {
+  enforceStepIngredientClosure,
+  ingredientsMatch,
+} from './recipeIngredientValidation.js';
 import { logScanEvaluation } from './scanEvalLogger.js';
 import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
 import { getGeneratedRecipe, storeGeneratedRecipe } from '../store.js';
@@ -353,6 +357,37 @@ export async function generateRecipeFromDish(
       finalResult = await ensureComponentCoverage(finalResult, input.analysis, config);
       if (finalResult.recipe) {
         storeGeneratedRecipe(finalResult.recipe);
+      }
+    }
+
+    // Ingredient closure enforcement: recipe.ingredients is the single source
+    // of truth. The provider's quality-repair pass already had one chance to
+    // fix unlisted step ingredients; anything still unknown here is
+    // deterministically stripped — never invented, never a scan failure.
+    if (finalResult.recipe) {
+      const enforced = enforceStepIngredientClosure(finalResult.recipe);
+      let closedRecipe = enforced.recipe;
+      if (enforced.report.missingGroceryItems.length > 0) {
+        closedRecipe = {
+          ...closedRecipe,
+          groceryItems: getGroceryItems(closedRecipe.ingredients, input.analysis),
+        };
+      }
+      if (enforced.changed || enforced.report.missingGroceryItems.length > 0) {
+        finalResult = { ...finalResult, recipe: closedRecipe };
+        storeGeneratedRecipe(closedRecipe);
+      }
+      if (
+        enforced.report.unknownStepIngredients.length > 0 ||
+        enforced.report.missingGroceryItems.length > 0
+      ) {
+        console.warn('[recipe_consistency]', {
+          recipeId: closedRecipe.id,
+          unknownStepIngredients: enforced.report.unknownStepIngredients,
+          missingGroceryItems: enforced.report.missingGroceryItems,
+          strippedStepIngredients: enforced.strippedStepIngredients,
+          repaired: enforced.report.unknownStepIngredients.length === 0,
+        });
       }
     }
 
@@ -1479,59 +1514,8 @@ function isVagueIngredientWord(value: string) {
   return vagueIngredientWords.has(value.trim().toLowerCase());
 }
 
-// Culinary synonym groups — each group maps to a single canonical form (index 0).
-// Used to match equivalent ingredient names across different cuisines and dialects.
-// Plurals are included explicitly; auto-desingularization handles simple -s endings.
-const INGREDIENT_SYNONYM_GROUPS: string[][] = [
-  ['scallion', 'scallions', 'green onion', 'green onions', 'spring onion', 'spring onions'],
-  ['cilantro', 'coriander', 'fresh coriander'],
-  ['chickpea', 'chickpeas', 'garbanzo', 'garbanzo bean', 'garbanzo beans', 'garbanzos'],
-  ['zucchini', 'zucchinis', 'courgette', 'courgettes'],
-  ['eggplant', 'eggplants', 'aubergine', 'aubergines'],
-  ['bell pepper', 'bell peppers', 'capsicum', 'capsicums'],
-  ['cornstarch', 'corn starch', 'cornflour', 'corn flour'],
-  ['confectioners sugar', "confectioner's sugar", 'powdered sugar', 'icing sugar'],
-  ['caster sugar', 'castor sugar', 'superfine sugar'],
-  ['jalapeño', 'jalapeno', 'jalapeños', 'jalapenos'],
-  ['yogurt', 'yoghurt', 'yogurts', 'yoghurts'],
-  ['arugula', 'rocket', 'arugulas'],
-  ['shrimp', 'prawn', 'prawns', 'shrimps'],
-  ['ground meat', 'mince', 'minced meat', 'ground beef', 'minced beef'],
-];
-
-// Build a normalized alias → canonical index lookup at module load time.
-const INGREDIENT_SYNONYM_LOOKUP = new Map<string, number>(
-  INGREDIENT_SYNONYM_GROUPS.flatMap((group, idx) =>
-    group.map((alias) => [alias.toLowerCase().trim(), idx]),
-  ),
-);
-
-// Returns the canonical form of an ingredient name for comparison.
-// Handles synonyms and simple plural auto-stripping.
-function canonicalIngredientName(name: string): string {
-  const lower = name.toLowerCase().trim();
-  const direct = INGREDIENT_SYNONYM_LOOKUP.get(lower);
-  if (direct !== undefined) {
-    return INGREDIENT_SYNONYM_GROUPS[direct][0];
-  }
-  // Strip a trailing 's' for simple plurals not in the synonym map.
-  if (lower.endsWith('s') && lower.length > 3) {
-    const singular = lower.slice(0, -1);
-    const singularIdx = INGREDIENT_SYNONYM_LOOKUP.get(singular);
-    if (singularIdx !== undefined) {
-      return INGREDIENT_SYNONYM_GROUPS[singularIdx][0];
-    }
-  }
-  return lower;
-}
-
-// Returns true when two ingredient strings are considered the same after synonym
-// expansion and substring matching (e.g. "chicken breast" matches "chicken").
-function ingredientsMatch(recipeIngredient: string, stepIngredient: string): boolean {
-  const a = canonicalIngredientName(recipeIngredient);
-  const b = canonicalIngredientName(stepIngredient);
-  return a === b || a.includes(b) || b.includes(a);
-}
+// Ingredient synonym matching lives in recipeIngredientValidation.ts —
+// imported as ingredientsMatch, shared with the closure validator.
 
 // Verb-to-tool mapping for high-confidence tool detection from step text.
 const TOOL_DETECTION_RULES: Array<{ verbs: RegExp; tools: string[] }> = [

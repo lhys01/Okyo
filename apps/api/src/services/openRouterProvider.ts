@@ -10,6 +10,7 @@ import {
   enrichRecipeContext,
   type EnrichedRecipeContext,
 } from './epicureService.js';
+import { ingredientsMatch } from './recipeIngredientValidation.js';
 
 const openRouterEndpoint = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -855,6 +856,28 @@ function getRecipeQualityIssues(output: OpenRouterRecipeOutput, isDrink: boolean
     issues.push('drink_uses_cooking_language');
   }
 
+  // Ingredient closure: every ingredient a step declares must resolve to the
+  // top-level ingredient list. Caught here so the existing one-shot repair pass
+  // can fix it; aiService deterministically strips whatever survives repair.
+  const stepIngredientNames = (Array.isArray(output.steps) ? output.steps : [])
+    .flatMap((value) => {
+      if (typeof value !== 'object' || value === null) return [] as string[];
+      const names = Array.isArray(value.ingredients)
+        ? value.ingredients
+        : Array.isArray(value.ingredientsUsed)
+          ? value.ingredientsUsed
+          : [];
+      return names.filter(
+        (name): name is string => typeof name === 'string' && name.trim().length > 0,
+      );
+    });
+  const unlistedStepIngredients = stepIngredientNames.filter(
+    (name) => !ingredients.some((listed) => ingredientsMatch(listed, name)),
+  );
+  if (unlistedStepIngredients.length > 0) {
+    issues.push('step_uses_unlisted_ingredients');
+  }
+
   return issues;
 }
 
@@ -881,6 +904,7 @@ function getRecipeRepairPrompt(
     'Fix every problem: NEVER write "the main ingredient" or "main ingredient" — name the actual food. Every ingredient must start with an exact amount and a real grocery name. Every step must name real ingredients with amounts, a time, and a visual cue. No "cook until done", "prepare the ingredients", "season to taste", or "mix everything".',
     'PHASE ORDER IS MANDATORY: Every step object MUST include "phase" (integer 1-6). Steps must be in phase order — 1 Preparation, 2 Setup, 3 Cooking, 4 Assembly, 5 Finishing, 6 Serving. Phase numbers must never decrease. Phase 6 Serving MUST be the final step and can NEVER appear before phase 3 Cooking.',
     'STEP CONTRACT IS MANDATORY: Every step object MUST include "stepNumber" (integer, starts at 1, strictly sequential, no gaps), "title" (2-4 word action phrase), "step" (one clear instruction sentence), "ingredients" (array of ingredient names used in this step — never empty), and "tools" (array of tool names used in this step — never empty, no duplicates).',
+    'INGREDIENT CLOSURE IS MANDATORY: every name in any step "ingredients" array must also appear in the top-level "ingredients" list with an exact amount. If a step needs an ingredient that is missing from the list, add it to the list with an amount — never reference an ingredient that is not listed.',
     'Keep 6-12 ingredients and 8-14 steps (6-8 for drinks or salads).',
     `Food: ${JSON.stringify({
       dishName: analysis.dishName,

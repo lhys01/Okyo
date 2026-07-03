@@ -11,6 +11,7 @@ import {
   Cutlery,
   FireFlame,
   Heart,
+  HeartSolid,
   Leaf,
   MoneySquare,
   NavArrowLeft,
@@ -49,6 +50,7 @@ import type { MainTabParamList, RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
+import { matchIngredientToList } from '../utils/ingredientMatching';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
@@ -134,6 +136,7 @@ export function RecipeDetailScreen() {
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
   const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
+  const isRecipeSaved = Boolean(recipe && savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id));
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
   const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
   const canShowSavings = restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
@@ -328,10 +331,15 @@ export function RecipeDetailScreen() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
+              accessibilityState={{ selected: isRecipeSaved }}
               onPress={saveSelectedRecipe}
               style={({ pressed }) => [styles.circleSaveButton, pressed ? styles.pressed : null]}
             >
-              <Heart color={colors.charcoal} height={23} strokeWidth={2.1} width={23} />
+              {isRecipeSaved ? (
+                <HeartSolid color={colors.coral} height={23} width={23} />
+              ) : (
+                <Heart color={colors.charcoal} height={23} strokeWidth={2.1} width={23} />
+              )}
             </Pressable>
             <View style={styles.inspiredPill}>
               <Spark color={colors.coral} height={18} strokeWidth={2.2} width={18} />
@@ -2409,9 +2417,7 @@ function getGuidedCookingSteps(
     return {
       chefTip: step.chefTip ? cleanDisplayText(step.chefTip) : undefined,
       estimatedMinutes: step.estimatedMinutes ?? parseEstimatedMinutes(step.timeEstimate) ?? null,
-      ingredientsUsed: step.ingredientsUsed?.length
-        ? resolveIngredientsFromNames(step.ingredientsUsed, recipeIngredients)
-        : getStepIngredients(step.text, recipeIngredients),
+      ingredientsUsed: getClosedStepIngredients(step, recipeIngredients),
       instruction,
       phase: phaseName,
       phaseStepIndex: phaseIdx,
@@ -2443,14 +2449,7 @@ function getRecipeIngredients(recipe: Recipe | null) {
     return [];
   }
 
-  const groupedIngredients = getSafeIngredientGroups(recipe).flatMap((group) => group.items);
-  const ingredients = groupedIngredients.length > 0
-    ? groupedIngredients
-    : Array.isArray(recipe.ingredients)
-      ? recipe.ingredients
-      : [];
-
-  return ingredients
+  return (Array.isArray(recipe.ingredients) ? recipe.ingredients : [])
     .filter((ingredient) => ingredient?.name?.trim())
     .slice(0, 40);
 }
@@ -2476,63 +2475,26 @@ function getStepIngredients(stepText: string, ingredients: RecipeIngredient[]) {
   return matchedIngredients.slice(0, 5);
 }
 
-// Common culinary synonyms — AI may use one name while the recipe uses another.
-const INGREDIENT_SYNONYMS: Record<string, string[]> = {
-  scallion: ['green onion', 'spring onion'],
-  'green onion': ['scallion', 'spring onion'],
-  'spring onion': ['scallion', 'green onion'],
-  cilantro: ['coriander', 'fresh coriander'],
-  coriander: ['cilantro', 'fresh coriander'],
-  cornstarch: ['corn starch', 'corn flour'],
-  'corn starch': ['cornstarch', 'corn flour'],
-  chickpea: ['garbanzo bean', 'garbanzo'],
-  garbanzo: ['chickpea', 'garbanzo bean'],
-  'garbanzo bean': ['chickpea', 'garbanzo'],
-  'bell pepper': ['capsicum', 'sweet pepper'],
-  capsicum: ['bell pepper', 'sweet pepper'],
-  zucchini: ['courgette'],
-  courgette: ['zucchini'],
-  eggplant: ['aubergine'],
-  aubergine: ['eggplant'],
-};
-
+// Resolves AI-declared step ingredient names against recipe.ingredients — the
+// single source of truth. Unmatched names are DROPPED, never invented: a name
+// that is not in the ingredient list must not appear in "Use now" chips.
 function resolveIngredientsFromNames(names: string[], recipeIngredients: RecipeIngredient[]): RecipeIngredient[] {
   return names
-    .map((name) => {
-      const normalized = normalizeForMatching(name);
-      // 1. Exact match
-      const exact = recipeIngredients.find((ing) => normalizeForMatching(ing.name) === normalized);
-      if (exact) return exact;
-      // 2. Substring match (either direction)
-      const sub = recipeIngredients.find((ing) => {
-        const n = normalizeForMatching(ing.name);
-        return n.includes(normalized) || normalized.includes(n);
-      });
-      if (sub) return sub;
-      // 3. All significant words present (handles "garlic" matching "2 cloves garlic, minced")
-      const words = normalized.split(' ').filter((w) => w.length >= 3);
-      if (words.length > 0) {
-        const wordMatch = recipeIngredients.find((ing) => {
-          const n = normalizeForMatching(ing.name);
-          return words.every((w) => n.includes(w) || n.includes(`${w}s`) || (w.endsWith('s') && n.includes(w.slice(0, -1))));
-        });
-        if (wordMatch) return wordMatch;
-      }
-      // 3.5. Synonym lookup — handles scallions↔green onions, cilantro↔coriander, etc.
-      // Also tries the singular form so "scallions" resolves via the "scallion" key.
-      const singularNormalized = normalized.endsWith('s') ? normalized.slice(0, -1) : normalized;
-      const synonyms = INGREDIENT_SYNONYMS[normalized] ?? INGREDIENT_SYNONYMS[singularNormalized] ?? [];
-      if (synonyms.length > 0) {
-        const synonymMatch = recipeIngredients.find((ing) => {
-          const n = normalizeForMatching(ing.name);
-          return synonyms.some((syn) => n.includes(normalizeForMatching(syn)));
-        });
-        if (synonymMatch) return synonymMatch;
-      }
-      // 4. No match — use AI-declared name directly, no quantity
-      return { name, quantity: '' };
-    })
+    .map((name) => matchIngredientToList(name, recipeIngredients))
+    .filter((ingredient): ingredient is RecipeIngredient => ingredient !== null)
     .slice(0, 5);
+}
+
+// "Use now" chips for a guided step. AI-declared names are resolved against the
+// ingredient list first; when every declared name is unknown (or none were
+// declared), fall back to matching the step text — which can only ever surface
+// ingredients already in the list.
+function getClosedStepIngredients(step: DisplayRecipeStep, recipeIngredients: RecipeIngredient[]): RecipeIngredient[] {
+  const resolved = step.ingredientsUsed?.length
+    ? resolveIngredientsFromNames(step.ingredientsUsed, recipeIngredients)
+    : [];
+
+  return resolved.length > 0 ? resolved : getStepIngredients(step.text, recipeIngredients);
 }
 
 const STEP_TOOL_PATTERNS: Array<[RegExp, string]> = [
