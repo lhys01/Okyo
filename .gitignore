@@ -6,6 +6,14 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
+# Local runtime state / agent memory — never commit (excluded paths per AGENTS.md)
+.swarm/
+ruvector.db
+ruvector.db-*
+.claude-flow/
+*.db-wal
+*.db-shm
+
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 

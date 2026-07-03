@@ -501,6 +501,37 @@ const RECIPE_CACHE_TTL_MS = (() => {
   const days = Number(process.env.RECIPE_CACHE_TTL_DAYS);
   return (Number.isFinite(days) && days > 0 ? days : 7) * 24 * 60 * 60 * 1000;
 })();
+const RECIPE_CACHE_MAX_ENTRIES = 2000;
+
+// Lazily sweeps expired entries and, if still oversized, drops the oldest
+// (first-inserted) entries. Called on insert so the cache never needs its
+// own timer/interval.
+function sweepRecipeCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of recipeCache) {
+    if (entry.expiresAt <= now) {
+      recipeCache.delete(key);
+    }
+  }
+  if (recipeCache.size > RECIPE_CACHE_MAX_ENTRIES) {
+    const overflow = recipeCache.size - RECIPE_CACHE_MAX_ENTRIES;
+    const oldestKeys = [...recipeCache.keys()].slice(0, overflow);
+    for (const key of oldestKeys) {
+      recipeCache.delete(key);
+    }
+  }
+}
+
+// One-time-per-process warning when a paid fallback model is configured.
+// Never enables it and never removes it — informational only.
+let paidFallbackStartupWarningLogged = false;
+export function validatePaidFallbackAtStartup(): void {
+  const paid = process.env.RECIPE_PAID_FALLBACK_MODEL?.trim();
+  if (paid && !paidFallbackStartupWarningLogged) {
+    paidFallbackStartupWarningLogged = true;
+    console.warn('[cost] RECIPE_PAID_FALLBACK_MODEL is set — recipe generation may fall back to a PAID model on failure:', paid);
+  }
+}
 
 function getRecipeCacheKey(analysis: FoodImageAnalysis, mode: RecipeMode): string {
   const data = JSON.stringify({

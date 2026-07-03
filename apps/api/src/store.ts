@@ -17,9 +17,22 @@ import type {
   XpEventDefinition,
 } from './types.js';
 
+// In-memory demo store — no DB yet, so cap growth to bound process memory
+// under repeated-request abuse. Oldest entries drop first (FIFO).
+const MAX_SAVED_RECIPES = 500;
+const MAX_COMPLETED_CHALLENGES = 2000;
+const MAX_AWARDED_XP_EVENTS = 5000;
+
 const savedRecipes: Recipe[] = [];
 const completedChallenges: CompletedChallenge[] = [];
 const awardedXpEvents: AwardedXpEvent[] = [];
+
+function pushBounded<T>(list: T[], item: T, maxSize: number): void {
+  list.push(item);
+  if (list.length > maxSize) {
+    list.splice(0, list.length - maxSize);
+  }
+}
 
 // Deferred coaching store: recipes awaiting on-demand coaching enrichment.
 // Keyed by recipe.id. TTL = 1 day (survives the typical user session).
@@ -52,7 +65,7 @@ export function getRecipe(recipeId: string) {
 
 export function saveRecipe(recipe: Recipe) {
   if (!savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id)) {
-    savedRecipes.push(recipe);
+    pushBounded(savedRecipes, recipe, MAX_SAVED_RECIPES);
   }
 
   return savedRecipes;
@@ -91,7 +104,7 @@ export function createChallenge(input: {
     badgeUnlocked: getBadgeForChallenge(recipe.title, input.mode, input.rating, recipe.estimatedSavings),
   };
 
-  completedChallenges.push(challenge);
+  pushBounded(completedChallenges, challenge, MAX_COMPLETED_CHALLENGES);
   return challenge;
 }
 
@@ -105,7 +118,7 @@ export function awardXp(eventType: string, sourceId?: string) {
     sourceId,
   };
 
-  awardedXpEvents.push(event);
+  pushBounded(awardedXpEvents, event, MAX_AWARDED_XP_EVENTS);
   return event;
 }
 

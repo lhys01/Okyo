@@ -59,18 +59,26 @@ const scanRequestSchema = z.object({
   image: scanImageMetadataSchema.optional(),
 });
 const challengeRequestSchema = z.object({
-  recipeId: z.string().min(1),
+  recipeId: z.string().min(1).max(200),
   mode: recipeModeSchema.optional().default('Restaurant Copy'),
   rating: z.enum(['Nailed it', 'Pretty close', 'Needs work', 'Not close']),
   matchScore: z.number().min(0).max(10).optional(),
 });
 const xpEventRequestSchema = z.object({
-  eventType: z.string().min(1),
-  sourceId: z.string().min(1).optional(),
+  eventType: z.string().min(1).max(200),
+  sourceId: z.string().min(1).max(200).optional(),
 });
 
 app.use(cors());
 app.use(express.json({ limit: jsonBodyLimit }));
+
+// Minimal manual security headers — no dependency needed for this small a surface.
+app.use((_request, response, next) => {
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('X-Frame-Options', 'DENY');
+  response.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
 
 app.get('/health', (_request, response) => {
   const aiConfig = getPublicAiConfig();
@@ -228,8 +236,14 @@ app.get('/v1/rankings/weekly', (_request, response) => {
   sendOk(response, getWeeklyRankings());
 });
 
-app.post('/v1/recipes/:recipeId/coaching', async (request, response, next) => {
+app.post('/v1/recipes/:recipeId/coaching', scanRateLimitMiddleware, async (request, response, next) => {
   try {
+    if (!checkAndIncrementGlobalAiCap()) {
+      sendError(response.status(429), 'ai_daily_cap_exceeded', "Okyo has reached its daily scan limit. Try again tomorrow.");
+      return;
+    }
+
+    logCostEvent('coaching_cap_consumed', { recipeId: request.params.recipeId });
     const result = await enrichRecipeCoaching(request.params.recipeId);
     if (!result) {
       sendNotFound(response, 'recipe_not_found', 'Recipe not found or expired. Please scan again.');

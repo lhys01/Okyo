@@ -8,6 +8,8 @@ Project name: **Okyo**
 
 Okyo is a mobile cooking app that helps users scan restaurant food, generate copycat-style or inspired-by recipes, estimate savings, save recipes, make grocery lists, and make cooking feel easier and more fun.
 
+Okyo is an AI food companion, not a calorie tracker. Do not build or expand strict nutrition/calorie-counting features unless explicitly requested.
+
 Okyo should feel:
 - cute
 - clean
@@ -111,6 +113,39 @@ For every prompt, follow this workflow:
 - Keep fallback behavior for demo/mock mode only.
 - Do not show technical AI/provider errors to normal users.
 - Development debug metadata is okay when hidden behind dev-only UI.
+
+## AI Provider & Model Routing
+
+- OpenRouter is the default and only always-on AI provider. Do not change this default without explicit instruction.
+- Fable is opt-in only, never a default. Two gates required together, not either alone:
+  - Env: `FABLE_ENABLED=true`
+  - Per-request header: `x-okyo-model: fable`
+- If either gate is missing, requests fall through to normal OpenRouter path unchanged.
+- Fable must fail closed: no silent fallback to Gemini or any other model on Fable failure/timeout/cap-exceeded. A failed Fable request must surface as a failure, not swap providers underneath the caller.
+- Daily Fable request cap is hard-capped at 10 in code; env value cannot raise it above 10, only lower it.
+
+## Run Commands
+
+- API: `cd apps/api && npm run dev`
+- Mobile: `cd apps/mobile && npx expo start`
+- Typecheck before every commit (`npm run typecheck` in `apps/api`, or project equivalent). Do not commit if typecheck fails.
+
+## Excluded Paths
+
+Never read, edit, regenerate, or commit changes inside:
+- `.swarm`
+- `ruvector.db`
+- `node_modules`
+- `__pycache__` / `pycache`
+- generated skill mirrors
+- runtime databases
+
+These are generated, vendored, or runtime state — not source.
+
+## Secrets
+
+- Never commit secrets, API keys, or `.env` files.
+- Never hardcode sensitive values in source or docs.
 
 ## Marketing Style
 

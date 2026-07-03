@@ -27,7 +27,7 @@ export function getCostControlConfig(): CostControlConfig {
     imageGenEnabled: process.env.IMAGE_GEN_ENABLED === 'true',
     imageGenDailyRequestCap: getPositiveInteger(process.env.IMAGE_GEN_DAILY_REQUEST_CAP, 0),
     fableDailyRequestCap: Math.min(
-      getPositiveInteger(process.env.FABLE_DAILY_REQUEST_CAP, FABLE_DAILY_REQUEST_CAP_HARD_MAX),
+      getNonNegativeCap(process.env.FABLE_DAILY_REQUEST_CAP, FABLE_DAILY_REQUEST_CAP_HARD_MAX),
       FABLE_DAILY_REQUEST_CAP_HARD_MAX,
     ),
   };
@@ -36,4 +36,14 @@ export function getCostControlConfig(): CostControlConfig {
 function getPositiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+// Same as getPositiveInteger but 0 is a valid, meaningful value (explicitly
+// disables the cap) rather than falling back to the default.
+function getNonNegativeCap(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === '') {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
