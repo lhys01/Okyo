@@ -1818,7 +1818,7 @@ function getScanFailureCopy(failure: { rejectionType?: string; rejectionReason?:
   // is not about the photo, so the copy must not ask for a clearer one.
   return {
     title: 'That scan didn’t go through.',
-    body: friendlyReason ?? 'It’s not your photo — Okyo’s scanner hit a snag. Try the same photo again.',
+    body: friendlyReason ?? 'It’s not your photo — Okyo’s scanner hit a snag. Head back to scan and choose a photo again.',
   };
 }
 
@@ -1843,8 +1843,8 @@ function getFailureGuidance(rejectionType: string | undefined) {
 
   return {
     title: 'Mind trying that again?',
-    body: 'The scanner had a momentary hiccup. The same photo will usually work on a second try.',
-    primaryLabel: 'Try Again',
+    body: 'The scanner had a momentary hiccup. Head back to scan and choose a food photo again.',
+    primaryLabel: 'Scan Another Photo',
   };
 }
 

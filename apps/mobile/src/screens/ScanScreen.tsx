@@ -10,8 +10,8 @@ import {
   OpenBook,
   Upload,
 } from 'iconoir-react-native';
-import type { ReactNode } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { type ReactNode, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
@@ -38,6 +38,8 @@ const tabBarSafePadding = 260;
 export function ScanScreen() {
   const navigation = useNavigation<ScanNavigation>();
   const insets = useSafeAreaInsets();
+  const [preparingScanAction, setPreparingScanAction] = useState<ScanSource | null>(null);
+  const preparingScanActionRef = useRef<ScanSource | null>(null);
   const selectedMode = useOkyoStore((state) => state.selectedMode);
   const beginLatestScanSession = useOkyoStore((state) => state.beginLatestScanSession);
   const writeLatestScanSession = useOkyoStore((state) => state.writeLatestScanSession);
@@ -217,7 +219,26 @@ export function ScanScreen() {
       });
   };
 
+  const beginPreparingScan = (action: ScanSource) => {
+    if (preparingScanActionRef.current) {
+      return false;
+    }
+
+    preparingScanActionRef.current = action;
+    setPreparingScanAction(action);
+    return true;
+  };
+
+  const finishPreparingScan = () => {
+    preparingScanActionRef.current = null;
+    setPreparingScanAction(null);
+  };
+
   const takePhoto = async () => {
+    if (!beginPreparingScan('camera')) {
+      return;
+    }
+
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
@@ -254,10 +275,16 @@ export function ScanScreen() {
         'Camera unavailable',
         'Camera isn’t available in this simulator. Use Upload From Photos instead.',
       );
+    } finally {
+      finishPreparingScan();
     }
   };
 
   const uploadFromPhotos = async () => {
+    if (!beginPreparingScan('photos')) {
+      return;
+    }
+
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: false,
@@ -284,6 +311,8 @@ export function ScanScreen() {
         'Photo upload unavailable',
         'Okyo could not open your photo library. Try again.',
       );
+    } finally {
+      finishPreparingScan();
     }
   };
 
@@ -337,13 +366,19 @@ export function ScanScreen() {
           <View style={styles.scanActions}>
             <ScanActionButton
               icon={<CameraSolid color="#fffdf8" height={25} width={25} />}
+              disabled={Boolean(preparingScanAction)}
               label="Take photo"
+              loading={preparingScanAction === 'camera'}
+              loadingLabel="Preparing photo"
               onPress={takePhoto}
               tone="primary"
             />
             <ScanActionButton
               icon={<Upload color={colors.coral} height={24} strokeWidth={2.3} width={24} />}
+              disabled={Boolean(preparingScanAction)}
               label="Upload food photo"
+              loading={preparingScanAction === 'photos'}
+              loadingLabel="Preparing photo"
               onPress={uploadFromPhotos}
             />
           </View>
@@ -434,33 +469,51 @@ function HowStep({ caption, icon, label }: HowStepProps) {
 }
 
 type ScanActionButtonProps = {
+  disabled?: boolean;
   icon: ReactNode;
   label: string;
+  loading?: boolean;
+  loadingLabel?: string;
   onPress: () => void;
   tone?: 'primary' | 'secondary';
 };
 
-function ScanActionButton({ icon, label, onPress, tone = 'secondary' }: ScanActionButtonProps) {
+function ScanActionButton({
+  disabled = false,
+  icon,
+  label,
+  loading = false,
+  loadingLabel,
+  onPress,
+  tone = 'secondary',
+}: ScanActionButtonProps) {
   const isPrimary = tone === 'primary';
 
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ busy: loading, disabled }}
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.scanButton,
         isPrimary ? styles.scanButtonPrimary : styles.scanButtonSecondary,
+        disabled ? styles.scanButtonDisabled : null,
         pressed ? styles.pressed : null,
       ]}
     >
-      <View style={styles.scanButtonIcon}>{icon}</View>
+      <View style={styles.scanButtonIcon}>
+        {loading ? (
+          <ActivityIndicator color={isPrimary ? '#fffdf8' : colors.coral} size="small" />
+        ) : icon}
+      </View>
       <Text
         adjustsFontSizeToFit
         minimumFontScale={0.84}
         numberOfLines={1}
         style={[styles.scanButtonText, isPrimary ? styles.scanButtonTextPrimary : styles.scanButtonTextSecondary]}
       >
-        {label}
+        {loading ? loadingLabel ?? label : label}
       </Text>
     </Pressable>
   );
@@ -1045,6 +1098,9 @@ const styles = StyleSheet.create({
   },
   scanButtonSecondary: {
     backgroundColor: colors.cream,
+  },
+  scanButtonDisabled: {
+    opacity: 0.72,
   },
   scanButtonIcon: {
     alignItems: 'center',

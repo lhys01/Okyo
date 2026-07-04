@@ -82,6 +82,7 @@ export function WelcomeScreen() {
   const [isScanSubmitting, setIsScanSubmitting] = useState(false);
   const [selectedWeeklyGoal, setSelectedWeeklyGoal] = useState<string | null>(null);
   const didTrackStart = useRef(false);
+  const scanSubmittingRef = useRef(false);
   const splashOpacity = useRef(new Animated.Value(0)).current;
   const selectedMode = useOkyoStore((state) => state.selectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
@@ -192,7 +193,27 @@ export function WelcomeScreen() {
     advance();
   };
 
+  const beginScanSubmitting = () => {
+    if (scanSubmittingRef.current) {
+      return false;
+    }
+
+    scanSubmittingRef.current = true;
+    setIsScanSubmitting(true);
+    return true;
+  };
+
+  const finishScanSubmitting = () => {
+    scanSubmittingRef.current = false;
+    setIsScanSubmitting(false);
+  };
+
   const takePhoto = async () => {
+    if (!beginScanSubmitting()) {
+      return;
+    }
+
+    let scanStarted = false;
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
@@ -214,7 +235,9 @@ export function WelcomeScreen() {
         return;
       }
 
-      await startOnboardingScan('camera', await getImageMetadata(result.assets[0], 'camera'));
+      const cameraImage = await getImageMetadata(result.assets[0], 'camera');
+      scanStarted = true;
+      await startOnboardingScan('camera', cameraImage);
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Camera unavailable.',
@@ -222,10 +245,19 @@ export function WelcomeScreen() {
         source: 'camera',
       });
       Alert.alert('Camera unavailable', 'Use Upload from Photos instead.');
+    } finally {
+      if (!scanStarted) {
+        finishScanSubmitting();
+      }
     }
   };
 
   const uploadFromPhotos = async () => {
+    if (!beginScanSubmitting()) {
+      return;
+    }
+
+    let scanStarted = false;
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: false,
@@ -238,7 +270,9 @@ export function WelcomeScreen() {
         return;
       }
 
-      await startOnboardingScan('photos', await getImageMetadata(result.assets[0], 'photos'));
+      const photosImage = await getImageMetadata(result.assets[0], 'photos');
+      scanStarted = true;
+      await startOnboardingScan('photos', photosImage);
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Image picker failed.',
@@ -246,18 +280,21 @@ export function WelcomeScreen() {
         source: 'photos',
       });
       Alert.alert('Photo upload unavailable', 'Okyo could not open your photo library. Try again.');
+    } finally {
+      if (!scanStarted) {
+        finishScanSubmitting();
+      }
     }
   };
 
   const startOnboardingScan = async (source: ScanSource, image?: ScanImageMetadata) => {
-    if (isScanSubmitting) {
+    if (!scanSubmittingRef.current && !beginScanSubmitting()) {
       return;
     }
 
     const scanSessionId = createScanSessionId(source);
     const persistedImage = (image && !image.placeholder) ? await copyToDocuments(image) : image;
     const previewImage = getPreviewImageMetadata(persistedImage);
-    setIsScanSubmitting(true);
     setScanError(null);
     setScreenKey('loading');
     track(analyticsEvents.SCAN_STARTED, { screen: 'WelcomeScreen', source });
@@ -319,7 +356,7 @@ export function WelcomeScreen() {
       setScreenKey('scan');
       setScanError(failureReason);
     } finally {
-      setIsScanSubmitting(false);
+      finishScanSubmitting();
     }
   };
 
@@ -670,6 +707,7 @@ function ScanIntroScreen({
       />
       <OnboardingScanCard
         errorMessage={errorMessage}
+        isSubmitting={isSubmitting}
         onTakePhoto={isSubmitting ? noop : onTakePhoto}
         onUpload={isSubmitting ? noop : onUpload}
       />

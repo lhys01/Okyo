@@ -334,7 +334,14 @@ export function OnboardingStatefulButton({
         ]}
       >
         {resolvedState === 'loading' ? (
-          <ActivityIndicator color={isPrimary ? '#fffdf8' : onboardingColors.primary} />
+          <View style={styles.buttonSuccessContent}>
+            <ActivityIndicator color={isPrimary ? '#fffdf8' : onboardingColors.primary} />
+            {stateLabel ? (
+              <Text style={[styles.buttonText, isPrimary ? styles.buttonTextPrimary : styles.buttonTextSecondary]}>
+                {stateLabel}
+              </Text>
+            ) : null}
+          </View>
         ) : resolvedState === 'success' ? (
           <View style={styles.buttonSuccessContent}>
             <Check color={isPrimary ? '#fffdf8' : onboardingColors.primary} height={18} strokeWidth={2.8} width={18} />
@@ -356,11 +363,17 @@ export function OnboardingStatefulButton({
 
 type OnboardingScanCardProps = {
   errorMessage?: string | null;
+  isSubmitting?: boolean;
   onTakePhoto: () => void;
   onUpload: () => void;
 };
 
-export function OnboardingScanCard({ errorMessage, onTakePhoto, onUpload }: OnboardingScanCardProps) {
+export function OnboardingScanCard({
+  errorMessage,
+  isSubmitting = false,
+  onTakePhoto,
+  onUpload,
+}: OnboardingScanCardProps) {
   return (
     <View style={styles.scanCard}>
       <View style={styles.scanFrame}>
@@ -379,8 +392,14 @@ export function OnboardingScanCard({ errorMessage, onTakePhoto, onUpload }: Onbo
         </View>
       </View>
       <View style={styles.scanButtons}>
-        <OnboardingStatefulButton label="Take a Photo" onPress={onTakePhoto} />
+        <OnboardingStatefulButton
+          label="Take a Photo"
+          loading={isSubmitting}
+          stateLabel="Preparing Photo"
+          onPress={onTakePhoto}
+        />
         <ScanSecondaryAction
+          disabled={isSubmitting}
           icon={<Upload color={onboardingColors.primary} height={20} strokeWidth={2.3} width={20} />}
           label="Upload from Photos"
           onPress={onUpload}
@@ -924,14 +943,21 @@ function MetricPill({ label, value }: MetricPillProps) {
 // ─── Scan secondary action ────────────────────────────────────────────────────
 
 type ScanSecondaryActionProps = {
+  disabled?: boolean;
   icon: ReactNode;
   label: string;
   onPress: () => void;
 };
 
-function ScanSecondaryAction({ icon, label, onPress }: ScanSecondaryActionProps) {
+function ScanSecondaryAction({ disabled = false, icon, label, onPress }: ScanSecondaryActionProps) {
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={styles.scanSecondaryAction}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.scanSecondaryAction, disabled ? styles.scanSecondaryActionDisabled : null]}
+    >
       {icon}
       <Text style={styles.scanSecondaryText}>{label}</Text>
     </Pressable>
@@ -1233,6 +1259,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 54,
     paddingVertical: 8,
+  },
+  scanSecondaryActionDisabled: {
+    opacity: 0.62,
   },
   scanSecondaryText: {
     color: onboardingColors.primary,
