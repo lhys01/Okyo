@@ -42,6 +42,7 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { getModeLabel } from '../utils/modeDisplay';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { getRealScanImageUri } from '../utils/recipeImages';
 import { isUsableScan } from '../utils/scanDecision';
@@ -428,9 +429,7 @@ export function ResultSummaryScreen() {
       />
 
       <View style={styles.headerSection}>
-        <Text style={styles.kicker}>
-          {isUncertainResult ? 'Okyo made a best guess' : 'Okyo understood your food'}
-        </Text>
+        <Text style={styles.kicker}>Based on your scan</Text>
         <Text
           adjustsFontSizeToFit
           minimumFontScale={0.82}
@@ -603,8 +602,8 @@ export function ResultSummaryScreen() {
       <View style={styles.summaryCard}>
         <StatBlock
           icon={<ShieldCheck color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
-          label="Confidence"
-          value={formatPercent(confidencePercent)}
+          label="Servings"
+          value={selectedRecipe.servings ? `${selectedRecipe.servings}` : '—'}
         />
         <View style={styles.statDivider} />
         <StatBlock
@@ -643,23 +642,6 @@ export function ResultSummaryScreen() {
           <View style={styles.matchAward}>
             <Sparks color={colors.coral} height={36} strokeWidth={2.05} width={36} />
           </View>
-        </View>
-        <View style={styles.chipRow}>
-          {getModeChips(selectedRecipe, {
-            estimatedSavings,
-            showSavings: canShowSavings,
-          }).map((chip) => (
-            <View key={chip.label} style={styles.infoChip}>
-              <Text
-                adjustsFontSizeToFit
-                minimumFontScale={0.78}
-                numberOfLines={1}
-                style={styles.infoChipText}
-              >
-                {chip.label}
-              </Text>
-            </View>
-          ))}
         </View>
       </View>
 
@@ -971,55 +953,29 @@ function logResultDecision(details: Record<string, unknown>) {
   });
 }
 
-const modeUiByMode: Record<RecipeMode, { label: string }> = {
-  'Restaurant Copy': { label: 'Restaurant Style' },
-  Budget: { label: 'Budget' },
-  Healthy: { label: 'Lighter' },
-};
-
 function getModeUi(mode: RecipeMode) {
-  return modeUiByMode[mode];
-}
-
-function getModeChips(
-  recipe: Recipe,
-  options: {
-    estimatedSavings: number | null;
-    showSavings: boolean;
-  },
-) {
-  return [
-    { label: `${formatOptionalCurrency(recipe.estimatedHomemadeCost)} homemade est.` },
-    options.showSavings ? { label: `${formatOptionalCurrency(options.estimatedSavings)} savings` } : null,
-    { label: recipe.servings ? `Serves ${recipe.servings}` : 'Serves —' },
-  ].filter((chip): chip is { label: string } => Boolean(chip))
-    .filter((chip) => !chip.label.includes('—'));
+  return { label: getModeLabel(mode) };
 }
 
 function getDisplaySubtitle(restaurantStyle?: string, recipeDescription?: string) {
-  const style = cleanDisplayText(restaurantStyle ?? '');
   const description = cleanDisplayText(recipeDescription ?? '');
-  if (description.toLowerCase().includes('lighter')) {
-    return 'Lighter homemade recipe from what Okyo can see';
+  if (description.toLowerCase().includes('lighter') || description.toLowerCase().includes('healthier')) {
+    return 'A healthier home version of this dish';
   }
 
   if (description.toLowerCase().includes('budget') || description.toLowerCase().includes('lower-cost')) {
-    return 'Budget-friendly homemade recipe from the photo';
+    return 'An easy, lower-cost home version of this dish';
   }
 
-  if (style) {
-    return 'Homemade recipe based on what’s visible';
-  }
-
-  return 'Homemade recipe from the photo';
+  return 'A home version of this dish';
 }
 
 function getModeCardTitle(mode: RecipeMode) {
   switch (mode) {
     case 'Budget':
-      return 'Budget pick for your scan';
+      return 'Easy shortcut take on your scan';
     case 'Healthy':
-      return 'Lighter pick for your scan';
+      return 'Healthier take on your scan';
     case 'Restaurant Copy':
     default:
       return 'Best match for your scan';
@@ -1034,12 +990,12 @@ function getModeSummary(recipe: Recipe, mode: RecipeMode) {
 
   switch (mode) {
     case 'Budget':
-      return 'Keeps the dish feeling familiar while nudging the grocery cost down.';
+      return 'The same dish with easier steps and a lower grocery cost.';
     case 'Healthy':
-      return 'A lighter version with the same cozy scan-inspired idea.';
+      return 'A healthier version of the same dish from your scan.';
     case 'Restaurant Copy':
     default:
-      return 'A homemade restaurant-style version built from your scan.';
+      return 'A home version of the restaurant dish from your scan.';
   }
 }
 
@@ -1052,8 +1008,8 @@ function cleanDisplayText(value: string) {
   return value
     .replace(new RegExp(`\\b${commonTypo}\\b`, 'g'), 'American')
     .replace(new RegExp(`\\b${lowercaseTypo}\\b`, 'g'), 'american')
-    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
-    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
+    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'restaurant-style')
+    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'restaurant-style')
     .trim();
 }
 
@@ -1691,31 +1647,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
     width: 60,
   },
-  chipRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 14,
-    minWidth: 0,
-  },
-  infoChip: {
-    backgroundColor: recipeColors.cream,
-    borderRadius: 999,
-    flex: 1,
-    justifyContent: 'center',
-    minHeight: 42,
-    minWidth: 0,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  infoChipText: {
-    color: recipeColors.green,
-    fontFamily: fontFamilies.bold,
-    fontSize: 13,
-    fontWeight: '700',
-    includeFontPadding: false,
-    lineHeight: 18,
-    textAlign: 'center',
-  },
   standaloneScanPreview: {
     backgroundColor: recipeColors.cream,
     borderRadius: 24,
@@ -1872,7 +1803,7 @@ function getScanFailureCopy(failure: { rejectionType?: string; rejectionReason?:
   if (failure?.rejectionType === 'not_food') {
     return {
       title: 'Try a food photo.',
-      body: friendlyReason ?? 'Okyo needs a clear food photo to build a useful inspired-by recipe.',
+      body: friendlyReason ?? 'Okyo needs a clear food photo to build a useful recipe.',
     };
   }
 

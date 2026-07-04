@@ -793,9 +793,9 @@ function getCuisineLabel(recipe: Recipe) {
 function getModeLabel(mode: RecipeMode | string) {
   switch (mode) {
     case 'Budget':
-      return 'Budget';
+      return 'Easy Shortcut';
     case 'Healthy':
-      return 'Lighter';
+      return 'Healthier';
     case 'Restaurant Copy':
       return 'Restaurant Style';
     default:

@@ -4,12 +4,14 @@
 import { colors } from '../components/OkyoUI';
 import type { RecipeMode } from '../mocks';
 
+// Display labels only — internal RecipeMode values stay 'Budget' / 'Healthy' /
+// 'Restaurant Copy' for storage and API compatibility.
 export function getModeLabel(mode: RecipeMode): string {
   switch (mode) {
     case 'Budget':
-      return 'Budget';
+      return 'Easy Shortcut';
     case 'Healthy':
-      return 'Lighter';
+      return 'Healthier';
     case 'Restaurant Copy':
     default:
       return 'Restaurant Style';

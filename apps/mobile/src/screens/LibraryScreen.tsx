@@ -32,8 +32,8 @@ type LibraryFilter = 'recent' | 'restaurant' | 'budget' | 'lighter' | 'fast';
 const filters: Array<{ id: LibraryFilter; label: string }> = [
   { id: 'recent', label: 'Recent' },
   { id: 'restaurant', label: 'Restaurant Style' },
-  { id: 'budget', label: 'Budget' },
-  { id: 'lighter', label: 'Lighter' },
+  { id: 'budget', label: 'Easy Shortcut' },
+  { id: 'lighter', label: 'Healthier' },
   { id: 'fast', label: 'Fast meals' },
 ];
 
@@ -313,7 +313,7 @@ function SavedRecipeCard({
             </Pressable>
           </View>
           <Text numberOfLines={2} style={styles.recipeTitle}>{cleanDisplayText(recipe.title)}</Text>
-          <Text numberOfLines={1} style={styles.recipeSubtitle}>Inspired-by homemade version</Text>
+          <Text numberOfLines={1} style={styles.recipeSubtitle}>Your home version</Text>
           <View style={styles.recipeMetaRow}>
             <MetaChip icon={<Clock color={colors.charcoal} height={15} strokeWidth={2} width={15} />} label={`${getTotalTime(recipe)} min`} />
             <MetaChip icon={<Cutlery color={colors.charcoal} height={15} strokeWidth={2} width={15} />} label={getDifficulty(recipe)} />

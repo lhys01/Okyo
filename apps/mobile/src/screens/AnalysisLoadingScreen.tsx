@@ -25,6 +25,25 @@ const loadingSteps = [
   'Almost ready',
 ];
 
+// Seconds at which each loading step becomes active. Real scans regularly take
+// 20-60s on the free-tier model, so the sequence is paced to still feel alive
+// late in that window instead of hitting "Almost ready" after ~4 seconds.
+const loadingStepStartSeconds = [0, 5, 12, 22, 34];
+
+const stillWorkingSeconds = 10;
+const longScanSeconds = 26;
+
+function getLoadingStepIndex(elapsedSeconds: number) {
+  let stepIndex = 0;
+  for (let index = 0; index < loadingStepStartSeconds.length; index += 1) {
+    if (elapsedSeconds >= loadingStepStartSeconds[index]) {
+      stepIndex = index;
+    }
+  }
+
+  return stepIndex;
+}
+
 export function AnalysisLoadingScreen() {
   const navigation = useNavigation<AnalysisNavigation>();
   const route = useRoute<AnalysisRoute>();
@@ -37,15 +56,14 @@ export function AnalysisLoadingScreen() {
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const scanImageUri = getRealScanImageUri(selectedScanImage);
-  const [pulseIndex, setPulseIndex] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const pulseIndex = getLoadingStepIndex(elapsedSeconds);
   const didNavigate = useRef(false);
   const didTrackCompletion = useRef(false);
 
   useEffect(() => {
     uiLog('AnalysisLoadingScreen', 'enter');
     const pulse = setInterval(() => {
-      setPulseIndex((currentIndex) => Math.min(currentIndex + 1, loadingSteps.length - 1));
       setElapsedSeconds((currentSeconds) => currentSeconds + 1);
     }, 1000);
 
@@ -158,11 +176,15 @@ export function AnalysisLoadingScreen() {
           <Text style={styles.kicker}>SCANNING</Text>
           <Text style={styles.title}>Kiko is reading your plate…</Text>
           <Text style={styles.subtitle}>
-            Finding the homemade version. This can take a few seconds, and Okyo only shows a result it trusts.
+            Kiko is turning your scan into a home recipe. Okyo only shows a result it trusts.
           </Text>
-          {elapsedSeconds >= 8 ? (
+          {elapsedSeconds >= longScanSeconds ? (
             <Text style={styles.stillWorkingText}>
-              Still working on the photo. Clear food and drink scans can take a little longer.
+              Still working — complex plates take a bit more time.
+            </Text>
+          ) : elapsedSeconds >= stillWorkingSeconds ? (
+            <Text style={styles.stillWorkingText}>
+              Detailed plates can take a little longer.
             </Text>
           ) : null}
         </View>

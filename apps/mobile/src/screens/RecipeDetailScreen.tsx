@@ -34,6 +34,7 @@ import { OKYO_API_BASE_URL } from '../api/config';
 import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
+import { getFoodSafetyNote, TrustBadge } from '../components/TrustBadge';
 import { colors, fontFamilies } from '../components/OkyoUI';
 import {
   defaultScanResult,
@@ -47,6 +48,7 @@ import {
 } from '../mocks';
 import type { MainTabParamList, RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { getModeLabel } from '../utils/modeDisplay';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
@@ -158,6 +160,7 @@ export function RecipeDetailScreen() {
   const whyBullets = getWhyBullets(recipe, totalTime);
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
+  const foodSafetyNote = getFoodSafetyNote(`${recipe?.title ?? ''} ${recipe?.description ?? ''}`);
   const [coachingLoading, setCoachingLoading] = useState(false);
 
   useEffect(() => {
@@ -335,7 +338,7 @@ export function RecipeDetailScreen() {
             </Pressable>
             <View style={styles.inspiredPill}>
               <Spark color={colors.coral} height={18} strokeWidth={2.2} width={18} />
-              <Text style={styles.inspiredPillText}>Inspired by your restaurant meal</Text>
+              <Text style={styles.inspiredPillText}>Based on your scan</Text>
             </View>
           </FoodImage>
 
@@ -365,6 +368,8 @@ export function RecipeDetailScreen() {
             </View>
 
             <Text style={styles.description}>{displayDescription}</Text>
+
+            {foodSafetyNote ? <TrustBadge note={foodSafetyNote} /> : null}
 
             <View style={styles.modeSection}>
               <Text style={styles.sectionSmallTitle}>Choose your style</Text>
@@ -2236,6 +2241,10 @@ function getIngredientCount(recipe: Recipe | null) {
   return ingredients.length;
 }
 
+// Notes that add no flavor information — filtered out so the section stays
+// specific or hides entirely.
+const genericFlavorNotePattern = /^(home ?cooking|homemade|home version|comfort food|delicious|tasty|classic|easy|weeknight( dinner)?|dinner|lunch|meal)$/i;
+
 function getFlavorNotes(recipe: Recipe | null, pairings: string[]) {
   const notes = [
     ...pairings,
@@ -2244,7 +2253,8 @@ function getFlavorNotes(recipe: Recipe | null, pairings: string[]) {
   ]
     .map((value) => cleanDisplayText(value ?? ''))
     .flatMap((value) => value.split(',').map((part) => part.trim()))
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((note) => !genericFlavorNotePattern.test(note));
 
   return Array.from(new Set(notes)).slice(0, 4);
 }
@@ -2595,18 +2605,6 @@ function normalizeForMatching(value: string) {
     .trim();
 }
 
-function getModeLabel(mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return 'Budget';
-    case 'Healthy':
-      return 'Lighter';
-    case 'Restaurant Copy':
-    default:
-      return 'Restaurant Style';
-  }
-}
-
 function cleanDisplayText(value: string) {
   const commonTypo = `Amer${'cian'}`;
   const lowercaseTypo = `amer${'cian'}`;
@@ -2616,7 +2614,7 @@ function cleanDisplayText(value: string) {
   return value
     .replace(new RegExp(`\\b${commonTypo}\\b`, 'g'), 'American')
     .replace(new RegExp(`\\b${lowercaseTypo}\\b`, 'g'), 'american')
-    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
-    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
+    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'restaurant-style')
+    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'restaurant-style')
     .trim();
 }
