@@ -4,6 +4,7 @@ import {
   Bookmark,
   Camera,
   Cart,
+  Check,
   Clock,
   Cutlery,
   MoneySquare,
@@ -27,10 +28,11 @@ import { checkImageFileExists, getStorageLocation } from '../utils/imageValidati
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 type LibraryNavigation = NativeStackNavigationProp<RootStackParamList>;
-type LibraryFilter = 'recent' | 'restaurant' | 'budget' | 'lighter' | 'fast';
+type LibraryFilter = 'recent' | 'cooked' | 'restaurant' | 'budget' | 'lighter' | 'fast';
 
 const filters: Array<{ id: LibraryFilter; label: string }> = [
   { id: 'recent', label: 'Recent' },
+  { id: 'cooked', label: 'Cooked before' },
   { id: 'restaurant', label: 'Restaurant Style' },
   { id: 'budget', label: 'Easy Shortcut' },
   { id: 'lighter', label: 'Healthier' },
@@ -59,7 +61,7 @@ export function LibraryScreen() {
     [activeFilter, searchQuery, sortedRecipes],
   );
   const totalHomemadeEstimate = safeSavedRecipes.reduce((total, recipe) => total + getFiniteNumber(recipe.estimatedHomemadeCost), 0);
-  const easyMeals = safeSavedRecipes.filter((recipe) => getDifficulty(recipe) === 'Easy').length;
+  const cookedMeals = safeSavedRecipes.reduce((total, recipe) => total + getCookedCount(recipe), 0);
 
   useEffect(() => {
     if (didTrackMalformedData.current || malformedRecipeCount === 0) {
@@ -179,8 +181,8 @@ export function LibraryScreen() {
         </View>
         <View style={styles.heroStats}>
           <HeroStat icon={<Bookmark color={colors.coral} height={18} strokeWidth={2} width={18} />} value={safeSavedRecipes.length.toString()} label="saved" />
+          <HeroStat icon={<Check color={colors.green} height={18} strokeWidth={2.2} width={18} />} value={cookedMeals.toString()} label="cooked" />
           <HeroStat icon={<MoneySquare color={colors.green} height={18} strokeWidth={2} width={18} />} value={formatCurrency(totalHomemadeEstimate)} label="home est." />
-          <HeroStat icon={<Clock color="#d8800b" height={18} strokeWidth={2} width={18} />} value={easyMeals.toString()} label="easy" />
         </View>
       </View>
 
@@ -313,7 +315,9 @@ function SavedRecipeCard({
             </Pressable>
           </View>
           <Text numberOfLines={2} style={styles.recipeTitle}>{cleanDisplayText(recipe.title)}</Text>
-          <Text numberOfLines={1} style={styles.recipeSubtitle}>Your home version</Text>
+          <Text numberOfLines={1} style={styles.recipeSubtitle}>
+            {getCookedCount(recipe) > 0 ? formatCookedCount(getCookedCount(recipe)) : 'Your home version'}
+          </Text>
           <View style={styles.recipeMetaRow}>
             <MetaChip icon={<Clock color={colors.charcoal} height={15} strokeWidth={2} width={15} />} label={`${getTotalTime(recipe)} min`} />
             <MetaChip icon={<Cutlery color={colors.charcoal} height={15} strokeWidth={2} width={15} />} label={getDifficulty(recipe)} />
@@ -384,6 +388,8 @@ function filterRecipes(recipes: Recipe[], activeFilter: LibraryFilter, searchQue
     }
 
     switch (activeFilter) {
+      case 'cooked':
+        return getCookedCount(recipe) > 0;
       case 'restaurant':
         return recipe.mode === 'Restaurant Copy';
       case 'budget':
@@ -435,6 +441,16 @@ function getTotalTime(recipe: Recipe) {
 
 function getDifficulty(recipe: Recipe) {
   return recipe.skillLevel ?? recipe.difficulty ?? 'Easy';
+}
+
+function getCookedCount(recipe: Recipe) {
+  return typeof recipe.cookedCount === 'number' && Number.isFinite(recipe.cookedCount)
+    ? Math.max(0, recipe.cookedCount)
+    : 0;
+}
+
+function formatCookedCount(count: number) {
+  return `Cooked ${count} ${count === 1 ? 'time' : 'times'}`;
 }
 
 function getFiniteNumber(value: unknown) {

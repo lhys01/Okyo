@@ -126,6 +126,7 @@ type OkyoState = {
   setLatestAiDebugMetadata: (metadata: AiDebugMetadata | null) => void;
   setSelectedMode: (mode: RecipeMode) => void;
   saveRecipe: (recipe: Recipe) => void;
+  markRecipeCooked: (recipe: Recipe) => void;
   removeSavedRecipe: (recipeId: string) => void;
   completeChallenge: (challenge: CompletedChallenge) => void;
   incrementMoneySaved: (amount: number) => void;
@@ -295,21 +296,55 @@ export const useOkyoStore = create<OkyoState>()(
       saveRecipe: (recipe) =>
         set((state) => {
           const existingRecipe = state.savedRecipes.find((savedRecipe) => savedRecipe.id === recipe.id);
+          const now = new Date().toISOString();
           if (!existingRecipe) {
-            return { savedRecipes: [...state.savedRecipes, recipe] };
+            return { savedRecipes: [...state.savedRecipes, { ...recipe, savedAt: recipe.savedAt ?? now }] };
           }
 
           const realRecipeImageUri = getRecipeRealImageUri(recipe);
-          if (!realRecipeImageUri) {
-            return { savedRecipes: state.savedRecipes };
-          }
 
           return {
             savedRecipes: state.savedRecipes.map((savedRecipe) =>
               savedRecipe.id === recipe.id
-                ? attachRecipeImageUri(savedRecipe, realRecipeImageUri)
+                ? mergeSavedRecipe(savedRecipe, recipe, realRecipeImageUri)
                 : savedRecipe,
             ),
+          };
+        }),
+      markRecipeCooked: (recipe) =>
+        set((state) => {
+          const existingRecipe = state.savedRecipes.find((savedRecipe) => savedRecipe.id === recipe.id);
+          const now = new Date().toISOString();
+          const realRecipeImageUri = getRecipeRealImageUri(recipe);
+          if (!existingRecipe) {
+            const nextRecipe = realRecipeImageUri ? attachRecipeImageUri(recipe, realRecipeImageUri) : recipe;
+            return {
+              savedRecipes: [
+                ...state.savedRecipes,
+                {
+                  ...nextRecipe,
+                  savedAt: nextRecipe.savedAt ?? now,
+                  cookedCount: 1,
+                  lastCookedAt: now,
+                },
+              ],
+            };
+          }
+
+          return {
+            savedRecipes: state.savedRecipes.map((savedRecipe) => {
+              if (savedRecipe.id !== recipe.id) {
+                return savedRecipe;
+              }
+
+              const mergedRecipe = mergeSavedRecipe(savedRecipe, recipe, realRecipeImageUri);
+              return {
+                ...mergedRecipe,
+                cookedCount: getSavedCookedCount(mergedRecipe) + 1,
+                lastCookedAt: now,
+                savedAt: mergedRecipe.savedAt ?? now,
+              };
+            }),
           };
         }),
       removeSavedRecipe: (recipeId) => {
@@ -472,6 +507,24 @@ function attachRecipeImageUri(recipe: Recipe, imageUri: string): Recipe {
     imageUri,
     imageUrl: imageUri,
   };
+}
+
+function mergeSavedRecipe(existingRecipe: Recipe, incomingRecipe: Recipe, imageUri: string | null): Recipe {
+  const mergedRecipe = {
+    ...existingRecipe,
+    ...incomingRecipe,
+    savedAt: existingRecipe.savedAt ?? incomingRecipe.savedAt,
+    cookedCount: existingRecipe.cookedCount ?? incomingRecipe.cookedCount,
+    lastCookedAt: existingRecipe.lastCookedAt ?? incomingRecipe.lastCookedAt,
+  };
+
+  return imageUri ? attachRecipeImageUri(mergedRecipe, imageUri) : mergedRecipe;
+}
+
+function getSavedCookedCount(recipe: Recipe) {
+  return typeof recipe.cookedCount === 'number' && Number.isFinite(recipe.cookedCount)
+    ? Math.max(0, recipe.cookedCount)
+    : 0;
 }
 
 function getRecipeRealImageUri(recipe: Recipe) {

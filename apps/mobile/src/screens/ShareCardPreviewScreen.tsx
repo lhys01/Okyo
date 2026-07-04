@@ -10,7 +10,7 @@ import {
   Clock,
   Crown,
   Cutlery,
-  FireFlame,
+  MoneySquare,
   NavArrowLeft,
   ShareAndroid,
   Spark,
@@ -44,10 +44,13 @@ import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 type ShareCardRoute = RouteProp<RootStackParamList, 'ShareCardPreviewScreen'>;
 type ShareCardNavigation = NativeStackNavigationProp<RootStackParamList, 'ShareCardPreviewScreen'>;
+type SharePricingState = 'restaurant_price' | 'challenge_savings' | 'home_estimate';
 type ShareCardData = {
   cardType: ShareCardType;
   dishName: string;
   eyebrow: string;
+  flexLine: string;
+  pricingState: SharePricingState;
   restaurantPrice: number;
   homemadeCost: number;
   estimatedSavings: number;
@@ -106,7 +109,6 @@ export function ShareCardPreviewScreen() {
     selectedPack.dishes.find((dish) => dish.id === route.params?.dishId) ??
     selectedPack.dishes[0];
   const cardRecipe = recipe ?? getSafeRecipeForMode(selectedMode);
-  const fallbackScanResult = scanResult ?? defaultScanResult;
   const hasScanShareContext = Boolean(
     cardType !== 'scan_result' ||
     recipe ||
@@ -117,14 +119,25 @@ export function ShareCardPreviewScreen() {
 
   const cardData = useMemo<ShareCardData>(() => {
     const scanDishName = scanResult?.dishName ?? recipe?.title ?? cardRecipe.title;
-    const scanRestaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
-    const scanHomemadeCost = recipe?.estimatedHomemadeCost ?? scanResult?.homemadeCost ?? cardRecipe.estimatedHomemadeCost;
-    const scanEstimatedSavings = recipe?.estimatedSavings ?? scanResult?.estimatedSavings ?? cardRecipe.estimatedSavings;
+    const scanRestaurantPrice = getPositiveNumber(scanResult?.restaurantPrice);
+    const scanHomemadeCost = getPositiveNumber(recipe?.estimatedHomemadeCost) ||
+      getPositiveNumber(scanResult?.homemadeCost) ||
+      getPositiveNumber(cardRecipe.estimatedHomemadeCost);
+    const scanEstimatedSavings = scanRestaurantPrice > 0
+      ? getPositiveNumber(scanResult?.estimatedSavings) || Math.max(0, scanRestaurantPrice - scanHomemadeCost)
+      : 0;
+    const packRestaurantPrice = getPositiveNumber(packDish?.restaurantPrice);
+    const packHomemadeCost = getPositiveNumber(packDish?.homemadeCost);
+    const challengeSavings = getPositiveNumber(latestChallenge?.moneySaved);
 
     const dataByType: Record<ShareCardType, Omit<ShareCardData, 'caption'>> = {
       scan_result: {
         cardType: 'scan_result',
         eyebrow: 'Restaurant-style swap',
+        flexLine: scanRestaurantPrice > 0
+          ? 'I remade this restaurant meal at home.'
+          : 'Restaurant food, home-cooked.',
+        pricingState: scanRestaurantPrice > 0 ? 'restaurant_price' : 'home_estimate',
         dishName: scanDishName,
         restaurantPrice: scanRestaurantPrice,
         homemadeCost: scanHomemadeCost,
@@ -138,13 +151,15 @@ export function ShareCardPreviewScreen() {
       challenge_result: {
         cardType: 'challenge_result',
         eyebrow: 'Challenge complete',
-        dishName: latestChallenge?.recipeTitle ?? fallbackScanResult.dishName,
-        restaurantPrice: fallbackScanResult.restaurantPrice,
-        homemadeCost: cardRecipe.estimatedHomemadeCost,
-        estimatedSavings: latestChallenge?.moneySaved ?? cardRecipe.estimatedSavings,
+        dishName: latestChallenge?.recipeTitle ?? cardRecipe.title,
+        flexLine: 'Restaurant food, home-cooked.',
+        pricingState: challengeSavings > 0 ? 'challenge_savings' : 'home_estimate',
+        restaurantPrice: 0,
+        homemadeCost: getPositiveNumber(cardRecipe.estimatedHomemadeCost),
+        estimatedSavings: challengeSavings,
         selectedMode: latestChallenge?.mode ?? selectedMode,
         recipe: cardRecipe,
-        scanResult: fallbackScanResult,
+        scanResult,
         imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
@@ -152,25 +167,29 @@ export function ShareCardPreviewScreen() {
         cardType: 'ranking',
         eyebrow: topLeaderboardEntry.category,
         dishName: topLeaderboardEntry.displayName,
-        restaurantPrice: fallbackScanResult.restaurantPrice,
-        homemadeCost: cardRecipe.estimatedHomemadeCost,
-        estimatedSavings: cardRecipe.estimatedSavings,
+        flexLine: 'Restaurant food, home-cooked.',
+        pricingState: 'home_estimate',
+        restaurantPrice: 0,
+        homemadeCost: getPositiveNumber(cardRecipe.estimatedHomemadeCost),
+        estimatedSavings: 0,
         selectedMode: topLeaderboardEntry.value,
         recipe: cardRecipe,
-        scanResult: fallbackScanResult,
+        scanResult,
         imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
       badge: {
         cardType: 'badge',
         eyebrow: unlockedBadge.name,
-        dishName: fallbackScanResult.dishName,
-        restaurantPrice: fallbackScanResult.restaurantPrice,
-        homemadeCost: cardRecipe.estimatedHomemadeCost,
-        estimatedSavings: cardRecipe.estimatedSavings,
+        dishName: recipe?.title ?? cardRecipe.title,
+        flexLine: 'Restaurant food, home-cooked.',
+        pricingState: 'home_estimate',
+        restaurantPrice: 0,
+        homemadeCost: getPositiveNumber(cardRecipe.estimatedHomemadeCost),
+        estimatedSavings: 0,
         selectedMode,
         recipe: cardRecipe,
-        scanResult: fallbackScanResult,
+        scanResult,
         imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
@@ -178,12 +197,16 @@ export function ShareCardPreviewScreen() {
         cardType: 'restaurant_pack',
         eyebrow: selectedPack.name,
         dishName: packDish?.dishName ?? selectedPack.name,
-        restaurantPrice: packDish?.restaurantPrice ?? 0,
-        homemadeCost: packDish?.homemadeCost ?? 0,
-        estimatedSavings: packDish?.estimatedSavings ?? 0,
+        flexLine: 'I remade this restaurant meal at home.',
+        pricingState: packRestaurantPrice > 0 ? 'restaurant_price' : 'home_estimate',
+        restaurantPrice: packRestaurantPrice,
+        homemadeCost: packHomemadeCost,
+        estimatedSavings: packRestaurantPrice > 0
+          ? getPositiveNumber(packDish?.estimatedSavings) || Math.max(0, packRestaurantPrice - packHomemadeCost)
+          : 0,
         selectedMode: packDish?.difficulty ?? 'Pack',
         recipe: cardRecipe,
-        scanResult: fallbackScanResult,
+        scanResult,
         imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
@@ -197,7 +220,6 @@ export function ShareCardPreviewScreen() {
   }, [
     cardRecipe,
     cardType,
-    fallbackScanResult,
     latestChallenge?.mode,
     latestChallenge?.moneySaved,
     latestChallenge?.recipeTitle,
@@ -210,13 +232,14 @@ export function ShareCardPreviewScreen() {
     scanResult,
     selectedMode,
     selectedPack.name,
+    shareImage?.placeholder,
     shareImage?.uri,
     topLeaderboardEntry.category,
     topLeaderboardEntry.displayName,
     topLeaderboardEntry.value,
     unlockedBadge.name,
   ]);
-  const shareStats = useMemo(() => getShareStats(cardData.recipe), [cardData.recipe]);
+  const shareStats = useMemo(() => getShareStats(cardData), [cardData]);
   const didTrackGenerated = useRef(false);
   const cardRef = useRef<View | null>(null);
 
@@ -375,31 +398,32 @@ export function ShareCardPreviewScreen() {
       <View style={styles.previewIntro}>
         <Text style={styles.previewKicker}>{cardData.eyebrow}</Text>
         <Text style={styles.previewTitle}>Share preview</Text>
-        <Text style={styles.previewBody}>A post-ready card built from this Okyo recipe and your scan data.</Text>
+        <Text style={styles.previewBody}>A post-ready card built from this Okyo recipe.</Text>
       </View>
 
       <View style={styles.cardShell}>
         <View ref={cardRef} collapsable={false} style={styles.shareCard}>
-          <Text adjustsFontSizeToFit minimumFontScale={0.62} numberOfLines={2} style={styles.cardTitle}>
-            {cleanDisplayText(cardData.dishName)}
-          </Text>
-          <View style={styles.remadeRow}>
-            <View style={styles.remadeLine} />
-            <Text style={styles.remadeText}>remade at home</Text>
-            <View style={styles.remadeLine} />
-          </View>
-
           <PhotoBlock
             dishName={cardData.dishName}
             imageUri={cardData.imageUri}
             homemadeImageUri={cardData.homemadeImageUri}
           />
-
-          <View style={styles.transformPill}>
-            <Text style={styles.transformText}>Restaurant</Text>
-            <ArrowRight color={colors.coral} height={24} strokeWidth={2.4} width={24} />
-            <Text style={styles.transformText}>Homemade</Text>
+          <Text adjustsFontSizeToFit minimumFontScale={0.62} numberOfLines={2} style={styles.cardTitle}>
+            {cleanDisplayText(cardData.dishName)}
+          </Text>
+          <View style={styles.flexLineRow}>
+            <View style={styles.remadeLine} />
+            <Text style={styles.remadeText}>{cardData.flexLine}</Text>
+            <View style={styles.remadeLine} />
           </View>
+
+          {cardData.pricingState === 'restaurant_price' ? (
+            <View style={styles.transformPill}>
+              <Text style={styles.transformText}>Restaurant</Text>
+              <ArrowRight color={colors.coral} height={24} strokeWidth={2.4} width={24} />
+              <Text style={styles.transformText}>Homemade</Text>
+            </View>
+          ) : null}
 
           <View style={styles.statGrid}>
             {shareStats.map((stat) => (
@@ -416,21 +440,7 @@ export function ShareCardPreviewScreen() {
         </View>
       </View>
 
-      <View style={styles.priceSummary}>
-        <View style={styles.priceColumn}>
-          <Text style={styles.priceLabel}>Restaurant estimate</Text>
-          <Text style={styles.priceValue}>{formatCurrency(cardData.restaurantPrice)}</Text>
-        </View>
-        <ArrowRight color={colors.green} height={22} strokeWidth={2.4} width={22} />
-        <View style={styles.priceColumn}>
-          <Text style={styles.priceLabel}>Home estimate</Text>
-          <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
-        </View>
-        <View style={styles.savingsPill}>
-          <Text style={styles.savingsPillLabel}>Saved</Text>
-          <Text style={styles.savingsPillValue}>{formatCurrency(cardData.estimatedSavings)}</Text>
-        </View>
-      </View>
+      <PriceSummary cardData={cardData} />
 
       <View style={styles.actions}>
         <PrimaryAction icon={<ShareAndroid color="#fffdf8" height={21} strokeWidth={2.2} width={21} />} label="Share Image" onPress={shareCard} />
@@ -520,6 +530,61 @@ function ShareStat({ stat }: { stat: ShareStatData }) {
   );
 }
 
+function PriceSummary({ cardData }: { cardData: ShareCardData }) {
+  if (cardData.pricingState === 'restaurant_price') {
+    return (
+      <View style={styles.priceSummary}>
+        <View style={styles.priceColumn}>
+          <Text style={styles.priceLabel}>Restaurant</Text>
+          <Text style={styles.priceValue}>{formatCurrency(cardData.restaurantPrice)}</Text>
+        </View>
+        <ArrowRight color={colors.green} height={22} strokeWidth={2.4} width={22} />
+        <View style={styles.priceColumn}>
+          <Text style={styles.priceLabel}>Home estimate</Text>
+          <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
+        </View>
+        <View style={styles.savingsPill}>
+          <Text style={styles.savingsPillLabel}>Saved</Text>
+          <Text style={styles.savingsPillValue}>{formatCurrency(cardData.estimatedSavings)}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (cardData.pricingState === 'challenge_savings') {
+    return (
+      <View style={styles.priceSummary}>
+        <View style={styles.priceColumnWide}>
+          <Text style={styles.priceLabel}>Logged estimated savings</Text>
+          <Text style={styles.priceValue}>{formatCurrency(cardData.estimatedSavings)}</Text>
+        </View>
+        <View style={styles.savingsPill}>
+          <Text style={styles.savingsPillLabel}>Cooked</Text>
+          <Text style={styles.savingsPillValue}>At home</Text>
+        </View>
+      </View>
+    );
+  }
+
+  const totalTime = getTotalTime(cardData.recipe);
+  return (
+    <View style={styles.priceSummary}>
+      <View style={styles.priceColumn}>
+        <Text style={styles.priceLabel}>Home estimate</Text>
+        <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
+      </View>
+      <View style={styles.priceColumn}>
+        <Text style={styles.priceLabel}>Ready in</Text>
+        <Text style={styles.priceValue}>{totalTime > 0 ? formatDuration(totalTime) : 'Flexible'}</Text>
+      </View>
+      <View style={styles.savingsPill}>
+        <Text style={styles.savingsPillLabel}>Style</Text>
+        <Text style={styles.savingsPillValue}>{getModeLabel(cardData.selectedMode)}</Text>
+      </View>
+    </View>
+  );
+}
+
 function PrimaryAction({ icon, label, onPress }: { icon: ReactNode; label: string; onPress: () => void }) {
   return (
     <Pressable
@@ -572,8 +637,18 @@ function getSafeCardType(cardType: unknown): ShareCardType {
 function buildCaption(data: Omit<ShareCardData, 'caption'>) {
   const dishName = cleanDisplayText(data.dishName);
   const modeLabel = typeof data.selectedMode === 'string' ? getModeLabel(data.selectedMode) : String(data.selectedMode);
+  const totalTime = getTotalTime(data.recipe);
 
-  return `${dishName} remade at home with Okyo. Restaurant estimate ${formatCurrency(data.restaurantPrice)} -> home estimate ${formatCurrency(data.homemadeCost)}. Saved about ${formatCurrency(data.estimatedSavings)} with a ${modeLabel} homemade version. Made with Okyo.`;
+  if (data.pricingState === 'restaurant_price') {
+    return `${dishName} remade at home with Okyo. Restaurant ${formatCurrency(data.restaurantPrice)} -> home estimate ${formatCurrency(data.homemadeCost)}. Saved about ${formatCurrency(data.estimatedSavings)} with a ${modeLabel} version. Made with Okyo.`;
+  }
+
+  if (data.pricingState === 'challenge_savings') {
+    return `${dishName} cooked at home with Okyo. Logged about ${formatCurrency(data.estimatedSavings)} in estimated savings from a ${modeLabel} cooking win. Made with Okyo.`;
+  }
+
+  const timeText = totalTime > 0 ? ` Ready in about ${formatDuration(totalTime)}.` : '';
+  return `${dishName} cooked at home with Okyo. Home estimate ${formatCurrency(data.homemadeCost)}.${timeText} ${modeLabel} style. Made with Okyo.`;
 }
 
 function getShareRecipe(
@@ -601,19 +676,50 @@ type ShareStatData = {
   icon: ReactNode;
 };
 
-function getShareStats(recipe: Recipe): ShareStatData[] {
+function getShareStats(data: ShareCardData): ShareStatData[] {
+  const recipe = data.recipe;
   const totalTime = getTotalTime(recipe);
   const stepsCount = getStepCount(recipe);
-  const difficultyLabel = getShareDifficulty(recipe.difficulty);
-  const rarity = getRarity(recipe);
+  const stats: ShareStatData[] = [];
 
-  return [
-    {
-      label: 'Cuisine',
-      value: getCuisineLabel(recipe),
-      strength: 76,
-      icon: <Cutlery color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
+  if (data.pricingState === 'restaurant_price') {
+    stats.push(
+      {
+        label: 'Restaurant',
+        value: formatCurrency(data.restaurantPrice),
+        strength: 86,
+        icon: <MoneySquare color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
+      },
+      {
+        label: 'Home',
+        value: formatCurrency(data.homemadeCost),
+        strength: 62,
+        icon: <Cutlery color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
+      },
+      {
+        label: 'Saved',
+        value: formatCurrency(data.estimatedSavings),
+        strength: 92,
+        icon: <Spark color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
+      },
+    );
+  } else if (data.pricingState === 'challenge_savings') {
+    stats.push({
+      label: 'Logged saved',
+      value: formatCurrency(data.estimatedSavings),
+      strength: 88,
+      icon: <MoneySquare color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
+    });
+  } else {
+    stats.push({
+      label: 'Home est.',
+      value: formatCurrency(data.homemadeCost),
+      strength: 70,
+      icon: <MoneySquare color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
+    });
+  }
+
+  stats.push(
     {
       label: 'Time',
       value: totalTime > 0 ? formatDuration(totalTime) : 'Flexible',
@@ -621,34 +727,36 @@ function getShareStats(recipe: Recipe): ShareStatData[] {
       icon: <Clock color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
     {
-      label: 'Steps',
-      value: stepsCount > 0 ? `${stepsCount} step${stepsCount === 1 ? '' : 's'}` : 'Recipe plan',
-      strength: Math.min(92, 35 + stepsCount * 8),
-      icon: <TaskList color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-    {
       label: 'Difficulty',
-      value: difficultyLabel,
+      value: getShareDifficulty(recipe.difficulty),
       strength: getDifficultyStrength(recipe.difficulty),
       icon: <Crown color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
     {
-      label: 'Streak',
-      value: 'Start streak',
-      strength: 38,
-      icon: <FireFlame color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
+      label: 'Style',
+      value: getModeLabel(data.selectedMode),
+      strength: 72,
+      icon: <Cutlery color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
-    {
-      label: 'Rarity',
-      value: rarity,
-      strength: getRarityStrength(rarity),
-      icon: <Spark color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-  ];
-}
+  );
 
-function getEstimatedRestaurantPrice(recipe: Recipe | null) {
-  return recipe ? getFiniteNumber(recipe.estimatedHomemadeCost) + getFiniteNumber(recipe.estimatedSavings) : 0;
+  if (recipe.servings > 0 && stats.length < 6) {
+    stats.push({
+      label: 'Servings',
+      value: `${recipe.servings}`,
+      strength: Math.min(88, 36 + recipe.servings * 8),
+      icon: <TaskList color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
+    });
+  } else if (stepsCount > 0 && stats.length < 6) {
+    stats.push({
+      label: 'Steps',
+      value: `${stepsCount} step${stepsCount === 1 ? '' : 's'}`,
+      strength: Math.min(92, 35 + stepsCount * 8),
+      icon: <TaskList color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
+    });
+  }
+
+  return stats.slice(0, 6);
 }
 
 function getTotalTime(recipe: Recipe) {
@@ -693,101 +801,12 @@ function getDifficultyStrength(difficulty: Difficulty) {
   }
 }
 
-function getRarity(recipe: Recipe) {
-  const totalTime = getTotalTime(recipe);
-  const stepsCount = getStepCount(recipe);
-  let score = 0;
-
-  if (recipe.difficulty === 'Hard') {
-    score += 3;
-  } else if (recipe.difficulty === 'Medium') {
-    score += 2;
-  } else {
-    score += 1;
-  }
-  if (totalTime >= 180) {
-    score += 3;
-  } else if (totalTime >= 75) {
-    score += 2;
-  } else if (totalTime >= 35) {
-    score += 1;
-  }
-  if (stepsCount >= 10) {
-    score += 2;
-  } else if (stepsCount >= 6) {
-    score += 1;
-  }
-
-  if (score >= 8) {
-    return 'Mythical';
-  }
-  if (score >= 7) {
-    return 'Legendary';
-  }
-  if (score >= 6) {
-    return 'Epic';
-  }
-  if (score >= 4) {
-    return 'Rare';
-  }
-  if (score >= 3) {
-    return 'Uncommon';
-  }
-  return 'Common';
-}
-
-function getRarityStrength(rarity: string) {
-  switch (rarity) {
-    case 'Mythical':
-      return 96;
-    case 'Legendary':
-      return 88;
-    case 'Epic':
-      return 76;
-    case 'Rare':
-      return 64;
-    case 'Uncommon':
-      return 52;
-    case 'Common':
-    default:
-      return 38;
-  }
-}
-
 function getTimeStrength(totalTime: number) {
   if (totalTime <= 0) {
     return 42;
   }
 
   return Math.min(92, Math.max(34, 30 + totalTime / 2));
-}
-
-function getCuisineLabel(recipe: Recipe) {
-  const text = `${recipe.title} ${recipe.description} ${recipe.mainIngredientsSummary ?? ''}`.toLowerCase();
-
-  if (/(sushi|katsu|ramen|teriyaki|udon|miso)/.test(text)) {
-    return 'Japanese';
-  }
-  if (/(taco|burrito|quesadilla|enchilada|salsa)/.test(text)) {
-    return 'Mexican';
-  }
-  if (/(pasta|rigatoni|pizza|parmesan|gnocchi|alfredo)/.test(text)) {
-    return 'Italian';
-  }
-  if (/(burger|sandwich|bbq|mac and cheese|fries)/.test(text)) {
-    return 'American';
-  }
-  if (/(curry|masala|paneer|naan)/.test(text)) {
-    return 'Indian';
-  }
-  if (/(pho|banh mi|lemongrass)/.test(text)) {
-    return 'Vietnamese';
-  }
-  if (/(noodle|dumpling|fried rice|chow)/.test(text)) {
-    return 'Asian-inspired';
-  }
-
-  return 'Home Style';
 }
 
 function getModeLabel(mode: RecipeMode | string) {
@@ -819,6 +838,10 @@ function getHomemadeImageUri(recipe: Recipe) {
 
 function getFiniteNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function getPositiveNumber(value: unknown) {
+  return Math.max(0, getFiniteNumber(value));
 }
 
 function cleanDisplayText(value: string) {
@@ -924,7 +947,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0,
     lineHeight: 30,
+    marginTop: 12,
     textAlign: 'center',
+  },
+  flexLineRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    marginTop: 8,
   },
   remadeRow: {
     alignItems: 'center',
@@ -941,16 +972,16 @@ const styles = StyleSheet.create({
   },
   remadeText: {
     color: '#6e755a',
+    flexShrink: 1,
     fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
+    lineHeight: 16,
+    textAlign: 'center',
   },
   comparisonBlock: {
-    aspectRatio: 1.82,
+    aspectRatio: 1.18,
     borderRadius: 18,
     flexDirection: 'row',
-    marginTop: 12,
     overflow: 'hidden',
   },
   comparisonImageLeft: {
@@ -964,10 +995,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   singlePhotoBlock: {
-    aspectRatio: 1.82,
+    aspectRatio: 1.18,
     backgroundColor: colors.cream,
     borderRadius: 18,
-    marginTop: 12,
     overflow: 'hidden',
   },
   singlePhoto: {
@@ -976,11 +1006,10 @@ const styles = StyleSheet.create({
   },
   photoArt: {
     alignItems: 'center',
-    aspectRatio: 1.82,
+    aspectRatio: 1.18,
     backgroundColor: '#fff1df',
     borderRadius: 18,
     justifyContent: 'center',
-    marginTop: 12,
     padding: 14,
   },
   photoInitials: {
@@ -1002,7 +1031,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     flexDirection: 'row',
     gap: 8,
-    marginTop: -18,
+    marginTop: 10,
     minHeight: 38,
     paddingHorizontal: 12,
   },
@@ -1105,6 +1134,10 @@ const styles = StyleSheet.create({
   priceColumn: {
     flex: 1,
     minWidth: 92,
+  },
+  priceColumnWide: {
+    flex: 1,
+    minWidth: 150,
   },
   priceLabel: {
     color: colors.body,

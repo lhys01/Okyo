@@ -259,7 +259,7 @@ export function HomeScreen() {
                 <View style={styles.timelineCopy}>
                   <Text numberOfLines={2} style={styles.timelineTitle}>{recipe.title}</Text>
                   <Text style={styles.timelineMeta}>
-                    {getModeLabel(getSafeRecipeMode(recipe.mode))} · saved about {formatCurrency(recipe.estimatedSavings)}
+                    {getSavedRecipeMeta(recipe)}
                   </Text>
                 </View>
                 <NavArrowRight color={colors.muted} height={20} strokeWidth={2} width={20} />
@@ -323,6 +323,54 @@ function getHomeMoment(date = new Date()): HomeMoment {
 
 function getStablePhrase(phrases: string[], date: Date) {
   return phrases[(date.getDate() + date.getHours()) % phrases.length] ?? phrases[0];
+}
+
+function getSavedRecipeMeta(recipe: Recipe) {
+  const cookedCount = getCookedCount(recipe);
+  const totalTime = getTotalTime(recipe);
+  const homeEstimate = typeof recipe.estimatedHomemadeCost === 'number' && Number.isFinite(recipe.estimatedHomemadeCost)
+    ? recipe.estimatedHomemadeCost
+    : 0;
+  const parts = [getModeLabel(getSafeRecipeMode(recipe.mode))];
+
+  if (cookedCount > 0) {
+    parts.push(formatCookedCount(cookedCount));
+  } else if (totalTime > 0) {
+    parts.push(`${totalTime} min`);
+  }
+
+  if (homeEstimate > 0) {
+    parts.push(`home est. ${formatCurrency(homeEstimate)}`);
+  }
+
+  return parts.join(' · ');
+}
+
+function getCookedCount(recipe: Recipe) {
+  return typeof recipe.cookedCount === 'number' && Number.isFinite(recipe.cookedCount)
+    ? Math.max(0, recipe.cookedCount)
+    : 0;
+}
+
+function formatCookedCount(count: number) {
+  return `cooked ${count} ${count === 1 ? 'time' : 'times'}`;
+}
+
+function getTotalTime(recipe: Recipe) {
+  const total = typeof recipe.totalTimeMinutes === 'number' && Number.isFinite(recipe.totalTimeMinutes)
+    ? recipe.totalTimeMinutes
+    : 0;
+  if (total > 0) {
+    return total;
+  }
+
+  const prep = typeof recipe.prepTimeMinutes === 'number' && Number.isFinite(recipe.prepTimeMinutes)
+    ? recipe.prepTimeMinutes
+    : 0;
+  const cook = typeof recipe.cookTimeMinutes === 'number' && Number.isFinite(recipe.cookTimeMinutes)
+    ? recipe.cookTimeMinutes
+    : 0;
+  return prep + cook;
 }
 
 type RecommendationRef = {

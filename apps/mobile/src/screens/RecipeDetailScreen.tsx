@@ -19,7 +19,7 @@ import {
   User,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -124,6 +124,7 @@ export function RecipeDetailScreen() {
   const setStoreSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
+  const markRecipeCooked = useOkyoStore((state) => state.markRecipeCooked);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
@@ -136,8 +137,10 @@ export function RecipeDetailScreen() {
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
   const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
+  const savedRecipe = recipe ? savedRecipes.find((savedRecipeItem) => savedRecipeItem.id === recipe.id) ?? null : null;
+  const cookedCount = getRecipeCookedCount(savedRecipe ?? recipe);
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
-  const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
+  const restaurantPrice = scanResult?.restaurantPrice ?? 0;
   const canShowSavings = restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
   const availableModes = scanResult?.modes ?? getAvailableModes(latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, isDemoScan);
   const spicePairings = getSafeTextList(recipe?.spicePairings);
@@ -237,6 +240,21 @@ export function RecipeDetailScreen() {
       screen: 'RecipeDetailScreen',
     });
     Alert.alert('Saved', `${cleanDisplayText(recipe.title)} was added to your library.`);
+  };
+
+  const markSelectedRecipeCooked = () => {
+    if (!recipe) {
+      return;
+    }
+
+    const alreadySaved = Boolean(savedRecipe);
+    uiLog('RecipeDetailScreen', 'mark_cooked', { recipeId: recipe.id });
+    markRecipeCooked(attachRealScanImage(recipe, selectedScanImage));
+    if (!alreadySaved) {
+      awardXPOnce(`save-recipe-${recipe.id}`, 5);
+      unlockBadge('first-dupe');
+    }
+    Alert.alert('Cooked', `${cleanDisplayText(recipe.title)} is logged as cooked.`);
   };
 
   const openShareRecipe = () => {
@@ -359,6 +377,12 @@ export function RecipeDetailScreen() {
                   : `Home est. ${formatCurrency(recipe.estimatedHomemadeCost)}`}
               </Text>
             </View>
+            {cookedCount > 0 ? (
+              <View style={styles.cookedMiniPill}>
+                <Check color={colors.green} height={15} strokeWidth={2.2} width={15} />
+                <Text style={styles.cookedMiniText}>{formatCookedCount(cookedCount)}</Text>
+              </View>
+            ) : null}
 
             <View style={styles.quickStatsRow}>
               <QuickStat label="Total Time" value={`${totalTime} min`} icon={<Clock color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
@@ -476,6 +500,22 @@ export function RecipeDetailScreen() {
             </View>
 
             <PrimaryAction label={coachingLoading ? 'Preparing...' : 'Start Cooking'} onPress={openCookingSteps} />
+            <View style={styles.cookedActionCard}>
+              <View style={styles.cookedActionCopy}>
+                <Text style={styles.cookedActionLabel}>Cooked status</Text>
+                <Text style={styles.cookedActionValue}>
+                  {cookedCount > 0 ? formatCookedCount(cookedCount) : 'Not cooked yet'}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={markSelectedRecipeCooked}
+                style={({ pressed }) => [styles.markCookedButton, pressed ? styles.pressed : null]}
+              >
+                <Check color={colors.green} height={17} strokeWidth={2.3} width={17} />
+                <Text style={styles.markCookedText}>Mark cooked</Text>
+              </Pressable>
+            </View>
             <View style={styles.secondaryActionsRow}>
               <SecondaryIconAction icon={<Bookmark color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Save" onPress={saveSelectedRecipe} />
               <SecondaryIconAction icon={<Cart color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Grocery List" onPress={openGroceryList} />
@@ -496,6 +536,7 @@ export function RecipeStepsScreen() {
   const selectedMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
+  const markRecipeCooked = useOkyoStore((state) => state.markRecipeCooked);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
@@ -504,8 +545,9 @@ export function RecipeStepsScreen() {
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
   const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
+  const savedRecipe = recipe ? savedRecipes.find((savedRecipeItem) => savedRecipeItem.id === recipe.id) ?? null : null;
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
-  const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
+  const restaurantPrice = scanResult?.restaurantPrice ?? 0;
   const canShowSavings = Boolean(recipe) && restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
   const spicePairings = getSafeTextList(recipe?.spicePairings);
   const cookingTerms = getSafeCookingTerms(recipe?.cookingTerms);
@@ -518,8 +560,11 @@ export function RecipeStepsScreen() {
   const recipeImageStatus = getRecipeImageStatus(recipe);
   const [activeStepIndex, setActiveStepIndex] = useState(0);
   const [showCompletion, setShowCompletion] = useState(false);
+  const [completionCookedCount, setCompletionCookedCount] = useState<number | null>(null);
+  const completionLoggedRef = useRef(false);
   const activeStep = guidedSteps[Math.min(activeStepIndex, Math.max(guidedSteps.length - 1, 0))];
   const progress = guidedSteps.length > 0 ? ((activeStepIndex + 1) / guidedSteps.length) * 100 : 0;
+  const cookedCount = completionCookedCount ?? getRecipeCookedCount(savedRecipe ?? recipe);
 
   useEffect(() => {
     uiLog('RecipeStepsScreen', 'enter', { routeMode, selectedMode });
@@ -558,6 +603,31 @@ export function RecipeStepsScreen() {
       setActiveStepIndex(Math.max(guidedSteps.length - 1, 0));
     }
   }, [activeStepIndex, guidedSteps.length]);
+
+  useEffect(() => {
+    if (!showCompletion || !recipe || completionLoggedRef.current) {
+      return;
+    }
+
+    completionLoggedRef.current = true;
+    const alreadySaved = Boolean(savedRecipe);
+    const nextCookedCount = getRecipeCookedCount(savedRecipe ?? recipe) + 1;
+    uiLog('RecipeStepsScreen', 'mark_cooked_from_completion', { recipeId: recipe.id });
+    markRecipeCooked(attachRealScanImage(recipe, selectedScanImage));
+    setCompletionCookedCount(nextCookedCount);
+    if (!alreadySaved) {
+      awardXPOnce(`save-recipe-${recipe.id}`, 5);
+      unlockBadge('first-dupe');
+    }
+  }, [
+    awardXPOnce,
+    markRecipeCooked,
+    recipe,
+    savedRecipe,
+    selectedScanImage,
+    showCompletion,
+    unlockBadge,
+  ]);
 
   const goBack = () => {
     if (navigation.canGoBack()) {
@@ -674,8 +744,14 @@ export function RecipeStepsScreen() {
               <Text style={styles.completionBody}>
                 Nice work. Let it rest if the recipe calls for it, taste once more, then enjoy your Okyo version.
               </Text>
-              <PrimaryAction label="Share it" onPress={openShareRecipe} />
-              <SecondaryAction label="Save" onPress={saveSelectedRecipe} />
+              <View style={styles.completionCookedBadge}>
+                <Check color={colors.green} height={18} strokeWidth={2.4} width={18} />
+                <Text style={styles.completionCookedText}>{formatCookedCount(cookedCount)}</Text>
+              </View>
+              <PrimaryAction label="Share" onPress={openShareRecipe} />
+              <SecondaryAction label="View Recipe" onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })} />
+              <SecondaryAction label="Go Home" onPress={() => navigation.navigate('HomeScreen')} />
+              {!savedRecipe ? <SecondaryAction label="Save recipe" onPress={saveSelectedRecipe} /> : null}
             </View>
           </ScrollView>
         </View>
@@ -1168,6 +1244,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  cookedMiniPill: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#fff8ed',
+    borderColor: 'rgba(232, 220, 203, 0.9)',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  cookedMiniText: {
+    color: recipeColors.green,
+    fontFamily: fontFamilies.bold,
+    fontSize: 12,
+    fontWeight: '800',
+  },
   quickStatsRow: {
     flexDirection: 'row',
     marginTop: 18,
@@ -1470,6 +1565,51 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     lineHeight: 23,
+  },
+  cookedActionCard: {
+    alignItems: 'center',
+    backgroundColor: '#fff8ed',
+    borderColor: 'rgba(232, 220, 203, 0.9)',
+    borderRadius: 22,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    marginTop: 12,
+    padding: 14,
+  },
+  cookedActionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  cookedActionLabel: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.bold,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  cookedActionValue: {
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 17,
+    fontWeight: '800',
+    marginTop: 3,
+  },
+  markCookedButton: {
+    alignItems: 'center',
+    backgroundColor: recipeColors.greenSoft,
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 42,
+    paddingHorizontal: 12,
+  },
+  markCookedText: {
+    color: recipeColors.green,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 13,
+    fontWeight: '800',
   },
   secondaryActionsRow: {
     flexDirection: 'row',
@@ -1824,6 +1964,23 @@ const styles = StyleSheet.create({
     marginTop: 12,
     textAlign: 'center',
   },
+  completionCookedBadge: {
+    alignItems: 'center',
+    backgroundColor: recipeColors.greenSoft,
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 7,
+    marginTop: 16,
+    marginBottom: 14,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+  },
+  completionCookedText: {
+    color: recipeColors.green,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 14,
+    fontWeight: '800',
+  },
   instructionsSection: {
     paddingTop: 16,
   },
@@ -2119,15 +2276,21 @@ function getAvailableModes(recipes: Recipe[], fallbackRecipe: Recipe | null, isD
   return uniqueModes.length > 0 || !isDemoScan ? uniqueModes : defaultScanResult.modes;
 }
 
-function getEstimatedRestaurantPrice(recipe: Recipe | null) {
-  return recipe ? recipe.estimatedHomemadeCost + recipe.estimatedSavings : 0;
-}
-
 function getSafeTextList(values: string[] | undefined) {
   return (Array.isArray(values) ? values : [])
     .map((value) => cleanDisplayText(value))
     .filter(Boolean)
     .slice(0, 6);
+}
+
+function getRecipeCookedCount(recipe: Recipe | null) {
+  return typeof recipe?.cookedCount === 'number' && Number.isFinite(recipe.cookedCount)
+    ? Math.max(0, recipe.cookedCount)
+    : 0;
+}
+
+function formatCookedCount(count: number) {
+  return `Cooked ${count} ${count === 1 ? 'time' : 'times'}`;
 }
 
 function getSafeCookingTerms(recipeTerms: Recipe['cookingTerms']) {

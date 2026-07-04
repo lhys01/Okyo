@@ -115,6 +115,9 @@ export type Recipe = {
   // Snapshot of the user's real scan photo, attached when the recipe is saved so
   // the library card can show the actual meal. Only ever a real uploaded image.
   imageUri?: string;
+  savedAt?: string;
+  cookedCount?: number;
+  lastCookedAt?: string;
   title: string;
   mode: RecipeMode;
   description: string;

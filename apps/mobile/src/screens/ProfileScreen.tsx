@@ -25,7 +25,6 @@ const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 export function ProfileScreen() {
   const navigation = useNavigation<ProfileNavigation>();
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
   const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
   const xp = useOkyoStore((state) => state.xp);
@@ -33,13 +32,11 @@ export function ProfileScreen() {
   const isPremium = useOkyoStore((state) => state.isPremium);
 
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
-  const safeChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeXp = getFiniteNumber(xp);
   const level = Math.floor(safeXp / 100) + 1;
   const xpIntoLevel = safeXp % 100;
-  const recipeSavings = safeSavedRecipes.reduce((total, recipe) => total + getFiniteNumber(recipe.estimatedSavings), 0);
-  const challengeSavings = safeChallenges.reduce((total, challenge) => total + getFiniteNumber(challenge.moneySaved), 0);
-  const estimatedSaved = getFiniteNumber(totalMoneySaved) + recipeSavings + challengeSavings;
+  const loggedSaved = getFiniteNumber(totalMoneySaved);
+  const cookedCount = safeSavedRecipes.reduce((total, recipe) => total + getCookedCount(recipe), 0);
   const badgeCount = Array.isArray(unlockedBadges) ? unlockedBadges.length : 0;
 
   const goTo = (screen: 'SavingsDashboardScreen' | 'RankingsScreen' | 'SettingsScreen' | 'PaywallScreen') => {
@@ -72,9 +69,9 @@ export function ProfileScreen() {
         </View>
 
         <View style={styles.statGrid}>
-          <ProfileStat label="Saved" value={formatCurrency(estimatedSaved)} />
+          <ProfileStat label="Logged saved" value={formatCurrency(loggedSaved)} />
           <ProfileStat label="Recipes" value={safeSavedRecipes.length.toString()} />
-          <ProfileStat label="Wins" value={safeChallenges.length.toString()} />
+          <ProfileStat label="Cooked" value={cookedCount.toString()} />
           <ProfileStat label="Badges" value={badgeCount.toString()} />
         </View>
 
@@ -143,6 +140,12 @@ function ProfileRow({
 
 function getFiniteNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function getCookedCount(recipe: { cookedCount?: unknown }) {
+  return typeof recipe.cookedCount === 'number' && Number.isFinite(recipe.cookedCount)
+    ? Math.max(0, recipe.cookedCount)
+    : 0;
 }
 
 const styles = StyleSheet.create({
