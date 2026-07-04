@@ -43,19 +43,33 @@ type GroceryListNavigation = BottomTabNavigationProp<MainTabParamList, 'GroceryL
 type GroceryItem = GroceryListItem & {
   id: string;
 };
-type GroceryTab = 'buy' | 'pantry';
+type ShoppingItemKind = 'buy' | 'pantry' | 'equipment';
+type ShoppingSectionId = GroceryCategory | 'Probably already have' | 'Equipment / Tools';
+type ShoppingItem = GroceryItem & {
+  kind: ShoppingItemKind;
+  sectionId: ShoppingSectionId;
+  sourceRecipeId: string;
+  sourceRecipeTitles: string[];
+  sourceIngredients: string[];
+};
+type ShoppingSection = {
+  items: ShoppingItem[];
+  sectionId: ShoppingSectionId;
+};
+type GroceryTab = ShoppingItemKind;
 
-const categoryOrder: GroceryCategory[] = [
+const shoppingSectionOrder: ShoppingSectionId[] = [
   'Produce',
   'Protein',
-  'Bakery / Bread',
   'Dairy',
-  'Pantry',
-  'Sauces / Condiments',
+  'Bakery / Bread',
   'Noodles / Grains',
+  'Sauces / Condiments',
+  'Pantry',
   'Garnish',
-  'Spices',
   'Other',
+  'Probably already have',
+  'Equipment / Tools',
 ];
 const spiceNames = ['pepper', 'flakes', 'chili', 'gochugaru', 'garlic powder', 'paprika', 'salt', 'seasoning', 'spice'];
 const dairyNames = ['cream', 'parmesan', 'milk', 'butter', 'yogurt', 'cheddar', 'cheese', 'mozzarella', 'egg'];
@@ -66,6 +80,68 @@ const sauceNames = ['mayo', 'mayonnaise', 'ketchup', 'mustard', 'sauce', 'condim
 const noodleGrainNames = ['pasta', 'rigatoni', 'spaghetti', 'noodle', 'noodles', 'rice', 'grain', 'grains', 'quinoa'];
 const garnishNames = ['cilantro', 'parsley', 'sesame', 'lime', 'lemon', 'herb', 'herbs'];
 const pantryNames = ['tomato paste', 'crushed tomato', 'canned tomato', 'biscuit mix', 'flour', 'sugar', 'broth'];
+const commonPantryStapleNames = [
+  'salt',
+  'kosher salt',
+  'sea salt',
+  'black pepper',
+  'pepper',
+  'olive oil',
+  'vegetable oil',
+  'canola oil',
+  'cooking oil',
+  'sesame oil',
+  'oil',
+  'vinegar',
+  'rice vinegar',
+  'white vinegar',
+  'sugar',
+  'flour',
+  'cornstarch',
+  'baking powder',
+  'baking soda',
+];
+const equipmentNames = [
+  'air fryer',
+  'baking sheet',
+  'baking stone',
+  'blender',
+  'board',
+  'bowl',
+  'cast iron',
+  'colander',
+  'cooker',
+  'cutting board',
+  'dutch oven',
+  'food processor',
+  'foil',
+  'grater',
+  'griddle',
+  'grill',
+  'knife',
+  'ladle',
+  'mandoline',
+  'measuring cup',
+  'measuring spoon',
+  'mixing bowl',
+  'oven',
+  'pan',
+  'parchment',
+  'peeler',
+  'pot',
+  'rice cooker',
+  'saucepan',
+  'sheet pan',
+  'skillet',
+  'spatula',
+  'spoon',
+  'strainer',
+  'thermometer',
+  'tongs',
+  'tray',
+  'whisk',
+  'wok',
+];
 
 export function GroceryListScreen() {
   const navigation = useNavigation<GroceryListNavigation>();
@@ -83,7 +159,8 @@ export function GroceryListScreen() {
   const recipe = getGroceryRecipe(selectedMode, latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, isDemoScan);
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
-  const items = useMemo(() => (recipe ? buildItems(recipe) : []), [recipe]);
+  const rawItems = useMemo(() => (recipe ? buildItems(recipe) : []), [recipe]);
+  const items = useMemo(() => (recipe ? buildShoppingItems(recipe, rawItems) : []), [rawItems, recipe]);
   const listText = useMemo(() => (recipe ? buildListText(recipe, items) : ''), [items, recipe]);
   const savedGroceryRecipes = useMemo(
     () => (Array.isArray(savedRecipes) ? savedRecipes.filter((savedRecipe) => savedRecipe?.id && savedRecipe?.title).slice().reverse() : []),
@@ -95,9 +172,14 @@ export function GroceryListScreen() {
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const didTrackView = useRef(false);
-  const groceryItems = items.filter((item) => !isPantryItem(item));
-  const pantryItems = items.filter(isPantryItem);
-  const visibleItems = activeTab === 'buy' ? groceryItems : pantryItems;
+  const groceryItems = items.filter((item) => item.kind === 'buy');
+  const pantryItems = items.filter((item) => item.kind === 'pantry');
+  const equipmentItems = items.filter((item) => item.kind === 'equipment');
+  const visibleItems = activeTab === 'buy'
+    ? groceryItems
+    : activeTab === 'pantry'
+      ? pantryItems
+      : equipmentItems;
   const groupedVisibleItems = getGroupedItems(visibleItems);
   const allVisibleChecked = visibleItems.length > 0 && visibleItems.every((item) => checkedItemIds.includes(item.id));
 
@@ -240,7 +322,7 @@ export function GroceryListScreen() {
         {savedGroceryRecipes.length > 0 ? (
           <View style={styles.savedRecipeList}>
             {savedGroceryRecipes.map((savedRecipe) => {
-              const savedItems = buildItems(savedRecipe);
+              const savedItems = buildShoppingItems(savedRecipe, buildItems(savedRecipe));
               const isExpanded = expandedRecipeIds.includes(savedRecipe.id);
 
               return (
@@ -300,8 +382,14 @@ export function GroceryListScreen() {
         <ListTab
           count={pantryItems.length}
           isSelected={activeTab === 'pantry'}
-          label="Pantry"
+          label="Pantry Check"
           onPress={() => setActiveTab('pantry')}
+        />
+        <ListTab
+          count={equipmentItems.length}
+          isSelected={activeTab === 'equipment'}
+          label="Tools"
+          onPress={() => setActiveTab('equipment')}
         />
       </View>
 
@@ -329,13 +417,14 @@ export function GroceryListScreen() {
 
       {groupedVisibleItems.length > 0 ? (
         groupedVisibleItems.map((group) => (
-          <View key={group.category} style={styles.categoryCard}>
+          <View key={group.sectionId} style={styles.categoryCard}>
             <View style={styles.categoryHeader}>
-              <CategoryIcon category={group.category} />
-              <Text style={styles.categoryTitle}>{getCategoryLabel(group.category, group.items)}</Text>
+              <CategoryIcon sectionId={group.sectionId} />
+              <Text style={styles.categoryTitle}>{getCategoryLabel(group.sectionId, group.items)}</Text>
             </View>
             {group.items.map((item, index) => {
               const isChecked = checkedItemIds.includes(item.id);
+              const sourceSummary = formatSourceSummary(item);
 
               return (
                 <Pressable
@@ -352,9 +441,14 @@ export function GroceryListScreen() {
                   <View style={[styles.checkbox, isChecked ? styles.checkboxChecked : null]}>
                     {isChecked ? <Check color="#fffdf8" height={14} strokeWidth={2.6} width={14} /> : null}
                   </View>
-                  <Text style={[styles.itemText, isChecked ? styles.itemTextChecked : null]}>
-                    {formatGroceryItem(item)}
-                  </Text>
+                  <View style={styles.itemCopy}>
+                    <Text style={[styles.itemText, isChecked ? styles.itemTextChecked : null]}>
+                      {formatGroceryItem(item)}
+                    </Text>
+                    {sourceSummary ? (
+                      <Text numberOfLines={2} style={styles.itemSourceText}>{sourceSummary}</Text>
+                    ) : null}
+                  </View>
                 </Pressable>
               );
             })}
@@ -363,11 +457,19 @@ export function GroceryListScreen() {
       ) : (
         <View style={styles.emptyTabCard}>
           <KikoMascot pose="groceryList" size={94} style={styles.emptyTabMascot} />
-          <Text style={styles.emptyTabTitle}>{activeTab === 'buy' ? 'No shopping items' : 'No pantry checks'}</Text>
+          <Text style={styles.emptyTabTitle}>
+            {activeTab === 'buy'
+              ? 'No shopping items'
+              : activeTab === 'pantry'
+                ? 'No pantry checks'
+                : 'No tools listed'}
+          </Text>
           <Text style={styles.emptyTabBody}>
             {activeTab === 'buy'
-              ? 'Everything for this recipe is listed as a pantry check.'
-              : 'This recipe does not list separate pantry staples.'}
+              ? 'Everything for this recipe is listed as a pantry or tool check.'
+              : activeTab === 'pantry'
+                ? 'This recipe does not list separate pantry staples.'
+                : 'This recipe does not list separate equipment.'}
           </Text>
         </View>
       )}
@@ -422,7 +524,7 @@ function ScreenFrame({ children, onBack, showBack = true, subtitle, title }: Scr
 type SavedRecipeGroceryCardProps = {
   checkedItemIds: string[];
   isExpanded: boolean;
-  items: GroceryItem[];
+  items: ShoppingItem[];
   onOpenRecipe: () => void;
   onToggle: () => void;
   onToggleItem: (itemId: string) => void;
@@ -464,6 +566,7 @@ function SavedRecipeGroceryCard({
           {items.length > 0 ? (
             items.map((item, index) => {
               const isChecked = checkedItemIds.includes(item.id);
+              const sourceSummary = formatSourceSummary(item);
 
               return (
                 <Pressable
@@ -480,12 +583,14 @@ function SavedRecipeGroceryCard({
                   <View style={[styles.checkbox, isChecked ? styles.checkboxChecked : null]}>
                     {isChecked ? <Check color="#fffdf8" height={14} strokeWidth={2.6} width={14} /> : null}
                   </View>
-                  <Text style={[styles.savedIngredientName, isChecked ? styles.itemTextChecked : null]}>
-                    {cleanDisplayText(item.name)}
-                  </Text>
-                  {getShoppingQuantity(item) ? (
-                    <Text numberOfLines={1} style={styles.savedIngredientQuantity}>{getShoppingQuantity(item)}</Text>
-                  ) : null}
+                  <View style={styles.savedIngredientCopy}>
+                    <Text style={[styles.savedIngredientName, isChecked ? styles.itemTextChecked : null]}>
+                      {formatGroceryItem(item)}
+                    </Text>
+                    {sourceSummary ? (
+                      <Text numberOfLines={2} style={styles.savedIngredientSource}>{sourceSummary}</Text>
+                    ) : null}
+                  </View>
                 </Pressable>
               );
             })
@@ -526,7 +631,12 @@ function ListTab({ count, isSelected, label, onPress }: ListTabProps) {
         pressed ? styles.pressed : null,
       ]}
     >
-      <Text style={[styles.tabButtonText, isSelected ? styles.tabButtonTextSelected : null]}>
+      <Text
+        adjustsFontSizeToFit
+        minimumFontScale={0.78}
+        numberOfLines={1}
+        style={[styles.tabButtonText, isSelected ? styles.tabButtonTextSelected : null]}
+      >
         {label} ({count})
       </Text>
     </Pressable>
@@ -575,10 +685,10 @@ function RecipeSummaryRow({
   );
 }
 
-function CategoryIcon({ category }: { category: GroceryCategory }) {
-  const icon = category === 'Produce'
+function CategoryIcon({ sectionId }: { sectionId: ShoppingSectionId }) {
+  const icon = sectionId === 'Produce'
     ? <Leaf color={colors.green} height={17} strokeWidth={2.2} width={17} />
-    : category === 'Spices' || category === 'Garnish'
+    : sectionId === 'Spices' || sectionId === 'Garnish' || sectionId === 'Probably already have'
       ? <Spark color={colors.green} height={17} strokeWidth={2.2} width={17} />
       : <Bag color={colors.green} height={17} strokeWidth={2.2} width={17} />;
 
@@ -622,10 +732,10 @@ function getCategory(item: Pick<RecipeIngredient, 'name' | 'pantryItem'> & { pan
 function buildItems(recipe: Recipe): GroceryItem[] {
   const groceryItems = Array.isArray(recipe.groceryItems) ? recipe.groceryItems : [];
   if (groceryItems.length > 0) {
-    return groceryItems.map((item) => ({
+    return groceryItems.map((item, index) => ({
       ...item,
       category: getDisplayCategory(item.category),
-      id: `${recipe.id}-${item.category}-${item.name}`,
+      id: `${recipe.id}-${item.category}-${item.name}-${index}`,
       pantryItem: isPantryItem(item),
       pantryStaple: item.pantryStaple ?? isPantryItem(item),
     }));
@@ -636,37 +746,83 @@ function buildItems(recipe: Recipe): GroceryItem[] {
   return ingredients.flatMap((ingredient) => toFallbackGroceryItems(recipe.id, ingredient));
 }
 
-function buildListText(recipe: Recipe, items: GroceryItem[]) {
-  const grouped = categoryOrder
-    .map((category) => {
-      const categoryItems = items.filter((item) => item.category === category && !isPantryItem(item));
-      if (categoryItems.length === 0) {
-        return '';
-      }
+function buildShoppingItems(recipe: Recipe, rawItems: GroceryItem[]): ShoppingItem[] {
+  const groceryItems = rawItems.map((item, index) => toShoppingItem(recipe, item, index));
+  const equipmentItems = getRecipeEquipmentItems(recipe);
 
-      return [
-        getCategoryLabel(category, categoryItems),
-        ...categoryItems.map((item) => `- ${formatGroceryItem(item)}`),
-      ].join('\n');
-    })
-    .filter(Boolean);
-  const pantryItems = items.filter(isPantryItem);
+  return mergeShoppingItems([...groceryItems, ...equipmentItems]);
+}
 
-  if (pantryItems.length > 0) {
-    grouped.push([
-      'Pantry',
-      ...pantryItems.map((item) => `- ${formatGroceryItem(item)}`),
-    ].join('\n'));
-  }
+function toShoppingItem(recipe: Recipe, item: GroceryItem, index: number): ShoppingItem {
+  const equipment = isEquipmentLike(item.name);
+  const pantryCheck = !equipment && isPantryCheckItem(item);
+  const kind: ShoppingItemKind = equipment ? 'equipment' : pantryCheck ? 'pantry' : 'buy';
+  const sectionId: ShoppingSectionId = equipment
+    ? 'Equipment / Tools'
+    : pantryCheck
+      ? 'Probably already have'
+      : getDisplayCategory(item.category);
+
+  return {
+    ...item,
+    category: getDisplayCategory(item.category),
+    id: `${item.id}-${kind}-${index}`,
+    kind,
+    pantryItem: pantryCheck || item.pantryItem,
+    pantryStaple: pantryCheck || item.pantryStaple,
+    sectionId,
+    sourceIngredient: item.sourceIngredient || formatGroceryItem(item),
+    sourceIngredients: [item.sourceIngredient || formatGroceryItem(item)],
+    sourceRecipeId: recipe.id,
+    sourceRecipeTitles: [cleanDisplayText(recipe.title)],
+  };
+}
+
+function getRecipeEquipmentItems(recipe: Recipe): ShoppingItem[] {
+  const equipment = [
+    ...(Array.isArray(recipe.equipment) ? recipe.equipment : []),
+    ...(Array.isArray(recipe.structuredSteps)
+      ? recipe.structuredSteps.flatMap((step) => Array.isArray(step.toolsUsed) ? step.toolsUsed : [])
+      : []),
+  ];
+  const uniqueEquipment = getUniqueCleanTexts(equipment).filter(isEquipmentLike);
+
+  return uniqueEquipment.map((name, index) => ({
+    category: 'Other',
+    id: `${recipe.id}-equipment-${normalizeShoppingName(name)}-${index}`,
+    kind: 'equipment',
+    name,
+    pantryItem: false,
+    pantryStaple: false,
+    quantity: '',
+    sectionId: 'Equipment / Tools',
+    shoppingNote: 'Tool check',
+    sourceIngredient: 'Recipe equipment',
+    sourceIngredients: ['Recipe equipment'],
+    sourceRecipeId: recipe.id,
+    sourceRecipeTitles: [cleanDisplayText(recipe.title)],
+  }));
+}
+
+function buildListText(recipe: Recipe, items: ShoppingItem[]) {
+  const grouped = getGroupedItems(items).map((group) => [
+    getCategoryLabel(group.sectionId, group.items),
+    ...group.items.map((item) => {
+      const sourceSummary = formatSourceSummary(item);
+      return sourceSummary
+        ? `- ${formatGroceryItem(item)} — ${sourceSummary}`
+        : `- ${formatGroceryItem(item)}`;
+    }),
+  ].join('\n'));
 
   return [`${cleanDisplayText(recipe.title)} Grocery List`, ...grouped].join('\n\n');
 }
 
-function getGroupedItems(items: GroceryItem[]) {
-  return categoryOrder
-    .map((category) => ({
-      category,
-      items: items.filter((item) => item.category === category),
+function getGroupedItems(items: ShoppingItem[]): ShoppingSection[] {
+  return shoppingSectionOrder
+    .map((sectionId) => ({
+      sectionId,
+      items: items.filter((item) => item.sectionId === sectionId),
     }))
     .filter((group) => group.items.length > 0);
 }
@@ -779,7 +935,10 @@ function getDisplayCategory(category: GroceryCategory): GroceryCategory {
   return category;
 }
 
-function getCategoryLabel(category: GroceryCategory, items: GroceryItem[]) {
+function getCategoryLabel(category: ShoppingSectionId, items: ShoppingItem[]) {
+  if (category === 'Probably already have' || category === 'Equipment / Tools') {
+    return category;
+  }
   if (category === 'Dairy') {
     return 'Dairy & Eggs';
   }
@@ -794,6 +953,138 @@ function getCategoryLabel(category: GroceryCategory, items: GroceryItem[]) {
   }
 
   return category;
+}
+
+function mergeShoppingItems(items: ShoppingItem[]): ShoppingItem[] {
+  const mergedItems: ShoppingItem[] = [];
+
+  items.forEach((item) => {
+    const existing = mergedItems.find((candidate) =>
+      candidate.sectionId === item.sectionId &&
+      normalizeShoppingName(candidate.name) === normalizeShoppingName(item.name) &&
+      canMergeQuantities(candidate, item),
+    );
+
+    if (!existing) {
+      mergedItems.push(item);
+      return;
+    }
+
+    existing.quantity = getMergedQuantity(existing, item);
+    existing.shoppingNote = mergeOptionalTexts(existing.shoppingNote, item.shoppingNote);
+    existing.sourceIngredients = mergeTextLists(existing.sourceIngredients, item.sourceIngredients);
+    existing.sourceRecipeTitles = mergeTextLists(existing.sourceRecipeTitles, item.sourceRecipeTitles);
+  });
+
+  return mergedItems;
+}
+
+function canMergeQuantities(first: Pick<GroceryListItem, 'name' | 'quantity'>, second: Pick<GroceryListItem, 'name' | 'quantity'>) {
+  const firstQuantity = normalizeQuantityForMerge(first);
+  const secondQuantity = normalizeQuantityForMerge(second);
+
+  return !firstQuantity || !secondQuantity || firstQuantity === secondQuantity;
+}
+
+function getMergedQuantity(first: Pick<GroceryListItem, 'name' | 'quantity'>, second: Pick<GroceryListItem, 'name' | 'quantity'>) {
+  return getShoppingQuantity(first) || getShoppingQuantity(second) || first.quantity || second.quantity;
+}
+
+function normalizeQuantityForMerge(item: Pick<GroceryListItem, 'name' | 'quantity'>) {
+  return getShoppingQuantity(item).trim().toLowerCase();
+}
+
+function mergeOptionalTexts(first: string | undefined, second: string | undefined) {
+  const merged = mergeTextLists(first ? [first] : [], second ? [second] : []);
+  return merged.length > 0 ? merged.join('; ') : undefined;
+}
+
+function mergeTextLists(first: string[], second: string[]) {
+  const seen = new Set<string>();
+  return [...first, ...second]
+    .map((value) => cleanDisplayText(value.trim()))
+    .filter((value) => {
+      const key = value.toLowerCase();
+      if (!value || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
+function isPantryCheckItem(item: Pick<GroceryListItem, 'category' | 'name' | 'pantryItem' | 'pantryStaple' | 'quantity'>) {
+  const normalizedName = normalizeShoppingName(item.name);
+  const normalizedQuantity = item.quantity.trim().toLowerCase();
+
+  return Boolean(
+    item.pantryStaple ||
+    item.pantryItem ||
+    item.category === 'Spices' ||
+    normalizedQuantity === 'pantry check' ||
+    normalizedQuantity === 'to taste' ||
+    normalizedQuantity === 'as needed' ||
+    commonPantryStapleNames.some((name) => normalizedName === normalizeShoppingName(name)) ||
+    commonPantryStapleNames.some((name) => normalizedName.endsWith(` ${normalizeShoppingName(name)}`)),
+  );
+}
+
+function isEquipmentLike(value: string) {
+  const normalized = normalizeShoppingName(value);
+  if (!normalized) {
+    return false;
+  }
+
+  return equipmentNames.some((name) => {
+    const normalizedEquipment = normalizeShoppingName(name);
+    return hasNormalizedPhrase(normalized, normalizedEquipment);
+  });
+}
+
+function hasNormalizedPhrase(value: string, phrase: string) {
+  return value === phrase ||
+    value.startsWith(`${phrase} `) ||
+    value.endsWith(` ${phrase}`) ||
+    value.includes(` ${phrase} `);
+}
+
+function normalizeShoppingName(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(a|an|the|small|large|medium|fresh|chopped|sliced|diced|minced|grated|optional)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getUniqueCleanTexts(values: string[]) {
+  const seen = new Set<string>();
+
+  return values
+    .map((value) => cleanDisplayText(value.trim()))
+    .filter((value) => {
+      const key = normalizeShoppingName(value);
+      if (!value || !key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
+function formatSourceSummary(item: ShoppingItem) {
+  const sourceTitle = item.sourceRecipeTitles.length > 1
+    ? `From ${item.sourceRecipeTitles.slice(0, 2).join(', ')}${item.sourceRecipeTitles.length > 2 ? ` +${item.sourceRecipeTitles.length - 2}` : ''}`
+    : item.sourceRecipeTitles[0]
+      ? `From ${item.sourceRecipeTitles[0]}`
+      : '';
+  const ingredientText = item.sourceIngredients
+    .filter((sourceIngredient) => normalizeShoppingName(sourceIngredient) !== normalizeShoppingName(item.name))
+    .slice(0, 2)
+    .join(', ');
+
+  return [sourceTitle, ingredientText].filter(Boolean).join(' · ');
 }
 
 function isPantryItem(item: Pick<GroceryListItem, 'category' | 'pantryItem' | 'pantryStaple'>) {
@@ -967,11 +1258,20 @@ const styles = StyleSheet.create({
   },
   savedIngredientName: {
     color: colors.charcoal,
-    flex: 1,
     fontSize: 15,
     fontWeight: '700',
     lineHeight: 20,
+  },
+  savedIngredientCopy: {
+    flex: 1,
     minWidth: 0,
+  },
+  savedIngredientSource: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '600',
+    lineHeight: 15,
+    marginTop: 3,
   },
   savedIngredientQuantity: {
     color: colors.body,
@@ -1177,10 +1477,19 @@ const styles = StyleSheet.create({
   },
   itemText: {
     color: colors.charcoal,
-    flex: 1,
     fontSize: 15,
     lineHeight: 22,
+  },
+  itemCopy: {
+    flex: 1,
     minWidth: 0,
+  },
+  itemSourceText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '600',
+    lineHeight: 15,
+    marginTop: 3,
   },
   itemTextChecked: {
     color: colors.muted,
