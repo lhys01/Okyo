@@ -20,6 +20,7 @@ import { getSampleFoodImageUrl, type SampleFoodImageKey } from './sampleFoodImag
 // category browsing already scale to any length.
 
 export type MealTime = 'morning' | 'afternoon' | 'evening' | 'late_night';
+export type MealContext = 'breakfast' | 'lunch' | 'dinner' | 'snack_dessert';
 
 export type RecommendationCategory =
   | 'Breakfast'
@@ -2486,22 +2487,73 @@ export function getRecommendationsByCategory(category: RecommendationCategory): 
 
 export function getRecommendationsForMealTime(mealTime: MealTime, limit = 6): RecommendationRecipe[] {
   const matches = recommendedRecipes.filter((recipe) => recipe.mealTimes.includes(mealTime));
-  // Fall back to the full set if a meal time has too few tagged recipes.
-  const source = matches.length >= 4 ? matches : recommendedRecipes;
+  const mainMealMatches = mealTime === 'afternoon' || mealTime === 'evening'
+    ? matches.filter((recipe) => !isDessertRecommendation(recipe))
+    : matches;
+  // Fall back without pulling desserts into lunch/dinner-style suggestions.
+  const source = mainMealMatches.length >= 4
+    ? mainMealMatches
+    : matches.length >= 4
+      ? matches
+      : recommendedRecipes.filter((recipe) => mealTime === 'late_night' || !isDessertRecommendation(recipe));
   return source.slice(0, limit);
 }
 
-export function getMealTimeForHour(hour: number): MealTime {
+export function getMealContextForHour(hour: number): MealContext {
   if (hour >= 22 || hour < 5) {
-    return 'late_night';
+    return 'snack_dessert';
   }
   if (hour < 11) {
-    return 'morning';
+    return 'breakfast';
   }
   if (hour < 17) {
-    return 'afternoon';
+    return 'lunch';
   }
-  return 'evening';
+  return 'dinner';
+}
+
+export function getMealTimesForContext(context: MealContext): MealTime[] {
+  switch (context) {
+    case 'breakfast':
+      return ['morning'];
+    case 'lunch':
+      return ['afternoon'];
+    case 'dinner':
+      return ['evening'];
+    case 'snack_dessert':
+    default:
+      return ['late_night'];
+  }
+}
+
+export function isDessertRecommendation(recipe: RecommendationRecipe) {
+  return recipe.category === 'Desserts';
+}
+
+export function isSnackRecommendation(recipe: RecommendationRecipe) {
+  return recipe.category === 'Snacks';
+}
+
+export function isTreatRecommendation(recipe: RecommendationRecipe) {
+  return isDessertRecommendation(recipe) || isSnackRecommendation(recipe);
+}
+
+export function isMainMealContext(context: MealContext) {
+  return context === 'breakfast' || context === 'lunch' || context === 'dinner';
+}
+
+export function getMealTimeForHour(hour: number): MealTime {
+  switch (getMealContextForHour(hour)) {
+    case 'breakfast':
+      return 'morning';
+    case 'lunch':
+      return 'afternoon';
+    case 'dinner':
+      return 'evening';
+    case 'snack_dessert':
+    default:
+      return 'late_night';
+  }
 }
 
 export function getRecommendationById(id: string): RecommendationRecipe | undefined {

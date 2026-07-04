@@ -4,7 +4,7 @@ import {
   NavArrowRight,
   Spark,
 } from 'iconoir-react-native';
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -12,13 +12,24 @@ import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { RecommendationCard } from '../components/RecommendationCard';
 import { colors, typography } from '../components/OkyoUI';
-import { getMealTimeForHour, getRecommendationsForMealTime } from '../data/recommendedRecipes';
+import {
+  getMealContextForHour,
+  getMealTimesForContext,
+  isDessertRecommendation,
+  isMainMealContext,
+  isTreatRecommendation,
+  recommendedRecipes,
+  type MealContext,
+  type MealTime,
+  type RecommendationRecipe,
+} from '../data/recommendedRecipes';
 import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { radius, shadows, spacing } from '../theme/okyoTheme';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
+import { getModeLabel } from '../utils/modeDisplay';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 import { useOpenRecommendation } from '../utils/useOpenRecommendation';
 
@@ -32,42 +43,63 @@ export function HomeScreen() {
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
+  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const openRecommendation = useOpenRecommendation();
-  const homeMoment = useMemo(() => getHomeMoment(), []);
-  const mealIdeas = useMemo(() => getRecommendationsForMealTime(getMealTimeForHour(new Date().getHours()), 4), []);
-
-  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [];
+  const homeDate = useMemo(() => new Date(), []);
+  const mealContext = useMemo(() => getMealContextForHour(homeDate.getHours()), [homeDate]);
+  const homeMoment = useMemo(() => getHomeMoment(homeDate), [homeDate]);
+  const safeSavedRecipes = useMemo(
+    () => Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [],
+    [savedRecipes],
+  );
   const recentRecipes = useMemo(() => safeSavedRecipes.slice().reverse().slice(0, 3), [safeSavedRecipes]);
   const hasMoreRecent = safeSavedRecipes.length > 3;
-  const heroRecipe = latestScanRecipe ?? recentRecipes[0] ?? null;
-  const heroImageUri = getRecipeImageUrl(
-    heroRecipe,
-    getRealScanImageUri(latestScanSession?.selectedScanImage) ?? getRealScanImageUri(selectedScanImage),
+  const latestRecipe = latestScanSession?.latestScanRecipe ?? latestScanRecipe;
+  const recentlySavedRecipes = useMemo(() => safeSavedRecipes.slice(-6), [safeSavedRecipes]);
+  const recentRecommendationRefs = useMemo(
+    () => getRecentRecommendationRefs({
+      completedChallenges,
+      latestRecipe,
+      recentlySavedRecipes,
+    }),
+    [completedChallenges, latestRecipe, recentlySavedRecipes],
   );
-  const heroImageStatus = getRecipeImageStatus(heroRecipe);
-  const hasActivity = Boolean(heroRecipe || heroImageUri || safeSavedRecipes.length > 0 || weeklyScanCount > 0);
+  const heroRecommendation = useMemo(
+    () => getHomeHeroRecommendation(mealContext, homeDate, recentRecommendationRefs),
+    [homeDate, mealContext, recentRecommendationRefs],
+  );
+  const mealIdeas = useMemo(
+    () => getHomeMealIdeas(
+      mealContext,
+      homeDate,
+      heroRecommendation ? [heroRecommendation, ...recentRecommendationRefs] : recentRecommendationRefs,
+      4,
+    ),
+    [heroRecommendation, homeDate, mealContext, recentRecommendationRefs],
+  );
+  const heroImageUri = getRecipeImageUrl(heroRecommendation);
+  const heroImageStatus = getRecipeImageStatus(heroRecommendation);
+  const latestScanImageUri = getRealScanImageUri(latestScanSession?.selectedScanImage) ?? getRealScanImageUri(selectedScanImage);
+  const latestScanCardImageUri = getRecipeImageUrl(latestRecipe, latestScanImageUri);
+  const latestScanImageStatus = getRecipeImageStatus(latestRecipe);
+  const hasLatestScanCard = Boolean(latestRecipe || latestScanCardImageUri);
 
   const didTraceHero = useRef(false);
   useEffect(() => {
     if (didTraceHero.current) return;
     didTraceHero.current = true;
     const uri = heroImageUri ?? null;
-    const hasStampedUri = Boolean((heroRecipe as { imageUri?: string } | null)?.imageUri);
     checkImageFileExists(uri).then((fileExists) => {
       imageTraceLog('HomeScreen', {
         screen: 'HomeScreen',
-        recipeId: heroRecipe?.id ?? null,
-        imageSource: hasStampedUri ? 'heroRecipe.imageUri'
-          : latestScanSession?.selectedScanImage ? 'latestScanSession.selectedScanImage'
-          : selectedScanImage ? 'selectedScanImage'
-          : 'none',
+        recipeId: heroRecommendation?.id ?? null,
+        imageSource: heroRecommendation ? 'daily_home_recommendation' : 'none',
         imageUri: uri,
         fileExists: uri ? fileExists : 'n/a',
-        usingFallback: !hasStampedUri,
-        fallbackReason: !hasStampedUri && !uri ? 'no_hero_recipe_or_scan_image' : null,
+        usingFallback: !uri,
+        fallbackReason: !uri ? 'no_home_recommendation_image' : null,
         storageLocation: getStorageLocation(uri),
       });
     });
@@ -110,31 +142,60 @@ export function HomeScreen() {
           <Text style={styles.title}>{homeMoment.title}</Text>
         </View>
 
-        {heroRecipe || heroImageUri ? (
+        {heroRecommendation ? (
           <Pressable
             accessibilityRole="button"
             style={({ pressed }) => [styles.heroCard, pressed ? styles.pressed : null]}
-            onPress={heroRecipe ? () => openRecipe(heroRecipe) : openScan}
+            onPress={() => openRecommendation(heroRecommendation)}
           >
             <FoodImage
-              fallbackLabel="Image coming soon"
+              fallbackLabel={heroRecommendation.category}
               imageStatus={heroImageStatus}
               imageUrl={heroImageUri}
               showFallbackLabel
               style={styles.heroImage}
             />
             <View style={styles.heroCopy}>
-              <Text style={styles.heroEyebrow}>{hasActivity ? 'Today in Okyo' : 'Latest photo'}</Text>
+              <Text style={styles.heroEyebrow}>{getHeroEyebrow(mealContext)}</Text>
               <Text numberOfLines={2} style={styles.heroTitle}>
-                {heroRecipe?.title ?? 'Latest scan'}
+                {heroRecommendation.title}
               </Text>
               <Text style={styles.heroBody}>
-                {heroRecipe
-                  ? `${heroRecipe.difficulty} · about ${formatCurrency(heroRecipe.estimatedHomemadeCost)} at home`
-                  : 'Your latest photo is here. Save a recipe and it becomes part of your cooking timeline.'}
+                {heroRecommendation.difficulty} · {heroRecommendation.totalTimeMinutes ?? heroRecommendation.prepTimeMinutes + heroRecommendation.cookTimeMinutes} min · about {formatCurrency(heroRecommendation.estimatedHomemadeCost)} at home
               </Text>
             </View>
           </Pressable>
+        ) : null}
+
+        {hasLatestScanCard ? (
+          <View style={styles.latestScanSection}>
+            <View style={styles.sectionHeaderCompact}>
+              <Text style={styles.sectionTitleSmall}>Latest scan</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.latestScanCard, pressed ? styles.pressed : null]}
+              onPress={latestRecipe ? () => openRecipe(latestRecipe) : openScan}
+            >
+              <FoodImage
+                fallbackLabel="Latest scan"
+                imageStatus={latestScanImageStatus}
+                imageUrl={latestScanCardImageUri}
+                style={styles.latestScanImage}
+              />
+              <View style={styles.latestScanCopy}>
+                <Text numberOfLines={1} style={styles.latestScanTitle}>
+                  {latestRecipe?.title ?? 'Latest food photo'}
+                </Text>
+                <Text numberOfLines={2} style={styles.latestScanMeta}>
+                  {latestRecipe
+                    ? `${getModeLabel(getSafeRecipeMode(latestRecipe.mode))} · from your scan`
+                    : 'Photo saved for this session. Scan again to build a recipe.'}
+                </Text>
+              </View>
+              <NavArrowRight color={colors.muted} height={20} strokeWidth={2} width={20} />
+            </Pressable>
+          </View>
         ) : null}
 
         {mealIdeas.length > 0 ? (
@@ -169,7 +230,7 @@ export function HomeScreen() {
         ) : null}
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent meals</Text>
+          <Text style={styles.sectionTitle}>Recently saved</Text>
           {hasMoreRecent ? (
             <Pressable accessibilityRole="button" hitSlop={8} style={styles.sectionLink} onPress={openPlan}>
               <Text style={styles.sectionLinkText}>View all</Text>
@@ -198,7 +259,7 @@ export function HomeScreen() {
                 <View style={styles.timelineCopy}>
                   <Text numberOfLines={2} style={styles.timelineTitle}>{recipe.title}</Text>
                   <Text style={styles.timelineMeta}>
-                    {recipe.mode} · saved about {formatCurrency(recipe.estimatedSavings)}
+                    {getModeLabel(getSafeRecipeMode(recipe.mode))} · saved about {formatCurrency(recipe.estimatedSavings)}
                   </Text>
                 </View>
                 <NavArrowRight color={colors.muted} height={20} strokeWidth={2} width={20} />
@@ -214,8 +275,8 @@ export function HomeScreen() {
             <KikoMascot pose="wave" size={72} style={styles.emptyMascot} />
             <View style={styles.emptyRecentCopy}>
               <Spark color={colors.coral} height={22} strokeWidth={2} width={22} />
-              <Text style={styles.emptyRecentTitle}>No recent meals yet.</Text>
-              <Text style={styles.emptyRecentBody}>Scan once and this becomes your cooking timeline.</Text>
+              <Text style={styles.emptyRecentTitle}>No saved meals yet.</Text>
+              <Text style={styles.emptyRecentBody}>Save a recipe and it becomes your quick list here.</Text>
             </View>
           </Pressable>
         )}
@@ -262,6 +323,276 @@ function getHomeMoment(date = new Date()): HomeMoment {
 
 function getStablePhrase(phrases: string[], date: Date) {
   return phrases[(date.getDate() + date.getHours()) % phrases.length] ?? phrases[0];
+}
+
+type RecommendationRef = {
+  id?: string | null;
+  recipeId?: string | null;
+  recipeTitle?: string | null;
+  title?: string | null;
+};
+
+function getRecentRecommendationRefs({
+  completedChallenges,
+  latestRecipe,
+  recentlySavedRecipes,
+}: {
+  completedChallenges: RecommendationRef[];
+  latestRecipe: Recipe | null;
+  recentlySavedRecipes: Recipe[];
+}): RecommendationRef[] {
+  return [
+    latestRecipe,
+    ...recentlySavedRecipes.slice().reverse(),
+    ...completedChallenges.slice(-6).reverse().map((challenge) => ({
+      id: challenge.recipeId,
+      title: challenge.recipeTitle,
+    })),
+  ].filter(Boolean) as RecommendationRef[];
+}
+
+function getHomeHeroRecommendation(
+  context: MealContext,
+  date: Date,
+  excludedRefs: RecommendationRef[],
+): RecommendationRecipe | null {
+  const sameMealPool = getContextRecommendationPool(context, { excludeTreatsForHero: true });
+  const adjacentPool = getAdjacentRecommendationPool(context, { excludeTreatsForHero: true });
+  const broadPool = getBroadRecommendationPool(context, { excludeTreatsForHero: true });
+
+  return getFirstAvailableRecommendation(sameMealPool, excludedRefs, date, `${context}:hero:same`) ??
+    getFirstAvailableRecommendation(adjacentPool, excludedRefs, date, `${context}:hero:adjacent`) ??
+    getFirstAvailableRecommendation(broadPool, excludedRefs, date, `${context}:hero:broad`) ??
+    getFirstAvailableRecommendation(sameMealPool, [], date, `${context}:hero:same-repeat`) ??
+    null;
+}
+
+function getHomeMealIdeas(
+  context: MealContext,
+  date: Date,
+  excludedRefs: RecommendationRef[],
+  limit: number,
+): RecommendationRecipe[] {
+  const ideas: RecommendationRecipe[] = [];
+  appendUniqueRecommendations(
+    ideas,
+    getAvailableRecommendations(
+      getContextRecommendationPool(context, { excludeDessertsForMainMeals: true }),
+      excludedRefs,
+      date,
+      `${context}:ideas:same`,
+    ),
+    limit,
+  );
+  appendUniqueRecommendations(
+    ideas,
+    getAvailableRecommendations(
+      getAdjacentRecommendationPool(context, { excludeDessertsForMainMeals: true }),
+      [...excludedRefs, ...ideas],
+      date,
+      `${context}:ideas:adjacent`,
+    ),
+    limit,
+  );
+  appendUniqueRecommendations(
+    ideas,
+    getAvailableRecommendations(
+      getBroadRecommendationPool(context, { excludeDessertsForMainMeals: true }),
+      [...excludedRefs, ...ideas],
+      date,
+      `${context}:ideas:broad`,
+    ),
+    limit,
+  );
+
+  return ideas.slice(0, limit);
+}
+
+function getContextRecommendationPool(
+  context: MealContext,
+  options: { excludeDessertsForMainMeals?: boolean; excludeTreatsForHero?: boolean } = {},
+) {
+  const mealTimes = getMealTimesForContext(context);
+  return filterRecommendationsForMealRules(
+    recommendedRecipes.filter((recipe) => mealTimes.some((mealTime) => recipe.mealTimes.includes(mealTime))),
+    context,
+    options,
+  );
+}
+
+function getAdjacentRecommendationPool(
+  context: MealContext,
+  options: { excludeDessertsForMainMeals?: boolean; excludeTreatsForHero?: boolean } = {},
+) {
+  const mealTimes = getAdjacentMealTimes(context);
+  return filterRecommendationsForMealRules(
+    recommendedRecipes.filter((recipe) => mealTimes.some((mealTime) => recipe.mealTimes.includes(mealTime))),
+    context,
+    options,
+  );
+}
+
+function getBroadRecommendationPool(
+  context: MealContext,
+  options: { excludeDessertsForMainMeals?: boolean; excludeTreatsForHero?: boolean } = {},
+) {
+  return filterRecommendationsForMealRules(recommendedRecipes, context, options);
+}
+
+function filterRecommendationsForMealRules(
+  recipes: RecommendationRecipe[],
+  context: MealContext,
+  options: { excludeDessertsForMainMeals?: boolean; excludeTreatsForHero?: boolean },
+) {
+  return recipes.filter((recipe) => {
+    if (options.excludeTreatsForHero && isMainMealContext(context) && isTreatRecommendation(recipe)) {
+      return false;
+    }
+
+    if (options.excludeDessertsForMainMeals && isMainMealContext(context) && isDessertRecommendation(recipe)) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function getAdjacentMealTimes(context: MealContext): MealTime[] {
+  switch (context) {
+    case 'breakfast':
+      return ['afternoon'];
+    case 'lunch':
+      return ['evening'];
+    case 'dinner':
+      return ['afternoon'];
+    case 'snack_dessert':
+    default:
+      return ['afternoon', 'evening'];
+  }
+}
+
+function getFirstAvailableRecommendation(
+  recipes: RecommendationRecipe[],
+  excludedRefs: RecommendationRef[],
+  date: Date,
+  seedKey: string,
+) {
+  return getAvailableRecommendations(recipes, excludedRefs, date, seedKey)[0] ?? null;
+}
+
+function getAvailableRecommendations(
+  recipes: RecommendationRecipe[],
+  excludedRefs: RecommendationRef[],
+  date: Date,
+  seedKey: string,
+) {
+  return rotateRecommendations(recipes, date, seedKey).filter((recipe) => !isRecommendationExcluded(recipe, excludedRefs));
+}
+
+function appendUniqueRecommendations(
+  destination: RecommendationRecipe[],
+  candidates: RecommendationRecipe[],
+  limit: number,
+) {
+  for (const candidate of candidates) {
+    if (destination.length >= limit) {
+      return;
+    }
+    if (!destination.some((recipe) => recipe.id === candidate.id)) {
+      destination.push(candidate);
+    }
+  }
+}
+
+function rotateRecommendations<T>(items: T[], date: Date, seedKey: string) {
+  if (items.length <= 1) {
+    return items;
+  }
+
+  const offset = getDailySeed(date, seedKey) % items.length;
+  return [...items.slice(offset), ...items.slice(0, offset)];
+}
+
+function getDailySeed(date: Date, seedKey: string) {
+  const dayKey = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+  const source = `${dayKey}:${seedKey}`;
+  let hash = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) >>> 0;
+  }
+
+  return hash;
+}
+
+function isRecommendationExcluded(recipe: RecommendationRecipe, refs: RecommendationRef[]) {
+  return refs.some((ref) => {
+    const refId = ref.id ?? ref.recipeId;
+    if (refId && (refId === recipe.id || refId === recipe.scanResultId)) {
+      return true;
+    }
+
+    return areSimilarRecipeTitles(recipe.title, ref.title ?? ref.recipeTitle);
+  });
+}
+
+function areSimilarRecipeTitles(first: string | null | undefined, second: string | null | undefined) {
+  const normalizedFirst = normalizeRecipeTitle(first);
+  const normalizedSecond = normalizeRecipeTitle(second);
+  if (!normalizedFirst || !normalizedSecond) {
+    return false;
+  }
+
+  if (normalizedFirst === normalizedSecond) {
+    return true;
+  }
+
+  if (
+    normalizedFirst.length >= 8 &&
+    normalizedSecond.length >= 8 &&
+    (normalizedFirst.includes(normalizedSecond) || normalizedSecond.includes(normalizedFirst))
+  ) {
+    return true;
+  }
+
+  const firstTokens = getTitleTokens(normalizedFirst);
+  const secondTokens = getTitleTokens(normalizedSecond);
+  if (firstTokens.length < 3 || secondTokens.length < 3) {
+    return false;
+  }
+
+  const secondTokenSet = new Set(secondTokens);
+  const overlap = firstTokens.filter((token) => secondTokenSet.has(token)).length;
+  return overlap / Math.min(firstTokens.length, secondTokens.length) >= 0.8;
+}
+
+function normalizeRecipeTitle(value: string | null | undefined) {
+  return (value ?? '')
+    .toLowerCase()
+    .replace(/copycat|copy-cat|restaurant-style|inspired-by/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function getTitleTokens(normalizedTitle: string) {
+  const stopWords = new Set(['and', 'with', 'the', 'style', 'recipe']);
+  return normalizedTitle
+    .split(/\s+/)
+    .filter((token) => token.length > 2 && !stopWords.has(token));
+}
+
+function getHeroEyebrow(context: MealContext) {
+  switch (context) {
+    case 'breakfast':
+      return 'Fresh breakfast idea';
+    case 'lunch':
+      return 'Fresh lunch idea';
+    case 'dinner':
+      return 'Fresh dinner idea';
+    case 'snack_dessert':
+    default:
+      return 'Fresh snack idea';
+  }
 }
 
 const styles = StyleSheet.create({
@@ -312,6 +643,46 @@ const styles = StyleSheet.create({
   heroBody: {
     ...typography.body,
     marginTop: 8,
+  },
+  latestScanSection: {
+    marginTop: 20,
+  },
+  sectionHeaderCompact: {
+    marginBottom: 10,
+  },
+  sectionTitleSmall: {
+    color: colors.charcoal,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  latestScanCard: {
+    ...shadows.card,
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: radius.card,
+    flexDirection: 'row',
+    gap: 12,
+    minHeight: 84,
+    padding: 14,
+  },
+  latestScanImage: {
+    backgroundColor: colors.cream,
+    borderRadius: 18,
+    height: 58,
+    width: 58,
+  },
+  latestScanCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  latestScanTitle: {
+    color: colors.charcoal,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  latestScanMeta: {
+    ...typography.caption,
+    marginTop: 3,
   },
   ideasSection: {
     marginTop: spacing.section,
