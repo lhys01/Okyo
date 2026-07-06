@@ -95,6 +95,9 @@ type OkyoState = {
   selectedScanImage: ScanImageMetadata | null;
   latestAiDebugMetadata: AiDebugMetadata | null;
   selectedMode: RecipeMode;
+  // Restaurant price the user actually paid, entered on the result screen.
+  // Savings display requires this — AI estimates alone must not show savings.
+  userRestaurantPrice: number | null;
   savedRecipes: Recipe[];
   completedChallenges: CompletedChallenge[];
   totalMoneySaved: number;
@@ -125,6 +128,7 @@ type OkyoState = {
   setSelectedScanImage: (image: ScanImageMetadata | null) => void;
   setLatestAiDebugMetadata: (metadata: AiDebugMetadata | null) => void;
   setSelectedMode: (mode: RecipeMode) => void;
+  setUserRestaurantPrice: (price: number | null) => void;
   saveRecipe: (recipe: Recipe) => void;
   markRecipeCooked: (recipe: Recipe) => void;
   removeSavedRecipe: (recipeId: string) => void;
@@ -160,6 +164,7 @@ export const useOkyoStore = create<OkyoState>()(
       selectedScanImage: null,
       latestAiDebugMetadata: null,
       selectedMode: 'Restaurant Copy',
+      userRestaurantPrice: null,
       savedRecipes: [],
       completedChallenges: [],
       totalMoneySaved: 0,
@@ -207,6 +212,7 @@ export const useOkyoStore = create<OkyoState>()(
 
           return {
             ...getLatestScanSessionState(latestScanSession),
+            userRestaurantPrice: null,
           };
         });
         if (outgoingScanImageUri) {
@@ -284,6 +290,7 @@ export const useOkyoStore = create<OkyoState>()(
             latestScanStatus: null,
             latestScanSession: null,
             selectedScanImage: null,
+            userRestaurantPrice: null,
           };
         }),
       setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
@@ -293,6 +300,7 @@ export const useOkyoStore = create<OkyoState>()(
       setSelectedScanImage: (image) => set({ selectedScanImage: image }),
       setLatestAiDebugMetadata: (metadata) => set({ latestAiDebugMetadata: metadata }),
       setSelectedMode: (mode) => set({ selectedMode: mode }),
+      setUserRestaurantPrice: (price) => set({ userRestaurantPrice: price }),
       saveRecipe: (recipe) =>
         set((state) => {
           const existingRecipe = state.savedRecipes.find((savedRecipe) => savedRecipe.id === recipe.id);
@@ -461,6 +469,7 @@ export const useOkyoStore = create<OkyoState>()(
         selectedScanImage: state.selectedScanImage,
         latestAiDebugMetadata: state.latestAiDebugMetadata,
         selectedMode: state.selectedMode,
+        userRestaurantPrice: state.userRestaurantPrice,
         savedRecipes: state.savedRecipes,
         completedChallenges: state.completedChallenges,
         totalMoneySaved: state.totalMoneySaved,
@@ -556,6 +565,7 @@ function getClearedLatestScanState() {
     latestScanRecipe: null,
     selectedScanImage: null,
     latestAiDebugMetadata: null,
+    userRestaurantPrice: null,
   };
 }
 

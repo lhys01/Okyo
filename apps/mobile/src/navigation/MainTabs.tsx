@@ -30,7 +30,7 @@ const tabLabels: Record<MainTabRouteName, string> = {
   HomeScreen: 'Home',
   RestaurantPacksScreen: 'Discover',
   ScanScreen: 'Scan',
-  LibraryScreen: 'Plan',
+  LibraryScreen: 'Saved',
   ProfileScreen: 'Profile',
   RecipeDetailScreen: 'Recipe',
   RecipeStepsScreen: 'Steps',
@@ -214,7 +214,7 @@ export function MainTabs() {
       <Tab.Screen name="HomeScreen" component={HomeScreen} options={{ title: 'Home' }} />
       <Tab.Screen name="RestaurantPacksScreen" component={RestaurantPacksScreen} options={{ title: 'Discover' }} />
       <Tab.Screen name="ScanScreen" component={ScanScreen} options={{ title: 'Scan' }} />
-      <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Plan' }} />
+      <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Saved' }} />
       <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />
       <Tab.Screen name="RecipeDetailScreen" component={RecipeDetailScreen} options={{ title: 'Recipe' }} />
       <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps', tabBarStyle: { display: 'none' } }} />

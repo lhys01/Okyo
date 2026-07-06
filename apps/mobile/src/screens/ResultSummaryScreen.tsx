@@ -13,8 +13,7 @@ import {
   PlusCircle,
   Settings,
   ShareAndroid,
-  ShieldCheck,
-  Sparks,
+  User,
   ArrowRight,
 } from 'iconoir-react-native';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
@@ -25,7 +24,6 @@ import { analyticsEvents, track } from '../analytics/track';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
-import { KikoMascot } from '../components/KikoMascot';
 import {
   PrimaryButton,
   colors,
@@ -48,7 +46,6 @@ import { getRealScanImageUri } from '../utils/recipeImages';
 import { isUsableScan } from '../utils/scanDecision';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
-const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
 type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'ResultSummaryScreen'>;
 type ResultSummaryRoute = RouteProp<RootStackParamList, 'ResultSummaryScreen'>;
 
@@ -67,6 +64,9 @@ export function ResultSummaryScreen() {
   const storedLatestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
+  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
+  const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
+  const setUserRestaurantPrice = useOkyoStore((state) => state.setUserRestaurantPrice);
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
@@ -122,7 +122,6 @@ export function ResultSummaryScreen() {
   const displayDishName = cleanDisplayText(dishNameOverride.trim() || scanResult?.dishName || '');
   const possibleDishNames = getPossibleDishNames(scanResult, displayDishName);
   const shouldShowDishConfirmation = Boolean(isRealScan && scanResult && isUncertainResult);
-  const userRestaurantPrice = parseRestaurantPrice(restaurantPriceInput);
   const homemadeEstimate = selectedRecipe?.estimatedHomemadeCost ?? scanResult?.homemadeCost ?? null;
   const canShowSavings = isDemoScan || userRestaurantPrice !== null;
   const estimatedSavings = isDemoScan
@@ -137,14 +136,23 @@ export function ResultSummaryScreen() {
     setDishNameOverride('');
     setDishGuessConfirmed(false);
     setIsEditingDishName(false);
-    // Pre-fill with the AI's restaurant price estimate for real scans so the
-    // savings section shows immediately without requiring user input.
-    const priceHint =
-      !isDemoScan && scanResult?.restaurantPrice && scanResult.restaurantPrice > 0
-        ? scanResult.restaurantPrice.toFixed(2)
-        : '';
-    setRestaurantPriceInput(priceHint);
+    // Savings only appear from a price the user actually paid — never from the
+    // AI's restaurant estimate. Restore their entered price if one exists.
+    setRestaurantPriceInput(userRestaurantPrice !== null ? userRestaurantPrice.toFixed(2) : '');
   }, [scanResult?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // One canonical dish title per scan: the scan's dish identity wins over the
+  // AI recipe's invented name, so Result, Recipe, Grocery, Share, and Library
+  // all show the same dish. Runs once per scan result.
+  useEffect(() => {
+    if (!scanResult || !storedRecipe || isDemoScan) {
+      return;
+    }
+    const canonicalTitle = cleanDisplayText(scanResult.dishName);
+    if (canonicalTitle && storedRecipe.title !== canonicalTitle) {
+      setLatestScanRecipe({ ...storedRecipe, title: canonicalTitle });
+    }
+  }, [scanResult?.id, storedRecipe?.id, storedRecipe?.title]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     logResultStateSource({
@@ -268,14 +276,19 @@ export function ResultSummaryScreen() {
     });
   }, [awardXPOnce, awardedXpEvents, estimatedSavings, firstScanEventId, incrementWeeklyScanCount, isDemoScan, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult, selectedMode, selectedModeRaw, setLatestScanResult, shouldShowFailure, shouldShowPartial]);
 
-  const chooseMode = (mode: RecipeMode) => {
-    setSelectedMode(mode);
-    uiLog('ResultSummaryScreen', 'choose_mode', { mode });
-    track(analyticsEvents.MODE_SELECTED, {
-      dishName: scanResult?.dishName ?? 'Missing scan',
-      mode,
-      screen: 'ResultSummaryScreen',
-    });
+  // Persist a user dish-name edit so every screen (Recipe, Grocery, Share,
+  // Library-on-save) shows the corrected name, not just this one.
+  const confirmDishName = () => {
+    setDishGuessConfirmed(true);
+    setIsEditingDishName(false);
+    const confirmedName = cleanDisplayText(dishNameOverride.trim());
+    if (!confirmedName || !scanResult) {
+      return;
+    }
+    setLatestScanResult({ ...scanResult, dishName: confirmedName });
+    if (storedRecipe) {
+      setLatestScanRecipe({ ...storedRecipe, title: confirmedName });
+    }
   };
 
   const saveSelectedRecipe = () => {
@@ -443,7 +456,9 @@ export function ResultSummaryScreen() {
           <View style={styles.matchPill}>
             <CheckCircle color={colors.green} height={20} strokeWidth={2.25} width={20} />
             <Text style={styles.matchPillText}>
-              {isUncertainResult ? `Best guess · ${formatPercent(matchPercent)} confidence` : `${formatPercent(matchPercent)} confidence`}
+              {isUncertainResult
+                ? `Best guess · Scan match: ${getScanMatchLabel(matchPercent)}`
+                : `Scan match: ${getScanMatchLabel(matchPercent)}`}
             </Text>
           </View>
         ) : null}
@@ -505,10 +520,7 @@ export function ResultSummaryScreen() {
           <View style={styles.confirmActions}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                setDishGuessConfirmed(true);
-                setIsEditingDishName(false);
-              }}
+              onPress={confirmDishName}
               style={({ pressed }) => [styles.confirmPrimary, pressed ? styles.pressed : null]}
             >
               <Text style={styles.confirmPrimaryText}>Keep this guess</Text>
@@ -533,25 +545,20 @@ export function ResultSummaryScreen() {
       ) : null}
 
       <View style={styles.savingsHero}>
-        <View style={styles.savingsTopRow}>
-          <View style={styles.savingsBadge}>
-            <KikoMascot pose="celebrating" size={44} />
-          </View>
-          <View style={styles.savingsAmountGroup}>
-            <Text style={styles.savingsHeroLabel}>
-              {canShowSavings ? (isDemoScan ? 'Example savings' : 'Estimated savings') : 'Homemade estimate'}
-            </Text>
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.78}
-              numberOfLines={1}
-              style={styles.savingsHeroValue}
-            >
-              {canShowSavings
-                ? formatOptionalCurrency(estimatedSavings)
-                : formatHomemadeEstimateRange(homemadeEstimate)}
-            </Text>
-          </View>
+        <View style={styles.savingsAmountGroup}>
+          <Text style={styles.savingsHeroLabel}>
+            {canShowSavings ? (isDemoScan ? 'Example savings' : 'You saved') : 'Estimated home cost'}
+          </Text>
+          <Text
+            adjustsFontSizeToFit
+            minimumFontScale={0.78}
+            numberOfLines={1}
+            style={styles.savingsHeroValue}
+          >
+            {canShowSavings
+              ? formatOptionalCurrency(estimatedSavings)
+              : formatHomemadeEstimateRange(homemadeEstimate)}
+          </Text>
         </View>
         {isDemoScan ? (
           <View style={styles.priceCompareRow}>
@@ -582,67 +589,29 @@ export function ResultSummaryScreen() {
         ) : (
           <View style={styles.priceCompareRow}>
             <View style={styles.priceColumn}>
-              <Text style={styles.priceLabel}>Estimated grocery cost</Text>
-              <Text style={styles.priceValue}>{formatHomemadeEstimateRange(homemadeEstimate)}</Text>
-              <Text style={styles.priceHint}>Add what you paid to estimate savings.</Text>
+              {userRestaurantPrice !== null ? (
+                <>
+                  <Text style={styles.priceLabel}>Restaurant {formatOptionalCurrency(userRestaurantPrice)}</Text>
+                  <Text style={styles.priceLabel}>Home {formatHomemadeEstimateRange(homemadeEstimate)}</Text>
+                </>
+              ) : (
+                <Text style={styles.priceHint}>Add restaurant price to calculate savings.</Text>
+              )}
             </View>
             <TextInput
               accessibilityLabel="Restaurant price paid"
               keyboardType="decimal-pad"
-              onChangeText={setRestaurantPriceInput}
-              placeholder="$ paid"
+              onChangeText={(value) => {
+                setRestaurantPriceInput(value);
+                setUserRestaurantPrice(parseRestaurantPrice(value));
+              }}
+              placeholder="I paid $"
               placeholderTextColor={colors.muted}
               style={styles.priceInput}
               value={restaurantPriceInput}
             />
           </View>
         )}
-      </View>
-
-      <View style={styles.summaryCard}>
-        <StatBlock
-          icon={<ShieldCheck color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
-          label="Servings"
-          value={selectedRecipe.servings ? `${selectedRecipe.servings}` : '—'}
-        />
-        <View style={styles.statDivider} />
-        <StatBlock
-          icon={<Cutlery color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
-          label="Difficulty"
-          value={selectedRecipe.difficulty ?? '—'}
-        />
-        <View style={styles.statDivider} />
-        <StatBlock
-          icon={<Clock color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
-          label="Time"
-          value={totalTimeMinutes ? `${totalTimeMinutes} min` : '—'}
-        />
-      </View>
-
-      <ResultModeTabs selectedMode={selectedMode} onSelectMode={chooseMode} />
-
-      <View style={styles.matchCard}>
-        <View style={styles.matchTopRow}>
-          <View style={styles.modeBadge}>
-            <Text style={styles.modeBadgeText}>{selectedModeUi.label}</Text>
-          </View>
-        </View>
-        <View style={styles.matchBodyRow}>
-          <View style={styles.matchCopy}>
-            <Text style={styles.matchTitle}>{getModeCardTitle(selectedMode)}</Text>
-            {formatScore(scanResult.matchScore) !== '—' ? (
-              <Text style={styles.matchScoreLine}>
-                {formatScore(scanResult.matchScore)}/10 <Text style={styles.matchScoreSuffix}>match</Text>
-              </Text>
-            ) : null}
-            <Text style={styles.matchNote}>
-              {getModeSummary(selectedRecipe, selectedMode)}
-            </Text>
-          </View>
-          <View style={styles.matchAward}>
-            <Sparks color={colors.coral} height={36} strokeWidth={2.05} width={36} />
-          </View>
-        </View>
       </View>
 
       <View style={styles.actions}>
@@ -666,6 +635,42 @@ export function ResultSummaryScreen() {
             label="Groceries"
             onPress={() => navigation.navigate('MainTabs', { screen: 'GroceryListScreen', params: { mode: selectedMode } })}
           />
+        </View>
+      </View>
+
+      <View style={styles.summaryCard}>
+        <StatBlock
+          icon={<User color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
+          label="Servings"
+          value={selectedRecipe.servings ? `${selectedRecipe.servings}` : '—'}
+        />
+        <View style={styles.statDivider} />
+        <StatBlock
+          icon={<Cutlery color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
+          label="Difficulty"
+          value={selectedRecipe.difficulty ?? '—'}
+        />
+        <View style={styles.statDivider} />
+        <StatBlock
+          icon={<Clock color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
+          label="Time"
+          value={totalTimeMinutes ? `${totalTimeMinutes} min` : '—'}
+        />
+      </View>
+
+      <View style={styles.matchCard}>
+        <View style={styles.matchTopRow}>
+          <View style={styles.modeBadge}>
+            <Text style={styles.modeBadgeText}>Style: {selectedModeUi.label}</Text>
+          </View>
+        </View>
+        <View style={styles.matchBodyRow}>
+          <View style={styles.matchCopy}>
+            <Text style={styles.matchTitle}>Close match to your scan</Text>
+            <Text style={styles.matchNote}>
+              {getModeSummary(selectedRecipe, selectedMode)}
+            </Text>
+          </View>
         </View>
       </View>
     </ResultFrame>
@@ -805,46 +810,6 @@ function StatBlock({ icon, label, value }: StatBlockProps) {
   );
 }
 
-type ResultModeTabsProps = {
-  selectedMode: RecipeMode;
-  onSelectMode: (mode: RecipeMode) => void;
-};
-
-function ResultModeTabs({ selectedMode, onSelectMode }: ResultModeTabsProps) {
-  return (
-    <View style={styles.modeTabs}>
-      {recipeModes.map((mode, index) => {
-        const isSelected = selectedMode === mode;
-        const modeUi = getModeUi(mode);
-
-        return (
-          <View key={mode} style={styles.modeTabSlot}>
-            {index > 0 ? <View style={styles.modeDivider} /> : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSelected }}
-              onPress={() => onSelectMode(mode)}
-              style={({ pressed }) => [
-                styles.modeTab,
-                isSelected ? styles.modeTabSelected : null,
-                pressed ? styles.pressed : null,
-              ]}
-            >
-              <Text
-                adjustsFontSizeToFit
-                minimumFontScale={0.82}
-                numberOfLines={1}
-                style={[styles.modeTabText, isSelected ? styles.modeTabTextSelected : null]}
-              >
-                {modeUi.label}
-              </Text>
-            </Pressable>
-          </View>
-        );
-      })}
-    </View>
-  );
-}
 
 type ActionButtonProps = {
   icon?: ReactNode;
@@ -970,18 +935,6 @@ function getDisplaySubtitle(restaurantStyle?: string, recipeDescription?: string
   return 'A home version of this dish';
 }
 
-function getModeCardTitle(mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return 'Easy shortcut take on your scan';
-    case 'Healthy':
-      return 'Healthier take on your scan';
-    case 'Restaurant Copy':
-    default:
-      return 'Best match for your scan';
-  }
-}
-
 function getModeSummary(recipe: Recipe, mode: RecipeMode) {
   const description = cleanDisplayText(recipe.description);
   if (description) {
@@ -1030,6 +983,18 @@ function formatHomemadeEstimateRange(value: number | null | undefined) {
   const low = Math.max(1, value * 0.85);
   const high = Math.max(low, value * 1.15);
   return `about ${formatCurrency(low)}–${formatCurrency(high)}`;
+}
+
+// Human-readable scan match tier. 82 mirrors the isUncertainScan threshold so
+// "High" and the confident result path always agree.
+function getScanMatchLabel(percent: number | null) {
+  if (percent === null) {
+    return 'Medium';
+  }
+  if (percent >= 82) {
+    return 'High';
+  }
+  return percent >= 60 ? 'Medium' : 'Low';
 }
 
 function isUncertainScan(
@@ -1102,14 +1067,6 @@ function getPercentValue(value: number | null | undefined) {
 
   const normalized = value <= 1 ? value * 100 : value;
   return Math.max(0, Math.min(100, Math.round(normalized)));
-}
-
-function formatPercent(value: number | null | undefined) {
-  return typeof value === 'number' && Number.isFinite(value) ? `${value}%` : '—';
-}
-
-function formatScore(value: number | null | undefined) {
-  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(1) : '—';
 }
 
 const styles = StyleSheet.create({
@@ -1398,20 +1355,6 @@ const styles = StyleSheet.create({
     minWidth: 0,
     padding: 20,
   },
-  savingsTopRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-    minWidth: 0,
-  },
-  savingsBadge: {
-    alignItems: 'center',
-    backgroundColor: recipeColors.greenSoft,
-    borderRadius: 999,
-    height: 50,
-    justifyContent: 'center',
-    width: 50,
-  },
   savingsAmountGroup: {
     flex: 1,
     minWidth: 0,
@@ -1531,50 +1474,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
     textAlign: 'center',
   },
-  modeTabs: {
-    alignItems: 'center',
-    backgroundColor: recipeColors.cream,
-    borderRadius: 999,
-    flexDirection: 'row',
-    marginTop: 16,
-    minWidth: 0,
-    padding: 5,
-  },
-  modeTabSlot: {
-    alignItems: 'center',
-    flex: 1,
-    flexDirection: 'row',
-    minWidth: 0,
-  },
-  modeDivider: {
-    backgroundColor: recipeColors.border,
-    height: 32,
-    width: 1,
-  },
-  modeTab: {
-    alignItems: 'center',
-    borderRadius: 999,
-    flex: 1,
-    justifyContent: 'center',
-    minHeight: 42,
-    minWidth: 0,
-    paddingHorizontal: 6,
-  },
-  modeTabSelected: {
-    backgroundColor: recipeColors.card,
-  },
-  modeTabText: {
-    color: recipeColors.muted,
-    flexShrink: 1,
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
-    minWidth: 0,
-    textAlign: 'center',
-  },
-  modeTabTextSelected: {
-    color: recipeColors.orange,
-  },
   matchCard: {
     marginTop: 16,
     minWidth: 0,
@@ -1620,32 +1519,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 28,
   },
-  matchScoreLine: {
-    color: recipeColors.orange,
-    fontFamily: fontFamilies.display,
-    fontSize: 19,
-    fontWeight: '800',
-    lineHeight: 24,
-    marginTop: 6,
-  },
-  matchScoreSuffix: {
-    fontSize: 15,
-  },
   matchNote: {
     color: recipeColors.muted,
     fontFamily: fontFamilies.body,
     fontSize: 16,
     lineHeight: 24,
     marginTop: 7,
-  },
-  matchAward: {
-    alignItems: 'center',
-    backgroundColor: recipeColors.orangeSoft,
-    borderRadius: 999,
-    height: 60,
-    justifyContent: 'center',
-    marginTop: 10,
-    width: 60,
   },
   standaloneScanPreview: {
     backgroundColor: recipeColors.cream,

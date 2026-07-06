@@ -15,7 +15,7 @@ import { KikoMascot } from '../components/KikoMascot';
 import { colors, typography } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { radius, shadows, spacing } from '../theme/okyoTheme';
+import { layout, radius, shadows, spacing } from '../theme/okyoTheme';
 import { uiLog } from '../utils/uiDebug';
 
 type ProfileNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -155,7 +155,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     padding: spacing.screen,
-    paddingBottom: 132,
+    paddingBottom: layout.scrollClearance,
   },
   headerCard: {
     alignItems: 'center',

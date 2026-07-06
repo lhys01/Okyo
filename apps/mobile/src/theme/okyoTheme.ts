@@ -24,6 +24,11 @@ export const spacing = {
   card: 20,
 };
 
+export const layout = {
+  // Clearance under scroll content so the floating tab bar never covers it.
+  scrollClearance: 140,
+};
+
 export const radius = {
   hero: 32,
   card: 24,

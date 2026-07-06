@@ -8,7 +8,6 @@ import {
   Cart,
   Check,
   Clock,
-  Cutlery,
   FireFlame,
   Heart,
   Leaf,
@@ -36,6 +35,7 @@ import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { getFoodSafetyNote, TrustBadge } from '../components/TrustBadge';
 import { colors, fontFamilies } from '../components/OkyoUI';
+import { layout } from '../theme/okyoTheme';
 import {
   defaultScanResult,
   getSafeRecipeForMode,
@@ -121,7 +121,6 @@ export function RecipeDetailScreen() {
   const routeMode = route.params?.mode;
   const initialMode = getSafeRecipeMode(routeMode ?? defaultScanResult.modes[0]);
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
-  const setStoreSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const markRecipeCooked = useOkyoStore((state) => state.markRecipeCooked);
@@ -131,6 +130,7 @@ export function RecipeDetailScreen() {
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
+  const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
   const [selectedMode, setSelectedMode] = useState<RecipeMode>(
     getSafeRecipeMode(initialMode ?? storeSelectedMode),
   );
@@ -140,9 +140,16 @@ export function RecipeDetailScreen() {
   const savedRecipe = recipe ? savedRecipes.find((savedRecipeItem) => savedRecipeItem.id === recipe.id) ?? null : null;
   const cookedCount = getRecipeCookedCount(savedRecipe ?? recipe);
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
-  const restaurantPrice = scanResult?.restaurantPrice ?? 0;
-  const canShowSavings = restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
-  const availableModes = scanResult?.modes ?? getAvailableModes(latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, isDemoScan);
+  // Savings need a price the user actually paid. Demo scans are the labeled
+  // exception — they show example numbers from mock data.
+  const homemadeCost = recipe?.estimatedHomemadeCost ?? 0;
+  const restaurantPrice = isDemoScan ? scanResult?.restaurantPrice ?? 0 : userRestaurantPrice ?? 0;
+  const displaySavings = isDemoScan
+    ? recipe?.estimatedSavings ?? 0
+    : Math.max(0, restaurantPrice - homemadeCost);
+  const canShowSavings = isDemoScan
+    ? restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0
+    : userRestaurantPrice !== null;
   const spicePairings = getSafeTextList(recipe?.spicePairings);
   const ingredientGroups = getSafeIngredientGroups(recipe);
   const equipment = getSafeTextList(recipe?.equipment);
@@ -210,17 +217,6 @@ export function RecipeDetailScreen() {
     navigation.navigate('MainTabs', { screen: 'ScanScreen' });
   };
 
-  const chooseMode = (mode: RecipeMode) => {
-    setSelectedMode(mode);
-    setStoreSelectedMode(mode);
-    uiLog('RecipeDetailScreen', 'choose_mode', { mode });
-    track(analyticsEvents.MODE_SELECTED, {
-      dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
-      mode,
-      screen: 'RecipeDetailScreen',
-    });
-  };
-
   const saveSelectedRecipe = () => {
     if (!recipe) {
       return;
@@ -236,7 +232,7 @@ export function RecipeDetailScreen() {
     track(analyticsEvents.RECIPE_SAVED, {
       dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
       mode: recipe.mode,
-      savings: canShowSavings ? recipe.estimatedSavings : 0,
+      savings: canShowSavings ? displaySavings : 0,
       screen: 'RecipeDetailScreen',
     });
     Alert.alert('Saved', `${cleanDisplayText(recipe.title)} was added to your library.`);
@@ -373,7 +369,7 @@ export function RecipeDetailScreen() {
               <Leaf color={colors.green} height={15} strokeWidth={2.2} width={15} />
               <Text style={styles.savingsMiniText}>
                 {canShowSavings
-                  ? `You save ${formatCurrency(recipe.estimatedSavings)}`
+                  ? `You save ${formatCurrency(displaySavings)}`
                   : `Home est. ${formatCurrency(recipe.estimatedHomemadeCost)}`}
               </Text>
             </View>
@@ -395,9 +391,31 @@ export function RecipeDetailScreen() {
 
             {foodSafetyNote ? <TrustBadge note={foodSafetyNote} /> : null}
 
+            <PrimaryAction label={coachingLoading ? 'Preparing...' : 'Start Cooking'} onPress={openCookingSteps} />
+            <View style={styles.cookedActionCard}>
+              <View style={styles.cookedActionCopy}>
+                <Text style={styles.cookedActionLabel}>Cooked status</Text>
+                <Text style={styles.cookedActionValue}>
+                  {cookedCount > 0 ? formatCookedCount(cookedCount) : 'Not cooked yet'}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={markSelectedRecipeCooked}
+                style={({ pressed }) => [styles.markCookedButton, pressed ? styles.pressed : null]}
+              >
+                <Check color={colors.green} height={17} strokeWidth={2.3} width={17} />
+                <Text style={styles.markCookedText}>Mark cooked</Text>
+              </Pressable>
+            </View>
+            <View style={styles.secondaryActionsRow}>
+              <SecondaryIconAction icon={<Bookmark color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Save" onPress={saveSelectedRecipe} />
+              <SecondaryIconAction icon={<Cart color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Grocery List" onPress={openGroceryList} />
+              <SecondaryIconAction icon={<ShareAndroid color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Share" onPress={openShareRecipe} />
+            </View>
+
             <View style={styles.modeSection}>
-              <Text style={styles.sectionSmallTitle}>Choose your style</Text>
-              <RecipeModeTabs modes={availableModes} selectedMode={selectedMode} onSelectMode={chooseMode} />
+              <Text style={styles.sectionSmallTitle}>Style: {getModeLabel(selectedMode)}</Text>
             </View>
 
             <View style={styles.previewSection}>
@@ -431,14 +449,16 @@ export function RecipeDetailScreen() {
               ))}
             </View>
 
-            <InfoCard title="Why you'll love this">
-              {whyBullets.map((bullet) => (
-                <View key={bullet} style={styles.bulletRow}>
-                  <Check color={colors.coral} height={16} strokeWidth={2.35} width={16} />
-                  <Text style={styles.bulletText}>{bullet}</Text>
-                </View>
-              ))}
-            </InfoCard>
+            {whyBullets.length > 0 ? (
+              <InfoCard title="Why this works">
+                {whyBullets.map((bullet) => (
+                  <View key={bullet} style={styles.bulletRow}>
+                    <Check color={colors.coral} height={16} strokeWidth={2.35} width={16} />
+                    <Text style={styles.bulletText}>{bullet}</Text>
+                  </View>
+                ))}
+              </InfoCard>
+            ) : null}
 
             {flavorNotes.length > 0 ? (
               <InfoCard title="Flavor notes">
@@ -454,11 +474,10 @@ export function RecipeDetailScreen() {
 
             {equipment.length > 0 ? (
               <InfoCard title="Equipment you'll need">
-                <View style={styles.equipmentRow}>
-                  {equipment.slice(0, 4).map((item) => (
-                    <View key={item} style={styles.equipmentCard}>
-                      <Cutlery color={colors.coralDark} height={22} strokeWidth={2} width={22} />
-                      <Text numberOfLines={2} style={styles.equipmentText}>{cleanDisplayText(item)}</Text>
+                <View style={styles.chipRow}>
+                  {equipment.slice(0, 6).map((item) => (
+                    <View key={item} style={styles.flavorChipWrap}>
+                      <Text numberOfLines={1} style={styles.flavorChipText}>{cleanDisplayText(item)}</Text>
                     </View>
                   ))}
                 </View>
@@ -467,6 +486,7 @@ export function RecipeDetailScreen() {
 
             {substitutions.length > 0 ? (
               <InfoCard title="Easy swaps">
+                <Text style={styles.swapsHelper}>Use these if you want a lighter or easier version.</Text>
                 {substitutions.map((item) => (
                   <View key={item} style={styles.bulletRow}>
                     <Leaf color={colors.green} height={16} strokeWidth={2.2} width={16} />
@@ -478,20 +498,20 @@ export function RecipeDetailScreen() {
 
             <View style={styles.savingsCard}>
               <View style={styles.savingsCopy}>
-                <Text style={styles.savingsLabel}>{canShowSavings ? 'Estimated savings' : 'Homemade estimate'}</Text>
-                <Text style={styles.savingsSubLabel}>{canShowSavings ? 'You save' : 'Estimated grocery cost'}</Text>
+                <Text style={styles.savingsLabel}>{canShowSavings ? (isDemoScan ? 'Example savings' : 'Your savings') : 'Estimated home cost'}</Text>
+                <Text style={styles.savingsSubLabel}>{canShowSavings ? 'You save' : 'To make at home'}</Text>
                 <Text
                   adjustsFontSizeToFit
                   minimumFontScale={0.75}
                   numberOfLines={1}
                   style={styles.savingsValue}
                 >
-                  {formatCurrency(canShowSavings ? recipe.estimatedSavings : recipe.estimatedHomemadeCost)}
+                  {formatCurrency(canShowSavings ? displaySavings : recipe.estimatedHomemadeCost)}
                 </Text>
                 <Text style={styles.savingsNote}>
                   {canShowSavings
                     ? `vs. restaurant ${formatCurrency(restaurantPrice)}`
-                    : 'Add what you paid from the result screen to estimate savings.'}
+                    : 'Add what you paid from the result screen to see savings.'}
                 </Text>
               </View>
               <View style={styles.savingsIconBubble}>
@@ -499,28 +519,6 @@ export function RecipeDetailScreen() {
               </View>
             </View>
 
-            <PrimaryAction label={coachingLoading ? 'Preparing...' : 'Start Cooking'} onPress={openCookingSteps} />
-            <View style={styles.cookedActionCard}>
-              <View style={styles.cookedActionCopy}>
-                <Text style={styles.cookedActionLabel}>Cooked status</Text>
-                <Text style={styles.cookedActionValue}>
-                  {cookedCount > 0 ? formatCookedCount(cookedCount) : 'Not cooked yet'}
-                </Text>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                onPress={markSelectedRecipeCooked}
-                style={({ pressed }) => [styles.markCookedButton, pressed ? styles.pressed : null]}
-              >
-                <Check color={colors.green} height={17} strokeWidth={2.3} width={17} />
-                <Text style={styles.markCookedText}>Mark cooked</Text>
-              </Pressable>
-            </View>
-            <View style={styles.secondaryActionsRow}>
-              <SecondaryIconAction icon={<Bookmark color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Save" onPress={saveSelectedRecipe} />
-              <SecondaryIconAction icon={<Cart color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Grocery List" onPress={openGroceryList} />
-              <SecondaryIconAction icon={<ShareAndroid color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Share" onPress={openShareRecipe} />
-            </View>
           </View>
         </View>
       </ScrollView>
@@ -542,13 +540,23 @@ export function RecipeStepsScreen() {
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
+  const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
   const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
   const savedRecipe = recipe ? savedRecipes.find((savedRecipeItem) => savedRecipeItem.id === recipe.id) ?? null : null;
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
-  const restaurantPrice = scanResult?.restaurantPrice ?? 0;
-  const canShowSavings = Boolean(recipe) && restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
+  // Same honesty rule as RecipeDetailScreen: real savings need a user price.
+  const restaurantPrice = isDemoScan ? scanResult?.restaurantPrice ?? 0 : userRestaurantPrice ?? 0;
+  const canShowSavings = Boolean(recipe) &&
+    (isDemoScan
+      ? restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0
+      : userRestaurantPrice !== null);
+  const displaySavings = !recipe
+    ? 0
+    : isDemoScan
+      ? recipe.estimatedSavings
+      : Math.max(0, restaurantPrice - recipe.estimatedHomemadeCost);
   const spicePairings = getSafeTextList(recipe?.spicePairings);
   const cookingTerms = getSafeCookingTerms(recipe?.cookingTerms);
   const guidedSteps = useMemo(
@@ -653,7 +661,7 @@ export function RecipeStepsScreen() {
     track(analyticsEvents.RECIPE_SAVED, {
       dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
       mode: recipe.mode,
-      savings: canShowSavings ? recipe.estimatedSavings : 0,
+      savings: canShowSavings ? displaySavings : 0,
       screen: 'RecipeStepsScreen',
     });
     Alert.alert('Saved', `${cleanDisplayText(recipe.title)} was added to your library.`);
@@ -969,46 +977,6 @@ function QuickStat({ icon, label, value }: QuickStatProps) {
   );
 }
 
-type RecipeModeTabsProps = {
-  modes: RecipeMode[];
-  selectedMode: RecipeMode;
-  onSelectMode: (mode: RecipeMode) => void;
-};
-
-function RecipeModeTabs({ modes, selectedMode, onSelectMode }: RecipeModeTabsProps) {
-  const safeModes = modes.length > 0 ? modes : defaultScanResult.modes;
-
-  return (
-    <View style={styles.modeTabs}>
-      {safeModes.map((mode) => {
-        const isSelected = selectedMode === mode;
-
-        return (
-          <Pressable
-            key={mode}
-            accessibilityRole="button"
-            accessibilityState={{ selected: isSelected }}
-            onPress={() => onSelectMode(mode)}
-            style={({ pressed }) => [
-              styles.modeTab,
-              isSelected ? styles.modeTabSelected : null,
-              pressed ? styles.pressed : null,
-            ]}
-          >
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.78}
-              numberOfLines={1}
-              style={[styles.modeTabText, isSelected ? styles.modeTabTextSelected : null]}
-            >
-              {getModeLabel(mode)}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
 
 type InfoCardProps = {
   children: ReactNode;
@@ -1157,7 +1125,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     flexGrow: 1,
-    paddingBottom: 150,
+    paddingBottom: layout.scrollClearance,
     paddingHorizontal: 20,
   },
   heroCard: {
@@ -1314,35 +1282,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 23,
   },
-  modeTabs: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-    minWidth: 0,
-  },
-  modeTab: {
-    alignItems: 'center',
-    backgroundColor: recipeColors.cream,
-    borderRadius: 999,
-    flex: 1,
-    justifyContent: 'center',
-    minHeight: 42,
-    minWidth: 0,
-    paddingHorizontal: 8,
-  },
-  modeTabSelected: {
-    backgroundColor: recipeColors.orange,
-  },
-  modeTabText: {
-    color: recipeColors.charcoal,
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  modeTabTextSelected: {
-    color: '#fffdf8',
-  },
   previewSection: {
     marginTop: 22,
     paddingBottom: 16,
@@ -1478,24 +1417,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  equipmentRow: {
-    flexDirection: 'row',
-    gap: 8,
-    minWidth: 0,
-  },
-  equipmentCard: {
-    alignItems: 'center',
-    flex: 1,
-    minWidth: 0,
-  },
-  equipmentText: {
-    color: recipeColors.charcoal,
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 15,
-    marginTop: 6,
-    textAlign: 'center',
+  swapsHelper: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 10,
   },
   savingsCard: {
     alignItems: 'center',
@@ -2266,16 +2193,6 @@ function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode, fallbackRec
     null;
 }
 
-function getAvailableModes(recipes: Recipe[], fallbackRecipe: Recipe | null, isDemoScan: boolean) {
-  const modes = [
-    ...recipes.map((candidate) => candidate.mode),
-    ...(fallbackRecipe ? [fallbackRecipe.mode] : []),
-  ];
-  const uniqueModes = modes.filter((mode, index) => modes.indexOf(mode) === index);
-
-  return uniqueModes.length > 0 || !isDemoScan ? uniqueModes : defaultScanResult.modes;
-}
-
 function getSafeTextList(values: string[] | undefined) {
   return (Array.isArray(values) ? values : [])
     .map((value) => cleanDisplayText(value))
@@ -2422,16 +2339,21 @@ function getFlavorNotes(recipe: Recipe | null, pairings: string[]) {
   return Array.from(new Set(notes)).slice(0, 4);
 }
 
+// Only honest, human-readable bullets survive. The raw ingredient-parser
+// sentence ("Built around corn on the cob, hot cheetos, crushed...") and
+// AI-estimated savings claims are intentionally excluded, and generic filler
+// like "home cooking" is filtered out rather than shown.
+const GENERIC_FILLER_PATTERN = /\bhome cooking\b/i;
+
 function getWhyBullets(recipe: Recipe | null, totalTime: number) {
   if (!recipe) {
     return [];
   }
 
+  const bestFor = recipe.bestFor ? cleanDisplayText(recipe.bestFor) : '';
   const bullets = [
-    recipe.bestFor ? cleanDisplayText(recipe.bestFor) : null,
+    bestFor && !GENERIC_FILLER_PATTERN.test(bestFor) ? bestFor : null,
     totalTime > 0 ? `Ready in about ${totalTime} minutes` : null,
-    recipe.estimatedSavings > 0 ? `Saves about ${formatCurrency(recipe.estimatedSavings)} versus restaurant prices` : null,
-    recipe.mainIngredientsSummary ? `Built around ${cleanDisplayText(recipe.mainIngredientsSummary)}` : null,
   ].filter(Boolean) as string[];
 
   return bullets.slice(0, 3);

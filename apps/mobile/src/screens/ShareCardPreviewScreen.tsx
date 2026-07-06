@@ -76,6 +76,7 @@ export function ShareCardPreviewScreen() {
   const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
   const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
+  const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
   const selectedMode = getSafeRecipeMode(route.params?.mode ?? storeMode);
   const scanContext = route.params?.scanContext;
   const shareImage = scanContext?.image ?? selectedScanImage;
@@ -117,14 +118,19 @@ export function ShareCardPreviewScreen() {
   );
   const missingScanResult = cardType === 'scan_result' && !hasScanShareContext;
 
+  // Scan-result cards only claim a restaurant price and savings when the user
+  // actually entered one on the result screen — never the AI's own estimate.
+  // Demo scans are the labeled example exception.
   const cardData = useMemo<ShareCardData>(() => {
     const scanDishName = scanResult?.dishName ?? recipe?.title ?? cardRecipe.title;
-    const scanRestaurantPrice = getPositiveNumber(scanResult?.restaurantPrice);
+    const scanRestaurantPrice = isDemoScan
+      ? getPositiveNumber(scanResult?.restaurantPrice)
+      : getPositiveNumber(userRestaurantPrice);
     const scanHomemadeCost = getPositiveNumber(recipe?.estimatedHomemadeCost) ||
       getPositiveNumber(scanResult?.homemadeCost) ||
       getPositiveNumber(cardRecipe.estimatedHomemadeCost);
     const scanEstimatedSavings = scanRestaurantPrice > 0
-      ? getPositiveNumber(scanResult?.estimatedSavings) || Math.max(0, scanRestaurantPrice - scanHomemadeCost)
+      ? (isDemoScan ? getPositiveNumber(scanResult?.estimatedSavings) : 0) || Math.max(0, scanRestaurantPrice - scanHomemadeCost)
       : 0;
     const packRestaurantPrice = getPositiveNumber(packDish?.restaurantPrice);
     const packHomemadeCost = getPositiveNumber(packDish?.homemadeCost);
@@ -220,6 +226,8 @@ export function ShareCardPreviewScreen() {
   }, [
     cardRecipe,
     cardType,
+    isDemoScan,
+    userRestaurantPrice,
     latestChallenge?.mode,
     latestChallenge?.moneySaved,
     latestChallenge?.recipeTitle,
@@ -523,9 +531,6 @@ function ShareStat({ stat }: { stat: ShareStatData }) {
           </Text>
         </View>
       </View>
-      <View style={styles.shareStatTrack}>
-        <View style={[styles.shareStatFill, { width: `${stat.strength}%` }]} />
-      </View>
     </View>
   );
 }
@@ -672,10 +677,10 @@ function getShareRecipe(
 type ShareStatData = {
   label: string;
   value: string;
-  strength: number;
   icon: ReactNode;
 };
 
+// Honest stats only — no invented strength bars behind the numbers.
 function getShareStats(data: ShareCardData): ShareStatData[] {
   const recipe = data.recipe;
   const totalTime = getTotalTime(recipe);
@@ -687,19 +692,16 @@ function getShareStats(data: ShareCardData): ShareStatData[] {
       {
         label: 'Restaurant',
         value: formatCurrency(data.restaurantPrice),
-        strength: 86,
         icon: <MoneySquare color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
       },
       {
         label: 'Home',
         value: formatCurrency(data.homemadeCost),
-        strength: 62,
         icon: <Cutlery color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
       },
       {
         label: 'Saved',
         value: formatCurrency(data.estimatedSavings),
-        strength: 92,
         icon: <Spark color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
       },
     );
@@ -707,14 +709,12 @@ function getShareStats(data: ShareCardData): ShareStatData[] {
     stats.push({
       label: 'Logged saved',
       value: formatCurrency(data.estimatedSavings),
-      strength: 88,
       icon: <MoneySquare color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     });
   } else {
     stats.push({
       label: 'Home est.',
       value: formatCurrency(data.homemadeCost),
-      strength: 70,
       icon: <MoneySquare color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     });
   }
@@ -723,19 +723,16 @@ function getShareStats(data: ShareCardData): ShareStatData[] {
     {
       label: 'Time',
       value: totalTime > 0 ? formatDuration(totalTime) : 'Flexible',
-      strength: getTimeStrength(totalTime),
       icon: <Clock color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
     {
       label: 'Difficulty',
       value: getShareDifficulty(recipe.difficulty),
-      strength: getDifficultyStrength(recipe.difficulty),
       icon: <Crown color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
     {
       label: 'Style',
       value: getModeLabel(data.selectedMode),
-      strength: 72,
       icon: <Cutlery color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
   );
@@ -744,14 +741,12 @@ function getShareStats(data: ShareCardData): ShareStatData[] {
     stats.push({
       label: 'Servings',
       value: `${recipe.servings}`,
-      strength: Math.min(88, 36 + recipe.servings * 8),
       icon: <TaskList color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     });
   } else if (stepsCount > 0 && stats.length < 6) {
     stats.push({
       label: 'Steps',
       value: `${stepsCount} step${stepsCount === 1 ? '' : 's'}`,
-      strength: Math.min(92, 35 + stepsCount * 8),
       icon: <TaskList color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     });
   }
@@ -787,26 +782,6 @@ function getShareDifficulty(difficulty: Difficulty) {
     default:
       return 'Beginner';
   }
-}
-
-function getDifficultyStrength(difficulty: Difficulty) {
-  switch (difficulty) {
-    case 'Hard':
-      return 86;
-    case 'Medium':
-      return 66;
-    case 'Easy':
-    default:
-      return 42;
-  }
-}
-
-function getTimeStrength(totalTime: number) {
-  if (totalTime <= 0) {
-    return 42;
-  }
-
-  return Math.min(92, Math.max(34, 30 + totalTime / 2));
 }
 
 function getModeLabel(mode: RecipeMode | string) {
@@ -1085,18 +1060,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     marginTop: 2,
-  },
-  shareStatTrack: {
-    backgroundColor: '#f5e6d3',
-    borderRadius: 999,
-    height: 6,
-    marginTop: 8,
-    overflow: 'hidden',
-  },
-  shareStatFill: {
-    backgroundColor: '#f47b21',
-    borderRadius: 999,
-    height: '100%',
   },
   cardFooter: {
     alignItems: 'center',

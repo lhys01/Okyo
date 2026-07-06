@@ -26,7 +26,7 @@ import {
 import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { radius, shadows, spacing } from '../theme/okyoTheme';
+import { layout, radius, shadows, spacing } from '../theme/okyoTheme';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { getModeLabel } from '../utils/modeDisplay';
@@ -650,7 +650,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     padding: spacing.screen,
-    paddingBottom: 150,
+    paddingBottom: layout.scrollClearance,
   },
   header: {
     marginTop: 8,
