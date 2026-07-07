@@ -51,6 +51,7 @@ import { useOkyoStore } from '../state/useOkyoStore';
 import { getModeLabel } from '../utils/modeDisplay';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
+import { matchIngredientToList } from '../utils/ingredientMatching';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
@@ -168,6 +169,7 @@ export function RecipeDetailScreen() {
   const perServingCost = recipe && recipe.servings > 0 ? recipe.estimatedHomemadeCost / recipe.servings : null;
   const flavorNotes = getFlavorNotes(recipe, spicePairings);
   const whyBullets = getWhyBullets(recipe, totalTime);
+  const strategyNote = getStrategyNote(recipe);
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
   const foodSafetyNote = getFoodSafetyNote(`${recipe?.title ?? ''} ${recipe?.description ?? ''}`);
@@ -416,6 +418,7 @@ export function RecipeDetailScreen() {
 
             <View style={styles.modeSection}>
               <Text style={styles.sectionSmallTitle}>Style: {getModeLabel(selectedMode)}</Text>
+              {strategyNote ? <Text style={styles.strategyNote}>{strategyNote}</Text> : null}
             </View>
 
             <View style={styles.previewSection}>
@@ -1274,6 +1277,13 @@ const styles = StyleSheet.create({
   modeSection: {
     marginTop: 24,
     paddingBottom: 16,
+  },
+  strategyNote: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
   },
   sectionSmallTitle: {
     color: recipeColors.charcoal,
@@ -2268,6 +2278,48 @@ const GENERIC_WHY_TEXTS = new Set([
   'Proper technique here improves the final result.',
 ]);
 
+const GENERIC_WHY_PATTERNS = [
+  /\bdining experience\b/i,
+  /\benhances? (the )?(overall |flavor profile|presentation|experience)/i,
+  /\bimproves? (the )?presentation\b/i,
+  /\b(elevates?|completes?) the (dish|meal|experience)\b/i,
+  /\bthis (step|process) is important\b/i,
+  /\bimportant for the (final |overall )?(dish|recipe|result|outcome)\b/i,
+  /\bproper technique\b/i,
+  /\bkey step\b/i,
+  /\bcome together\b/i,
+  /^this step (matters|is essential|is key)/i,
+];
+
+function filterGenericWhy(why: string | undefined): string | undefined {
+  if (!why || GENERIC_WHY_TEXTS.has(why) || GENERIC_WHY_PATTERNS.some((pattern) => pattern.test(why))) {
+    return undefined;
+  }
+  return why;
+}
+
+function getStrategyNote(recipe: Recipe | null): string | null {
+  if (!recipe || !Array.isArray(recipe.ingredients)) {
+    return null;
+  }
+
+  const names = recipe.ingredients.map((ingredient) => ingredient.name.toLowerCase());
+  const hasPreparedBase = names.some((name) =>
+    /\b(frozen|store-?bought|pre-?made|ready-?made|prepared)\b/.test(name),
+  );
+  const hasScratchComponents = names.some(
+    (name) => /\bwrappers?\b/.test(name) || /\bground (pork|beef|chicken|turkey|meat)\b/.test(name) || /\b(dough|batter)\b/.test(name),
+  );
+
+  if (hasPreparedBase && !hasScratchComponents) {
+    return 'Shortcut version using prepared ingredients.';
+  }
+  if (hasScratchComponents && !hasPreparedBase) {
+    return 'From-scratch version - includes all prep steps.';
+  }
+  return null;
+}
+
 function getRecipeDisplaySteps(recipe: Recipe | null): DisplayRecipeStep[] {
   const structuredSteps = (Array.isArray(recipe?.structuredSteps) ? recipe.structuredSteps : [])
     .map((step) => ({
@@ -2282,7 +2334,7 @@ function getRecipeDisplaySteps(recipe: Recipe | null): DisplayRecipeStep[] {
       stepImagePrompt: step.stepImagePrompt,
       commonQuestion: step.commonQuestion,
       commonQuestionAnswer: step.commonQuestionAnswer,
-      why: step.why ?? (step.whyItMatters && !GENERIC_WHY_TEXTS.has(step.whyItMatters) ? cleanDisplayText(step.whyItMatters) : undefined),
+      why: filterGenericWhy(step.why) ?? (step.whyItMatters ? filterGenericWhy(cleanDisplayText(step.whyItMatters)) : undefined),
       commonMistake: step.commonMistake ?? (step.safetyNote ? cleanDisplayText(step.safetyNote) : undefined),
       estimatedMinutes: step.estimatedMinutes,
       timeEstimate: step.timeEstimate?.trim(),
@@ -2504,14 +2556,12 @@ function getGuidedCookingSteps(
     return {
       chefTip: step.chefTip ? cleanDisplayText(step.chefTip) : undefined,
       estimatedMinutes: step.estimatedMinutes ?? parseEstimatedMinutes(step.timeEstimate) ?? null,
-      ingredientsUsed: step.ingredientsUsed?.length
-        ? resolveIngredientsFromNames(step.ingredientsUsed, recipeIngredients)
-        : getStepIngredients(step.text, recipeIngredients),
+      ingredientsUsed: getClosedStepIngredients(step, recipeIngredients),
       instruction,
       phase: phaseName,
       phaseStepIndex: phaseIdx,
       phaseStepCount: phaseTotals.get(phaseName) ?? 1,
-      why: step.why,
+      why: filterGenericWhy(step.why),
       commonMistake: step.commonMistake,
       commonQuestion: step.commonQuestion,
       commonQuestionAnswer: step.commonQuestionAnswer,
@@ -2538,14 +2588,7 @@ function getRecipeIngredients(recipe: Recipe | null) {
     return [];
   }
 
-  const groupedIngredients = getSafeIngredientGroups(recipe).flatMap((group) => group.items);
-  const ingredients = groupedIngredients.length > 0
-    ? groupedIngredients
-    : Array.isArray(recipe.ingredients)
-      ? recipe.ingredients
-      : [];
-
-  return ingredients
+  return (Array.isArray(recipe.ingredients) ? recipe.ingredients : [])
     .filter((ingredient) => ingredient?.name?.trim())
     .slice(0, 40);
 }
@@ -2571,63 +2614,47 @@ function getStepIngredients(stepText: string, ingredients: RecipeIngredient[]) {
   return matchedIngredients.slice(0, 5);
 }
 
-// Common culinary synonyms — AI may use one name while the recipe uses another.
-const INGREDIENT_SYNONYMS: Record<string, string[]> = {
-  scallion: ['green onion', 'spring onion'],
-  'green onion': ['scallion', 'spring onion'],
-  'spring onion': ['scallion', 'green onion'],
-  cilantro: ['coriander', 'fresh coriander'],
-  coriander: ['cilantro', 'fresh coriander'],
-  cornstarch: ['corn starch', 'corn flour'],
-  'corn starch': ['cornstarch', 'corn flour'],
-  chickpea: ['garbanzo bean', 'garbanzo'],
-  garbanzo: ['chickpea', 'garbanzo bean'],
-  'garbanzo bean': ['chickpea', 'garbanzo'],
-  'bell pepper': ['capsicum', 'sweet pepper'],
-  capsicum: ['bell pepper', 'sweet pepper'],
-  zucchini: ['courgette'],
-  courgette: ['zucchini'],
-  eggplant: ['aubergine'],
-  aubergine: ['eggplant'],
-};
-
 function resolveIngredientsFromNames(names: string[], recipeIngredients: RecipeIngredient[]): RecipeIngredient[] {
   return names
-    .map((name) => {
-      const normalized = normalizeForMatching(name);
-      // 1. Exact match
-      const exact = recipeIngredients.find((ing) => normalizeForMatching(ing.name) === normalized);
-      if (exact) return exact;
-      // 2. Substring match (either direction)
-      const sub = recipeIngredients.find((ing) => {
-        const n = normalizeForMatching(ing.name);
-        return n.includes(normalized) || normalized.includes(n);
-      });
-      if (sub) return sub;
-      // 3. All significant words present (handles "garlic" matching "2 cloves garlic, minced")
-      const words = normalized.split(' ').filter((w) => w.length >= 3);
-      if (words.length > 0) {
-        const wordMatch = recipeIngredients.find((ing) => {
-          const n = normalizeForMatching(ing.name);
-          return words.every((w) => n.includes(w) || n.includes(`${w}s`) || (w.endsWith('s') && n.includes(w.slice(0, -1))));
-        });
-        if (wordMatch) return wordMatch;
-      }
-      // 3.5. Synonym lookup — handles scallions↔green onions, cilantro↔coriander, etc.
-      // Also tries the singular form so "scallions" resolves via the "scallion" key.
-      const singularNormalized = normalized.endsWith('s') ? normalized.slice(0, -1) : normalized;
-      const synonyms = INGREDIENT_SYNONYMS[normalized] ?? INGREDIENT_SYNONYMS[singularNormalized] ?? [];
-      if (synonyms.length > 0) {
-        const synonymMatch = recipeIngredients.find((ing) => {
-          const n = normalizeForMatching(ing.name);
-          return synonyms.some((syn) => n.includes(normalizeForMatching(syn)));
-        });
-        if (synonymMatch) return synonymMatch;
-      }
-      // 4. No match — use AI-declared name directly, no quantity
-      return { name, quantity: '' };
-    })
+    .map((name) => matchIngredientToList(name, recipeIngredients))
+    .filter((ingredient): ingredient is RecipeIngredient => ingredient !== null)
     .slice(0, 5);
+}
+
+const PASSIVE_STEP_RE = /\b(drain|draining|rest|resting|transfer|remove|pat dry|plate|plating|serve|serving|garnish)\b/i;
+const ACTIVE_STEP_RE = /\b(mix|stir|add|combine|fry|cook|heat|sear|boil|simmer|bake|whisk|fold|season|toss|fill|seal|wrap)\b/i;
+
+function filterChipsForPassiveStep(
+  stepText: string,
+  chips: RecipeIngredient[],
+): RecipeIngredient[] {
+  if (!PASSIVE_STEP_RE.test(stepText) || ACTIVE_STEP_RE.test(stepText)) {
+    return chips;
+  }
+
+  const normalizedStep = normalizeForMatching(stepText);
+  return chips.filter((chip) => {
+    const name = normalizeForMatching(chip.name);
+    if (normalizedStep.includes(name)) {
+      return true;
+    }
+
+    const headNoun = name.split(' ').filter((part) => part.length >= 3).pop();
+    if (!headNoun) {
+      return false;
+    }
+    const singular = headNoun.endsWith('s') ? headNoun.slice(0, -1) : headNoun;
+    return normalizedStep.includes(singular);
+  });
+}
+
+function getClosedStepIngredients(step: DisplayRecipeStep, recipeIngredients: RecipeIngredient[]): RecipeIngredient[] {
+  const resolved = step.ingredientsUsed?.length
+    ? resolveIngredientsFromNames(step.ingredientsUsed, recipeIngredients)
+    : [];
+
+  const chips = resolved.length > 0 ? resolved : getStepIngredients(step.text, recipeIngredients);
+  return filterChipsForPassiveStep(step.text, chips);
 }
 
 const STEP_TOOL_PATTERNS: Array<[RegExp, string]> = [

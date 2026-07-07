@@ -10,6 +10,7 @@ import {
   enrichRecipeContext,
   type EnrichedRecipeContext,
 } from './epicureService.js';
+import { ingredientsMatch } from './recipeIngredientValidation.js';
 
 const openRouterEndpoint = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -855,6 +856,28 @@ function getRecipeQualityIssues(output: OpenRouterRecipeOutput, isDrink: boolean
     issues.push('drink_uses_cooking_language');
   }
 
+  const stepIngredientNames = (Array.isArray(output.steps) ? output.steps : [])
+    .flatMap((value) => {
+      if (typeof value !== 'object' || value === null) {
+        return [] as string[];
+      }
+      const stepLike = value as { ingredients?: unknown; ingredientsUsed?: unknown };
+      const names = Array.isArray(stepLike.ingredients)
+        ? stepLike.ingredients
+        : Array.isArray(stepLike.ingredientsUsed)
+          ? stepLike.ingredientsUsed
+          : [];
+      return names.filter(
+        (name): name is string => typeof name === 'string' && name.trim().length > 0,
+      );
+    });
+  const unlistedStepIngredients = stepIngredientNames.filter(
+    (name) => !ingredients.some((listed) => ingredientsMatch(listed, name)),
+  );
+  if (unlistedStepIngredients.length > 0) {
+    issues.push('step_uses_unlisted_ingredients');
+  }
+
   return issues;
 }
 
@@ -879,6 +902,7 @@ function getRecipeRepairPrompt(
     'Rewrite it so a beginner can cook it with zero guessing. Return ONLY valid minified JSON, same single-recipe shape as before.',
     'Return exactly ONE recipe object: {"dishName":"...","title":"...", ...recipe fields..., "steps":[...]}. No modes, no variants, no "selectedMode".',
     'Fix every problem: NEVER write "the main ingredient" or "main ingredient" — name the actual food. Every ingredient must start with an exact amount and a real grocery name. Every step must name real ingredients with amounts, a time, and a visual cue. No "cook until done", "prepare the ingredients", "season to taste", or "mix everything".',
+    'INGREDIENT CLOSURE IS MANDATORY: every name in any step "ingredients" array must also appear in the top-level "ingredients" list with an exact amount. If a step needs an ingredient that is missing from the list, add it to the list with an amount — never reference an ingredient that is not listed.',
     'PHASE ORDER IS MANDATORY: Every step object MUST include "phase" (integer 1-6). Steps must be in phase order — 1 Preparation, 2 Setup, 3 Cooking, 4 Assembly, 5 Finishing, 6 Serving. Phase numbers must never decrease. Phase 6 Serving MUST be the final step and can NEVER appear before phase 3 Cooking.',
     'STEP CONTRACT IS MANDATORY: Every step object MUST include "stepNumber" (integer, starts at 1, strictly sequential, no gaps), "title" (2-4 word action phrase), "step" (one clear instruction sentence), "ingredients" (array of ingredient names used in this step — never empty), and "tools" (array of tool names used in this step — never empty, no duplicates).',
     'Keep 6-12 ingredients and 8-14 steps (6-8 for drinks or salads).',
@@ -1239,6 +1263,9 @@ function getRecipePrompt(
     'MUSUBI FORMAT: Spam musubi = rectangular rice block + Spam slice on top + nori strip wrapped around the outside. It is NOT rolled sushi. Never create roll-slicing, bamboo mat, or "slice rolls" steps for musubi. Name it "Spam Musubi". Steps must follow: cook rice → season rice → sear Spam → make glaze → cut nori strips → shape rice blocks → assemble → serve. Max 8 steps.',
     'MANGO STICKY RICE FORMAT: Ingredients MUST be exactly: sticky rice (glutinous), ripe mangoes, coconut milk (ONE can only — never both coconut milk AND coconut cream as separate items), sugar, salt. Optional: sesame seeds or toasted coconut flakes. MAX 7 ingredients total. Never list "coconut sauce" AND "coconut cream" as separate ingredients — they are the same thing. Never list "ripe mangoes" AND "diced mango" — pick one. Steps: soak/rinse rice → steam rice → warm coconut milk + sugar + salt → fold sauce into rice → slice mango → plate and drizzle. Max 7 steps.',
     'COOKABLE NOT VISIBLE: Do not list only the visible toppings. Infer the hidden essentials needed to actually cook a believable home version — cooking oil/fat, salt, seasoning, sauce COMPONENTS (not just "sauce"), and aromatics. Every recipe must be cookable from the ingredient list alone. Dumplings/wontons need wrapper-or-frozen-base + filling-or-shortcut + aromatics + sauce. Pick ONE coherent strategy: either a from-scratch version (wrappers + filling) OR a shortcut version (e.g. frozen dumplings) — never mix both.',
+    'ONE STRATEGY (all dishes): Commit to ONE approach — shortcut (prepared/frozen/store-bought components, fewer steps, faster) OR from-scratch (raw components + every prep step). NEVER list the finished scanned dish as an ingredient ("fried wontons", "cooked fried rice", "assembled tacos") — list the components the chosen strategy actually uses. Never combine a prepared finished food with the raw ingredients used to make it. prepTime/cookTime/skillLevel must match the chosen strategy.',
+    'PREP COMPLETENESS: If ingredients include raw components, steps MUST include their prep before cooking. wrappers + ground meat → mix filling, fill wrappers, seal, THEN cook. raw chicken → a cooking step with safe temperature. dry rice → cook rice (or list "cooked rice" instead). Never jump from heating oil straight to frying items that still need to be assembled.',
+    'QUANTITY CONSISTENCY: Every amount in a step MUST equal the amount in the ingredient list — if steps deep-fry in 2 cups of oil, the ingredient list says "2 cups vegetable oil (for frying)", not "2 tbsp". Keep sauce portions sane: a dipping sauce is 1/4–1/2 cup per 12 pieces, never 3 cups. State each amount once and reuse it exactly.',
     'NO DUPLICATE INGREDIENTS: Each ingredient concept appears exactly once. soy sauce appears once with the total quantity for the whole recipe. RICE SEASONING: use either "seasoned rice vinegar" (1 ingredient) OR separate rice vinegar + sugar + salt (3 ingredients) — never both strategies in the same recipe.',
     'STEP HYGIENE: Never create standalone steps titled "Combine Ingredients", "Heat Mixture", "Cool and Store", or "Gather Ingredients" — fold these into the adjacent cooking step. Storage notes belong in storageAndReheating, not in steps.',
     'SIMPLE FOODS: Plain fruit (watermelon cubes, berries, grapes, banana, sliced melon) = the fruit itself only. Do NOT add feta, mint, honey, nuts, granola, yogurt, dressing, or any chef addition unless clearly visible in the scan or named in the title. Watermelon cubes → ["4 cups watermelon, cubed"], optionally ["1 lime", "1/4 tsp Tajín or salt"]. Never create a salad from a plain fruit scan. Same rule for plain boiled eggs and plain toast.',

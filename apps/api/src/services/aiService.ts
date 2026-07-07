@@ -39,6 +39,7 @@ import {
 } from './openRouterProvider.js';
 import { logScanEvaluation } from './scanEvalLogger.js';
 import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
+import { enforceStepIngredientClosure } from './recipeIngredientValidation.js';
 import { getGeneratedRecipe, storeGeneratedRecipe } from '../store.js';
 
 // Bump when the vision/recipe prompt or post-processing pipeline changes substantially.
@@ -326,25 +327,9 @@ export async function generateRecipeFromDish(
     });
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterTextModel, { stage: 'recipe' }));
     const result = createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
-
-    // Store recipe for deferred coaching — enriched on Guided Cooking tap, not on scan.
-    if (result.recipe) {
-      storeGeneratedRecipe(result.recipe);
-    }
-
     const initialScore = result.recipe?.structuredSteps?.length
       ? calculateRecipeCoachingScore(result.recipe.structuredSteps)
       : 0;
-
-    recordRecipeQualityForResult({
-      config,
-      analysis: input.analysis,
-      result,
-      initialScore,
-      finalScore: initialScore,
-      repairDelivered: false,
-      generationMs: Date.now() - startedAt,
-    });
 
     // Component coverage repair: for platter-style meals, ensure every detected
     // component appears in ingredientGroups.
@@ -355,6 +340,54 @@ export async function generateRecipeFromDish(
         storeGeneratedRecipe(finalResult.recipe);
       }
     }
+
+    // Ingredient closure enforcement: recipe.ingredients is the single source
+    // of truth. Unknown step ingredients are stripped, never invented, and
+    // groceries are regenerated when final recipe ingredients are missing.
+    if (finalResult.recipe) {
+      const enforced = enforceStepIngredientClosure(finalResult.recipe);
+      let closedRecipe = enforced.recipe;
+      if (enforced.report.missingGroceryItems.length > 0) {
+        closedRecipe = {
+          ...closedRecipe,
+          groceryItems: getGroceryItems(closedRecipe.ingredients, input.analysis),
+        };
+      }
+      if (enforced.changed || enforced.report.missingGroceryItems.length > 0) {
+        finalResult = { ...finalResult, recipe: closedRecipe };
+      }
+      if (
+        enforced.report.unknownStepIngredients.length > 0 ||
+        enforced.report.missingGroceryItems.length > 0
+      ) {
+        console.warn('[recipe_consistency]', {
+          recipeId: closedRecipe.id,
+          unknownStepIngredients: enforced.report.unknownStepIngredients,
+          missingGroceryItems: enforced.report.missingGroceryItems,
+          strippedStepIngredients: enforced.strippedStepIngredients,
+          repaired: enforced.report.unknownStepIngredients.length === 0,
+        });
+      }
+    }
+
+    // Store recipe for deferred coaching — enriched on Guided Cooking tap, not on scan.
+    if (finalResult.recipe) {
+      storeGeneratedRecipe(finalResult.recipe);
+    }
+
+    const finalScore = finalResult.recipe?.structuredSteps?.length
+      ? calculateRecipeCoachingScore(finalResult.recipe.structuredSteps)
+      : initialScore;
+
+    recordRecipeQualityForResult({
+      config,
+      analysis: input.analysis,
+      result: finalResult,
+      initialScore,
+      finalScore,
+      repairDelivered: false,
+      generationMs: Date.now() - startedAt,
+    });
 
     return finalResult;
   } catch (error) {
@@ -384,6 +417,7 @@ function recordRecipeQualityForResult(args: {
         analysis,
         analysis.dishName ?? '',
         result.recipe?.ingredients.map((i) => i.name),
+        result.recipe?.ingredients.map((i) => ({ name: i.name, quantity: i.quantity })),
       ).warnCounts
     : {};
 
@@ -3183,6 +3217,45 @@ function getDefaultSubstitutions() {
   return ['Adjust ingredients to taste or substitute similar pantry staples.'];
 }
 
+const WRAPPED_DISH_RE = /\b(wonton|dumpling|gyoza|potsticker|pot sticker|mandu|spring roll|egg roll)s?\b/i;
+const FINISHED_DISH_INGREDIENT_RE = /\b(?:fried|cooked|prepared|leftover)\s+(wonton|dumpling|gyoza|potsticker|spring roll|egg roll)s?\b/i;
+const PREPARED_BASE_RE = /\b(?:frozen|store-?bought|pre-?made|ready-?made)\b/i;
+const SCRATCH_WRAPPER_RE = /\bwrappers?\b/i;
+const SCRATCH_FILLING_RE = /\bground\s+(?:pork|beef|chicken|turkey|meat)\b/i;
+
+export function enforceDishStrategy(ingredients: RecipeIngredient[], dishText: string): RecipeIngredient[] {
+  if (!WRAPPED_DISH_RE.test(dishText)) {
+    return ingredients;
+  }
+
+  const isScratchComponent = (name: string) => SCRATCH_WRAPPER_RE.test(name) || SCRATCH_FILLING_RE.test(name);
+  const finishedIndex = ingredients.findIndex((ingredient) => FINISHED_DISH_INGREDIENT_RE.test(ingredient.name));
+
+  if (finishedIndex >= 0) {
+    return ingredients
+      .map((ingredient, index) =>
+        index === finishedIndex
+          ? {
+              ...ingredient,
+              name: ingredient.name.replace(
+                FINISHED_DISH_INGREDIENT_RE,
+                (_match, base: string) => `frozen ${base}s`,
+              ),
+            }
+          : ingredient,
+      )
+      .filter((ingredient, index) => index === finishedIndex || !isScratchComponent(ingredient.name));
+  }
+
+  const hasPreparedBase = ingredients.some((ingredient) => PREPARED_BASE_RE.test(ingredient.name));
+  const hasScratchComponents = ingredients.some((ingredient) => isScratchComponent(ingredient.name));
+  if (hasPreparedBase && hasScratchComponents) {
+    return ingredients.filter((ingredient) => !isScratchComponent(ingredient.name));
+  }
+
+  return ingredients;
+}
+
 function ensureCoreIngredients(
   ingredients: RecipeIngredient[],
   analysis: FoodImageAnalysis,
@@ -3196,7 +3269,7 @@ function ensureCoreIngredients(
     ...analysis.visibleIngredients,
     ...analysis.likelyIngredients,
   ].join(' ').toLowerCase();
-  const result = [...ingredients];
+  const result = enforceDishStrategy([...ingredients], dishText);
 
   if (dishText.includes('burger')) {
     addIngredientIfMissing(result, ['bun', 'brioche', 'roll'], {
@@ -3859,6 +3932,7 @@ function collectCoachingWarnings(
   analysis: FoodImageAnalysis,
   dishName: string,
   recipeIngredients?: string[],
+  ingredientDetails?: Array<{ name: string; quantity?: string }>,
 ): CoachingWarningResult {
   const warnCounts: Record<string, number> = {};
   const warnings: CoachingWarning[] = [];
@@ -4116,6 +4190,41 @@ function collectCoachingWarnings(
     }
   }
 
+  if (recipeIngredients) {
+    for (const ingredientName of recipeIngredients) {
+      if (FINISHED_DISH_INGREDIENT_RE.test(ingredientName)) {
+        warn('[recipe-quality] finished dish listed as ingredient', { dish: dishName, ingredient: ingredientName });
+      }
+    }
+  }
+
+  if (ingredientDetails) {
+    const oilIngredient = ingredientDetails.find(
+      (item) => /\boil\b/i.test(item.name) && item.quantity,
+    );
+    const oilUnitClass = oilIngredient?.quantity && /\b(tbsp|tsp|tablespoons?|teaspoons?)\b/i.test(oilIngredient.quantity)
+      ? 'spoon'
+      : oilIngredient?.quantity && /\bcups?\b/i.test(oilIngredient.quantity)
+        ? 'cup'
+        : null;
+    if (oilUnitClass) {
+      for (const step of steps) {
+        const stepOil = /(\d+(?:\/\d+)?)\s*(cups?|tbsp|tsp|tablespoons?|teaspoons?)\s+(?:of\s+)?[a-z ]*\boil\b/i.exec(step.text ?? '');
+        if (!stepOil) {
+          continue;
+        }
+        const stepUnitClass = /cups?/i.test(stepOil[2]) ? 'cup' : 'spoon';
+        if (stepUnitClass !== oilUnitClass) {
+          warn('[recipe-quality] oil quantity contradiction', {
+            dish: dishName,
+            listed: oilIngredient?.quantity,
+            step: stepOil[0],
+          });
+        }
+      }
+    }
+  }
+
   // Per-phase coverage — phases 3 (Cooking), 4 (Assembly), 5 (Finishing)
   for (const requiredPhase of [3, 4, 5]) {
     const hasPhaseSteps = steps.some((s) => s.phase === requiredPhase);
@@ -4142,8 +4251,9 @@ function auditStepCoachingQuality(
   analysis: FoodImageAnalysis,
   dishName: string,
   recipeIngredients?: string[],
+  ingredientDetails?: Array<{ name: string; quantity?: string }>,
 ): CoachingWarningResult {
-  const result = collectCoachingWarnings(steps, analysis, dishName, recipeIngredients);
+  const result = collectCoachingWarnings(steps, analysis, dishName, recipeIngredients, ingredientDetails);
   for (const { tag, ctx } of result.warnings) {
     console.warn(tag, ctx);
   }
