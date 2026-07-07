@@ -11,9 +11,16 @@ Use this workflow for engineering tasks in Okyo.
 
 1. Restate the goal in simple terms.
 2. Inspect the relevant files first.
-3. Make a reasonable assumption if the prompt is vague.
-4. Ask only if the task is impossible or dangerous without user input.
-5. Explain the planned changes briefly.
+3. For recurring bug areas (scan, images, state, recipes), check `docs/audits/` and `docs/wiki/KNOWN_ISSUES.md` before re-diagnosing — 30 prior reports exist.
+4. Make a reasonable assumption if the prompt is vague.
+5. Ask only if the task is impossible or dangerous without user input.
+6. Explain the planned changes briefly.
+
+## Paths And Worktrees
+
+- Resolve the repo root with `git rev-parse --show-toplevel`; the checkout moves between machines/worktrees.
+- Never trust stale absolute paths (e.g. `/Users/rober/Documents/Okyo-1` in the `./run` script is stale).
+- Never claim prior work landed without grepping the working tree for it.
 
 ## Code Rules
 
@@ -62,5 +69,19 @@ End with:
 
 - What changed
 - Files edited
-- How to test it
+- Commands run (typecheck/tests) and their results
+- Risks
+- How to test it manually
 - Any issues or next steps
+
+## Example Final Output
+
+> Fixed grocery-list duplicate rows. Cause: `GroceryListScreen.tsx` merged saved-recipe ingredients without deduping by normalized name. Fix: dedupe on lowercase trimmed name before render; quantities summed. Files: `apps/mobile/src/screens/GroceryListScreen.tsx`. Commands: `npx tsc --noEmit` clean. Risk: quantity summing assumes same unit — mixed units still show as separate rows (intentional). Test: save two recipes sharing "garlic", open grocery list, one garlic row.
+
+## Done Checklist
+
+- [ ] Relevant files inspected before editing; prior `docs/audits/` findings checked for recurring bug areas
+- [ ] Change focused; no unrelated rewrites; Okyo identity preserved (food companion, not calorie tracker)
+- [ ] No fake data, stats, prices, or savings introduced
+- [ ] Narrowest useful verification run and reported
+- [ ] Report includes files changed, commands run, risks, manual test steps
