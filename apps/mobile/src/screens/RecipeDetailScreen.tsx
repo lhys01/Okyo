@@ -166,7 +166,6 @@ export function RecipeDetailScreen() {
       ? [{ component: '', items: fallbackIngredients }]
       : [];
   const totalTime = recipe ? recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes : 0;
-  const perServingCost = recipe && recipe.servings > 0 ? recipe.estimatedHomemadeCost / recipe.servings : null;
   const flavorNotes = getFlavorNotes(recipe, spicePairings);
   const whyBullets = getWhyBullets(recipe, totalTime);
   const strategyNote = getStrategyNote(recipe);
@@ -386,7 +385,6 @@ export function RecipeDetailScreen() {
               <QuickStat label="Total Time" value={`${totalTime} min`} icon={<Clock color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
               <QuickStat label="Difficulty" value={recipe.skillLevel ?? recipe.difficulty} icon={<FireFlame color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
               <QuickStat label="Servings" value={`${recipe.servings}`} icon={<User color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
-              <QuickStat label="Per Serving" value={perServingCost ? formatCurrency(perServingCost) : formatCurrency(recipe.estimatedHomemadeCost)} icon={<MoneySquare color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
             </View>
 
             <Text style={styles.description}>{displayDescription}</Text>
@@ -1218,8 +1216,8 @@ const styles = StyleSheet.create({
   cookedMiniPill: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: '#fff8ed',
-    borderColor: 'rgba(232, 220, 203, 0.9)',
+    backgroundColor: recipeColors.cream,
+    borderColor: recipeColors.border,
     borderRadius: 999,
     borderWidth: 1,
     flexDirection: 'row',
@@ -1313,16 +1311,14 @@ const styles = StyleSheet.create({
   ingredientGroupTitle: {
     color: recipeColors.orangeDeep,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
-    letterSpacing: 0.4,
     marginBottom: 2,
     marginTop: 10,
-    textTransform: 'uppercase',
   },
   ingredientRow: {
     alignItems: 'center',
-    borderBottomColor: 'rgba(232, 220, 203, 0.9)',
+    borderBottomColor: recipeColors.border,
     borderBottomWidth: 1,
     flexDirection: 'row',
     gap: 10,
@@ -1437,7 +1433,7 @@ const styles = StyleSheet.create({
   savingsCard: {
     alignItems: 'center',
     backgroundColor: recipeColors.greenSoft,
-    borderRadius: 12,
+    borderRadius: 20,
     flexDirection: 'row',
     gap: 12,
     marginTop: 18,
@@ -1455,7 +1451,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   savingsSubLabel: {
-    color: '#3f6a52',
+    color: recipeColors.green,
     fontSize: 13,
     fontWeight: '600',
     marginTop: 10,
@@ -1469,14 +1465,14 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   savingsNote: {
-    color: '#3f6a52',
+    color: recipeColors.green,
     fontSize: 13,
     lineHeight: 18,
     marginTop: 4,
   },
   savingsIconBubble: {
     alignItems: 'center',
-    backgroundColor: '#d9efd9',
+    backgroundColor: recipeColors.card,
     borderRadius: 999,
     height: 76,
     justifyContent: 'center',
@@ -1485,7 +1481,7 @@ const styles = StyleSheet.create({
   primaryAction: {
     alignItems: 'center',
     backgroundColor: recipeColors.orange,
-    borderRadius: 24,
+    borderRadius: 999,
     justifyContent: 'center',
     marginTop: 22,
     minHeight: 62,
@@ -1497,7 +1493,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   primaryActionText: {
-    color: '#fffdf8',
+    color: colors.card,
     fontFamily: fontFamilies.extraBold,
     fontSize: 18,
     fontWeight: '800',
@@ -1505,8 +1501,8 @@ const styles = StyleSheet.create({
   },
   cookedActionCard: {
     alignItems: 'center',
-    backgroundColor: '#fff8ed',
-    borderColor: 'rgba(232, 220, 203, 0.9)',
+    backgroundColor: recipeColors.cream,
+    borderColor: recipeColors.border,
     borderRadius: 22,
     borderWidth: 1,
     flexDirection: 'row',
@@ -1522,9 +1518,8 @@ const styles = StyleSheet.create({
   cookedActionLabel: {
     color: recipeColors.muted,
     fontFamily: fontFamilies.bold,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
-    textTransform: 'uppercase',
   },
   cookedActionValue: {
     color: recipeColors.charcoal,
@@ -1556,8 +1551,8 @@ const styles = StyleSheet.create({
   secondaryIconAction: {
     alignItems: 'center',
     backgroundColor: recipeColors.cream,
-    borderColor: 'rgba(232, 220, 203, 0.8)',
-    borderRadius: 22,
+    borderColor: recipeColors.border,
+    borderRadius: 20,
     borderWidth: 1,
     flex: 1,
     gap: 6,

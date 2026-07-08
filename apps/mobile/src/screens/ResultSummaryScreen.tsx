@@ -6,14 +6,11 @@ import {
   Camera,
   Cart,
   CheckCircle,
-  Clock,
-  Cutlery,
   NavArrowLeft,
   OpenBook,
   PlusCircle,
   Settings,
   ShareAndroid,
-  User,
   ArrowRight,
 } from 'iconoir-react-native';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
@@ -452,6 +449,23 @@ export function ResultSummaryScreen() {
           {displayDishName || 'Scanned dish'}
         </Text>
         <Text style={styles.subtitle}>{displaySubtitle}</Text>
+        <View style={styles.metaChipRow}>
+          {selectedRecipe.servings ? (
+            <View style={styles.metaChip}>
+              <Text style={styles.metaChipText}>Serves {selectedRecipe.servings}</Text>
+            </View>
+          ) : null}
+          {selectedRecipe.difficulty ? (
+            <View style={styles.metaChip}>
+              <Text style={styles.metaChipText}>{selectedRecipe.difficulty}</Text>
+            </View>
+          ) : null}
+          {totalTimeMinutes ? (
+            <View style={styles.metaChip}>
+              <Text style={styles.metaChipText}>{totalTimeMinutes} min</Text>
+            </View>
+          ) : null}
+        </View>
         {matchPercent !== null ? (
           <View style={styles.matchPill}>
             <CheckCircle color={colors.green} height={20} strokeWidth={2.25} width={20} />
@@ -616,7 +630,7 @@ export function ResultSummaryScreen() {
 
       <View style={styles.actions}>
         <ResultPrimaryButton onPress={() => navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: selectedMode } })}>
-          <OpenBook color="#fffdf8" height={25} strokeWidth={2.15} width={25} />
+          <OpenBook color={colors.card} height={25} strokeWidth={2.15} width={25} />
           <Text style={styles.resultPrimaryButtonText}>View recipe</Text>
         </ResultPrimaryButton>
         <View style={styles.secondaryRow}>
@@ -638,26 +652,6 @@ export function ResultSummaryScreen() {
         </View>
       </View>
 
-      <View style={styles.summaryCard}>
-        <StatBlock
-          icon={<User color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
-          label="Servings"
-          value={selectedRecipe.servings ? `${selectedRecipe.servings}` : '—'}
-        />
-        <View style={styles.statDivider} />
-        <StatBlock
-          icon={<Cutlery color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
-          label="Difficulty"
-          value={selectedRecipe.difficulty ?? '—'}
-        />
-        <View style={styles.statDivider} />
-        <StatBlock
-          icon={<Clock color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
-          label="Time"
-          value={totalTimeMinutes ? `${totalTimeMinutes} min` : '—'}
-        />
-      </View>
-
       <View style={styles.matchCard}>
         <View style={styles.matchTopRow}>
           <View style={styles.modeBadge}>
@@ -666,7 +660,7 @@ export function ResultSummaryScreen() {
         </View>
         <View style={styles.matchBodyRow}>
           <View style={styles.matchCopy}>
-            <Text style={styles.matchTitle}>Close match to your scan</Text>
+            <Text style={styles.matchTitle}>About this recipe</Text>
             <Text style={styles.matchNote}>
               {getModeSummary(selectedRecipe, selectedMode)}
             </Text>
@@ -689,7 +683,7 @@ function ResultFrame({ children, onScanAgain, onSettings }: ResultFrameProps) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
-        contentContainerStyle={[styles.screenContent, { paddingBottom: 220 + insets.bottom }]}
+        contentContainerStyle={[styles.screenContent, { paddingBottom: 48 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.topBar}>
@@ -775,41 +769,6 @@ function FoodImageCard({ dishName, imageUri, isDemoScan }: FoodImageCardProps) {
     </View>
   );
 }
-
-type StatBlockProps = {
-  icon: ReactNode;
-  label: string;
-  value: string;
-};
-
-function StatBlock({ icon, label, value }: StatBlockProps) {
-  return (
-    <View style={styles.statTile}>
-      <View style={styles.statIcon}>
-        {icon}
-      </View>
-      <View style={styles.statTextGroup}>
-        <Text
-          adjustsFontSizeToFit
-          minimumFontScale={0.82}
-          numberOfLines={1}
-          style={styles.metricLabel}
-        >
-          {label}
-        </Text>
-        <Text
-          adjustsFontSizeToFit
-          minimumFontScale={0.8}
-          numberOfLines={1}
-          style={styles.metricValue}
-        >
-          {value}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
 
 type ActionButtonProps = {
   icon?: ReactNode;
@@ -1145,11 +1104,10 @@ const styles = StyleSheet.create({
   kicker: {
     color: recipeColors.orange,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0,
     marginBottom: 10,
-    textTransform: 'uppercase',
   },
   title: {
     color: recipeColors.charcoal,
@@ -1255,9 +1213,8 @@ const styles = StyleSheet.create({
   confirmLabel: {
     color: recipeColors.orange,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
-    textTransform: 'uppercase',
   },
   confirmTitle: {
     color: recipeColors.charcoal,
@@ -1318,7 +1275,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   confirmPrimaryText: {
-    color: '#fffdf8',
+    color: colors.card,
     fontFamily: fontFamilies.bold,
     fontSize: 13,
     fontWeight: '700',
@@ -1362,10 +1319,9 @@ const styles = StyleSheet.create({
   savingsHeroLabel: {
     color: recipeColors.green,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0,
-    textTransform: 'uppercase',
   },
   savingsHeroValue: {
     color: recipeColors.green,
@@ -1425,54 +1381,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     textAlign: 'center',
   },
-  summaryCard: {
-    alignItems: 'center',
+  metaChipRow: {
     flexDirection: 'row',
-    marginTop: 18,
-    minWidth: 0,
-    paddingHorizontal: 10,
-    paddingVertical: 16,
-  },
-  statTile: {
-    alignItems: 'center',
-    flex: 1,
+    flexWrap: 'wrap',
     gap: 8,
-    justifyContent: 'center',
-    minHeight: 62,
-    minWidth: 0,
-    paddingHorizontal: 4,
+    marginTop: 14,
   },
-  statDivider: {
-    backgroundColor: recipeColors.border,
-    height: 56,
-    width: 1,
-  },
-  statIcon: {
-    alignItems: 'center',
+  metaChip: {
+    backgroundColor: recipeColors.cream,
     borderRadius: 999,
-    height: 28,
-    justifyContent: 'center',
-    width: 28,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
   },
-  statTextGroup: {
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  metricLabel: {
-    color: recipeColors.muted,
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  metricValue: {
+  metaChipText: {
     color: recipeColors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 18,
-    fontWeight: '800',
-    lineHeight: 22,
-    marginTop: 1,
-    textAlign: 'center',
+    fontFamily: fontFamilies.bold,
+    fontSize: 13,
+    fontWeight: '700',
   },
   matchCard: {
     marginTop: 16,
@@ -1579,8 +1504,8 @@ const styles = StyleSheet.create({
   actionButton: {
     alignItems: 'center',
     backgroundColor: recipeColors.cream,
-    borderColor: 'rgba(232, 220, 203, 0.8)',
-    borderRadius: 22,
+    borderColor: recipeColors.border,
+    borderRadius: 20,
     borderWidth: 1,
     flex: 1,
     gap: 5,
@@ -1607,7 +1532,7 @@ const styles = StyleSheet.create({
   resultPrimaryButton: {
     alignItems: 'center',
     backgroundColor: recipeColors.orange,
-    borderRadius: 24,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 12,
     justifyContent: 'center',
@@ -1620,7 +1545,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   resultPrimaryButtonText: {
-    color: '#fffdf8',
+    color: colors.card,
     fontFamily: fontFamilies.extraBold,
     fontSize: 18,
     fontWeight: '800',

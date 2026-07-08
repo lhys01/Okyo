@@ -363,7 +363,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   badgeText_dark: {
-    color: '#fffdf8',
+    color: colors.card,
   },
   badgeText_green: {
     color: colors.green,
