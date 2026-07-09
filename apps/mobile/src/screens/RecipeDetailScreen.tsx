@@ -10,7 +10,6 @@ import {
   Clock,
   FireFlame,
   Heart,
-  HeartSolid,
   Leaf,
   MoneySquare,
   NavArrowLeft,
@@ -19,7 +18,7 @@ import {
   User,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -34,7 +33,9 @@ import { OKYO_API_BASE_URL } from '../api/config';
 import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
-import { colors, fontFamilies, layout, radius, surfaces } from '../theme/okyoTheme';
+import { getFoodSafetyNote, TrustBadge } from '../components/TrustBadge';
+import { colors, fontFamilies } from '../components/OkyoUI';
+import { layout } from '../theme/okyoTheme';
 import {
   defaultScanResult,
   getSafeRecipeForMode,
@@ -47,9 +48,9 @@ import {
 } from '../mocks';
 import type { MainTabParamList, RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { getModeLabel } from '../utils/modeDisplay';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
-import { getModeLabel } from '../utils/modeDisplay';
 import { matchIngredientToList } from '../utils/ingredientMatching';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
@@ -121,9 +122,9 @@ export function RecipeDetailScreen() {
   const routeMode = route.params?.mode;
   const initialMode = getSafeRecipeMode(routeMode ?? defaultScanResult.modes[0]);
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
-  const setStoreSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
+  const markRecipeCooked = useOkyoStore((state) => state.markRecipeCooked);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
@@ -137,14 +138,13 @@ export function RecipeDetailScreen() {
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
   const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
-  const isRecipeSaved = Boolean(recipe && savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id));
+  const savedRecipe = recipe ? savedRecipes.find((savedRecipeItem) => savedRecipeItem.id === recipe.id) ?? null : null;
+  const cookedCount = getRecipeCookedCount(savedRecipe ?? recipe);
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
   // Savings need a price the user actually paid. Demo scans are the labeled
   // exception — they show example numbers from mock data.
   const homemadeCost = recipe?.estimatedHomemadeCost ?? 0;
-  const restaurantPrice = isDemoScan
-    ? scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe)
-    : userRestaurantPrice ?? 0;
+  const restaurantPrice = isDemoScan ? scanResult?.restaurantPrice ?? 0 : userRestaurantPrice ?? 0;
   const displaySavings = isDemoScan
     ? recipe?.estimatedSavings ?? 0
     : Math.max(0, restaurantPrice - homemadeCost);
@@ -171,6 +171,7 @@ export function RecipeDetailScreen() {
   const strategyNote = getStrategyNote(recipe);
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
+  const foodSafetyNote = getFoodSafetyNote(`${recipe?.title ?? ''} ${recipe?.description ?? ''}`);
   const [coachingLoading, setCoachingLoading] = useState(false);
 
   useEffect(() => {
@@ -236,6 +237,21 @@ export function RecipeDetailScreen() {
       screen: 'RecipeDetailScreen',
     });
     Alert.alert('Saved', `${cleanDisplayText(recipe.title)} was added to your library.`);
+  };
+
+  const markSelectedRecipeCooked = () => {
+    if (!recipe) {
+      return;
+    }
+
+    const alreadySaved = Boolean(savedRecipe);
+    uiLog('RecipeDetailScreen', 'mark_cooked', { recipeId: recipe.id });
+    markRecipeCooked(attachRealScanImage(recipe, selectedScanImage));
+    if (!alreadySaved) {
+      awardXPOnce(`save-recipe-${recipe.id}`, 5);
+      unlockBadge('first-dupe');
+    }
+    Alert.alert('Cooked', `${cleanDisplayText(recipe.title)} is logged as cooked.`);
   };
 
   const openShareRecipe = () => {
@@ -330,19 +346,14 @@ export function RecipeDetailScreen() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ selected: isRecipeSaved }}
               onPress={saveSelectedRecipe}
               style={({ pressed }) => [styles.circleSaveButton, pressed ? styles.pressed : null]}
             >
-              {isRecipeSaved ? (
-                <HeartSolid color={colors.coral} height={23} width={23} />
-              ) : (
-                <Heart color={colors.charcoal} height={23} strokeWidth={2.1} width={23} />
-              )}
+              <Heart color={colors.charcoal} height={23} strokeWidth={2.1} width={23} />
             </Pressable>
             <View style={styles.inspiredPill}>
               <Spark color={colors.coral} height={18} strokeWidth={2.2} width={18} />
-              <Text style={styles.inspiredPillText}>Inspired by your restaurant meal</Text>
+              <Text style={styles.inspiredPillText}>Based on your scan</Text>
             </View>
           </FoodImage>
 
@@ -363,6 +374,12 @@ export function RecipeDetailScreen() {
                   : `Home est. ${formatCurrency(recipe.estimatedHomemadeCost)}`}
               </Text>
             </View>
+            {cookedCount > 0 ? (
+              <View style={styles.cookedMiniPill}>
+                <Check color={colors.green} height={15} strokeWidth={2.2} width={15} />
+                <Text style={styles.cookedMiniText}>{formatCookedCount(cookedCount)}</Text>
+              </View>
+            ) : null}
 
             <View style={styles.quickStatsRow}>
               <QuickStat label="Total Time" value={`${totalTime} min`} icon={<Clock color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
@@ -372,7 +389,25 @@ export function RecipeDetailScreen() {
 
             <Text style={styles.description}>{displayDescription}</Text>
 
+            {foodSafetyNote ? <TrustBadge note={foodSafetyNote} /> : null}
+
             <PrimaryAction label={coachingLoading ? 'Preparing...' : 'Start Cooking'} onPress={openCookingSteps} />
+            <View style={styles.cookedActionCard}>
+              <View style={styles.cookedActionCopy}>
+                <Text style={styles.cookedActionLabel}>Cooked status</Text>
+                <Text style={styles.cookedActionValue}>
+                  {cookedCount > 0 ? formatCookedCount(cookedCount) : 'Not cooked yet'}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={markSelectedRecipeCooked}
+                style={({ pressed }) => [styles.markCookedButton, pressed ? styles.pressed : null]}
+              >
+                <Check color={colors.green} height={17} strokeWidth={2.3} width={17} />
+                <Text style={styles.markCookedText}>Mark cooked</Text>
+              </Pressable>
+            </View>
             <View style={styles.secondaryActionsRow}>
               <SecondaryIconAction icon={<Bookmark color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Save" onPress={saveSelectedRecipe} />
               <SecondaryIconAction icon={<Cart color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Grocery List" onPress={openGroceryList} />
@@ -500,6 +535,7 @@ export function RecipeStepsScreen() {
   const selectedMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
+  const markRecipeCooked = useOkyoStore((state) => state.markRecipeCooked);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
@@ -509,11 +545,10 @@ export function RecipeStepsScreen() {
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
   const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
+  const savedRecipe = recipe ? savedRecipes.find((savedRecipeItem) => savedRecipeItem.id === recipe.id) ?? null : null;
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
   // Same honesty rule as RecipeDetailScreen: real savings need a user price.
-  const restaurantPrice = isDemoScan
-    ? scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe)
-    : userRestaurantPrice ?? 0;
+  const restaurantPrice = isDemoScan ? scanResult?.restaurantPrice ?? 0 : userRestaurantPrice ?? 0;
   const canShowSavings = Boolean(recipe) &&
     (isDemoScan
       ? restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0
@@ -534,8 +569,11 @@ export function RecipeStepsScreen() {
   const recipeImageStatus = getRecipeImageStatus(recipe);
   const [activeStepIndex, setActiveStepIndex] = useState(0);
   const [showCompletion, setShowCompletion] = useState(false);
+  const [completionCookedCount, setCompletionCookedCount] = useState<number | null>(null);
+  const completionLoggedRef = useRef(false);
   const activeStep = guidedSteps[Math.min(activeStepIndex, Math.max(guidedSteps.length - 1, 0))];
   const progress = guidedSteps.length > 0 ? ((activeStepIndex + 1) / guidedSteps.length) * 100 : 0;
+  const cookedCount = completionCookedCount ?? getRecipeCookedCount(savedRecipe ?? recipe);
 
   useEffect(() => {
     uiLog('RecipeStepsScreen', 'enter', { routeMode, selectedMode });
@@ -574,6 +612,31 @@ export function RecipeStepsScreen() {
       setActiveStepIndex(Math.max(guidedSteps.length - 1, 0));
     }
   }, [activeStepIndex, guidedSteps.length]);
+
+  useEffect(() => {
+    if (!showCompletion || !recipe || completionLoggedRef.current) {
+      return;
+    }
+
+    completionLoggedRef.current = true;
+    const alreadySaved = Boolean(savedRecipe);
+    const nextCookedCount = getRecipeCookedCount(savedRecipe ?? recipe) + 1;
+    uiLog('RecipeStepsScreen', 'mark_cooked_from_completion', { recipeId: recipe.id });
+    markRecipeCooked(attachRealScanImage(recipe, selectedScanImage));
+    setCompletionCookedCount(nextCookedCount);
+    if (!alreadySaved) {
+      awardXPOnce(`save-recipe-${recipe.id}`, 5);
+      unlockBadge('first-dupe');
+    }
+  }, [
+    awardXPOnce,
+    markRecipeCooked,
+    recipe,
+    savedRecipe,
+    selectedScanImage,
+    showCompletion,
+    unlockBadge,
+  ]);
 
   const goBack = () => {
     if (navigation.canGoBack()) {
@@ -690,8 +753,14 @@ export function RecipeStepsScreen() {
               <Text style={styles.completionBody}>
                 Nice work. Let it rest if the recipe calls for it, taste once more, then enjoy your Okyo version.
               </Text>
-              <PrimaryAction label="Share it" onPress={openShareRecipe} />
-              <SecondaryAction label="Save" onPress={saveSelectedRecipe} />
+              <View style={styles.completionCookedBadge}>
+                <Check color={colors.green} height={18} strokeWidth={2.4} width={18} />
+                <Text style={styles.completionCookedText}>{formatCookedCount(cookedCount)}</Text>
+              </View>
+              <PrimaryAction label="Share" onPress={openShareRecipe} />
+              <SecondaryAction label="View Recipe" onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })} />
+              <SecondaryAction label="Go Home" onPress={() => navigation.navigate('HomeScreen')} />
+              {!savedRecipe ? <SecondaryAction label="Save recipe" onPress={saveSelectedRecipe} /> : null}
             </View>
           </ScrollView>
         </View>
@@ -908,6 +977,7 @@ function QuickStat({ icon, label, value }: QuickStatProps) {
     </View>
   );
 }
+
 
 type InfoCardProps = {
   children: ReactNode;
@@ -1142,6 +1212,25 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bold,
     fontSize: 12,
     fontWeight: '700',
+  },
+  cookedMiniPill: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: recipeColors.cream,
+    borderColor: recipeColors.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  cookedMiniText: {
+    color: recipeColors.green,
+    fontFamily: fontFamilies.bold,
+    fontSize: 12,
+    fontWeight: '800',
   },
   quickStatsRow: {
     flexDirection: 'row',
@@ -1404,11 +1493,55 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   primaryActionText: {
-    color: colors.onCoral,
+    color: colors.card,
     fontFamily: fontFamilies.extraBold,
     fontSize: 18,
     fontWeight: '800',
     lineHeight: 23,
+  },
+  cookedActionCard: {
+    alignItems: 'center',
+    backgroundColor: recipeColors.cream,
+    borderColor: recipeColors.border,
+    borderRadius: 22,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    marginTop: 12,
+    padding: 14,
+  },
+  cookedActionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  cookedActionLabel: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.bold,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  cookedActionValue: {
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 17,
+    fontWeight: '800',
+    marginTop: 3,
+  },
+  markCookedButton: {
+    alignItems: 'center',
+    backgroundColor: recipeColors.greenSoft,
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 42,
+    paddingHorizontal: 12,
+  },
+  markCookedText: {
+    color: recipeColors.green,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 13,
+    fontWeight: '800',
   },
   secondaryActionsRow: {
     flexDirection: 'row',
@@ -1501,11 +1634,8 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   guidedStepCard: {
-    ...surfaces.card,
-    borderRadius: radius.hero,
     flex: 1,
     marginTop: 14,
-    overflow: 'hidden',
   },
   guidedStepCardContent: {
     flexGrow: 1,
@@ -1521,9 +1651,11 @@ const styles = StyleSheet.create({
   guidedPhaseLabel: {
     color: recipeColors.muted,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
+    letterSpacing: 1.2,
     marginBottom: 8,
+    textTransform: 'uppercase',
   },
   guidedStepNumber: {
     color: recipeColors.orange,
@@ -1531,6 +1663,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '900',
     letterSpacing: 0,
+    textTransform: 'uppercase',
   },
   guidedTimeChipWrap: {
     backgroundColor: recipeColors.orangeSoft,
@@ -1571,6 +1704,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0,
+    textTransform: 'uppercase',
   },
   guidedCueText: {
     color: recipeColors.charcoal,
@@ -1583,11 +1717,12 @@ const styles = StyleSheet.create({
   guidedDoneLabel: {
     color: recipeColors.green,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '900',
     letterSpacing: 0,
     marginTop: 12,
     opacity: 0.7,
+    textTransform: 'uppercase',
   },
   guidedDoneText: {
     color: recipeColors.charcoal,
@@ -1610,6 +1745,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0,
+    textTransform: 'uppercase',
   },
   guidedSafetyText: {
     color: recipeColors.charcoal,
@@ -1631,6 +1767,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0,
+    textTransform: 'uppercase',
   },
   guidedWhyText: {
     color: recipeColors.charcoal,
@@ -1650,6 +1787,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0,
     marginBottom: 8,
+    textTransform: 'uppercase',
   },
   guidedChipRow: {
     flexDirection: 'row',
@@ -1691,11 +1829,10 @@ const styles = StyleSheet.create({
   guidedNavButtonPrimary: {
     backgroundColor: recipeColors.orange,
     borderColor: recipeColors.orange,
-    borderRadius: radius.button,
     shadowColor: recipeColors.orangeDeep,
-    shadowOffset: { height: 10, width: 0 },
-    shadowOpacity: 0.2,
-    shadowRadius: 20,
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
     elevation: 2,
   },
   guidedNavButtonDisabled: {
@@ -1711,15 +1848,13 @@ const styles = StyleSheet.create({
     color: recipeColors.muted,
   },
   guidedNavPrimaryText: {
-    color: colors.onCoral,
+    color: '#fffdf8',
     fontFamily: fontFamilies.extraBold,
     fontSize: 16,
     fontWeight: '900',
   },
   completionCard: {
-    ...surfaces.card,
     alignItems: 'center',
-    borderRadius: radius.hero,
     padding: 22,
   },
   completionScrollContent: {
@@ -1760,6 +1895,23 @@ const styles = StyleSheet.create({
     lineHeight: 25,
     marginTop: 12,
     textAlign: 'center',
+  },
+  completionCookedBadge: {
+    alignItems: 'center',
+    backgroundColor: recipeColors.greenSoft,
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 7,
+    marginTop: 16,
+    marginBottom: 14,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+  },
+  completionCookedText: {
+    color: recipeColors.green,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 14,
+    fontWeight: '800',
   },
   instructionsSection: {
     paddingTop: 16,
@@ -1986,9 +2138,10 @@ const styles = StyleSheet.create({
   kicker: {
     color: recipeColors.orange,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
     marginBottom: 8,
+    textTransform: 'uppercase',
   },
   issueTitle: {
     color: recipeColors.charcoal,
@@ -2045,15 +2198,21 @@ function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode, fallbackRec
     null;
 }
 
-function getEstimatedRestaurantPrice(recipe: Recipe | null) {
-  return recipe ? recipe.estimatedHomemadeCost + recipe.estimatedSavings : 0;
-}
-
 function getSafeTextList(values: string[] | undefined) {
   return (Array.isArray(values) ? values : [])
     .map((value) => cleanDisplayText(value))
     .filter(Boolean)
     .slice(0, 6);
+}
+
+function getRecipeCookedCount(recipe: Recipe | null) {
+  return typeof recipe?.cookedCount === 'number' && Number.isFinite(recipe.cookedCount)
+    ? Math.max(0, recipe.cookedCount)
+    : 0;
+}
+
+function formatCookedCount(count: number) {
+  return `Cooked ${count} ${count === 1 ? 'time' : 'times'}`;
 }
 
 function getSafeCookingTerms(recipeTerms: Recipe['cookingTerms']) {
@@ -2114,8 +2273,6 @@ const GENERIC_WHY_TEXTS = new Set([
   'Proper technique here improves the final result.',
 ]);
 
-// AI filler patterns for "Why this matters" — kept only when it teaches a real
-// cooking reason. "Serving hot enhances the dining experience" teaches nothing.
 const GENERIC_WHY_PATTERNS = [
   /\bdining experience\b/i,
   /\benhances? (the )?(overall |flavor profile|presentation|experience)/i,
@@ -2136,13 +2293,11 @@ function filterGenericWhy(why: string | undefined): string | undefined {
   return why;
 }
 
-// One-line strategy note so the user knows whether this recipe takes the
-// shortcut (prepared components) or from-scratch route. Heuristic on the
-// ingredient list — no note when neither signal is present.
 function getStrategyNote(recipe: Recipe | null): string | null {
   if (!recipe || !Array.isArray(recipe.ingredients)) {
     return null;
   }
+
   const names = recipe.ingredients.map((ingredient) => ingredient.name.toLowerCase());
   const hasPreparedBase = names.some((name) =>
     /\b(frozen|store-?bought|pre-?made|ready-?made|prepared)\b/.test(name),
@@ -2150,11 +2305,12 @@ function getStrategyNote(recipe: Recipe | null): string | null {
   const hasScratchComponents = names.some(
     (name) => /\bwrappers?\b/.test(name) || /\bground (pork|beef|chicken|turkey|meat)\b/.test(name) || /\b(dough|batter)\b/.test(name),
   );
+
   if (hasPreparedBase && !hasScratchComponents) {
     return 'Shortcut version using prepared ingredients.';
   }
   if (hasScratchComponents && !hasPreparedBase) {
-    return 'From-scratch version — includes all prep steps.';
+    return 'From-scratch version - includes all prep steps.';
   }
   return null;
 }
@@ -2212,6 +2368,10 @@ function getIngredientCount(recipe: Recipe | null) {
   return ingredients.length;
 }
 
+// Notes that add no flavor information — filtered out so the section stays
+// specific or hides entirely.
+const genericFlavorNotePattern = /^(home ?cooking|homemade|home version|comfort food|delicious|tasty|classic|easy|weeknight( dinner)?|dinner|lunch|meal)$/i;
+
 function getFlavorNotes(recipe: Recipe | null, pairings: string[]) {
   const notes = [
     ...pairings,
@@ -2220,7 +2380,8 @@ function getFlavorNotes(recipe: Recipe | null, pairings: string[]) {
   ]
     .map((value) => cleanDisplayText(value ?? ''))
     .flatMap((value) => value.split(',').map((part) => part.trim()))
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((note) => !genericFlavorNotePattern.test(note));
 
   return Array.from(new Set(notes)).slice(0, 4);
 }
@@ -2448,9 +2609,6 @@ function getStepIngredients(stepText: string, ingredients: RecipeIngredient[]) {
   return matchedIngredients.slice(0, 5);
 }
 
-// Resolves AI-declared step ingredient names against recipe.ingredients — the
-// single source of truth. Unmatched names are DROPPED, never invented: a name
-// that is not in the ingredient list must not appear in "Use now" chips.
 function resolveIngredientsFromNames(names: string[], recipeIngredients: RecipeIngredient[]): RecipeIngredient[] {
   return names
     .map((name) => matchIngredientToList(name, recipeIngredients))
@@ -2458,10 +2616,6 @@ function resolveIngredientsFromNames(names: string[], recipeIngredients: RecipeI
     .slice(0, 5);
 }
 
-// Passive steps handle the food, they don't add to it — drain, rest, transfer,
-// serve. On these steps loose matching drags in irrelevant chips (a draining
-// step showing "wonton wrappers" and "sweet and sour sauce"), so chips must be
-// named in the step text itself.
 const PASSIVE_STEP_RE = /\b(drain|draining|rest|resting|transfer|remove|pat dry|plate|plating|serve|serving|garnish)\b/i;
 const ACTIVE_STEP_RE = /\b(mix|stir|add|combine|fry|cook|heat|sear|boil|simmer|bake|whisk|fold|season|toss|fill|seal|wrap)\b/i;
 
@@ -2472,13 +2626,14 @@ function filterChipsForPassiveStep(
   if (!PASSIVE_STEP_RE.test(stepText) || ACTIVE_STEP_RE.test(stepText)) {
     return chips;
   }
+
   const normalizedStep = normalizeForMatching(stepText);
   return chips.filter((chip) => {
     const name = normalizeForMatching(chip.name);
     if (normalizedStep.includes(name)) {
       return true;
     }
-    // Head noun ("wontons" of "frozen wontons") must appear in the step text.
+
     const headNoun = name.split(' ').filter((part) => part.length >= 3).pop();
     if (!headNoun) {
       return false;
@@ -2488,11 +2643,6 @@ function filterChipsForPassiveStep(
   });
 }
 
-// "Use now" chips for a guided step. AI-declared names are resolved against the
-// ingredient list first; when every declared name is unknown (or none were
-// declared), fall back to matching the step text — which can only ever surface
-// ingredients already in the list. Passive steps additionally require the chip
-// to be named in the step itself.
 function getClosedStepIngredients(step: DisplayRecipeStep, recipeIngredients: RecipeIngredient[]): RecipeIngredient[] {
   const resolved = step.ingredientsUsed?.length
     ? resolveIngredientsFromNames(step.ingredientsUsed, recipeIngredients)
@@ -2571,7 +2721,7 @@ function cleanDisplayText(value: string) {
   return value
     .replace(new RegExp(`\\b${commonTypo}\\b`, 'g'), 'American')
     .replace(new RegExp(`\\b${lowercaseTypo}\\b`, 'g'), 'american')
-    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
-    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
+    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'restaurant-style')
+    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'restaurant-style')
     .trim();
 }
