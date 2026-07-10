@@ -26,7 +26,10 @@ import {
 } from './store.js';
 import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
 import { validatePaidFallbackAtStartup } from './services/openRouterProvider.js';
+import { buildRecipeQualityReport } from './services/recipeCheckService.js';
 import type { ApiFailure, ApiResponse } from './types.js';
+import type { Recipe } from './types.js';
+import type { RecipeCheckResponse } from './types/recipeQuality.js';
 
 const port = Number(process.env.PORT ?? 8081);
 const app = express();
@@ -69,6 +72,29 @@ const xpEventRequestSchema = z.object({
   eventType: z.string().min(1).max(200),
   sourceId: z.string().min(1).max(200).optional(),
 });
+const recipeCheckSourceSchema = z.enum(['scan', 'foodIdea', 'savedRecipe', 'manual']);
+const recipeCheckRecipeSchema = z.object({}).passthrough().superRefine((recipe, ctx) => {
+  const title = typeof recipe.title === 'string' && recipe.title.trim().length > 0;
+  const ingredients = Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0;
+  const steps = Array.isArray(recipe.steps) && recipe.steps.length > 0;
+  const structuredSteps = Array.isArray(recipe.structuredSteps) && recipe.structuredSteps.length > 0;
+
+  if (!title && !ingredients && !steps && !structuredSteps) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Recipe needs a title, ingredients, or steps.',
+    });
+  }
+});
+const recipeCheckRequestSchema = z.object({
+  recipe: recipeCheckRecipeSchema,
+  context: z.object({
+    source: recipeCheckSourceSchema.optional(),
+    userGoal: z.string().min(1).max(240).optional(),
+    timePreference: z.string().min(1).max(120).optional(),
+    skillLevel: z.string().min(1).max(80).optional(),
+  }).strict().optional(),
+}).strict();
 
 app.use(cors());
 app.use(express.json({ limit: jsonBodyLimit }));
@@ -178,6 +204,14 @@ app.get('/v1/scans/:scanId', (request, response) => {
   }
 
   sendOk(response, { scan });
+});
+
+app.post('/v1/recipes/check', (request, response) => {
+  const body = parseRequest(recipeCheckRequestSchema, request.body);
+  const report = buildRecipeQualityReport(coerceRecipeForCheck(body.recipe), body.context);
+  const payload: RecipeCheckResponse = { ok: true, report };
+
+  response.json(payload);
 });
 
 app.get('/v1/recipes/:recipeId', (request, response) => {
@@ -310,6 +344,10 @@ app.listen(port, () => {
 
 function parseRequest<TSchema extends z.ZodTypeAny>(schema: TSchema, value: unknown): z.infer<TSchema> {
   return schema.parse(value);
+}
+
+function coerceRecipeForCheck(value: z.infer<typeof recipeCheckRecipeSchema>): Recipe {
+  return value as unknown as Recipe;
 }
 
 function sendOk<T>(response: Response, data: T) {

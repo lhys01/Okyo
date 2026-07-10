@@ -36,8 +36,8 @@ import {
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getRealScanImageUri } from '../utils/recipeImages';
-import { buildRecipeQualityReport } from '../utils/recipeQuality';
 import { isUsableScan } from '../utils/scanDecision';
+import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'ResultSummaryScreen'>;
@@ -130,7 +130,10 @@ export function ResultSummaryScreen() {
       : null;
   const displaySubtitle = getDisplaySubtitle(scanResult?.restaurantStyle, selectedRecipe?.description);
   const bestGuessNote = getBestGuessResultNote(scanResult);
-  const qualityReport = useMemo(() => (selectedRecipe ? buildRecipeQualityReport(selectedRecipe) : null), [selectedRecipe]);
+  const qualityReport = useRecipeQualityReport(selectedRecipe, {
+    source: isDemoScan ? 'savedRecipe' : 'scan',
+    skillLevel: selectedRecipe?.difficulty,
+  });
 
   useEffect(() => {
     setDishNameOverride('');

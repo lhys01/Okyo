@@ -19,7 +19,6 @@ import {
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -64,9 +63,9 @@ import {
   type RecipeAdaptationGoal,
   type RecipeAdaptationOption,
 } from '../utils/makeItMine';
-import { buildRecipeQualityReport } from '../utils/recipeQuality';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { buildSmartGrocerySummary, type SmartGrocerySummary } from '../utils/smartGrocery';
+import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
@@ -175,7 +174,11 @@ export function RecipeDetailScreen() {
   const strategyNote = getStrategyNote(recipe);
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
-  const qualityReport = useMemo(() => (recipe ? buildRecipeQualityReport(recipe) : null), [recipe]);
+  const qualityReport = useRecipeQualityReport(recipe, {
+    source: savedFoodIdeas.some((idea) => idea.extractedRecipe?.id === recipe?.id) ? 'foodIdea' : 'savedRecipe',
+    skillLevel: recipe?.difficulty,
+    userGoal: onboardingGoal ?? undefined,
+  });
   const smartGrocerySummary = useMemo(() => buildSmartGrocerySummary(recipe), [recipe]);
   const adaptationOptions = useMemo(
     () => (recipe
@@ -290,8 +293,7 @@ export function RecipeDetailScreen() {
     }
     saveToastTimer.current = setTimeout(() => {
       setSaveToastVisible(false);
-      Alert.alert('Saved', `${cleanDisplayText(recipe.title)} was added to your library.`);
-    }, 520);
+    }, 1600);
   };
 
   const openShareRecipe = () => {
@@ -591,9 +593,12 @@ export function RecipeStepsScreen() {
   const [activeStepIndex, setActiveStepIndex] = useState(0);
   const [showCompletion, setShowCompletion] = useState(false);
   const [stepToastVisible, setStepToastVisible] = useState(false);
+  const [saveToastVisible, setSaveToastVisible] = useState(false);
+  const [saveToastLabel, setSaveToastLabel] = useState('Saved to your library');
   const [cookingRewardVisible, setCookingRewardVisible] = useState(false);
   const [cookingRewardLabel, setCookingRewardLabel] = useState('Cooked with Okyo');
   const stepToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cookingRewardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeStep = guidedSteps[Math.min(activeStepIndex, Math.max(guidedSteps.length - 1, 0))];
   const progress = guidedSteps.length > 0 ? ((activeStepIndex + 1) / guidedSteps.length) * 100 : 0;
@@ -674,6 +679,9 @@ export function RecipeStepsScreen() {
     if (stepToastTimer.current) {
       clearTimeout(stepToastTimer.current);
     }
+    if (saveToastTimer.current) {
+      clearTimeout(saveToastTimer.current);
+    }
     if (cookingRewardTimer.current) {
       clearTimeout(cookingRewardTimer.current);
     }
@@ -694,10 +702,12 @@ export function RecipeStepsScreen() {
     }
 
     const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
+    const saveEventId = `save-recipe-${recipe.id}`;
+    const willAwardSaveXp = !alreadySaved && !awardedXpEvents.includes(saveEventId);
     uiLog('RecipeStepsScreen', 'save_recipe', { recipeId: recipe.id });
     saveRecipe(attachRealScanImage(recipe, selectedScanImage));
     if (!alreadySaved) {
-      awardXPOnce(`save-recipe-${recipe.id}`, 5);
+      awardXPOnce(saveEventId, 5);
     }
     unlockBadge('first-dupe');
     track(analyticsEvents.RECIPE_SAVED, {
@@ -706,7 +716,12 @@ export function RecipeStepsScreen() {
       savings: canShowSavings ? displaySavings : 0,
       screen: 'RecipeStepsScreen',
     });
-    Alert.alert('Saved', `${cleanDisplayText(recipe.title)} was added to your library.`);
+    setSaveToastLabel(willAwardSaveXp ? 'Saved to your library +5 XP' : 'Saved to your library');
+    setSaveToastVisible(true);
+    if (saveToastTimer.current) {
+      clearTimeout(saveToastTimer.current);
+    }
+    saveToastTimer.current = setTimeout(() => setSaveToastVisible(false), 1600);
   };
 
   const openShareRecipe = () => {
@@ -842,6 +857,7 @@ export function RecipeStepsScreen() {
             </View>
           </ScrollView>
           <RewardToast label={cookingRewardLabel} tone={cookingRewardLabel.includes('XP') ? 'xp' : 'save'} visible={cookingRewardVisible} />
+          <RewardToast label={saveToastLabel} tone={saveToastLabel.includes('XP') ? 'xp' : 'save'} visible={saveToastVisible} />
         </View>
       </SafeAreaView>
     );

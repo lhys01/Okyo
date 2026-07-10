@@ -10,12 +10,13 @@ import {
   Spark,
   Upload,
 } from 'iconoir-react-native';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RecipeQualityCard } from '../components/RecipeQualityCard';
 import { analyticsEvents, track } from '../analytics/track';
+import { checkRecipeQualityWithBackend } from '../api/recipeCheckClient';
 import type { FoodIdeaSourceType, SavedFoodIdea } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
@@ -53,6 +54,7 @@ export function FoodIdeaScreen() {
   const [rawText, setRawText] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
   const [checkedIdea, setCheckedIdea] = useState<SavedFoodIdea | null>(null);
+  const checkRequestId = useRef(0);
   const trimmedText = rawText.trim();
   const trimmedUrl = sourceUrl.trim();
   const activeSource = sourceOptions.find((option) => option.id === sourceType) ?? sourceOptions[0];
@@ -105,6 +107,24 @@ export function FoodIdeaScreen() {
     });
     setCheckedIdea(idea);
     uiLog('FoodIdeaScreen', 'recipe_check_created', { sourceType });
+
+    const requestId = checkRequestId.current + 1;
+    checkRequestId.current = requestId;
+    checkRecipeQualityWithBackend(idea.extractedRecipe!, {
+      source: 'foodIdea',
+      skillLevel: idea.extractedRecipe?.difficulty,
+    })
+      .then((qualityReport) => {
+        if (checkRequestId.current !== requestId) {
+          return;
+        }
+        setCheckedIdea((current) => (
+          current?.id === idea.id ? { ...current, qualityReport } : current
+        ));
+      })
+      .catch(() => {
+        // Local Recipe Check is already visible; backend is an enhancement only.
+      });
   };
 
   const saveAndOpen = (target: 'recipe' | 'grocery' | 'cook') => {
