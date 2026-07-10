@@ -28,7 +28,6 @@ import {
   defaultScanResult,
   getSafeRecipeForMode,
   getSafeRecipeMode,
-  mockBadges,
   mockRestaurantPacks,
   type Difficulty,
   type Recipe,
@@ -69,8 +68,6 @@ export function ShareCardPreviewScreen() {
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
-  const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
-  const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
@@ -82,24 +79,7 @@ export function ShareCardPreviewScreen() {
   const recipe = getShareRecipe(selectedMode, latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, routeRecipe, isDemoScan);
   const scanResult = scanContext?.scanResult ?? latestScanResult ?? (isDemoScan ? defaultScanResult : null);
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
-  const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
   const latestChallenge = safeCompletedChallenges[safeCompletedChallenges.length - 1];
-  const topLeaderboardEntry = (Array.isArray(leaderboardEntries) ? leaderboardEntries[0] : undefined) ?? {
-    id: 'fallback-ranking',
-    rank: 1,
-    displayName: 'Okyo Cook',
-    category: 'Rising Cook',
-    value: '+0 XP',
-    xp: 0,
-  };
-  const unlockedBadge =
-    (Array.isArray(mockBadges) ? mockBadges.find((badge) => safeUnlockedBadges.includes(badge.id)) : undefined) ??
-    mockBadges[0] ?? {
-      id: 'badge',
-      name: 'Okyo Badge',
-      description: 'Keep scanning to unlock badges.',
-      unlocked: false,
-    };
   const selectedPack =
     mockRestaurantPacks.find((restaurantPack) => restaurantPack.id === route.params?.packId) ??
     defaultRestaurantPack;
@@ -159,12 +139,12 @@ export function ShareCardPreviewScreen() {
       },
       ranking: {
         cardType: 'ranking',
-        eyebrow: topLeaderboardEntry.category,
-        dishName: topLeaderboardEntry.displayName,
+        eyebrow: 'Cooking win',
+        dishName: fallbackScanResult.dishName,
         restaurantPrice: fallbackScanResult.restaurantPrice,
         homemadeCost: cardRecipe.estimatedHomemadeCost,
         estimatedSavings: cardRecipe.estimatedSavings,
-        selectedMode: topLeaderboardEntry.value,
+        selectedMode,
         recipe: cardRecipe,
         scanResult: fallbackScanResult,
         imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
@@ -172,7 +152,7 @@ export function ShareCardPreviewScreen() {
       },
       badge: {
         cardType: 'badge',
-        eyebrow: unlockedBadge.name,
+        eyebrow: 'Saved at home',
         dishName: fallbackScanResult.dishName,
         restaurantPrice: fallbackScanResult.restaurantPrice,
         homemadeCost: cardRecipe.estimatedHomemadeCost,
@@ -223,10 +203,6 @@ export function ShareCardPreviewScreen() {
     selectedMode,
     selectedPack.name,
     shareImage?.uri,
-    topLeaderboardEntry.category,
-    topLeaderboardEntry.displayName,
-    topLeaderboardEntry.value,
-    unlockedBadge.name,
   ]);
   const shareStats = useMemo(() => getShareStats(cardData.recipe), [cardData.recipe]);
   const didTrackGenerated = useRef(false);
