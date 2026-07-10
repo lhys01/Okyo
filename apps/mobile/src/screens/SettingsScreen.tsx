@@ -6,7 +6,7 @@ import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
 import { SecondaryButton, sharedStyles } from '../components/OkyoUI';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { colors, radius, spacing } from '../theme/okyoTheme';
+import { colors, radius, spacing, typography } from '../theme/okyoTheme';
 
 export function SettingsScreen() {
   const resetOnboarding = useOkyoStore((state) => state.resetOnboarding);
@@ -133,9 +133,7 @@ const styles = StyleSheet.create({
     lineHeight: 39,
   },
   description: {
-    color: colors.body,
-    fontSize: 16,
-    lineHeight: 23,
+    ...typography.body,
     marginTop: 8,
   },
   section: {
