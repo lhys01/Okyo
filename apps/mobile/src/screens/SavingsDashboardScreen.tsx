@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
-import { colors } from '../components/OkyoUI';
+import { colors, fontFamilies, layout, shadows, surfaces, typography } from '../theme/okyoTheme';
 import {
   getSafeRecipeMode,
   isRecipeMode,
@@ -239,7 +239,7 @@ export function SavingsDashboardScreen() {
               <Text style={styles.biggestTitle}>{cleanDisplayText(biggestWin.title)}</Text>
               <Text style={styles.biggestSavings}>Saved about {formatCurrency(biggestWin.savings)}</Text>
               <Text style={styles.biggestMeta}>
-                Restaurant {formatCurrency(biggestWin.restaurantCost)}{' -> '}Home {formatCurrency(biggestWin.homeCost)}
+                Restaurant {formatCurrency(biggestWin.restaurantCost)} → {formatCurrency(biggestWin.homeCost)} at home
               </Text>
             </View>
           </View>
@@ -483,7 +483,7 @@ const styles = StyleSheet.create({
   screenContent: {
     gap: 14,
     padding: 20,
-    paddingBottom: 132,
+    paddingBottom: layout.scrollClearance,
   },
   brandHeader: {
     alignItems: 'center',
@@ -498,11 +498,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   screenTitle: {
-    color: colors.charcoal,
+    ...typography.title,
     flex: 1,
-    fontSize: 27,
-    fontWeight: '700',
-    letterSpacing: 0,
+    fontSize: 26,
+    lineHeight: 33,
     textAlign: 'center',
   },
   headerSpacer: {
@@ -515,19 +514,16 @@ const styles = StyleSheet.create({
     width: 76,
   },
   heroCard: {
-    backgroundColor: '#f1f7d8',
-    borderColor: '#d8d88d',
-    borderRadius: 28,
+    backgroundColor: colors.greenSoft,
+    borderColor: '#c9e7d2',
+    borderRadius: 32,
     borderWidth: 1,
     flexDirection: 'row',
     gap: 14,
     minHeight: 124,
     overflow: 'hidden',
-    padding: 16,
-    shadowColor: '#3b2f20',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
+    padding: 18,
+    ...shadows.card,
   },
   heroCopy: {
     flex: 1,
@@ -535,14 +531,16 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   heroTitle: {
-    color: '#0e5528',
-    fontSize: 22,
-    fontWeight: '700',
+    color: colors.green,
+    fontFamily: fontFamilies.display,
+    fontSize: 23,
+    fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 27,
+    lineHeight: 29,
   },
   heroBody: {
-    color: '#31543a',
+    color: '#3d6b52',
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
     fontWeight: '700',
     lineHeight: 18,
@@ -551,9 +549,9 @@ const styles = StyleSheet.create({
   heroBadge: {
     alignItems: 'center',
     alignSelf: 'center',
-    backgroundColor: '#fff8e8',
-    borderColor: '#f4cf9c',
-    borderRadius: 18,
+    backgroundColor: colors.cardWarm,
+    borderColor: '#c9e7d2',
+    borderRadius: 20,
     borderWidth: 1,
     height: 78,
     justifyContent: 'center',
@@ -575,27 +573,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   periodTabSelected: {
-    backgroundColor: '#1f5f29',
+    backgroundColor: colors.card,
+    ...shadows.soft,
   },
   periodText: {
-    color: colors.body,
+    color: colors.muted,
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '700',
     textAlign: 'center',
   },
   periodTextSelected: {
-    color: '#fffdf8',
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
   },
   biggestCard: {
-    padding: 14,
+    ...surfaces.card,
+    padding: 16,
   },
   sectionKicker: {
+    ...typography.label,
     color: colors.green,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.6,
     marginBottom: 10,
-    textTransform: 'uppercase',
   },
   biggestBody: {
     alignItems: 'center',
@@ -647,6 +646,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   periodEmptyCard: {
+    ...surfaces.panel,
     padding: 18,
   },
   periodEmptyTitle: {
@@ -666,6 +666,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   statTile: {
+    ...surfaces.panel,
     alignItems: 'center',
     flexBasis: '48%',
     flexDirection: 'row',
@@ -676,7 +677,7 @@ const styles = StyleSheet.create({
   },
   statIcon: {
     alignItems: 'center',
-    backgroundColor: '#edf5df',
+    backgroundColor: colors.greenSoft,
     borderRadius: 999,
     height: 38,
     justifyContent: 'center',
@@ -687,28 +688,28 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   statLabel: {
-    color: colors.body,
+    ...typography.label,
     fontSize: 12,
-    fontWeight: '700',
+    lineHeight: 16,
   },
   statValue: {
-    color: '#174d1f',
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 20,
     fontVariant: ['tabular-nums'],
-    fontWeight: '700',
+    fontWeight: '800',
     marginTop: 3,
   },
   goalCard: {
-    backgroundColor: '#fff3e4',
-    borderColor: '#f2c796',
-    borderRadius: 20,
+    ...surfaces.tint,
+    borderColor: colors.borderStrong,
     borderWidth: 1,
     gap: 14,
-    padding: 14,
+    padding: 16,
   },
   goalIcon: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
+    backgroundColor: colors.card,
     borderRadius: 999,
     height: 48,
     justifyContent: 'center',
@@ -728,14 +729,14 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   progressTrack: {
-    backgroundColor: '#ead8bd',
+    backgroundColor: colors.creamDeep,
     borderRadius: 999,
     height: 10,
     marginTop: 12,
     overflow: 'hidden',
   },
   progressFill: {
-    backgroundColor: '#6b9359',
+    backgroundColor: colors.green,
     borderRadius: 999,
     height: '100%',
   },
@@ -754,20 +755,21 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   goalPercent: {
-    color: colors.coral,
+    color: colors.green,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   goalButton: {
     alignItems: 'center',
     alignSelf: 'flex-end',
-    backgroundColor: '#fffdf8',
+    backgroundColor: colors.card,
     borderColor: colors.green,
-    borderRadius: 12,
+    borderRadius: 999,
     borderWidth: 1.5,
-    minHeight: 38,
+    minHeight: 40,
     justifyContent: 'center',
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
   },
   goalButtonText: {
     color: colors.green,
@@ -775,12 +777,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   recentCard: {
-    padding: 14,
+    ...surfaces.card,
+    padding: 16,
   },
   recentTitle: {
-    color: colors.charcoal,
+    ...typography.heading,
     fontSize: 18,
-    fontWeight: '700',
+    lineHeight: 24,
     marginBottom: 8,
   },
   recentList: {
@@ -788,7 +791,7 @@ const styles = StyleSheet.create({
   },
   recentRow: {
     alignItems: 'center',
-    borderBottomColor: '#f0e4d6',
+    borderBottomColor: colors.border,
     borderBottomWidth: 1,
     flexDirection: 'row',
     gap: 12,
@@ -826,6 +829,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   emptyCard: {
+    ...surfaces.card,
     alignItems: 'center',
     gap: 14,
     marginTop: 24,
@@ -851,19 +855,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'stretch',
     backgroundColor: colors.coral,
-    borderRadius: 16,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
+    minHeight: 56,
+    paddingHorizontal: 18,
+    ...shadows.cta,
   },
   primaryActionText: {
-    color: '#fffdf8',
+    color: colors.onCoral,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   pressed: {
-    opacity: 0.72,
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
 });

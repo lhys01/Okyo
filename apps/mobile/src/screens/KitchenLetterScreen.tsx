@@ -6,9 +6,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { KikoMascot } from '../components/KikoMascot';
-import { PrimaryButton, colors, typography } from '../components/OkyoUI';
+import { PrimaryButton } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
-import { radius, shadows } from '../theme/okyoTheme';
+import { colors, radius, shadows, typography } from '../theme/okyoTheme';
 import { uiLog } from '../utils/uiDebug';
 
 type KitchenLetterNavigation = NativeStackNavigationProp<RootStackParamList, 'KitchenLetterScreen'>;

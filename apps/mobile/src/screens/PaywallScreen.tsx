@@ -4,17 +4,18 @@ import {
   Camera,
   CheckCircle,
   NavArrowLeft,
-  Spark,
 } from 'iconoir-react-native';
-import { useEffect, useRef, type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { AccessibilityInfo, Alert, Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { colors, typography } from '../components/OkyoUI';
+import { KikoMascot } from '../components/KikoMascot';
+import { ProgressFill } from '../components/OkyoUI';
+import { getPricingTrialNote, PricingCards, type PricingPlan } from '../components/PricingCards';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { radius, shadows, spacing } from '../theme/okyoTheme';
+import { colors, radius, shadows, spacing, typography } from '../theme/okyoTheme';
 
 type PaywallNavigation = NativeStackNavigationProp<RootStackParamList, 'PaywallScreen'>;
 
@@ -24,7 +25,11 @@ export function PaywallScreen() {
   const navigation = useNavigation<PaywallNavigation>();
   const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
   const didTrackView = useRef(false);
+  const reveal = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<PricingPlan>('annual');
   const scansLeft = Math.max(0, weeklyFreeScanLimit - weeklyScanCount);
+  const scanProgress = Math.min(weeklyScanCount / weeklyFreeScanLimit, 1);
 
   useEffect(() => {
     if (didTrackView.current) {
@@ -35,6 +40,23 @@ export function PaywallScreen() {
     track(analyticsEvents.PAYWALL_VIEWED, { screen: 'PaywallScreen' });
   }, []);
 
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const subscription = AccessibilityInfo.addEventListener?.('reduceMotionChanged', setReduceMotion);
+
+    return () => subscription?.remove?.();
+  }, []);
+
+  useEffect(() => {
+    reveal.setValue(0);
+    Animated.timing(reveal, {
+      duration: reduceMotion ? 120 : 560,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  }, [reduceMotion, reveal]);
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -44,8 +66,8 @@ export function PaywallScreen() {
         </Pressable>
 
         <View style={styles.heroCard}>
-          <View style={styles.iconBadge}>
-            <Spark color={colors.coral} height={32} strokeWidth={2.1} width={32} />
+          <View style={styles.kikoBadge}>
+            <KikoMascot animated="success" pose="happy" size={84} />
           </View>
           <Text style={styles.kicker}>Okyo Plus</Text>
           <Text style={styles.title}>Unlimited scans. Every dish, remade.</Text>
@@ -54,10 +76,13 @@ export function PaywallScreen() {
           </Text>
         </View>
 
+        <PricingCards onSelectPlan={setSelectedPlan} selectedPlan={selectedPlan} />
+
         <View style={styles.scanMeter}>
-          <View>
+          <View style={styles.scanMeterCopy}>
             <Text style={styles.meterLabel}>This week</Text>
             <Text style={styles.meterValue}>{weeklyScanCount}/{weeklyFreeScanLimit} free scans used</Text>
+            <ProgressFill progress={scanProgress} style={styles.scanMeterProgress} />
           </View>
           <View style={styles.scanBubble}>
             <Camera color={colors.coral} height={23} strokeWidth={2.1} width={23} />
@@ -66,28 +91,61 @@ export function PaywallScreen() {
         </View>
 
         <View style={styles.featureList}>
-          <FeatureRow>Scan every craving, not just the first few.</FeatureRow>
-          <FeatureRow>Save unlimited restaurant-style recipes and grocery lists.</FeatureRow>
-          <FeatureRow>Keep savings, XP, and challenges moving all week.</FeatureRow>
+          <FeatureRow index={0} reduceMotion={reduceMotion} reveal={reveal}>Scan every craving, not just the first few.</FeatureRow>
+          <FeatureRow index={1} reduceMotion={reduceMotion} reveal={reveal}>Save unlimited restaurant-style recipes and grocery lists.</FeatureRow>
+          <FeatureRow index={2} reduceMotion={reduceMotion} reveal={reveal}>Keep savings and challenges moving all week.</FeatureRow>
         </View>
 
         <View style={styles.actions}>
-          <View style={styles.disabledCta}>
-            <Text style={styles.disabledCtaText}>Payments coming soon</Text>
-          </View>
-          <Text style={styles.disclaimer}>No purchase is available in this preview build.</Text>
+          <Pressable accessibilityRole="button" onPress={handleUpgradePress} style={styles.primaryCta}>
+            <Text style={styles.primaryCtaText}>Start 7-Day Free Trial</Text>
+          </Pressable>
+          <Text style={styles.disclaimer}>{getPricingTrialNote(selectedPlan)}</Text>
+          <Text style={styles.disclaimer}>Purchases aren't available in this preview build yet.</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
+
+  function handleUpgradePress() {
+    Alert.alert('Okyo Plus', "Purchases aren't available in this preview build yet — check back soon.");
+  }
 }
 
-function FeatureRow({ children }: { children: ReactNode }) {
+function FeatureRow({
+  children,
+  index,
+  reduceMotion,
+  reveal,
+}: {
+  children: ReactNode;
+  index: number;
+  reduceMotion: boolean;
+  reveal: Animated.Value;
+}) {
   return (
-    <View style={styles.featureRow}>
+    <Animated.View
+      style={[
+        styles.featureRow,
+        {
+          opacity: reveal.interpolate({
+            inputRange: [0, 0.2 + index * 0.18, 1],
+            outputRange: [0, 0, 1],
+          }),
+          transform: [
+            {
+              translateY: reveal.interpolate({
+                inputRange: [0, 1],
+                outputRange: [reduceMotion ? 0 : 8, 0],
+              }),
+            },
+          ],
+        },
+      ]}
+    >
       <CheckCircle color={colors.green} height={22} strokeWidth={2} width={22} />
       <Text style={styles.featureText}>{children}</Text>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -119,14 +177,14 @@ const styles = StyleSheet.create({
     padding: 24,
     ...shadows.hero,
   },
-  iconBadge: {
+  kikoBadge: {
     alignItems: 'center',
     backgroundColor: colors.coralSoft,
-    borderRadius: 24,
-    height: 58,
+    borderRadius: 999,
+    height: 98,
     justifyContent: 'center',
     marginBottom: 22,
-    width: 58,
+    width: 98,
   },
   kicker: {
     color: colors.coral,
@@ -153,6 +211,10 @@ const styles = StyleSheet.create({
     padding: 18,
     ...shadows.card,
   },
+  scanMeterCopy: {
+    flex: 1,
+    marginRight: 14,
+  },
   meterLabel: {
     ...typography.caption,
   },
@@ -176,6 +238,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
+  scanMeterProgress: {
+    marginTop: 12,
+  },
   featureList: {
     backgroundColor: colors.card,
     borderRadius: radius.card,
@@ -198,16 +263,16 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 22,
   },
-  disabledCta: {
+  primaryCta: {
     alignItems: 'center',
-    backgroundColor: colors.charcoal,
+    backgroundColor: colors.coral,
     borderRadius: radius.button,
     minHeight: 58,
     justifyContent: 'center',
-    opacity: 0.52,
+    ...shadows.cta,
   },
-  disabledCtaText: {
-    color: '#fffdf8',
+  primaryCtaText: {
+    color: colors.onCoral,
     fontSize: 17,
     fontWeight: '700',
   },

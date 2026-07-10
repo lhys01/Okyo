@@ -6,7 +6,8 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
-import { BadgePill, PrimaryButton, ScreenContainer, colors, sharedStyles } from '../components/OkyoUI';
+import { BadgePill, PrimaryButton, ScreenContainer, sharedStyles } from '../components/OkyoUI';
+import { colors } from '../theme/okyoTheme';
 import {
   defaultScanResult,
   getSafeRecipeForMode,

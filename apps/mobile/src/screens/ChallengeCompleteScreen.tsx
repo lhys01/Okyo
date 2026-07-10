@@ -6,9 +6,10 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
-import { EmptyState, PrimaryButton, ScreenContainer, SecondaryButton, StatCard, colors } from '../components/OkyoUI';
+import { EmptyState, PrimaryButton, ScreenContainer, SecondaryButton, StatCard } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { colors } from '../theme/okyoTheme';
 
 type ChallengeCompleteNavigation = NativeStackNavigationProp<RootStackParamList, 'ChallengeCompleteScreen'>;
 type ChallengeCompleteRoute = RouteProp<RootStackParamList, 'ChallengeCompleteScreen'>;

@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { PrimaryButton, ScreenContainer, SecondaryButton, colors, sharedStyles } from './OkyoUI';
+import { PrimaryButton, ScreenContainer, SecondaryButton, sharedStyles } from './OkyoUI';
+import { colors, radius } from '../theme/okyoTheme';
 
 type ScreenScaffoldProps = {
   title: string;
@@ -44,14 +45,15 @@ export function ScreenScaffold({
 
 const styles = StyleSheet.create({
   kicker: {
-    color: colors.coral,
+    color: colors.coralDark,
+    fontFamily: 'Nunito_800ExtraBold',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     marginBottom: 12,
-    textTransform: 'uppercase',
   },
   heroCard: {
     ...sharedStyles.card,
+    borderRadius: radius.hero,
     padding: 20,
   },
   title: {

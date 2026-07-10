@@ -1,35 +1,30 @@
+// Recipe-surface aliases over the core Okyo tokens. Historically this file
+// carried its own palette (a second brand orange, a second charcoal); it now
+// maps every key onto okyoTheme so recipe screens share the one visual system.
+import { colors, shadows } from './okyoTheme';
+
 export const recipeColors = {
-  background: '#FFF8F1',
-  card: '#FFFFFF',
-  orange: '#FF7A00',
-  orangeDeep: '#E84F1A',
-  orangeSoft: '#FFE3D2',
-  charcoal: '#111111',
-  text: '#1A1A1A',
-  muted: '#746D64',
-  border: '#E8DCCB',
-  cream: '#FFF3E8',
-  creamDeep: '#F0DFC8',
-  green: '#187A44',
-  greenSoft: '#E6F6EA',
-  yellowSoft: '#FFF2C7',
-  blue: '#1F6AA0',
-  blueSoft: '#E8F1FD',
+  background: colors.background,
+  card: colors.card,
+  orange: colors.coral,
+  orangeDeep: colors.coralDark,
+  orangeSoft: colors.coralSoft,
+  charcoal: colors.charcoal,
+  text: colors.charcoal,
+  muted: colors.muted,
+  border: colors.border,
+  cream: colors.cream,
+  creamDeep: colors.creamDeep,
+  green: colors.green,
+  greenSoft: colors.greenSoft,
+  yellowSoft: '#f9efce',
+  // Kept for the few info chips that use them; warmed toward the palette so
+  // they no longer read as an off-brand blue.
+  blue: '#46707c',
+  blueSoft: '#e9f1f2',
 };
 
 export const recipeShadows = {
-  card: {
-    shadowColor: '#5a3924',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.07,
-    shadowRadius: 18,
-    elevation: 2,
-  },
-  hero: {
-    shadowColor: '#5a3924',
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.12,
-    shadowRadius: 28,
-    elevation: 5,
-  },
+  card: shadows.card,
+  hero: shadows.hero,
 };

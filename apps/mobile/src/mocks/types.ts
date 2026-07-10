@@ -154,6 +154,45 @@ export type GroceryList = {
   items: GroceryListItem[];
 };
 
+export type FoodIdeaSourceType =
+  | 'link'
+  | 'text'
+  | 'photo'
+  | 'screenshot'
+  | 'cookbook_photo'
+  | 'manual_note';
+
+export type RecipeCookabilityStatus = 'cookable' | 'needs_quick_fix' | 'too_vague_to_trust';
+
+export type RecipeQualityReport = {
+  score: number;
+  confidence: number;
+  cookabilityStatus: RecipeCookabilityStatus;
+  missingIngredients: string[];
+  missingSteps: string[];
+  vagueInstructions: string[];
+  timeWarnings: string[];
+  equipmentWarnings: string[];
+  pantryStaples: string[];
+  budgetOpportunities: string[];
+  speedOpportunities: string[];
+  healthOpportunities: string[];
+  whatCouldGoWrong: string[];
+  fixesApplied: string[];
+  userFacingSummary: string;
+};
+
+export type SavedFoodIdea = {
+  id: string;
+  sourceType: FoodIdeaSourceType;
+  title: string;
+  rawText: string;
+  sourceUrl?: string;
+  createdAt: string;
+  extractedRecipe?: Recipe;
+  qualityReport?: RecipeQualityReport;
+};
+
 export type ShareCard = {
   id: string;
   scanResultId?: string;

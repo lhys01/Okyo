@@ -12,7 +12,7 @@ import {
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors, fontFamilies } from '../components/OkyoUI';
+import { colors, fontFamilies } from '../theme/okyoTheme';
 import { GroceryListScreen } from '../screens/GroceryListScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
@@ -30,7 +30,7 @@ const tabLabels: Record<MainTabRouteName, string> = {
   HomeScreen: 'Home',
   RestaurantPacksScreen: 'Discover',
   ScanScreen: 'Scan',
-  LibraryScreen: 'Plan',
+  LibraryScreen: 'Saved',
   ProfileScreen: 'Profile',
   RecipeDetailScreen: 'Recipe',
   RecipeStepsScreen: 'Steps',
@@ -156,7 +156,7 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
   return (
     <View pointerEvents="box-none" style={[styles.tabBarRoot, { height: 122 + bottomInset }]}>
       <View style={[styles.tabBarPill, { bottom: bottomInset + 8 }]}>
-        <BlurView intensity={34} pointerEvents="none" style={styles.tabBarBlur} tint="light" />
+        <BlurView intensity={55} pointerEvents="none" style={styles.tabBarBlur} tint="light" />
         <View style={styles.sideTabRow}>
           {visibleTabOrder.slice(0, 2).map(renderSideTab)}
           <View pointerEvents="none" style={styles.scanGap} />
@@ -214,7 +214,7 @@ export function MainTabs() {
       <Tab.Screen name="HomeScreen" component={HomeScreen} options={{ title: 'Home' }} />
       <Tab.Screen name="RestaurantPacksScreen" component={RestaurantPacksScreen} options={{ title: 'Discover' }} />
       <Tab.Screen name="ScanScreen" component={ScanScreen} options={{ title: 'Scan' }} />
-      <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Plan' }} />
+      <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Saved' }} />
       <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />
       <Tab.Screen name="RecipeDetailScreen" component={RecipeDetailScreen} options={{ title: 'Recipe' }} />
       <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps', tabBarStyle: { display: 'none' } }} />
@@ -223,7 +223,7 @@ export function MainTabs() {
   );
 }
 
-const inactiveGray = '#a39b8e';
+const inactiveGray = '#7d7466';
 
 const styles = StyleSheet.create({
   tabBarRoot: {
@@ -232,8 +232,8 @@ const styles = StyleSheet.create({
   },
   tabBarPill: {
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.62)',
-    borderColor: 'rgba(255, 255, 255, 0.76)',
+    backgroundColor: 'rgba(255, 253, 248, 0.72)',
+    borderColor: 'rgba(255, 255, 255, 0.78)',
     borderRadius: 34,
     borderWidth: StyleSheet.hairlineWidth,
     height: 76,

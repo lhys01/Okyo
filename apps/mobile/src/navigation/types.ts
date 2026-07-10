@@ -18,6 +18,7 @@ export type ShareScanContext = {
 export type RootStackParamList = {
   WelcomeScreen: undefined;
   GoalScreen: undefined;
+  FoodIdeaScreen: undefined;
   ScanScreen: undefined;
   AnalysisLoadingScreen: { scanSessionId?: string } | undefined;
   ResultSummaryScreen: { scanSessionId?: string } | undefined;

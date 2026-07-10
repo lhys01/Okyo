@@ -2,10 +2,11 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useEffect, useRef } from 'react';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { colors } from '../components/OkyoUI';
+import { colors } from '../theme/okyoTheme';
 import { AnalysisLoadingScreen } from '../screens/AnalysisLoadingScreen';
 import { ChallengeCompleteScreen } from '../screens/ChallengeCompleteScreen';
 import { DupeChallengeScreen } from '../screens/DupeChallengeScreen';
+import { FoodIdeaScreen } from '../screens/FoodIdeaScreen';
 import { GoalScreen } from '../screens/GoalScreen';
 import { PaywallScreen } from '../screens/PaywallScreen';
 import { RestaurantPackDetailScreen } from '../screens/RestaurantPackDetailScreen';
@@ -72,6 +73,7 @@ export function AppNavigator() {
     >
       <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} options={{ title: 'Okyo' }} />
       <Stack.Screen name="GoalScreen" component={GoalScreen} options={{ title: 'Goal' }} />
+      <Stack.Screen name="FoodIdeaScreen" component={FoodIdeaScreen} options={{ headerShown: false, title: 'Food Idea' }} />
       <Stack.Screen name="ScanScreen" component={ScanScreen} options={{ headerShown: false, title: 'Scan' }} />
       <Stack.Screen
         name="AnalysisLoadingScreen"

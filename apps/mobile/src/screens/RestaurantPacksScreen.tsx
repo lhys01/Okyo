@@ -6,7 +6,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { uiLog } from '../utils/uiDebug';
-import { PackCard, colors, typography } from '../components/OkyoUI';
+import { PackCard } from '../components/OkyoUI';
 import {
   getCategoryArt,
   getRecommendationsByCategory,
@@ -15,7 +15,7 @@ import {
 } from '../data/recommendedRecipes';
 import { mockRestaurantPacks, type RestaurantPack } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
-import { radius, shadows, spacing } from '../theme/okyoTheme';
+import { colors, radius, shadows, spacing, typography } from '../theme/okyoTheme';
 
 type RestaurantPacksNavigation = NativeStackNavigationProp<RootStackParamList>;
 

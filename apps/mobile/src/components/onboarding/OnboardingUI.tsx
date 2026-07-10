@@ -2,6 +2,7 @@ import { Check, NavArrowLeft, Spark, Upload } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Animated,
   Easing,
@@ -20,21 +21,24 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { foodAssets } from '../../../assets/food';
 import { FoodImage } from '../FoodImage';
 import { KikoMascot, type KikoMascotPose } from '../KikoMascot';
-import { fontFamilies, shadows } from '../../theme/okyoTheme';
+import { ProgressFill } from '../OkyoUI';
+import { getPricingTrialNote, PricingCards, type PricingPlan } from '../PricingCards';
+import { colors, fontFamilies, shadows, surfaces } from '../../theme/okyoTheme';
 
+// Sourced from okyoTheme where the value is shared with the rest of the app —
+// keeps onboarding visually continuous with post-onboarding screens instead
+// of switching to a different orange/palette the moment onboarding ends.
 export const onboardingColors = {
-  background: '#FFF8F1',
-  card: '#FFFFFF',
-  primary: '#FF6A1A',
-  primaryDark: '#E84F1A',
-  primarySoft: '#FFE3D2',
-  green: '#46B35E',
-  greenDeep: '#187A44',
-  greenSoft: '#E6F6EA',
-  charcoal: '#1A1A1A',
-  gray: '#746D64',
-  border: '#E8DCCB',
-  yellow: '#FFF2C7',
+  background: colors.background,
+  card: colors.card,
+  primary: colors.coral,
+  primaryDark: colors.coralDark,
+  primarySoft: colors.coralSoft,
+  green: colors.green,
+  greenSoft: colors.greenSoft,
+  charcoal: colors.charcoal,
+  gray: colors.muted,
+  border: colors.border,
 };
 
 export type OnboardingOption = {
@@ -108,15 +112,21 @@ type OnboardingProgressHeaderProps = {
 export function OnboardingProgressHeader({ canGoBack = true, onBack, progress }: OnboardingProgressHeaderProps) {
   const clampedProgress = Math.max(0.04, Math.min(progress, 1));
   const fillAnim = useRef(new Animated.Value(clampedProgress)).current;
+  const reduceMotion = useOnboardingReducedMotion();
 
   useEffect(() => {
+    if (reduceMotion) {
+      fillAnim.setValue(clampedProgress);
+      return;
+    }
+
     Animated.timing(fillAnim, {
       duration: 380,
       easing: Easing.out(Easing.cubic),
       toValue: clampedProgress,
       useNativeDriver: false,
     }).start();
-  }, [clampedProgress, fillAnim]);
+  }, [clampedProgress, fillAnim, reduceMotion]);
 
   return (
     <View style={styles.progressHeader}>
@@ -156,8 +166,14 @@ type OnboardingTypedTextProps = {
 
 export function OnboardingTypedText({ style, text }: OnboardingTypedTextProps) {
   const [visibleText, setVisibleText] = useState('');
+  const reduceMotion = useOnboardingReducedMotion();
 
   useEffect(() => {
+    if (reduceMotion) {
+      setVisibleText(text);
+      return;
+    }
+
     let index = 0;
     setVisibleText('');
     const interval = setInterval(() => {
@@ -169,7 +185,7 @@ export function OnboardingTypedText({ style, text }: OnboardingTypedTextProps) {
     }, 14);
 
     return () => clearInterval(interval);
-  }, [text]);
+  }, [reduceMotion, text]);
 
   return <Text style={style}>{visibleText || ' '}</Text>;
 }
@@ -186,7 +202,9 @@ export function KikoSpeechBubble({ pose = 'wave', text, typed = true }: KikoSpee
   return (
     <View style={styles.speechRow}>
       <View style={styles.kikoStage}>
-        <KikoMascot pose={pose} size={92} />
+        <View style={styles.kikoBackdrop}>
+          <KikoMascot animated="idle" pose={pose} size={80} />
+        </View>
       </View>
       <View style={styles.bubble}>
         <View style={styles.bubbleTail} />
@@ -234,8 +252,15 @@ type OnboardingOptionCardProps = {
 export function OnboardingOptionCard({ delay = 0, onPress, option, selected }: OnboardingOptionCardProps) {
   const intro = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(1)).current;
+  const reduceMotion = useOnboardingReducedMotion();
 
   useEffect(() => {
+    if (reduceMotion) {
+      intro.setValue(1);
+      scale.setValue(1);
+      return;
+    }
+
     intro.setValue(0);
     Animated.timing(intro, {
       delay,
@@ -244,7 +269,7 @@ export function OnboardingOptionCard({ delay = 0, onPress, option, selected }: O
       toValue: 1,
       useNativeDriver: true,
     }).start();
-  }, [delay, intro, option.id]);
+  }, [delay, intro, option.id, reduceMotion, scale]);
 
   const animatedStyle = {
     opacity: intro,
@@ -273,8 +298,8 @@ export function OnboardingOptionCard({ delay = 0, onPress, option, selected }: O
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={onPress}
-        onPressIn={() => animateScale(scale, 0.975)}
-        onPressOut={() => animateScale(scale, 1)}
+        onPressIn={() => animateScale(scale, 0.975, reduceMotion)}
+        onPressOut={() => animateScale(scale, 1, reduceMotion)}
         style={[styles.optionCard, selected ? styles.optionCardSelected : null]}
       >
         <View style={styles.optionCopy}>
@@ -284,7 +309,7 @@ export function OnboardingOptionCard({ delay = 0, onPress, option, selected }: O
           <Text style={styles.optionDetail}>{option.detail}</Text>
         </View>
         <View style={[styles.optionCheck, selected ? styles.optionCheckSelected : null]}>
-          {selected ? <Check color="#fffdf8" height={17} strokeWidth={2.8} width={17} /> : null}
+          {selected ? <Check color={colors.onCoral} height={17} strokeWidth={2.8} width={17} /> : null}
         </View>
       </Pressable>
     </Animated.View>
@@ -313,6 +338,7 @@ export function OnboardingStatefulButton({
   variant = 'primary',
 }: OnboardingStatefulButtonProps) {
   const scale = useRef(new Animated.Value(1)).current;
+  const reduceMotion = useOnboardingReducedMotion();
   const isPrimary = variant === 'primary';
   const isGhost = variant === 'ghost';
   const resolvedState = loading ? 'loading' : state;
@@ -322,8 +348,8 @@ export function OnboardingStatefulButton({
       accessibilityRole="button"
       disabled={disabled || resolvedState === 'loading'}
       onPress={onPress}
-      onPressIn={() => animateScale(scale, 0.97)}
-      onPressOut={() => animateScale(scale, 1)}
+      onPressIn={() => animateScale(scale, 0.97, reduceMotion)}
+      onPressOut={() => animateScale(scale, 1, reduceMotion)}
     >
       <Animated.View
         style={[
@@ -334,10 +360,10 @@ export function OnboardingStatefulButton({
         ]}
       >
         {resolvedState === 'loading' ? (
-          <ActivityIndicator color={isPrimary ? '#fffdf8' : onboardingColors.primary} />
+          <ActivityIndicator color={isPrimary ? colors.onCoral : onboardingColors.primary} />
         ) : resolvedState === 'success' ? (
           <View style={styles.buttonSuccessContent}>
-            <Check color={isPrimary ? '#fffdf8' : onboardingColors.primary} height={18} strokeWidth={2.8} width={18} />
+            <Check color={isPrimary ? colors.onCoral : onboardingColors.primary} height={18} strokeWidth={2.8} width={18} />
             <Text style={[styles.buttonText, isPrimary ? styles.buttonTextPrimary : styles.buttonTextSecondary]}>
               {stateLabel ?? 'DONE'}
             </Text>
@@ -372,7 +398,7 @@ export function OnboardingScanCard({ errorMessage, onTakePhoto, onUpload }: Onbo
         </View>
         <View style={styles.scanOverlay} />
         <View style={styles.scanKikoWrapper}>
-          <KikoMascot pose="scanning" size={110} style={styles.scanKiko} />
+          <KikoMascot animated="thinking" pose="scanning" size={110} style={styles.scanKiko} />
         </View>
         <View style={styles.scanTarget}>
           <Spark color={onboardingColors.primary} height={30} strokeWidth={2.1} width={30} />
@@ -406,8 +432,15 @@ type OnboardingHeroScreenProps = {
 export function OnboardingHeroScreen({ onContinue, progress }: OnboardingHeroScreenProps) {
   const introAnim = useRef(new Animated.Value(0)).current;
   const imageScale = useRef(new Animated.Value(0.96)).current;
+  const reduceMotion = useOnboardingReducedMotion();
 
   useEffect(() => {
+    if (reduceMotion) {
+      introAnim.setValue(1);
+      imageScale.setValue(1);
+      return;
+    }
+
     Animated.parallel([
       Animated.timing(introAnim, {
         duration: 520,
@@ -423,7 +456,7 @@ export function OnboardingHeroScreen({ onContinue, progress }: OnboardingHeroScr
         useNativeDriver: true,
       }),
     ]).start();
-  }, [imageScale, introAnim]);
+  }, [imageScale, introAnim, reduceMotion]);
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.shell}>
@@ -518,8 +551,16 @@ function OnboardingBuildingPlanScreen({ progress }: { progress: number }) {
   const dot1 = useRef(new Animated.Value(0.3)).current;
   const dot2 = useRef(new Animated.Value(0.3)).current;
   const dot3 = useRef(new Animated.Value(0.3)).current;
+  const reduceMotion = useOnboardingReducedMotion();
 
   useEffect(() => {
+    if (reduceMotion) {
+      dot1.setValue(1);
+      dot2.setValue(1);
+      dot3.setValue(1);
+      return;
+    }
+
     const makePulse = (val: Animated.Value, delay: number) =>
       Animated.loop(
         Animated.sequence([
@@ -535,12 +576,12 @@ function OnboardingBuildingPlanScreen({ progress }: { progress: number }) {
     const a3 = makePulse(dot3, 506);
     a1.start(); a2.start(); a3.start();
     return () => { a1.stop(); a2.stop(); a3.stop(); };
-  }, [dot1, dot2, dot3]);
+  }, [dot1, dot2, dot3, reduceMotion]);
 
   return (
     <OnboardingScreenShell canGoBack={false} progress={progress} scroll={false}>
       <View style={styles.loadingPlanContent}>
-        <KikoMascot pose="recipeCard" size={200} />
+        <KikoMascot animated="idle" pose="recipeCard" size={200} />
         <Text style={styles.loadingPlanLabel}>BUILDING YOUR PLAN...</Text>
         <Text style={styles.loadingPlanBody}>
           Get ready to find smarter homemade swaps, easy recipes, and better meal savings with Okyo!
@@ -558,15 +599,13 @@ function OnboardingBuildingPlanScreen({ progress }: { progress: number }) {
 function OnboardingScanLoadingScreen({ progress, userImageUri }: { progress: number; userImageUri: string }) {
   const [stepIndex, setStepIndex] = useState(0);
   const stepAnim = useRef(new Animated.Value(1)).current;
-  const barProgress = useRef(new Animated.Value(0)).current;
+  const reduceMotion = useOnboardingReducedMotion();
 
   useEffect(() => {
-    Animated.timing(barProgress, {
-      duration: 4500,
-      easing: Easing.out(Easing.exp),
-      toValue: 1,
-      useNativeDriver: false,
-    }).start();
+    if (reduceMotion) {
+      stepAnim.setValue(1);
+      return;
+    }
 
     const cycleStep = () => {
       Animated.timing(stepAnim, { duration: 200, easing: Easing.in(Easing.quad), toValue: 0, useNativeDriver: true }).start(() => {
@@ -577,7 +616,7 @@ function OnboardingScanLoadingScreen({ progress, userImageUri }: { progress: num
 
     const interval = setInterval(cycleStep, 1300);
     return () => clearInterval(interval);
-  }, [barProgress, stepAnim]);
+  }, [reduceMotion, stepAnim]);
 
   const currentStep = LOADING_STEPS[stepIndex];
 
@@ -588,7 +627,7 @@ function OnboardingScanLoadingScreen({ progress, userImageUri }: { progress: num
           <Image source={{ uri: userImageUri }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
           <View style={styles.loadingUserImageOverlay} />
           <Animated.View style={[styles.loadingKikoCorner, { opacity: stepAnim }]}>
-            <KikoMascot pose={currentStep.pose} size={68} />
+            <KikoMascot animated="thinking" pose={currentStep.pose} size={68} />
           </Animated.View>
         </View>
         <Animated.Text style={[styles.loadingHeadline, { opacity: stepAnim }]}>
@@ -597,19 +636,7 @@ function OnboardingScanLoadingScreen({ progress, userImageUri }: { progress: num
         <Text style={styles.loadingBody}>
           Building your homemade version with savings, groceries, and guided cooking steps.
         </Text>
-        <View style={styles.loadingBar}>
-          <Animated.View
-            style={[
-              styles.loadingBarFill,
-              {
-                width: barProgress.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: ['4%', '92%'],
-                }),
-              },
-            ]}
-          />
-        </View>
+        <ProgressFill progress={0.04 + (stepIndex / Math.max(1, LOADING_STEPS.length - 1)) * 0.88} style={styles.loadingBar} />
       </View>
     </OnboardingScreenShell>
   );
@@ -624,6 +651,7 @@ type OnboardingFirstResultScreenProps = {
   imageUri?: string | null;
   imageUrl?: string | null;
   onContinue: () => void;
+  progress: number;
   recipeDescription?: string;
   recipeTitle: string;
   savingsText: string;
@@ -637,6 +665,7 @@ export function OnboardingFirstResultScreen({
   imageUri,
   imageUrl,
   onContinue,
+  progress,
   recipeDescription,
   recipeTitle,
   savingsText,
@@ -644,8 +673,15 @@ export function OnboardingFirstResultScreen({
 }: OnboardingFirstResultScreenProps) {
   const introAnim = useRef(new Animated.Value(0)).current;
   const celebrateAnim = useRef(new Animated.Value(0)).current;
+  const reduceMotion = useOnboardingReducedMotion();
 
   useEffect(() => {
+    if (reduceMotion) {
+      introAnim.setValue(1);
+      celebrateAnim.setValue(1);
+      return;
+    }
+
     Animated.sequence([
       Animated.spring(introAnim, {
         damping: 22,
@@ -662,13 +698,13 @@ export function OnboardingFirstResultScreen({
         useNativeDriver: true,
       }),
     ]).start();
-  }, [celebrateAnim, introAnim]);
+  }, [celebrateAnim, introAnim, reduceMotion]);
 
   return (
     <OnboardingScreenShell
       canGoBack={false}
       footer={<OnboardingStatefulButton label="See My Recipe  →" onPress={onContinue} />}
-      progress={0.87}
+      progress={progress}
     >
       <Animated.View
         style={{
@@ -762,13 +798,20 @@ export function OnboardingFirstResultScreen({
 type OnboardingPaywallScreenProps = {
   onContinue: () => void;
   onRestore: () => void;
+  progress: number;
 };
 
-export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPaywallScreenProps) {
-  const [selectedPlan, setSelectedPlan] = useState<'annual' | 'weekly'>('annual');
+export function OnboardingPaywallScreen({ onContinue, onRestore, progress }: OnboardingPaywallScreenProps) {
+  const [selectedPlan, setSelectedPlan] = useState<PricingPlan>('annual');
   const introAnim = useRef(new Animated.Value(0)).current;
+  const reduceMotion = useOnboardingReducedMotion();
 
   useEffect(() => {
+    if (reduceMotion) {
+      introAnim.setValue(1);
+      return;
+    }
+
     Animated.spring(introAnim, {
       damping: 22,
       mass: 0.9,
@@ -776,7 +819,7 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
       toValue: 1,
       useNativeDriver: true,
     }).start();
-  }, [introAnim]);
+  }, [introAnim, reduceMotion]);
 
   return (
     <OnboardingScreenShell
@@ -784,17 +827,13 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
       footer={
         <View style={styles.paywallFooter}>
           <OnboardingStatefulButton label="Start 7-Day Free Trial  →" onPress={onContinue} />
-          <Text style={styles.paywallTrialNote}>
-            {selectedPlan === 'annual'
-              ? 'Then $49.99/year ($4.17/mo) • Cancel anytime'
-              : 'Then $4.99/week • Cancel anytime'}
-          </Text>
+          <Text style={styles.paywallTrialNote}>{getPricingTrialNote(selectedPlan)}</Text>
           <Pressable accessibilityRole="button" onPress={onRestore} style={styles.restoreButton}>
             <Text style={styles.restoreText}>Restore Purchases</Text>
           </Pressable>
         </View>
       }
-      progress={1}
+      progress={progress}
     >
       <Animated.View
         style={{
@@ -812,7 +851,9 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
       >
         {/* Hero */}
         <View style={styles.paywallHero}>
-          <KikoMascot pose="celebrating" size={110} />
+          <View style={styles.paywallKikoBackdrop}>
+            <KikoMascot pose="celebrating" size={92} />
+          </View>
           <Text style={styles.paywallEyebrow}>✓ Step 1 complete</Text>
           <Text style={styles.paywallTitle}>You just got your first recipe free.</Text>
           <Text style={styles.paywallBody}>
@@ -820,65 +861,15 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
           </Text>
         </View>
 
-        {/* Social proof */}
-        <View style={styles.socialProof}>
-          <Text style={styles.socialProofText}>♥  Loved by 12,000+ home cooks</Text>
-        </View>
-
         {/* Price plans */}
-        <View style={styles.priceRow}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: selectedPlan === 'annual' }}
-            onPress={() => setSelectedPlan('annual')}
-            style={[styles.priceCard, selectedPlan === 'annual' ? styles.priceCardFeatured : null]}
-          >
-            <View style={styles.priceBestBadge}>
-              <Text style={styles.priceBestText}>BEST VALUE</Text>
-            </View>
-            <Text style={styles.priceAmount}>$4.17</Text>
-            <Text style={styles.pricePeriod}>/ month</Text>
-            <Text style={styles.priceFineprint}>Billed as $49.99/year</Text>
-            <View style={[styles.planCheck, selectedPlan === 'annual' ? styles.planCheckSelected : null]}>
-              {selectedPlan === 'annual' ? (
-                <Check color="#fffdf8" height={13} strokeWidth={3} width={13} />
-              ) : null}
-            </View>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: selectedPlan === 'weekly' }}
-            onPress={() => setSelectedPlan('weekly')}
-            style={[styles.priceCard, selectedPlan === 'weekly' ? styles.priceCardWeeklySelected : null]}
-          >
-            <View style={styles.priceBestBadge}>
-              <Text style={[styles.priceBestText, { color: onboardingColors.gray }]}>FLEXIBLE</Text>
-            </View>
-            <Text style={styles.priceAmount}>$4.99</Text>
-            <Text style={styles.pricePeriod}>/ week</Text>
-            <Text style={styles.priceFineprint}>No commitment</Text>
-            <View style={[styles.planCheck, selectedPlan === 'weekly' ? styles.planCheckSelected : null]}>
-              {selectedPlan === 'weekly' ? (
-                <Check color="#fffdf8" height={13} strokeWidth={3} width={13} />
-              ) : null}
-            </View>
-          </Pressable>
-        </View>
-
-        {/* Savings callout */}
-        {selectedPlan === 'annual' ? (
-          <View style={styles.savingsCallout}>
-            <Text style={styles.savingsCalloutText}>💰  Annual plan saves 81% vs weekly</Text>
-          </View>
-        ) : null}
+        <PricingCards onSelectPlan={setSelectedPlan} selectedPlan={selectedPlan} />
 
         {/* Perks */}
         <View style={styles.paywallPerks}>
           {PAYWALL_PERKS.map((perk) => (
             <View key={perk.label} style={styles.paywallPerk}>
               <View style={styles.paywallCheck}>
-                <Check color="#fffdf8" height={13} strokeWidth={3} width={13} />
+                <Check color={colors.onCoral} height={13} strokeWidth={3} width={13} />
               </View>
               <View style={styles.paywallPerkCopy}>
                 <Text style={styles.paywallPerkLabel}>{perk.label}</Text>
@@ -940,7 +931,25 @@ function ScanSecondaryAction({ icon, label, onPress }: ScanSecondaryActionProps)
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function animateScale(value: Animated.Value, toValue: number) {
+function useOnboardingReducedMotion() {
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const subscription = AccessibilityInfo.addEventListener?.('reduceMotionChanged', setReduceMotion);
+
+    return () => subscription?.remove?.();
+  }, []);
+
+  return reduceMotion;
+}
+
+function animateScale(value: Animated.Value, toValue: number, reduceMotion: boolean) {
+  if (reduceMotion) {
+    value.setValue(1);
+    return;
+  }
+
   Animated.spring(value, {
     damping: 18,
     mass: 0.6,
@@ -985,7 +994,7 @@ const styles = StyleSheet.create({
     opacity: 0,
   },
   progressTrack: {
-    backgroundColor: '#EBDDCB',
+    backgroundColor: colors.creamDeep,
     borderRadius: 999,
     flex: 1,
     height: 9,
@@ -1027,9 +1036,17 @@ const styles = StyleSheet.create({
     minHeight: 108,
     width: 96,
   },
+  kikoBackdrop: {
+    alignItems: 'center',
+    backgroundColor: onboardingColors.primarySoft,
+    borderRadius: 999,
+    height: 96,
+    justifyContent: 'center',
+    width: 96,
+  },
   bubble: {
     backgroundColor: onboardingColors.card,
-    borderColor: 'rgba(232, 220, 203, 0.82)',
+    borderColor: colors.borderStrong,
     borderRadius: 30,
     borderTopLeftRadius: 20,
     borderWidth: 1,
@@ -1041,8 +1058,8 @@ const styles = StyleSheet.create({
   },
   bubbleTail: {
     backgroundColor: onboardingColors.card,
-    borderBottomColor: 'rgba(232, 220, 203, 0.82)',
-    borderLeftColor: 'rgba(232, 220, 203, 0.82)',
+    borderBottomColor: colors.borderStrong,
+    borderLeftColor: colors.borderStrong,
     borderRightColor: 'transparent',
     borderTopColor: 'transparent',
     borderWidth: 1,
@@ -1080,7 +1097,7 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   optionCardSelected: {
-    backgroundColor: '#FFF0E6',
+    backgroundColor: onboardingColors.primarySoft,
     borderColor: onboardingColors.primary,
   },
   optionCopy: {
@@ -1106,7 +1123,7 @@ const styles = StyleSheet.create({
   },
   optionCheck: {
     alignItems: 'center',
-    borderColor: '#D8CBB9',
+    borderColor: colors.borderStrong,
     borderRadius: 999,
     borderWidth: 1.5,
     height: 28,
@@ -1155,7 +1172,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   buttonTextPrimary: {
-    color: '#fffdf8',
+    color: colors.onCoral,
   },
   buttonTextSecondary: {
     color: onboardingColors.primary,
@@ -1207,11 +1224,9 @@ const styles = StyleSheet.create({
     marginTop: 0,
   },
   scanTarget: {
+    ...surfaces.glassChip,
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: onboardingColors.border,
     borderRadius: 22,
-    borderWidth: 1,
     bottom: 20,
     height: 64,
     justifyContent: 'center',
@@ -1241,7 +1256,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   errorCard: {
-    backgroundColor: '#FDE7E0',
+    backgroundColor: colors.dangerSoft,
     borderRadius: 22,
     padding: 16,
   },
@@ -1267,7 +1282,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
   },
   loadingPlanLabel: {
-    color: '#A89080',
+    color: colors.muted,
     fontFamily: fontFamilies.extraBold,
     fontSize: 14,
     fontWeight: '800',
@@ -1317,7 +1332,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.06)',
   },
   loadingKikoCorner: {
-    backgroundColor: '#fffdf8',
+    backgroundColor: colors.onCoral,
     borderColor: onboardingColors.border,
     borderRadius: 40,
     borderWidth: 1,
@@ -1346,7 +1361,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   loadingBar: {
-    backgroundColor: '#EBDDCB',
+    backgroundColor: colors.creamDeep,
     borderRadius: 999,
     height: 10,
     marginTop: 32,
@@ -1381,7 +1396,7 @@ const styles = StyleSheet.create({
     width: 8,
   },
   resultFoundText: {
-    color: onboardingColors.greenDeep,
+    color: colors.green,
     fontFamily: fontFamilies.extraBold,
     fontSize: 13,
     fontWeight: '800',
@@ -1420,7 +1435,7 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   savingsBadgeAmount: {
-    color: '#fffdf8',
+    color: colors.onCoral,
     fontFamily: fontFamilies.display,
     fontSize: 20,
     fontWeight: '800',
@@ -1436,7 +1451,7 @@ const styles = StyleSheet.create({
   },
   resultCard: {
     backgroundColor: onboardingColors.card,
-    borderColor: 'rgba(232, 220, 203, 0.82)',
+    borderColor: colors.borderStrong,
     borderRadius: 30,
     borderWidth: 1,
     padding: 20,
@@ -1463,7 +1478,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   metricPill: {
-    backgroundColor: '#FFF4EC',
+    backgroundColor: onboardingColors.primarySoft,
     borderRadius: 18,
     flex: 1,
     minWidth: '30%',
@@ -1490,6 +1505,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  paywallKikoBackdrop: {
+    alignItems: 'center',
+    backgroundColor: onboardingColors.greenSoft,
+    borderRadius: 999,
+    height: 116,
+    justifyContent: 'center',
+    width: 116,
+  },
   paywallEyebrow: {
     color: onboardingColors.green,
     fontFamily: fontFamilies.extraBold,
@@ -1515,106 +1538,6 @@ const styles = StyleSheet.create({
     lineHeight: 25,
     marginTop: 10,
     textAlign: 'center',
-  },
-  socialProof: {
-    alignItems: 'center',
-    backgroundColor: '#FFF4EC',
-    borderRadius: 999,
-    marginBottom: 18,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    alignSelf: 'center',
-  },
-  socialProofText: {
-    color: onboardingColors.primary,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  priceRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  priceCard: {
-    backgroundColor: onboardingColors.card,
-    borderColor: onboardingColors.border,
-    borderRadius: 26,
-    borderWidth: 1.5,
-    flex: 1,
-    padding: 16,
-    position: 'relative',
-    ...shadows.card,
-  },
-  priceCardFeatured: {
-    backgroundColor: '#FFF0E6',
-    borderColor: onboardingColors.primary,
-    borderWidth: 2,
-  },
-  priceCardWeeklySelected: {
-    borderColor: onboardingColors.primary,
-    borderWidth: 2,
-  },
-  priceBestBadge: {
-    marginBottom: 6,
-  },
-  priceBestText: {
-    color: onboardingColors.primary,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  priceAmount: {
-    color: onboardingColors.charcoal,
-    fontFamily: fontFamilies.display,
-    fontSize: 30,
-    fontWeight: '800',
-    lineHeight: 34,
-  },
-  pricePeriod: {
-    color: onboardingColors.gray,
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
-    fontWeight: '700',
-    marginTop: 1,
-  },
-  priceFineprint: {
-    color: onboardingColors.gray,
-    fontFamily: fontFamilies.body,
-    fontSize: 12,
-    lineHeight: 17,
-    marginTop: 6,
-  },
-  planCheck: {
-    alignItems: 'center',
-    borderColor: '#D8CBB9',
-    borderRadius: 999,
-    borderWidth: 1.5,
-    height: 22,
-    justifyContent: 'center',
-    marginTop: 10,
-    width: 22,
-  },
-  planCheckSelected: {
-    backgroundColor: onboardingColors.primary,
-    borderColor: onboardingColors.primary,
-  },
-  savingsCallout: {
-    alignItems: 'center',
-    backgroundColor: onboardingColors.greenSoft,
-    borderRadius: 999,
-    marginBottom: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    alignSelf: 'center',
-  },
-  savingsCalloutText: {
-    color: onboardingColors.greenDeep,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 13,
-    fontWeight: '800',
   },
   paywallPerks: {
     backgroundColor: onboardingColors.card,

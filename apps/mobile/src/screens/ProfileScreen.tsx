@@ -12,10 +12,10 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { KikoMascot } from '../components/KikoMascot';
-import { colors, typography } from '../components/OkyoUI';
+import { ProgressFill } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { radius, shadows, spacing } from '../theme/okyoTheme';
+import { colors, layout, spacing, surfaces, typography } from '../theme/okyoTheme';
 import { uiLog } from '../utils/uiDebug';
 
 type ProfileNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -24,23 +24,11 @@ const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 
 export function ProfileScreen() {
   const navigation = useNavigation<ProfileNavigation>();
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
-  const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
   const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
-  const xp = useOkyoStore((state) => state.xp);
-  const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
+  const weeklyGoal = useOkyoStore((state) => state.weeklyGoal);
   const isPremium = useOkyoStore((state) => state.isPremium);
 
-  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
-  const safeChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
-  const safeXp = getFiniteNumber(xp);
-  const level = Math.floor(safeXp / 100) + 1;
-  const xpIntoLevel = safeXp % 100;
-  const recipeSavings = safeSavedRecipes.reduce((total, recipe) => total + getFiniteNumber(recipe.estimatedSavings), 0);
-  const challengeSavings = safeChallenges.reduce((total, challenge) => total + getFiniteNumber(challenge.moneySaved), 0);
-  const estimatedSaved = getFiniteNumber(totalMoneySaved) + recipeSavings + challengeSavings;
-  const badgeCount = Array.isArray(unlockedBadges) ? unlockedBadges.length : 0;
+  const weeklyTarget = getWeeklyGoalCount(weeklyGoal);
 
   const goTo = (screen: 'SavingsDashboardScreen' | 'RankingsScreen' | 'SettingsScreen' | 'PaywallScreen') => {
     uiLog('ProfileScreen', 'open_row', { screen });
@@ -52,30 +40,26 @@ export function ProfileScreen() {
       <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
         <View style={styles.headerCard}>
           <View style={styles.avatar}>
-            <KikoMascot pose="happy" size={82} />
+            <KikoMascot animated="success" pose="happy" size={82} />
           </View>
           <View style={styles.headerCopy}>
             <Text style={styles.kicker}>Profile</Text>
             <Text style={styles.title}>Your Okyo kitchen</Text>
-            <Text style={styles.body}>Level {level} · {safeXp} XP · {weeklyScanCount} scans this week</Text>
+            <Text style={styles.body}>{weeklyScanCount} scans this week</Text>
           </View>
         </View>
 
         <View style={styles.progressCard}>
           <View style={styles.progressHeader}>
-            <Text style={styles.progressLabel}>Level {level} progress</Text>
-            <Text style={styles.progressValue}>{xpIntoLevel}/100 XP</Text>
+            <Text style={styles.progressLabel}>Weekly cooking rhythm</Text>
+            <Text style={styles.progressValue}>{weeklyScanCount}/{weeklyTarget}</Text>
           </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${xpIntoLevel}%` }]} />
-          </View>
-        </View>
-
-        <View style={styles.statGrid}>
-          <ProfileStat label="Saved" value={formatCurrency(estimatedSaved)} />
-          <ProfileStat label="Recipes" value={safeSavedRecipes.length.toString()} />
-          <ProfileStat label="Wins" value={safeChallenges.length.toString()} />
-          <ProfileStat label="Badges" value={badgeCount.toString()} />
+          <ProgressFill progress={Math.min(weeklyScanCount / weeklyTarget, 1)} tone="green" style={styles.progressFillMeter} />
+          <Text style={styles.progressHint}>
+            {weeklyScanCount >= weeklyTarget
+              ? 'You have a solid week of meal ideas ready.'
+              : 'Scan meals you actually want to remake. That is the whole habit.'}
+          </Text>
         </View>
 
         <View style={styles.menu}>
@@ -109,15 +93,6 @@ export function ProfileScreen() {
   );
 }
 
-function ProfileStat({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.statCard}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text adjustsFontSizeToFit numberOfLines={1} style={styles.statValue}>{value}</Text>
-    </View>
-  );
-}
-
 function ProfileRow({
   icon,
   label,
@@ -141,8 +116,18 @@ function ProfileRow({
   );
 }
 
-function getFiniteNumber(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+function getWeeklyGoalCount(goal: string | null) {
+  switch (goal) {
+    case '1_meal':
+      return 1;
+    case '5_meals':
+      return 5;
+    case '7_meals':
+      return 7;
+    case '3_meals':
+    default:
+      return 3;
+  }
 }
 
 const styles = StyleSheet.create({
@@ -152,9 +137,10 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     padding: spacing.screen,
-    paddingBottom: 132,
+    paddingBottom: layout.scrollClearance,
   },
   headerCard: {
+    ...surfaces.card,
     alignItems: 'center',
     flexDirection: 'row',
     gap: 16,
@@ -174,12 +160,9 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   kicker: {
-    ...typography.caption,
-    color: colors.coral,
-    fontWeight: '700',
-    letterSpacing: 1,
+    ...typography.label,
+    color: colors.coralDark,
     marginBottom: 8,
-    textTransform: 'uppercase',
   },
   title: {
     ...typography.title,
@@ -189,6 +172,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   progressCard: {
+    ...surfaces.panel,
     marginTop: 18,
     padding: 18,
   },
@@ -207,51 +191,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  progressTrack: {
-    backgroundColor: colors.cream,
-    borderRadius: radius.pill,
-    height: 10,
+  progressFillMeter: {
     marginTop: 14,
-    overflow: 'hidden',
   },
-  progressFill: {
-    backgroundColor: colors.coral,
-    borderRadius: radius.pill,
-    height: '100%',
-  },
-  statGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 18,
-  },
-  statCard: {
-    minHeight: 86,
-    padding: 16,
-    width: '48%',
-  },
-  statLabel: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.9,
-    textTransform: 'uppercase',
-  },
-  statValue: {
-    color: colors.charcoal,
-    fontSize: 25,
-    fontWeight: '800',
-    letterSpacing: -0.4,
-    marginTop: 9,
+  progressHint: {
+    ...typography.caption,
+    marginTop: 10,
   },
   menu: {
+    gap: 10,
     marginTop: spacing.section,
   },
   row: {
+    ...surfaces.panel,
     alignItems: 'center',
     flexDirection: 'row',
     gap: 14,
-    minHeight: 78,
+    minHeight: 72,
     paddingHorizontal: 16,
   },
   rowIcon: {
@@ -276,7 +232,7 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   pressed: {
-    opacity: 0.82,
-    transform: [{ scale: 0.99 }],
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
 });

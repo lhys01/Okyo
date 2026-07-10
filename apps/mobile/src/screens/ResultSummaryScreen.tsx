@@ -6,31 +6,24 @@ import {
   Camera,
   Cart,
   CheckCircle,
-  Clock,
-  Cutlery,
   NavArrowLeft,
   OpenBook,
   PlusCircle,
   Settings,
   ShareAndroid,
-  ShieldCheck,
-  Sparks,
   ArrowRight,
 } from 'iconoir-react-native';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { AccessibilityInfo, Animated, Easing, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
-import { KikoMascot } from '../components/KikoMascot';
-import {
-  PrimaryButton,
-  colors,
-  fontFamilies,
-} from '../components/OkyoUI';
+import { PrimaryButton, RewardToast } from '../components/OkyoUI';
+import { RecipeQualityCard } from '../components/RecipeQualityCard';
+import { colors, fontFamilies, radius, shadows, surfaces } from '../theme/okyoTheme';
 import {
   defaultScanResult,
   getSafeRecipeForMode,
@@ -42,12 +35,11 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { getRealScanImageUri } from '../utils/recipeImages';
+import { buildRecipeQualityReport } from '../utils/recipeQuality';
 import { isUsableScan } from '../utils/scanDecision';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
-const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
 type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'ResultSummaryScreen'>;
 type ResultSummaryRoute = RouteProp<RootStackParamList, 'ResultSummaryScreen'>;
 
@@ -66,6 +58,9 @@ export function ResultSummaryScreen() {
   const storedLatestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
+  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
+  const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
+  const setUserRestaurantPrice = useOkyoStore((state) => state.setUserRestaurantPrice);
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
@@ -99,6 +94,11 @@ export function ResultSummaryScreen() {
   const [isEditingDishName, setIsEditingDishName] = useState(false);
   const [dishGuessConfirmed, setDishGuessConfirmed] = useState(false);
   const [restaurantPriceInput, setRestaurantPriceInput] = useState('');
+  const [saveToastVisible, setSaveToastVisible] = useState(false);
+  const [saveToastLabel, setSaveToastLabel] = useState('Saved to your library');
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const revealAnim = useRef(new Animated.Value(0)).current;
+  const saveNavigationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstScanEventId = `first-scan-${scanResult?.id ?? 'missing-scan'}`;
   const isScanFailure = latestScanStatus === 'rejected' || latestScanStatus === 'failed';
   const isPartialScan = latestScanStatus === 'partial' && Boolean(latestScanResult);
@@ -121,7 +121,6 @@ export function ResultSummaryScreen() {
   const displayDishName = cleanDisplayText(dishNameOverride.trim() || scanResult?.dishName || '');
   const possibleDishNames = getPossibleDishNames(scanResult, displayDishName);
   const shouldShowDishConfirmation = Boolean(isRealScan && scanResult && isUncertainResult);
-  const userRestaurantPrice = parseRestaurantPrice(restaurantPriceInput);
   const homemadeEstimate = selectedRecipe?.estimatedHomemadeCost ?? scanResult?.homemadeCost ?? null;
   const canShowSavings = isDemoScan || userRestaurantPrice !== null;
   const estimatedSavings = isDemoScan
@@ -131,19 +130,62 @@ export function ResultSummaryScreen() {
       : null;
   const displaySubtitle = getDisplaySubtitle(scanResult?.restaurantStyle, selectedRecipe?.description);
   const bestGuessNote = getBestGuessResultNote(scanResult);
+  const qualityReport = useMemo(() => (selectedRecipe ? buildRecipeQualityReport(selectedRecipe) : null), [selectedRecipe]);
 
   useEffect(() => {
     setDishNameOverride('');
     setDishGuessConfirmed(false);
     setIsEditingDishName(false);
-    // Pre-fill with the AI's restaurant price estimate for real scans so the
-    // savings section shows immediately without requiring user input.
-    const priceHint =
-      !isDemoScan && scanResult?.restaurantPrice && scanResult.restaurantPrice > 0
-        ? scanResult.restaurantPrice.toFixed(2)
-        : '';
-    setRestaurantPriceInput(priceHint);
+    // Savings only appear from a price the user actually paid — never from the
+    // AI's restaurant estimate. Restore their entered price if one exists.
+    setRestaurantPriceInput(userRestaurantPrice !== null ? userRestaurantPrice.toFixed(2) : '');
   }, [scanResult?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const subscription = AccessibilityInfo.addEventListener?.('reduceMotionChanged', setReduceMotion);
+
+    return () => subscription?.remove?.();
+  }, []);
+
+  useEffect(() => () => {
+    if (saveNavigationTimer.current) {
+      clearTimeout(saveNavigationTimer.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    revealAnim.setValue(0);
+    if (reduceMotion) {
+      Animated.timing(revealAnim, {
+        duration: 120,
+        easing: Easing.out(Easing.quad),
+        toValue: 1,
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+
+    Animated.timing(revealAnim, {
+      duration: 560,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  }, [revealAnim, reduceMotion, scanResult?.id]);
+
+  // One canonical dish title per scan: the scan's dish identity wins over the
+  // AI recipe's invented name, so Result, Recipe, Grocery, Share, and Library
+  // all show the same dish. Runs once per scan result.
+  useEffect(() => {
+    if (!scanResult || !storedRecipe || isDemoScan) {
+      return;
+    }
+    const canonicalTitle = cleanDisplayText(scanResult.dishName);
+    if (canonicalTitle && storedRecipe.title !== canonicalTitle) {
+      setLatestScanRecipe({ ...storedRecipe, title: canonicalTitle });
+    }
+  }, [scanResult?.id, storedRecipe?.id, storedRecipe?.title]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     logResultStateSource({
@@ -267,14 +309,19 @@ export function ResultSummaryScreen() {
     });
   }, [awardXPOnce, awardedXpEvents, estimatedSavings, firstScanEventId, incrementWeeklyScanCount, isDemoScan, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult, selectedMode, selectedModeRaw, setLatestScanResult, shouldShowFailure, shouldShowPartial]);
 
-  const chooseMode = (mode: RecipeMode) => {
-    setSelectedMode(mode);
-    uiLog('ResultSummaryScreen', 'choose_mode', { mode });
-    track(analyticsEvents.MODE_SELECTED, {
-      dishName: scanResult?.dishName ?? 'Missing scan',
-      mode,
-      screen: 'ResultSummaryScreen',
-    });
+  // Persist a user dish-name edit so every screen (Recipe, Grocery, Share,
+  // Library-on-save) shows the corrected name, not just this one.
+  const confirmDishName = () => {
+    setDishGuessConfirmed(true);
+    setIsEditingDishName(false);
+    const confirmedName = cleanDisplayText(dishNameOverride.trim());
+    if (!confirmedName || !scanResult) {
+      return;
+    }
+    setLatestScanResult({ ...scanResult, dishName: confirmedName });
+    if (storedRecipe) {
+      setLatestScanRecipe({ ...storedRecipe, title: confirmedName });
+    }
   };
 
   const saveSelectedRecipe = () => {
@@ -283,10 +330,12 @@ export function ResultSummaryScreen() {
     }
 
     const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === selectedRecipe.id);
+    const saveEventId = `save-recipe-${selectedRecipe.id}`;
+    const willAwardSaveXp = !alreadySaved && !awardedXpEvents.includes(saveEventId);
     uiLog('ResultSummaryScreen', 'save_recipe', { recipeId: selectedRecipe.id });
     saveRecipe(attachRealScanImage(selectedRecipe, selectedScanImage));
     if (!alreadySaved) {
-      awardXPOnce(`save-recipe-${selectedRecipe.id}`, 5);
+      awardXPOnce(saveEventId, 5);
     }
     unlockBadge('first-dupe');
     track(analyticsEvents.RECIPE_SAVED, {
@@ -295,7 +344,14 @@ export function ResultSummaryScreen() {
       savings: estimatedSavings ?? 0,
       screen: 'ResultSummaryScreen',
     });
-    navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
+    setSaveToastLabel(willAwardSaveXp ? 'Saved to your library +5 XP' : 'Saved to your library');
+    setSaveToastVisible(true);
+    if (saveNavigationTimer.current) {
+      clearTimeout(saveNavigationTimer.current);
+    }
+    saveNavigationTimer.current = setTimeout(() => {
+      navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
+    }, reduceMotion ? 140 : 520);
   };
 
   const openShareDupe = () => {
@@ -420,7 +476,24 @@ export function ResultSummaryScreen() {
   }
 
   return (
-    <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
+    <ResultFrame
+      onScanAgain={goToScan}
+      onSettings={openSettings}
+      rewardToast={<RewardToast label={saveToastLabel} tone="save" visible={saveToastVisible} />}
+    >
+      <Animated.View
+        style={{
+          opacity: revealAnim,
+          transform: [
+            {
+              translateY: revealAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [reduceMotion ? 0 : 18, 0],
+              }),
+            },
+          ],
+        }}
+      >
       <FoodImageCard
         dishName={displayDishName || 'Scanned dish'}
         imageUri={selectedScanImageUri ?? undefined}
@@ -440,11 +513,30 @@ export function ResultSummaryScreen() {
           {displayDishName || 'Scanned dish'}
         </Text>
         <Text style={styles.subtitle}>{displaySubtitle}</Text>
+        <View style={styles.metaChipRow}>
+          {selectedRecipe.servings ? (
+            <View style={styles.metaChip}>
+              <Text style={styles.metaChipText}>Serves {selectedRecipe.servings}</Text>
+            </View>
+          ) : null}
+          {selectedRecipe.difficulty ? (
+            <View style={styles.metaChip}>
+              <Text style={styles.metaChipText}>{selectedRecipe.difficulty}</Text>
+            </View>
+          ) : null}
+          {totalTimeMinutes ? (
+            <View style={styles.metaChip}>
+              <Text style={styles.metaChipText}>{totalTimeMinutes} min</Text>
+            </View>
+          ) : null}
+        </View>
         {matchPercent !== null ? (
           <View style={styles.matchPill}>
             <CheckCircle color={colors.green} height={20} strokeWidth={2.25} width={20} />
             <Text style={styles.matchPillText}>
-              {isUncertainResult ? `Best guess · ${formatPercent(matchPercent)} confidence` : `${formatPercent(matchPercent)} confidence`}
+              {isUncertainResult
+                ? `Best guess · Scan match: ${getScanMatchLabel(matchPercent)}`
+                : `Scan match: ${getScanMatchLabel(matchPercent)}`}
             </Text>
           </View>
         ) : null}
@@ -506,10 +598,7 @@ export function ResultSummaryScreen() {
           <View style={styles.confirmActions}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                setDishGuessConfirmed(true);
-                setIsEditingDishName(false);
-              }}
+              onPress={confirmDishName}
               style={({ pressed }) => [styles.confirmPrimary, pressed ? styles.pressed : null]}
             >
               <Text style={styles.confirmPrimaryText}>Keep this guess</Text>
@@ -534,25 +623,20 @@ export function ResultSummaryScreen() {
       ) : null}
 
       <View style={styles.savingsHero}>
-        <View style={styles.savingsTopRow}>
-          <View style={styles.savingsBadge}>
-            <KikoMascot pose="celebrating" size={44} />
-          </View>
-          <View style={styles.savingsAmountGroup}>
-            <Text style={styles.savingsHeroLabel}>
-              {canShowSavings ? (isDemoScan ? 'Example savings' : 'Estimated savings') : 'Homemade estimate'}
-            </Text>
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.78}
-              numberOfLines={1}
-              style={styles.savingsHeroValue}
-            >
-              {canShowSavings
-                ? formatOptionalCurrency(estimatedSavings)
-                : formatHomemadeEstimateRange(homemadeEstimate)}
-            </Text>
-          </View>
+        <View style={styles.savingsAmountGroup}>
+          <Text style={styles.savingsHeroLabel}>
+            {canShowSavings ? (isDemoScan ? 'Example savings' : 'You saved') : 'Estimated home cost'}
+          </Text>
+          <Text
+            adjustsFontSizeToFit
+            minimumFontScale={0.78}
+            numberOfLines={1}
+            style={styles.savingsHeroValue}
+          >
+            {canShowSavings
+              ? formatOptionalCurrency(estimatedSavings)
+              : formatHomemadeEstimateRange(homemadeEstimate)}
+          </Text>
         </View>
         {isDemoScan ? (
           <View style={styles.priceCompareRow}>
@@ -583,15 +667,23 @@ export function ResultSummaryScreen() {
         ) : (
           <View style={styles.priceCompareRow}>
             <View style={styles.priceColumn}>
-              <Text style={styles.priceLabel}>Estimated grocery cost</Text>
-              <Text style={styles.priceValue}>{formatHomemadeEstimateRange(homemadeEstimate)}</Text>
-              <Text style={styles.priceHint}>Add what you paid to estimate savings.</Text>
+              {userRestaurantPrice !== null ? (
+                <>
+                  <Text style={styles.priceLabel}>Restaurant {formatOptionalCurrency(userRestaurantPrice)}</Text>
+                  <Text style={styles.priceLabel}>Home {formatHomemadeEstimateRange(homemadeEstimate)}</Text>
+                </>
+              ) : (
+                <Text style={styles.priceHint}>Add restaurant price to calculate savings.</Text>
+              )}
             </View>
             <TextInput
               accessibilityLabel="Restaurant price paid"
               keyboardType="decimal-pad"
-              onChangeText={setRestaurantPriceInput}
-              placeholder="$ paid"
+              onChangeText={(value) => {
+                setRestaurantPriceInput(value);
+                setUserRestaurantPrice(parseRestaurantPrice(value));
+              }}
+              placeholder="I paid $"
               placeholderTextColor={colors.muted}
               style={styles.priceInput}
               value={restaurantPriceInput}
@@ -600,72 +692,9 @@ export function ResultSummaryScreen() {
         )}
       </View>
 
-      <View style={styles.summaryCard}>
-        <StatBlock
-          icon={<ShieldCheck color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
-          label="Confidence"
-          value={formatPercent(confidencePercent)}
-        />
-        <View style={styles.statDivider} />
-        <StatBlock
-          icon={<Cutlery color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
-          label="Difficulty"
-          value={selectedRecipe.difficulty ?? '—'}
-        />
-        <View style={styles.statDivider} />
-        <StatBlock
-          icon={<Clock color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
-          label="Time"
-          value={totalTimeMinutes ? `${totalTimeMinutes} min` : '—'}
-        />
-      </View>
-
-      <ResultModeTabs selectedMode={selectedMode} onSelectMode={chooseMode} />
-
-      <View style={styles.matchCard}>
-        <View style={styles.matchTopRow}>
-          <View style={styles.modeBadge}>
-            <Text style={styles.modeBadgeText}>{selectedModeUi.label}</Text>
-          </View>
-        </View>
-        <View style={styles.matchBodyRow}>
-          <View style={styles.matchCopy}>
-            <Text style={styles.matchTitle}>{getModeCardTitle(selectedMode)}</Text>
-            {formatScore(scanResult.matchScore) !== '—' ? (
-              <Text style={styles.matchScoreLine}>
-                {formatScore(scanResult.matchScore)}/10 <Text style={styles.matchScoreSuffix}>match</Text>
-              </Text>
-            ) : null}
-            <Text style={styles.matchNote}>
-              {getModeSummary(selectedRecipe, selectedMode)}
-            </Text>
-          </View>
-          <View style={styles.matchAward}>
-            <Sparks color={colors.coral} height={36} strokeWidth={2.05} width={36} />
-          </View>
-        </View>
-        <View style={styles.chipRow}>
-          {getModeChips(selectedRecipe, {
-            estimatedSavings,
-            showSavings: canShowSavings,
-          }).map((chip) => (
-            <View key={chip.label} style={styles.infoChip}>
-              <Text
-                adjustsFontSizeToFit
-                minimumFontScale={0.78}
-                numberOfLines={1}
-                style={styles.infoChipText}
-              >
-                {chip.label}
-              </Text>
-            </View>
-          ))}
-        </View>
-      </View>
-
       <View style={styles.actions}>
         <ResultPrimaryButton onPress={() => navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: selectedMode } })}>
-          <OpenBook color="#fffdf8" height={25} strokeWidth={2.15} width={25} />
+          <OpenBook color={colors.onCoral} height={25} strokeWidth={2.15} width={25} />
           <Text style={styles.resultPrimaryButtonText}>View recipe</Text>
         </ResultPrimaryButton>
         <View style={styles.secondaryRow}>
@@ -686,6 +715,25 @@ export function ResultSummaryScreen() {
           />
         </View>
       </View>
+
+      <View style={styles.matchCard}>
+        <View style={styles.matchTopRow}>
+          <View style={styles.modeBadge}>
+            <Text style={styles.modeBadgeText}>Style: {selectedModeUi.label}</Text>
+          </View>
+        </View>
+        <View style={styles.matchBodyRow}>
+          <View style={styles.matchCopy}>
+            <Text style={styles.matchTitle}>About this recipe</Text>
+            <Text style={styles.matchNote}>
+              {getModeSummary(selectedRecipe, selectedMode)}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      {qualityReport ? <RecipeQualityCard compact report={qualityReport} /> : null}
+      </Animated.View>
     </ResultFrame>
   );
 }
@@ -694,15 +742,16 @@ type ResultFrameProps = {
   children: ReactNode;
   onScanAgain: () => void;
   onSettings: () => void;
+  rewardToast?: ReactNode;
 };
 
-function ResultFrame({ children, onScanAgain, onSettings }: ResultFrameProps) {
+function ResultFrame({ children, onScanAgain, onSettings, rewardToast }: ResultFrameProps) {
   const insets = useSafeAreaInsets();
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
-        contentContainerStyle={[styles.screenContent, { paddingBottom: 220 + insets.bottom }]}
+        contentContainerStyle={[styles.screenContent, { paddingBottom: 48 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.topBar}>
@@ -743,6 +792,7 @@ function ResultFrame({ children, onScanAgain, onSettings }: ResultFrameProps) {
         </View>
         {children}
       </ScrollView>
+      {rewardToast}
     </SafeAreaView>
   );
 }
@@ -785,81 +835,6 @@ function FoodImageCard({ dishName, imageUri, isDemoScan }: FoodImageCardProps) {
         <Text style={styles.photoUnavailableTitle}>Food photo unavailable</Text>
         <Text style={styles.photoUnavailableBody}>Okyo can still show the scan result from the recipe data.</Text>
       </View>
-    </View>
-  );
-}
-
-type StatBlockProps = {
-  icon: ReactNode;
-  label: string;
-  value: string;
-};
-
-function StatBlock({ icon, label, value }: StatBlockProps) {
-  return (
-    <View style={styles.statTile}>
-      <View style={styles.statIcon}>
-        {icon}
-      </View>
-      <View style={styles.statTextGroup}>
-        <Text
-          adjustsFontSizeToFit
-          minimumFontScale={0.82}
-          numberOfLines={1}
-          style={styles.metricLabel}
-        >
-          {label}
-        </Text>
-        <Text
-          adjustsFontSizeToFit
-          minimumFontScale={0.8}
-          numberOfLines={1}
-          style={styles.metricValue}
-        >
-          {value}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-type ResultModeTabsProps = {
-  selectedMode: RecipeMode;
-  onSelectMode: (mode: RecipeMode) => void;
-};
-
-function ResultModeTabs({ selectedMode, onSelectMode }: ResultModeTabsProps) {
-  return (
-    <View style={styles.modeTabs}>
-      {recipeModes.map((mode, index) => {
-        const isSelected = selectedMode === mode;
-        const modeUi = getModeUi(mode);
-
-        return (
-          <View key={mode} style={styles.modeTabSlot}>
-            {index > 0 ? <View style={styles.modeDivider} /> : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSelected }}
-              onPress={() => onSelectMode(mode)}
-              style={({ pressed }) => [
-                styles.modeTab,
-                isSelected ? styles.modeTabSelected : null,
-                pressed ? styles.pressed : null,
-              ]}
-            >
-              <Text
-                adjustsFontSizeToFit
-                minimumFontScale={0.82}
-                numberOfLines={1}
-                style={[styles.modeTabText, isSelected ? styles.modeTabTextSelected : null]}
-              >
-                {modeUi.label}
-              </Text>
-            </Pressable>
-          </View>
-        );
-      })}
     </View>
   );
 }
@@ -981,21 +956,6 @@ function getModeUi(mode: RecipeMode) {
   return modeUiByMode[mode];
 }
 
-function getModeChips(
-  recipe: Recipe,
-  options: {
-    estimatedSavings: number | null;
-    showSavings: boolean;
-  },
-) {
-  return [
-    { label: `${formatOptionalCurrency(recipe.estimatedHomemadeCost)} homemade est.` },
-    options.showSavings ? { label: `${formatOptionalCurrency(options.estimatedSavings)} savings` } : null,
-    { label: recipe.servings ? `Serves ${recipe.servings}` : 'Serves —' },
-  ].filter((chip): chip is { label: string } => Boolean(chip))
-    .filter((chip) => !chip.label.includes('—'));
-}
-
 function getDisplaySubtitle(restaurantStyle?: string, recipeDescription?: string) {
   const style = cleanDisplayText(restaurantStyle ?? '');
   const description = cleanDisplayText(recipeDescription ?? '');
@@ -1012,18 +972,6 @@ function getDisplaySubtitle(restaurantStyle?: string, recipeDescription?: string
   }
 
   return 'Homemade recipe from the photo';
-}
-
-function getModeCardTitle(mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return 'Budget pick for your scan';
-    case 'Healthy':
-      return 'Lighter pick for your scan';
-    case 'Restaurant Copy':
-    default:
-      return 'Best match for your scan';
-  }
 }
 
 function getModeSummary(recipe: Recipe, mode: RecipeMode) {
@@ -1074,6 +1022,18 @@ function formatHomemadeEstimateRange(value: number | null | undefined) {
   const low = Math.max(1, value * 0.85);
   const high = Math.max(low, value * 1.15);
   return `about ${formatCurrency(low)}–${formatCurrency(high)}`;
+}
+
+// Human-readable scan match tier. 82 mirrors the isUncertainScan threshold so
+// "High" and the confident result path always agree.
+function getScanMatchLabel(percent: number | null) {
+  if (percent === null) {
+    return 'Medium';
+  }
+  if (percent >= 82) {
+    return 'High';
+  }
+  return percent >= 60 ? 'Medium' : 'Low';
 }
 
 function isUncertainScan(
@@ -1148,21 +1108,13 @@ function getPercentValue(value: number | null | undefined) {
   return Math.max(0, Math.min(100, Math.round(normalized)));
 }
 
-function formatPercent(value: number | null | undefined) {
-  return typeof value === 'number' && Number.isFinite(value) ? `${value}%` : '—';
-}
-
-function formatScore(value: number | null | undefined) {
-  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(1) : '—';
-}
-
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: recipeColors.background,
+    backgroundColor: colors.background,
     flex: 1,
   },
   screenContent: {
-    backgroundColor: recipeColors.background,
+    backgroundColor: colors.background,
     flexGrow: 1,
     paddingHorizontal: 20,
     paddingTop: 8,
@@ -1177,7 +1129,7 @@ const styles = StyleSheet.create({
   },
   scanAgainButton: {
     alignItems: 'center',
-    backgroundColor: recipeColors.card,
+    backgroundColor: colors.card,
     borderRadius: 999,
     flexDirection: 'row',
     gap: 5,
@@ -1190,7 +1142,7 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   scanAgainText: {
-    color: recipeColors.orange,
+    color: colors.coral,
     flexShrink: 1,
     fontFamily: fontFamilies.bold,
     fontSize: 14,
@@ -1206,7 +1158,7 @@ const styles = StyleSheet.create({
     top: 0,
   },
   topTitle: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 20,
     fontWeight: '800',
@@ -1214,7 +1166,7 @@ const styles = StyleSheet.create({
   },
   settingsButton: {
     alignItems: 'center',
-    backgroundColor: recipeColors.card,
+    backgroundColor: colors.card,
     borderRadius: 999,
     height: 44,
     justifyContent: 'center',
@@ -1230,16 +1182,15 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   kicker: {
-    color: recipeColors.orange,
+    color: colors.coral,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0,
     marginBottom: 10,
-    textTransform: 'uppercase',
   },
   title: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.display,
     fontSize: 42,
     fontWeight: '800',
@@ -1248,7 +1199,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   failureHeadline: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.display,
     fontSize: 31,
     fontWeight: '800',
@@ -1257,7 +1208,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   subtitle: {
-    color: recipeColors.muted,
+    color: colors.muted,
     fontFamily: fontFamilies.body,
     fontSize: 18,
     fontWeight: '400',
@@ -1268,7 +1219,7 @@ const styles = StyleSheet.create({
   matchPill: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: recipeColors.greenSoft,
+    backgroundColor: colors.greenSoft,
     borderRadius: 999,
     flexDirection: 'row',
     gap: 8,
@@ -1277,13 +1228,13 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   matchPillText: {
-    color: recipeColors.green,
+    color: colors.green,
     fontFamily: fontFamilies.bold,
     fontSize: 14,
     fontWeight: '700',
   },
   bestGuessNote: {
-    color: recipeColors.muted,
+    color: colors.muted,
     fontFamily: fontFamilies.body,
     fontSize: 15,
     fontWeight: '400',
@@ -1293,8 +1244,8 @@ const styles = StyleSheet.create({
   foodImageCard: {
     alignItems: 'center',
     aspectRatio: 0.96,
-    backgroundColor: recipeColors.cream,
-    borderRadius: 32,
+    backgroundColor: colors.cream,
+    borderRadius: radius.hero,
     justifyContent: 'center',
     maxHeight: 390,
     minHeight: 318,
@@ -1313,14 +1264,14 @@ const styles = StyleSheet.create({
   },
   photoEmptyIcon: {
     alignItems: 'center',
-    backgroundColor: recipeColors.orangeSoft,
+    backgroundColor: colors.coralSoft,
     borderRadius: 999,
     height: 54,
     justifyContent: 'center',
     width: 54,
   },
   photoUnavailableTitle: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 19,
     fontWeight: '800',
@@ -1328,7 +1279,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   photoUnavailableBody: {
-    color: recipeColors.muted,
+    color: colors.muted,
     fontFamily: fontFamilies.body,
     fontSize: 15,
     lineHeight: 22,
@@ -1336,25 +1287,25 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   confirmCard: {
+    ...surfaces.card,
     marginTop: 18,
     padding: 20,
   },
   confirmLabel: {
-    color: recipeColors.orange,
+    color: colors.coral,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
-    textTransform: 'uppercase',
   },
   confirmTitle: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 21,
     fontWeight: '800',
     marginTop: 6,
   },
   confirmDishName: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.display,
     fontSize: 24,
     fontWeight: '700',
@@ -1368,21 +1319,21 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   alternativeChip: {
-    backgroundColor: recipeColors.orangeSoft,
+    backgroundColor: colors.coralSoft,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   alternativeChipText: {
-    color: recipeColors.orangeDeep,
+    color: colors.coralDark,
     fontFamily: fontFamilies.bold,
     fontSize: 13,
     fontWeight: '700',
   },
   dishNameInput: {
-    backgroundColor: recipeColors.card,
+    backgroundColor: colors.card,
     borderRadius: 16,
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 17,
     fontWeight: '800',
@@ -1397,7 +1348,7 @@ const styles = StyleSheet.create({
   },
   confirmPrimary: {
     alignItems: 'center',
-    backgroundColor: recipeColors.orange,
+    backgroundColor: colors.coral,
     borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
@@ -1405,7 +1356,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   confirmPrimaryText: {
-    color: '#fffdf8',
+    color: colors.onCoral,
     fontFamily: fontFamilies.bold,
     fontSize: 13,
     fontWeight: '700',
@@ -1413,7 +1364,7 @@ const styles = StyleSheet.create({
   },
   confirmSecondary: {
     alignItems: 'center',
-    backgroundColor: recipeColors.cream,
+    backgroundColor: colors.cream,
     borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
@@ -1421,14 +1372,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   confirmSecondaryText: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.bold,
     fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
   },
   confirmNote: {
-    color: recipeColors.muted,
+    color: colors.muted,
     fontFamily: fontFamilies.body,
     fontSize: 13,
     fontWeight: '500',
@@ -1442,34 +1393,19 @@ const styles = StyleSheet.create({
     minWidth: 0,
     padding: 20,
   },
-  savingsTopRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-    minWidth: 0,
-  },
-  savingsBadge: {
-    alignItems: 'center',
-    backgroundColor: recipeColors.greenSoft,
-    borderRadius: 999,
-    height: 50,
-    justifyContent: 'center',
-    width: 50,
-  },
   savingsAmountGroup: {
     flex: 1,
     minWidth: 0,
   },
   savingsHeroLabel: {
-    color: recipeColors.green,
+    color: colors.green,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0,
-    textTransform: 'uppercase',
   },
   savingsHeroValue: {
-    color: recipeColors.green,
+    color: colors.green,
     fontFamily: fontFamilies.display,
     fontSize: 38,
     fontWeight: '800',
@@ -1480,7 +1416,7 @@ const styles = StyleSheet.create({
   },
   priceCompareRow: {
     alignItems: 'center',
-    backgroundColor: recipeColors.greenSoft,
+    backgroundColor: colors.greenSoft,
     borderRadius: 22,
     flexDirection: 'row',
     gap: 10,
@@ -1494,20 +1430,20 @@ const styles = StyleSheet.create({
     minWidth: 88,
   },
   priceLabel: {
-    color: recipeColors.muted,
+    color: colors.muted,
     fontFamily: fontFamilies.bold,
     fontSize: 13,
     fontWeight: '700',
   },
   priceValue: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 18,
     fontWeight: '800',
     marginTop: 4,
   },
   priceHint: {
-    color: recipeColors.muted,
+    color: colors.muted,
     fontFamily: fontFamilies.body,
     fontSize: 13,
     fontWeight: '400',
@@ -1515,9 +1451,9 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   priceInput: {
-    backgroundColor: recipeColors.card,
+    backgroundColor: colors.card,
     borderRadius: 999,
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 17,
     fontWeight: '700',
@@ -1526,100 +1462,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     textAlign: 'center',
   },
-  summaryCard: {
-    alignItems: 'center',
+  metaChipRow: {
     flexDirection: 'row',
-    marginTop: 18,
-    minWidth: 0,
-    paddingHorizontal: 10,
-    paddingVertical: 16,
-  },
-  statTile: {
-    alignItems: 'center',
-    flex: 1,
+    flexWrap: 'wrap',
     gap: 8,
-    justifyContent: 'center',
-    minHeight: 62,
-    minWidth: 0,
-    paddingHorizontal: 4,
+    marginTop: 14,
   },
-  statDivider: {
-    backgroundColor: recipeColors.border,
-    height: 56,
-    width: 1,
-  },
-  statIcon: {
-    alignItems: 'center',
+  metaChip: {
+    backgroundColor: colors.cream,
     borderRadius: 999,
-    height: 28,
-    justifyContent: 'center',
-    width: 28,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
   },
-  statTextGroup: {
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  metricLabel: {
-    color: recipeColors.muted,
+  metaChipText: {
+    color: colors.charcoal,
     fontFamily: fontFamilies.bold,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
-    textAlign: 'center',
-  },
-  metricValue: {
-    color: recipeColors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 18,
-    fontWeight: '800',
-    lineHeight: 22,
-    marginTop: 1,
-    textAlign: 'center',
-  },
-  modeTabs: {
-    alignItems: 'center',
-    backgroundColor: recipeColors.cream,
-    borderRadius: 999,
-    flexDirection: 'row',
-    marginTop: 16,
-    minWidth: 0,
-    padding: 5,
-  },
-  modeTabSlot: {
-    alignItems: 'center',
-    flex: 1,
-    flexDirection: 'row',
-    minWidth: 0,
-  },
-  modeDivider: {
-    backgroundColor: recipeColors.border,
-    height: 32,
-    width: 1,
-  },
-  modeTab: {
-    alignItems: 'center',
-    borderRadius: 999,
-    flex: 1,
-    justifyContent: 'center',
-    minHeight: 42,
-    minWidth: 0,
-    paddingHorizontal: 6,
-  },
-  modeTabSelected: {
-    backgroundColor: recipeColors.card,
-  },
-  modeTabText: {
-    color: recipeColors.muted,
-    flexShrink: 1,
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
-    minWidth: 0,
-    textAlign: 'center',
-  },
-  modeTabTextSelected: {
-    color: recipeColors.orange,
   },
   matchCard: {
+    ...surfaces.card,
     marginTop: 16,
     minWidth: 0,
     padding: 20,
@@ -1634,14 +1496,14 @@ const styles = StyleSheet.create({
   modeBadge: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: recipeColors.orangeSoft,
+    backgroundColor: colors.coralSoft,
     borderRadius: 999,
     maxWidth: '74%',
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
   modeBadgeText: {
-    color: recipeColors.orangeDeep,
+    color: colors.coralDark,
     flexShrink: 1,
     fontSize: 13,
     fontWeight: '700',
@@ -1658,100 +1520,51 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   matchTitle: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 22,
     fontWeight: '800',
     lineHeight: 28,
   },
-  matchScoreLine: {
-    color: recipeColors.orange,
-    fontFamily: fontFamilies.display,
-    fontSize: 19,
-    fontWeight: '800',
-    lineHeight: 24,
-    marginTop: 6,
-  },
-  matchScoreSuffix: {
-    fontSize: 15,
-  },
   matchNote: {
-    color: recipeColors.muted,
+    color: colors.muted,
     fontFamily: fontFamilies.body,
     fontSize: 16,
     lineHeight: 24,
     marginTop: 7,
   },
-  matchAward: {
-    alignItems: 'center',
-    backgroundColor: recipeColors.orangeSoft,
-    borderRadius: 999,
-    height: 60,
-    justifyContent: 'center',
-    marginTop: 10,
-    width: 60,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 14,
-    minWidth: 0,
-  },
-  infoChip: {
-    backgroundColor: recipeColors.cream,
-    borderRadius: 999,
-    flex: 1,
-    justifyContent: 'center',
-    minHeight: 42,
-    minWidth: 0,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  infoChipText: {
-    color: recipeColors.green,
-    fontFamily: fontFamilies.bold,
-    fontSize: 13,
-    fontWeight: '700',
-    includeFontPadding: false,
-    lineHeight: 18,
-    textAlign: 'center',
-  },
   standaloneScanPreview: {
-    backgroundColor: recipeColors.cream,
-    borderRadius: 24,
+    backgroundColor: colors.cream,
+    borderRadius: radius.card,
     height: 170,
     marginTop: 14,
     width: '100%',
   },
   failureCard: {
-    marginTop: 14,
-    padding: 18,
-  },
-  partialCard: {
-    backgroundColor: recipeColors.yellowSoft,
-    borderRadius: 24,
+    ...surfaces.card,
     marginTop: 14,
     padding: 18,
   },
   loadingMiniCard: {
+    ...surfaces.card,
     marginTop: 20,
     padding: 18,
   },
   loadingMiniText: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 16,
     fontWeight: '700',
     textAlign: 'center',
   },
   failureTitle: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 18,
     fontWeight: '700',
   },
   failureBody: {
-    color: recipeColors.muted,
+    color: colors.muted,
     fontFamily: fontFamilies.body,
     fontSize: 15,
     lineHeight: 22,
@@ -1768,9 +1581,9 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     alignItems: 'center',
-    backgroundColor: recipeColors.cream,
-    borderColor: 'rgba(232, 220, 203, 0.8)',
-    borderRadius: 22,
+    backgroundColor: colors.cream,
+    borderColor: colors.border,
+    borderRadius: 20,
     borderWidth: 1,
     flex: 1,
     gap: 5,
@@ -1786,7 +1599,7 @@ const styles = StyleSheet.create({
     width: 20,
   },
   actionButtonText: {
-    color: recipeColors.charcoal,
+    color: colors.charcoal,
     flexShrink: 1,
     fontFamily: fontFamilies.bold,
     fontSize: 13,
@@ -1796,21 +1609,17 @@ const styles = StyleSheet.create({
   },
   resultPrimaryButton: {
     alignItems: 'center',
-    backgroundColor: recipeColors.orange,
-    borderRadius: 24,
+    backgroundColor: colors.coral,
+    borderRadius: 999,
     flexDirection: 'row',
     gap: 12,
     justifyContent: 'center',
     minHeight: 60,
     paddingHorizontal: 18,
-    shadowColor: recipeColors.orangeDeep,
-    shadowOffset: { height: 10, width: 0 },
-    shadowOpacity: 0.2,
-    shadowRadius: 20,
-    elevation: 3,
+    ...shadows.cta,
   },
   resultPrimaryButtonText: {
-    color: '#fffdf8',
+    color: colors.onCoral,
     fontFamily: fontFamilies.extraBold,
     fontSize: 18,
     fontWeight: '800',

@@ -1,7 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  Bookmark,
   Camera,
   Cart,
   Clock,
@@ -17,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
-import { colors } from '../components/OkyoUI';
+import { colors, fontFamilies, layout, shadows, surfaces, typography } from '../theme/okyoTheme';
 import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
@@ -59,8 +58,6 @@ export function LibraryScreen() {
     [activeFilter, searchQuery, sortedRecipes],
   );
   const totalHomemadeEstimate = safeSavedRecipes.reduce((total, recipe) => total + getFiniteNumber(recipe.estimatedHomemadeCost), 0);
-  const easyMeals = safeSavedRecipes.filter((recipe) => getDifficulty(recipe) === 'Easy').length;
-
   useEffect(() => {
     if (didTrackMalformedData.current || malformedRecipeCount === 0) {
       return;
@@ -149,12 +146,12 @@ export function LibraryScreen() {
       <LibraryFrame>
         <TopBar title="Plan" />
         <View style={styles.emptyCard}>
-          <KikoMascot pose="wave" size={118} style={styles.emptyMascot} />
+          <KikoMascot animated="idle" pose="wave" size={118} style={styles.emptyMascot} />
           <Text style={styles.emptyTitle}>Saved meals worth remaking will live here.</Text>
           <Text style={styles.emptyBody}>
             Scan a craving, save the homemade version, and Okyo will build your dinner shelf.
           </Text>
-          <PrimaryAction icon={<Camera color="#fffdf8" height={20} strokeWidth={2.2} width={20} />} label="Scan a meal" onPress={goToScan} />
+          <PrimaryAction icon={<Camera color={colors.onCoral} height={20} strokeWidth={2.2} width={20} />} label="Scan a meal" onPress={goToScan} />
         </View>
       </LibraryFrame>
     );
@@ -174,26 +171,19 @@ export function LibraryScreen() {
             Your favorite restaurant-style recipes, ready for an easy dinner repeat.
           </Text>
         </View>
-        <View style={styles.recipeMascotCard}>
-          <KikoMascot pose="recipe" size={76} />
-        </View>
-        <View style={styles.heroStats}>
-          <HeroStat icon={<Bookmark color={colors.coral} height={18} strokeWidth={2} width={18} />} value={safeSavedRecipes.length.toString()} label="saved" />
-          <HeroStat icon={<MoneySquare color={colors.green} height={18} strokeWidth={2} width={18} />} value={formatCurrency(totalHomemadeEstimate)} label="home est." />
-          <HeroStat icon={<Clock color="#d8800b" height={18} strokeWidth={2} width={18} />} value={easyMeals.toString()} label="easy" />
-        </View>
+        <Text style={styles.heroSummary}>{safeSavedRecipes.length} saved · {formatCurrency(totalHomemadeEstimate)} home est.</Text>
       </View>
 
       <View style={styles.searchRow}>
         <View style={styles.searchBox}>
-          <Search color="#a89a8a" height={22} strokeWidth={2} width={22} />
+          <Search color={colors.mutedSoft} height={22} strokeWidth={2} width={22} />
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
             clearButtonMode="while-editing"
             onChangeText={setSearchQuery}
             placeholder="Search saved recipes"
-            placeholderTextColor="#978b80"
+            placeholderTextColor={colors.mutedSoft}
             returnKeyType="search"
             style={styles.searchInput}
             value={searchQuery}
@@ -263,18 +253,6 @@ function TopBar({ title }: { title: string }) {
       <View style={styles.topSpacer} />
       <Text style={styles.topTitle}>{title}</Text>
       <View style={styles.topSpacer} />
-    </View>
-  );
-}
-
-function HeroStat({ icon, value, label }: { icon: ReactNode; value: string; label: string }) {
-  return (
-    <View style={styles.heroStat}>
-      <View style={styles.heroStatIcon}>{icon}</View>
-      <View style={styles.heroStatCopy}>
-        <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.heroStatValue}>{value}</Text>
-        <Text numberOfLines={1} style={styles.heroStatLabel}>{label}</Text>
-      </View>
     </View>
   );
 }
@@ -461,7 +439,7 @@ const styles = StyleSheet.create({
   screenContent: {
     gap: 12,
     padding: 24,
-    paddingBottom: 132,
+    paddingBottom: layout.scrollClearance,
   },
   topBar: {
     alignItems: 'center',
@@ -470,37 +448,39 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   topTitle: {
-    color: colors.charcoal,
+    ...typography.title,
     flex: 1,
     fontSize: 26,
-    fontWeight: '700',
-    letterSpacing: 0,
+    lineHeight: 33,
     textAlign: 'center',
   },
   topSpacer: {
     width: 48,
   },
   heroCard: {
+    ...surfaces.card,
     minHeight: 142,
-    padding: 14,
+    padding: 16,
   },
-  heroCopy: {
-    paddingRight: 66,
+  heroCopy: {},
+  heroSummary: {
+    ...typography.caption,
+    marginTop: 8,
   },
   heroKicker: {
-    color: colors.coral,
+    ...typography.label,
+    color: colors.coralDark,
     fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.4,
+    lineHeight: 16,
     marginBottom: 6,
-    textTransform: 'uppercase',
   },
   heroTitle: {
     color: colors.charcoal,
+    fontFamily: fontFamilies.display,
     fontSize: 23,
-    fontWeight: '700',
+    fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 27,
+    lineHeight: 29,
   },
   heroAccent: {
     color: colors.coral,
@@ -512,57 +492,6 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     marginTop: 6,
   },
-  recipeMascotCard: {
-    alignItems: 'center',
-    backgroundColor: '#fff1df',
-    borderRadius: 20,
-    justifyContent: 'center',
-    height: 82,
-    padding: 3,
-    position: 'absolute',
-    right: 12,
-    top: 18,
-    width: 82,
-  },
-  heroStats: {
-    alignItems: 'stretch',
-    flexDirection: 'row',
-    gap: 4,
-    justifyContent: 'space-between',
-    marginTop: 10,
-    padding: 10,
-  },
-  heroStat: {
-    alignItems: 'center',
-    flex: 1,
-    gap: 3,
-    minWidth: 0,
-  },
-  heroStatIcon: {
-    alignItems: 'center',
-    backgroundColor: '#fff1df',
-    borderRadius: 12,
-    height: 28,
-    justifyContent: 'center',
-    width: 28,
-  },
-  heroStatCopy: {
-    alignItems: 'center',
-    alignSelf: 'stretch',
-    minWidth: 0,
-  },
-  heroStatValue: {
-    color: colors.coral,
-    fontSize: 14,
-    fontVariant: ['tabular-nums'],
-    fontWeight: '800',
-  },
-  heroStatLabel: {
-    color: colors.body,
-    fontSize: 9,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
   searchRow: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -571,12 +500,15 @@ const styles = StyleSheet.create({
   searchBox: {
     alignItems: 'center',
     backgroundColor: colors.card,
+    borderColor: colors.border,
     borderRadius: 999,
+    borderWidth: 1,
     flex: 1,
     flexDirection: 'row',
     gap: 10,
     minHeight: 50,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
+    ...shadows.soft,
   },
   searchInput: {
     color: colors.charcoal,
@@ -600,22 +532,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   filterChipSelected: {
-    backgroundColor: '#fff2e8',
+    backgroundColor: colors.coralSoft,
   },
   filterText: {
     color: colors.charcoal,
+    fontFamily: fontFamilies.bold,
     fontSize: 13,
     fontWeight: '700',
   },
   filterTextSelected: {
-    color: colors.coral,
+    color: colors.coralDark,
+    fontFamily: fontFamilies.extraBold,
   },
   recipeList: {
     gap: 12,
   },
   recipeCard: {
+    ...surfaces.panel,
     gap: 9,
-    padding: 8,
+    padding: 10,
   },
   recipeTop: {
     flexDirection: 'row',
@@ -641,18 +576,19 @@ const styles = StyleSheet.create({
   },
   modePill: {
     alignItems: 'center',
-    backgroundColor: '#fff1df',
+    backgroundColor: colors.coralSoft,
     borderRadius: 999,
     flexDirection: 'row',
     gap: 5,
     maxWidth: '82%',
-    paddingHorizontal: 8,
+    paddingHorizontal: 9,
     paddingVertical: 5,
   },
   modePillText: {
-    color: colors.coral,
+    color: colors.coralDark,
     flexShrink: 1,
-    fontSize: 10,
+    fontFamily: fontFamilies.bold,
+    fontSize: 11,
     fontWeight: '700',
   },
   moreButton: {
@@ -714,7 +650,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   cookButtonText: {
-    color: '#fffdf8',
+    color: colors.onCoral,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -731,11 +667,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   groceryButtonText: {
-    color: colors.coral,
+    color: colors.coralDark,
+    fontFamily: fontFamilies.bold,
     fontSize: 14,
     fontWeight: '700',
   },
   noMatchesCard: {
+    ...surfaces.panel,
     padding: 20,
   },
   noMatchesTitle: {
@@ -750,6 +688,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   emptyCard: {
+    ...surfaces.card,
     alignItems: 'center',
     gap: 14,
     marginTop: 24,
@@ -779,15 +718,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
+    minHeight: 56,
+    paddingHorizontal: 18,
+    ...shadows.cta,
   },
   primaryActionText: {
-    color: '#fffdf8',
+    color: colors.onCoral,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   pressed: {
-    opacity: 0.72,
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
 });

@@ -1,8 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { FoodImage } from './FoodImage';
-import { colors } from './OkyoUI';
-import { radius, shadows } from '../theme/okyoTheme';
+import { colors, radius, spacing } from '../theme/okyoTheme';
 import type { RecommendationRecipe } from '../data/recommendedRecipes';
 import { getRecipeImageUrl } from '../utils/recipeImages';
 
@@ -50,7 +49,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   categoryPill: {
-    backgroundColor: 'rgba(255, 255, 255, 0.82)',
+    backgroundColor: colors.glassFill,
     borderRadius: 999,
     bottom: 8,
     left: 8,
@@ -65,7 +64,7 @@ const styles = StyleSheet.create({
   },
   body: {
     gap: 4,
-    padding: 12,
+    padding: spacing.sm,
   },
   title: {
     color: colors.charcoal,

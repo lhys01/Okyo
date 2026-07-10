@@ -6,7 +6,6 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RecommendationCard } from '../components/RecommendationCard';
-import { colors, typography } from '../components/OkyoUI';
 import {
   getCategoryArt,
   getRecommendationsByCategory,
@@ -14,7 +13,7 @@ import {
   type RecommendationCategory,
 } from '../data/recommendedRecipes';
 import type { RootStackParamList } from '../navigation/types';
-import { radius } from '../theme/okyoTheme';
+import { colors, radius, typography } from '../theme/okyoTheme';
 import { useOpenRecommendation } from '../utils/useOpenRecommendation';
 
 type CategoryNavigation = NativeStackNavigationProp<RootStackParamList, 'RecommendationCategoryScreen'>;

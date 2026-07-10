@@ -2,23 +2,26 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   NavArrowRight,
+  PasteClipboard,
   Spark,
 } from 'iconoir-react-native';
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
+import { PressableScale, ProgressFill, RewardToast } from '../components/OkyoUI';
 import { RecommendationCard } from '../components/RecommendationCard';
-import { colors, typography } from '../components/OkyoUI';
 import { getMealTimeForHour, getRecommendationsForMealTime } from '../data/recommendedRecipes';
 import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { radius, shadows, spacing } from '../theme/okyoTheme';
+import { colors, fontFamilies, layout, radius, shadows, spacing, surfaces, typography } from '../theme/okyoTheme';
+import { getModeLabel } from '../utils/modeDisplay';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
+import { deriveHomeCommandCenter, type HomeCommandCard } from '../utils/homeCommandCenter';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 import { useOpenRecommendation } from '../utils/useOpenRecommendation';
 
@@ -32,7 +35,13 @@ export function HomeScreen() {
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const savedFoodIdeas = useOkyoStore((state) => state.savedFoodIdeas);
+  const onboardingGoal = useOkyoStore((state) => state.onboardingGoal);
+  const mealRoutinePreference = useOkyoStore((state) => state.mealRoutinePreference);
   const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
+  const weeklyGoal = useOkyoStore((state) => state.weeklyGoal);
+  const lastDailyCheckInDate = useOkyoStore((state) => state.lastDailyCheckInDate);
+  const claimDailyCheckIn = useOkyoStore((state) => state.claimDailyCheckIn);
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const openRecommendation = useOpenRecommendation();
@@ -40,6 +49,7 @@ export function HomeScreen() {
   const mealIdeas = useMemo(() => getRecommendationsForMealTime(getMealTimeForHour(new Date().getHours()), 4), []);
 
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [];
+  const safeSavedFoodIdeas = Array.isArray(savedFoodIdeas) ? savedFoodIdeas.filter((idea) => idea?.id && idea?.title) : [];
   const recentRecipes = useMemo(() => safeSavedRecipes.slice().reverse().slice(0, 3), [safeSavedRecipes]);
   const hasMoreRecent = safeSavedRecipes.length > 3;
   const heroRecipe = latestScanRecipe ?? recentRecipes[0] ?? null;
@@ -49,6 +59,25 @@ export function HomeScreen() {
   );
   const heroImageStatus = getRecipeImageStatus(heroRecipe);
   const hasActivity = Boolean(heroRecipe || heroImageUri || safeSavedRecipes.length > 0 || weeklyScanCount > 0);
+  const weeklyTarget = getWeeklyGoalCount(weeklyGoal);
+  const weeklyProgress = Math.min(weeklyScanCount / weeklyTarget, 1);
+  const todayKey = getLocalDateKey();
+  const dailySpark = useMemo(() => getDailySpark(todayKey), [todayKey]);
+  const [dailyRewardVisible, setDailyRewardVisible] = useState(false);
+  const dailyRewardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shouldShowDailyCheckIn = lastDailyCheckInDate !== todayKey;
+  const commandCenter = useMemo(
+    () => deriveHomeCommandCenter({
+      latestScanRecipe,
+      mealIdeas,
+      mealRoutinePreference,
+      onboardingGoal,
+      savedFoodIdeas: safeSavedFoodIdeas,
+      savedRecipes: safeSavedRecipes,
+      weeklyScanCount,
+    }),
+    [latestScanRecipe, mealIdeas, mealRoutinePreference, onboardingGoal, safeSavedFoodIdeas, safeSavedRecipes, weeklyScanCount],
+  );
 
   const didTraceHero = useRef(false);
   useEffect(() => {
@@ -88,6 +117,11 @@ export function HomeScreen() {
     navigation.navigate('MainTabs', { screen: 'RestaurantPacksScreen' });
   };
 
+  const openFoodIdea = () => {
+    uiLog('HomeScreen', 'open_food_idea');
+    navigation.navigate('FoodIdeaScreen');
+  };
+
   const openRecipe = (recipe: Recipe) => {
     const mode = getSafeRecipeMode(recipe.mode);
     writeSavedRecipeContext({
@@ -102,12 +136,165 @@ export function HomeScreen() {
     navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
   };
 
+  const openGroceryForRecipe = (recipe?: Recipe) => {
+    if (!recipe) {
+      openFoodIdea();
+      return;
+    }
+
+    const mode = getSafeRecipeMode(recipe.mode);
+    writeSavedRecipeContext({
+      recipe,
+      reason: 'open_home_grocery',
+      source: 'HomeScreen.openGroceryForRecipe',
+    });
+    if (isRecipeMode(recipe.mode)) {
+      setSelectedMode(recipe.mode);
+    }
+    uiLog('HomeScreen', 'open_home_grocery', { recipeId: recipe.id });
+    navigation.navigate('MainTabs', { screen: 'GroceryListScreen', params: { mode } });
+  };
+
+  const openCommandCard = (card: HomeCommandCard) => {
+    uiLog('HomeScreen', 'open_command_card', { cardId: card.id, action: card.action });
+    switch (card.action) {
+      case 'open_recipe':
+        if (card.recipe) openRecipe(card.recipe);
+        return;
+      case 'open_recommendation':
+        if (card.recommendation) {
+          openRecommendation(card.recommendation);
+          return;
+        }
+        if (card.recipe) openRecipe(card.recipe);
+        return;
+      case 'open_food_idea':
+        openFoodIdea();
+        return;
+      case 'open_discover':
+        openDiscover();
+        return;
+      case 'open_grocery':
+        openGroceryForRecipe(card.recipe);
+        return;
+      case 'open_scan':
+      default:
+        openScan();
+    }
+  };
+
+  const claimTodaySpark = () => {
+    if (dailyRewardTimer.current) {
+      clearTimeout(dailyRewardTimer.current);
+    }
+    claimDailyCheckIn(todayKey);
+    setDailyRewardVisible(true);
+    dailyRewardTimer.current = setTimeout(() => setDailyRewardVisible(false), 1600);
+  };
+
+  useEffect(() => () => {
+    if (dailyRewardTimer.current) {
+      clearTimeout(dailyRewardTimer.current);
+    }
+  }, []);
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={styles.kicker}>{homeMoment.greeting}</Text>
-          <Text style={styles.title}>{homeMoment.title}</Text>
+          <Text style={styles.title}>{commandCenter.headline}</Text>
+          <Text style={styles.headerBody}>{commandCenter.subheadline}</Text>
+        </View>
+
+        {shouldShowDailyCheckIn ? (
+          <PressableScale style={styles.dailyCheckInCard} onPress={claimTodaySpark}>
+            <View style={styles.dailyKikoWrap}>
+              <KikoMascot animated="success" pose="happy" size={58} />
+            </View>
+            <View style={styles.dailyCopy}>
+              <Text style={styles.dailyLabel}>Daily kitchen spark</Text>
+              <Text style={styles.dailyTitle}>{dailySpark.title}</Text>
+              <Text style={styles.dailyBody}>{dailySpark.body}</Text>
+            </View>
+            <View style={styles.dailyRewardPill}>
+              <Text style={styles.dailyRewardText}>+5 XP</Text>
+            </View>
+          </PressableScale>
+        ) : null}
+
+        <View style={styles.momentumCard}>
+          <View style={styles.momentumHeader}>
+            <View style={styles.momentumCopy}>
+              <Text style={styles.momentumLabel}>Cooking momentum</Text>
+              <Text style={styles.momentumTitle}>{getMomentumTitle(weeklyScanCount, weeklyTarget)}</Text>
+            </View>
+            <View style={styles.momentumBadge}>
+              <Text style={styles.momentumBadgeText}>{weeklyScanCount}/{weeklyTarget}</Text>
+            </View>
+          </View>
+          <ProgressFill progress={weeklyProgress} tone="green" style={styles.momentumProgress} />
+          <Text style={styles.momentumBody}>{getMomentumBody(weeklyScanCount, weeklyTarget)}</Text>
+        </View>
+
+        <Pressable
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.tonightCard, pressed ? styles.pressed : null]}
+          onPress={() => openCommandCard(commandCenter.tonightCard)}
+        >
+          <View style={styles.tonightTopRow}>
+            <View style={styles.tonightKikoWrap}>
+              <KikoMascot animated="idle" pose="cooking" size={54} />
+            </View>
+            <View style={styles.tonightCopy}>
+              <Text style={styles.tonightLabel}>Tonight's best move</Text>
+              <Text numberOfLines={2} style={styles.tonightTitle}>{commandCenter.tonightCard.title}</Text>
+              <Text style={styles.tonightBody}>{commandCenter.tonightCard.body}</Text>
+            </View>
+          </View>
+          <View style={styles.tonightActionRow}>
+            <Text style={styles.tonightCta}>{commandCenter.tonightCard.cta}</Text>
+            <NavArrowRight color={colors.onCoral} height={20} strokeWidth={2.35} width={20} />
+          </View>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.foxFindCard, pressed ? styles.pressed : null]}
+          onPress={() => openCommandCard(commandCenter.foxFind)}
+        >
+          <View style={styles.foxMascotWrap}>
+            <KikoMascot animated="success" pose="wave" size={52} />
+          </View>
+          <View style={styles.foxCopy}>
+            <Text style={styles.foxTitle}>{commandCenter.foxFind.title}</Text>
+            <Text style={styles.foxBody}>{commandCenter.foxFind.body}</Text>
+            <Text style={styles.tasteNote}>{commandCenter.tasteNote}</Text>
+          </View>
+          <NavArrowRight color={colors.coral} height={19} strokeWidth={2.25} width={19} />
+        </Pressable>
+
+        <View style={styles.commandGrid}>
+          {commandCenter.quickCards.map((card) => (
+            <Pressable
+              accessibilityRole="button"
+              key={card.id}
+              style={({ pressed }) => [
+                styles.commandCard,
+                card.tone === 'green' ? styles.commandCardGreen : null,
+                card.tone === 'coral' ? styles.commandCardCoral : null,
+                pressed ? styles.pressed : null,
+              ]}
+              onPress={() => openCommandCard(card)}
+            >
+              <Text numberOfLines={2} style={styles.commandTitle}>{card.title}</Text>
+              <Text numberOfLines={3} style={styles.commandBody}>{card.body}</Text>
+              <View style={styles.commandCtaRow}>
+                <Text style={styles.commandCta}>{card.cta}</Text>
+                <NavArrowRight color={colors.coral} height={17} strokeWidth={2.25} width={17} />
+              </View>
+            </Pressable>
+          ))}
         </View>
 
         {heroRecipe || heroImageUri ? (
@@ -123,8 +310,10 @@ export function HomeScreen() {
               showFallbackLabel
               style={styles.heroImage}
             />
+            <View style={styles.heroChip}>
+              <Text style={styles.heroChipText}>{hasActivity ? 'Today in Okyo' : 'Latest photo'}</Text>
+            </View>
             <View style={styles.heroCopy}>
-              <Text style={styles.heroEyebrow}>{hasActivity ? 'Today in Okyo' : 'Latest photo'}</Text>
               <Text numberOfLines={2} style={styles.heroTitle}>
                 {heroRecipe?.title ?? 'Latest scan'}
               </Text>
@@ -136,6 +325,21 @@ export function HomeScreen() {
             </View>
           </Pressable>
         ) : null}
+
+        <Pressable
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.foodIdeaCard, pressed ? styles.pressed : null]}
+          onPress={openFoodIdea}
+        >
+          <View style={styles.foodIdeaIcon}>
+            <PasteClipboard color={colors.coral} height={21} strokeWidth={2.25} width={21} />
+          </View>
+          <View style={styles.foodIdeaCopy}>
+            <Text style={styles.foodIdeaTitle}>Save a food idea</Text>
+            <Text style={styles.foodIdeaBody}>Paste a link, caption, or messy note and Okyo checks if it is cookable.</Text>
+          </View>
+          <NavArrowRight color={colors.coral} height={21} strokeWidth={2.25} width={21} />
+        </Pressable>
 
         {mealIdeas.length > 0 ? (
           <View style={styles.ideasSection}>
@@ -187,9 +391,6 @@ export function HomeScreen() {
                 style={({ pressed }) => [styles.timelineItem, pressed ? styles.pressed : null]}
                 onPress={() => openRecipe(recipe)}
               >
-                <View style={styles.timelineMarker}>
-                  <Text style={styles.timelineNumber}>{index + 1}</Text>
-                </View>
                 <FoodImage
                   imageStatus={getRecipeImageStatus(recipe)}
                   imageUrl={getRecipeImageUrl(recipe)}
@@ -198,7 +399,7 @@ export function HomeScreen() {
                 <View style={styles.timelineCopy}>
                   <Text numberOfLines={2} style={styles.timelineTitle}>{recipe.title}</Text>
                   <Text style={styles.timelineMeta}>
-                    {recipe.mode} · saved about {formatCurrency(recipe.estimatedSavings)}
+                    {getModeLabel(getSafeRecipeMode(recipe.mode))} · saved about {formatCurrency(recipe.estimatedSavings)}
                   </Text>
                 </View>
                 <NavArrowRight color={colors.muted} height={20} strokeWidth={2} width={20} />
@@ -211,16 +412,21 @@ export function HomeScreen() {
             style={({ pressed }) => [styles.emptyRecent, pressed ? styles.pressed : null]}
             onPress={openScan}
           >
-            <KikoMascot pose="wave" size={72} style={styles.emptyMascot} />
+            <View style={styles.emptyMascotWrap}>
+              <KikoMascot animated="idle" pose="wave" size={64} />
+            </View>
             <View style={styles.emptyRecentCopy}>
-              <Spark color={colors.coral} height={22} strokeWidth={2} width={22} />
-              <Text style={styles.emptyRecentTitle}>No recent meals yet.</Text>
+              <View style={styles.emptyRecentSparkRow}>
+                <Spark color={colors.coral} height={18} strokeWidth={2.2} width={18} />
+                <Text style={styles.emptyRecentTitle}>No recent meals yet</Text>
+              </View>
               <Text style={styles.emptyRecentBody}>Scan once and this becomes your cooking timeline.</Text>
             </View>
           </Pressable>
         )}
 
       </ScrollView>
+      <RewardToast label={`${dailySpark.toast} +5 XP`} tone="xp" visible={dailyRewardVisible} />
     </SafeAreaView>
   );
 }
@@ -264,6 +470,71 @@ function getStablePhrase(phrases: string[], date: Date) {
   return phrases[(date.getDate() + date.getHours()) % phrases.length] ?? phrases[0];
 }
 
+function getLocalDateKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function getDailySpark(dateKey: string) {
+  const sparks = [
+    {
+      title: 'Kiko found a cooking spark',
+      body: 'One tiny idea for today: scan the meal you keep thinking about.',
+      toast: 'Cooking spark found',
+    },
+    {
+      title: 'Your kitchen rhythm is ready',
+      body: 'A quick scan keeps your homemade ideas fresh for the week.',
+      toast: 'Rhythm boost',
+    },
+    {
+      title: 'New idea energy',
+      body: 'Save one craving today and future-you gets an easier dinner.',
+      toast: 'Kitchen idea saved',
+    },
+  ];
+  const index = Array.from(dateKey).reduce((sum, char) => sum + char.charCodeAt(0), 0) % sparks.length;
+  return sparks[index] ?? sparks[0];
+}
+
+function getWeeklyGoalCount(goal: string | null) {
+  switch (goal) {
+    case '1_meal':
+      return 1;
+    case '5_meals':
+      return 5;
+    case '7_meals':
+      return 7;
+    case '3_meals':
+    default:
+      return 3;
+  }
+}
+
+function getMomentumTitle(count: number, target: number) {
+  if (count >= target) {
+    return 'Weekly rhythm is warm';
+  }
+
+  if (count > 0) {
+    const remaining = target - count;
+    return `${remaining} scan${remaining === 1 ? '' : 's'} from your rhythm`;
+  }
+
+  return 'Start this week with one scan';
+}
+
+function getMomentumBody(count: number, target: number) {
+  if (count >= target) {
+    return 'Nice. You have enough inspiration banked for easy cooking decisions.';
+  }
+
+  if (count > 0) {
+    return 'Each scan turns a craving into a recipe, grocery list, and a little more kitchen momentum.';
+  }
+
+  return 'Scan a meal when a craving hits. Okyo will turn it into your first homemade plan.';
+}
+
 const styles = StyleSheet.create({
   safeArea: {
     backgroundColor: colors.background,
@@ -271,10 +542,10 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     padding: spacing.screen,
-    paddingBottom: 150,
+    paddingBottom: layout.scrollClearance + 96,
   },
   header: {
-    marginTop: 8,
+    marginTop: spacing.xs,
   },
   kicker: {
     ...typography.caption,
@@ -285,7 +556,263 @@ const styles = StyleSheet.create({
     ...typography.display,
     maxWidth: 330,
   },
+  headerBody: {
+    ...typography.body,
+    marginTop: 8,
+    maxWidth: 340,
+  },
+  dailyCheckInCard: {
+    ...surfaces.panel,
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+    padding: 14,
+  },
+  dailyKikoWrap: {
+    alignItems: 'center',
+    backgroundColor: colors.greenSoft,
+    borderRadius: 999,
+    height: 70,
+    justifyContent: 'center',
+    width: 70,
+  },
+  dailyCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  dailyLabel: {
+    ...typography.label,
+    color: colors.green,
+  },
+  dailyTitle: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 17,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  dailyBody: {
+    ...typography.caption,
+    marginTop: 3,
+  },
+  dailyRewardPill: {
+    backgroundColor: colors.coralSoft,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  dailyRewardText: {
+    color: colors.coralDark,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  momentumCard: {
+    ...surfaces.card,
+    marginTop: 18,
+    padding: 18,
+  },
+  momentumHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 14,
+    justifyContent: 'space-between',
+  },
+  momentumCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  momentumLabel: {
+    ...typography.label,
+    color: colors.green,
+  },
+  momentumTitle: {
+    ...typography.heading,
+    marginTop: 3,
+  },
+  momentumBadge: {
+    backgroundColor: colors.greenSoft,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  momentumBadgeText: {
+    color: colors.green,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  momentumProgress: {
+    marginTop: 14,
+  },
+  momentumBody: {
+    ...typography.caption,
+    marginTop: 10,
+  },
+  tonightCard: {
+    ...surfaces.card,
+    backgroundColor: colors.coral,
+    borderColor: colors.coralDark,
+    borderRadius: radius.hero,
+    marginTop: 24,
+    overflow: 'hidden',
+    padding: 18,
+  },
+  tonightTopRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 14,
+  },
+  tonightKikoWrap: {
+    alignItems: 'center',
+    backgroundColor: colors.onCoral,
+    borderRadius: 999,
+    height: 72,
+    justifyContent: 'center',
+    width: 72,
+  },
+  tonightCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  tonightLabel: {
+    color: colors.onCoral,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 13,
+    fontWeight: '800',
+    opacity: 0.88,
+  },
+  tonightTitle: {
+    color: colors.onCoral,
+    fontFamily: fontFamilies.display,
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: 0,
+    lineHeight: 31,
+    marginTop: 2,
+  },
+  tonightBody: {
+    color: colors.onCoral,
+    fontFamily: fontFamilies.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 6,
+    opacity: 0.92,
+  },
+  tonightActionRow: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 253, 248, 0.18)',
+    borderColor: 'rgba(255, 253, 248, 0.36)',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  tonightCta: {
+    color: colors.onCoral,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  foxFindCard: {
+    ...surfaces.panel,
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 14,
+    padding: 15,
+  },
+  foxMascotWrap: {
+    alignItems: 'center',
+    backgroundColor: colors.cream,
+    borderRadius: 999,
+    height: 66,
+    justifyContent: 'center',
+    width: 66,
+  },
+  foxCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  foxTitle: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 16,
+    fontWeight: '800',
+    lineHeight: 21,
+  },
+  foxBody: {
+    color: colors.body,
+    fontFamily: fontFamilies.body,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 3,
+  },
+  tasteNote: {
+    color: colors.muted,
+    fontFamily: fontFamilies.bold,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 17,
+    marginTop: 8,
+  },
+  commandGrid: {
+    columnGap: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 14,
+    rowGap: 12,
+  },
+  commandCard: {
+    ...surfaces.panel,
+    flexBasis: '47%',
+    flexGrow: 1,
+    minHeight: 150,
+    padding: 14,
+  },
+  commandCardGreen: {
+    backgroundColor: colors.greenSoft,
+    borderColor: colors.greenSoft,
+  },
+  commandCardCoral: {
+    backgroundColor: colors.coralSoft,
+    borderColor: colors.coralSoft,
+  },
+  commandTitle: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 16,
+    fontWeight: '800',
+    lineHeight: 21,
+  },
+  commandBody: {
+    color: colors.body,
+    flex: 1,
+    fontFamily: fontFamilies.body,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 7,
+  },
+  commandCtaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+    marginTop: 10,
+  },
+  commandCta: {
+    color: colors.coral,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 13,
+    fontWeight: '800',
+  },
   heroCard: {
+    ...surfaces.card,
+    ...shadows.hero,
     borderRadius: radius.hero,
     marginTop: 26,
     overflow: 'hidden',
@@ -295,16 +822,22 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cream,
     width: '100%',
   },
-  heroCopy: {
-    padding: 22,
+  heroChip: {
+    ...surfaces.glassChip,
+    left: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    position: 'absolute',
+    top: 16,
   },
-  heroEyebrow: {
-    color: colors.coral,
+  heroChipText: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.bold,
     fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 0,
-    marginBottom: 8,
-    textTransform: 'uppercase',
+  },
+  heroCopy: {
+    padding: 22,
   },
   heroTitle: {
     ...typography.title,
@@ -312,6 +845,40 @@ const styles = StyleSheet.create({
   heroBody: {
     ...typography.body,
     marginTop: 8,
+  },
+  foodIdeaCard: {
+    ...surfaces.panel,
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: spacing.md,
+    padding: spacing.md,
+  },
+  foodIdeaIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.coralSoft,
+    borderRadius: 999,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  foodIdeaCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  foodIdeaTitle: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 16,
+    fontWeight: '800',
+    lineHeight: 21,
+  },
+  foodIdeaBody: {
+    color: colors.body,
+    fontFamily: fontFamilies.body,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 2,
   },
   ideasSection: {
     marginTop: spacing.section,
@@ -324,6 +891,7 @@ const styles = StyleSheet.create({
     rowGap: 16,
   },
   discoverPromptCard: {
+    ...surfaces.panel,
     alignItems: 'center',
     flexDirection: 'row',
     gap: 12,
@@ -332,7 +900,7 @@ const styles = StyleSheet.create({
   },
   discoverPromptIcon: {
     alignItems: 'center',
-    backgroundColor: '#fff0d7',
+    backgroundColor: colors.cream,
     borderRadius: 999,
     height: 34,
     justifyContent: 'center',
@@ -375,30 +943,18 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   timelineItem: {
+    ...surfaces.panel,
     alignItems: 'center',
     flexDirection: 'row',
     gap: 14,
     minHeight: 82,
-    padding: 16,
-  },
-  timelineMarker: {
-    alignItems: 'center',
-    backgroundColor: colors.cream,
-    borderRadius: 18,
-    height: 36,
-    justifyContent: 'center',
-    width: 36,
+    padding: 14,
   },
   timelineImage: {
     backgroundColor: colors.cream,
     borderRadius: 18,
     height: 58,
     width: 58,
-  },
-  timelineNumber: {
-    color: colors.charcoal,
-    fontSize: 14,
-    fontWeight: '800',
   },
   timelineCopy: {
     flex: 1,
@@ -415,19 +971,30 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   emptyRecent: {
+    ...surfaces.card,
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 8,
+    gap: 14,
     marginTop: 14,
-    padding: 20,
+    padding: spacing.card,
   },
-  emptyMascot: {
-    marginRight: 8,
+  emptyMascotWrap: {
+    alignItems: 'center',
+    backgroundColor: colors.cream,
+    borderRadius: 999,
+    height: 84,
+    justifyContent: 'center',
+    width: 84,
   },
   emptyRecentCopy: {
     flex: 1,
-    gap: 7,
+    gap: 6,
     minWidth: 0,
+  },
+  emptyRecentSparkRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
   },
   emptyRecentTitle: {
     ...typography.heading,
@@ -436,7 +1003,7 @@ const styles = StyleSheet.create({
     ...typography.body,
   },
   pressed: {
-    opacity: 0.82,
-    transform: [{ scale: 0.99 }],
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
 });

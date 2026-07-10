@@ -8,6 +8,7 @@ import {
   Dollar,
   NavArrowRight,
   OpenBook,
+  PasteClipboard,
   Upload,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
@@ -19,8 +20,9 @@ import { ApiError, createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
+import { PressableScale } from '../components/OkyoUI';
 import { sampleFoodImageUrls } from '../data/sampleFoodImages';
-import { colors } from '../components/OkyoUI';
+import { colors, radius, shadows, surfaces } from '../theme/okyoTheme';
 import { getSafeRecipeMode, type Recipe, type RecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore, type LatestScanFailure } from '../state/useOkyoStore';
@@ -309,6 +311,11 @@ export function ScanScreen() {
     navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
   };
 
+  const openFoodIdea = () => {
+    uiLog('ScanScreen', 'open_food_idea');
+    navigation.navigate('FoodIdeaScreen');
+  };
+
   return (
     <SafeAreaView edges={['top']} style={styles.container}>
       <ScrollView
@@ -331,12 +338,16 @@ export function ScanScreen() {
 
         <View style={styles.scanCard}>
           <View style={styles.illustrationPanel}>
-            <KikoMascot pose="scanning" size={190} style={styles.scanMascot} />
+            <View style={styles.scanGlow} />
+            <KikoMascot animated="thinking" pose="scanning" size={190} style={styles.scanMascot} />
+            <View style={styles.scanPortalChip}>
+              <Text style={styles.scanPortalChipText}>AI food scan</Text>
+            </View>
           </View>
 
           <View style={styles.scanActions}>
             <ScanActionButton
-              icon={<CameraSolid color="#fffdf8" height={25} width={25} />}
+              icon={<CameraSolid color={colors.onCoral} height={25} width={25} />}
               label="Take photo"
               onPress={takePhoto}
               tone="primary"
@@ -345,6 +356,11 @@ export function ScanScreen() {
               icon={<Upload color={colors.coral} height={24} strokeWidth={2.3} width={24} />}
               label="Upload food photo"
               onPress={uploadFromPhotos}
+            />
+            <ScanActionButton
+              icon={<PasteClipboard color={colors.coral} height={24} strokeWidth={2.3} width={24} />}
+              label="Paste food idea"
+              onPress={openFoodIdea}
             />
           </View>
         </View>
@@ -444,13 +460,13 @@ function ScanActionButton({ icon, label, onPress, tone = 'secondary' }: ScanActi
   const isPrimary = tone === 'primary';
 
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [
+      pulse={isPrimary}
+      style={[
         styles.scanButton,
         isPrimary ? styles.scanButtonPrimary : styles.scanButtonSecondary,
-        pressed ? styles.pressed : null,
       ]}
     >
       <View style={styles.scanButtonIcon}>{icon}</View>
@@ -462,7 +478,7 @@ function ScanActionButton({ icon, label, onPress, tone = 'secondary' }: ScanActi
       >
         {label}
       </Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -914,9 +930,9 @@ function getUploadFailureReasonFromError(error: unknown) {
       case 'image_payload_too_large':
         return 'This photo was too large to scan. Try a smaller image.';
       case 'fable_not_enabled':
-        return 'Fable 5 is not available right now. Try a normal scan.';
+        return 'Okyo had trouble scanning this photo. Try again in a second.';
       case 'fable_daily_cap_exceeded':
-        return "Fable 5's daily limit has been reached. Try again tomorrow.";
+        return 'Okyo has reached its daily scan limit. Try again tomorrow.';
       case 'ai_daily_cap_exceeded':
         return 'Okyo has reached its daily scan limit. Try again tomorrow.';
       case 'rate_limit_exceeded':
@@ -1020,25 +1036,42 @@ const styles = StyleSheet.create({
   },
   scanCard: {
     backgroundColor: colors.card,
-    borderRadius: 32,
+    borderRadius: radius.hero,
     padding: 16,
-    shadowColor: '#4a3a28',
-    shadowOffset: { height: 12, width: 0 },
-    shadowOpacity: 0.09,
-    shadowRadius: 24,
-    elevation: 2,
+    ...shadows.hero,
   },
   illustrationPanel: {
     alignItems: 'center',
     aspectRatio: 2.35,
     backgroundColor: colors.cream,
-    borderRadius: 26,
+    borderRadius: radius.card,
     justifyContent: 'center',
     overflow: 'hidden',
     position: 'relative',
   },
+  scanGlow: {
+    backgroundColor: colors.coralSoft,
+    borderRadius: 999,
+    height: 220,
+    opacity: 0.6,
+    position: 'absolute',
+    width: 220,
+  },
   scanMascot: {
     marginTop: 4,
+  },
+  scanPortalChip: {
+    ...surfaces.glassChip,
+    bottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    position: 'absolute',
+    right: 12,
+  },
+  scanPortalChipText: {
+    color: colors.charcoal,
+    fontSize: 12,
+    fontWeight: '700',
   },
   scanActions: {
     gap: 10,
@@ -1056,11 +1089,7 @@ const styles = StyleSheet.create({
   },
   scanButtonPrimary: {
     backgroundColor: colors.coral,
-    shadowColor: colors.coralDark,
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    elevation: 3,
+    ...shadows.cta,
   },
   scanButtonSecondary: {
     backgroundColor: colors.cream,
@@ -1079,7 +1108,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   scanButtonTextPrimary: {
-    color: '#fffdf8',
+    color: colors.onCoral,
   },
   scanButtonTextSecondary: {
     color: colors.coralDark,
@@ -1095,18 +1124,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   howCard: {
+    ...surfaces.panel,
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: 24,
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: 10,
     paddingVertical: 18,
-    shadowColor: '#4a3a28',
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    elevation: 2,
   },
   howStep: {
     alignItems: 'center',
@@ -1162,19 +1185,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   recentCard: {
+    ...surfaces.card,
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: 24,
     flexDirection: 'row',
     gap: 12,
     minHeight: 106,
     minWidth: 0,
     padding: 14,
-    shadowColor: '#4a3a28',
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    elevation: 2,
   },
   recentImage: {
     backgroundColor: colors.cream,

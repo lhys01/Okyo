@@ -2,9 +2,10 @@ import { useNavigation } from '@react-navigation/native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { colors, sharedStyles } from '../components/OkyoUI';
+import { sharedStyles } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
 import { type OnboardingGoal, useOkyoStore } from '../state/useOkyoStore';
+import { colors } from '../theme/okyoTheme';
 
 const goals: OnboardingGoal[] = [
   'Save money',

@@ -1,7 +1,7 @@
 // Single source for how a recipe mode is shown as a categorical chip across
 // screens (Savings, Library, Grocery). The chip color is driven by the mode
 // itself, not decoration — same idea as right-aligning numbers by place value.
-import { colors } from '../components/OkyoUI';
+import { colors } from '../theme/okyoTheme';
 import type { RecipeMode } from '../mocks';
 
 export function getModeLabel(mode: RecipeMode): string {

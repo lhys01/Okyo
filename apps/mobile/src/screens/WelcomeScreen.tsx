@@ -31,7 +31,7 @@ import {
   type LatestScanFailure,
   type OnboardingWeeklyGoal,
 } from '../state/useOkyoStore';
-import { fontFamilies, shadows } from '../theme/okyoTheme';
+import { colors, fontFamilies, shadows } from '../theme/okyoTheme';
 import { scheduleOkyoDailyReminder } from '../utils/notifications';
 import { hasFoodEvidence, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
 import { copyToDocuments } from '../utils/scanImageStorage';
@@ -444,6 +444,7 @@ export function WelcomeScreen() {
         imageStatus={resultRecipe.imageStatus}
         imageUri={selectedScanImage?.uri}
         imageUrl={resultRecipe.imageUrl}
+        progress={progress}
         recipeDescription={resultRecipe.description}
         recipeTitle={getFirstResultTitle(latestScanResult?.dishName, resultRecipe.title)}
         savingsText={getSavingsText(latestScanResult, resultRecipe)}
@@ -458,6 +459,7 @@ export function WelcomeScreen() {
       <OnboardingPaywallScreen
         onContinue={finishOnboarding}
         onRestore={() => Alert.alert('Restore Purchases', 'Purchases are not active in this build yet.')}
+        progress={progress}
       />
     );
   }
@@ -624,27 +626,9 @@ function ReminderScreen() {
         text="I'll remind you to cook so it becomes a habit!"
         typed
       />
-      <IOSPermissionDialog />
-      <View style={styles.notifArrowWrap}>
-        <Text style={styles.notifArrow}>↑</Text>
-      </View>
-    </View>
-  );
-}
-
-function IOSPermissionDialog() {
-  return (
-    <View style={styles.iosDialog}>
-      <Text style={styles.iosDialogTitle}>Okyo Would Like to Send You Notifications</Text>
-      <Text style={styles.iosDialogBody}>
-        Notifications may include recipe reminders, savings alerts, and grocery nudges. These can be configured in Settings.
+      <Text style={styles.reminderNote}>
+        A gentle nudge on your cooking days — no spam, and you can turn it off anytime in Settings.
       </Text>
-      <View style={styles.iosDialogDivider} />
-      <View style={styles.iosDialogButtons}>
-        <Text style={styles.iosDialogButton}>Don't Allow</Text>
-        <View style={styles.iosDialogButtonDivider} />
-        <Text style={[styles.iosDialogButton, styles.iosDialogButtonAllow]}>Allow</Text>
-      </View>
     </View>
   );
 }
@@ -970,7 +954,7 @@ const styles = StyleSheet.create({
   },
   splashMascot: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
+    backgroundColor: colors.onCoral,
     borderRadius: 44,
     height: 190,
     justifyContent: 'center',
@@ -978,7 +962,7 @@ const styles = StyleSheet.create({
     ...shadows.hero,
   },
   splashWordmark: {
-    color: '#fffdf8',
+    color: colors.onCoral,
     fontFamily: fontFamilies.display,
     fontSize: 58,
     fontWeight: '800',
@@ -1016,7 +1000,7 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   goalCardSelected: {
-    backgroundColor: '#FFF0E6',
+    backgroundColor: colors.coralSoft,
     borderColor: onboardingColors.primary,
   },
   goalFrequency: {
@@ -1038,71 +1022,12 @@ const styles = StyleSheet.create({
     color: onboardingColors.primary,
   },
   // Reminder — iOS permission dialog
-  iosDialog: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    elevation: 8,
-  },
-  iosDialogTitle: {
-    color: '#1C1C1E',
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 17,
-    fontWeight: '700',
-    lineHeight: 22,
-    marginBottom: 8,
-    marginTop: 22,
-    paddingHorizontal: 20,
-    textAlign: 'center',
-  },
-  iosDialogBody: {
-    color: '#3C3C43',
+  reminderNote: {
+    color: onboardingColors.gray,
     fontFamily: fontFamilies.body,
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 20,
-    opacity: 0.6,
-    paddingHorizontal: 20,
-    textAlign: 'center',
-  },
-  iosDialogDivider: {
-    backgroundColor: 'rgba(60,60,67,0.29)',
-    height: StyleSheet.hairlineWidth,
-  },
-  iosDialogButtons: {
-    flexDirection: 'row',
-  },
-  iosDialogButtonDivider: {
-    backgroundColor: 'rgba(60,60,67,0.29)',
-    width: StyleSheet.hairlineWidth,
-  },
-  iosDialogButton: {
-    color: '#007AFF',
-    flex: 1,
-    fontFamily: fontFamilies.body,
-    fontSize: 17,
-    lineHeight: 22,
-    paddingVertical: 14,
-    textAlign: 'center',
-  },
-  iosDialogButtonAllow: {
-    fontFamily: fontFamilies.extraBold,
-    fontWeight: '700',
-  },
-  notifArrowWrap: {
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  notifArrow: {
-    color: onboardingColors.primary,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 34,
-    fontWeight: '800',
-    lineHeight: 40,
+    fontSize: 15,
+    lineHeight: 21,
+    marginTop: 4,
   },
   // Reminder footer
   reminderFooter: {

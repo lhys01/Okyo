@@ -4,8 +4,9 @@ import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 're
 import appConfig from '../../app.json';
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
-import { SecondaryButton, colors, sharedStyles } from '../components/OkyoUI';
+import { SecondaryButton, sharedStyles } from '../components/OkyoUI';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { colors, radius, spacing } from '../theme/okyoTheme';
 
 export function SettingsScreen() {
   const resetOnboarding = useOkyoStore((state) => state.resetOnboarding);
@@ -46,7 +47,7 @@ export function SettingsScreen() {
   const confirmClearData = () => {
     Alert.alert(
       'Clear saved recipes and challenges?',
-      'This clears local saved dupes, challenge results, XP, and badges for testing.',
+      'This removes all locally saved recipes, challenge progress, and XP from this device.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -99,13 +100,15 @@ export function SettingsScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Development</Text>
-        <SecondaryButton onPress={confirmResetOnboarding}>Reset Onboarding</SecondaryButton>
-        <Pressable style={styles.dangerButton} onPress={confirmClearData}>
-          <Text style={styles.dangerButtonText}>Delete Saved Data</Text>
-        </Pressable>
-      </View>
+      {__DEV__ ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Development</Text>
+          <SecondaryButton onPress={confirmResetOnboarding}>Reset Onboarding</SecondaryButton>
+          <Pressable style={styles.dangerButton} onPress={confirmClearData}>
+            <Text style={styles.dangerButtonText}>Delete Saved Data</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -113,7 +116,7 @@ export function SettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     backgroundColor: colors.background,
-    padding: 24,
+    padding: spacing.screen,
     paddingBottom: 220,
   },
   kicker: {
@@ -182,8 +185,8 @@ const styles = StyleSheet.create({
   },
   dangerButton: {
     alignItems: 'center',
-    borderColor: '#c98a80',
-    borderRadius: 16,
+    borderColor: colors.danger,
+    borderRadius: radius.chip,
     borderWidth: 1,
     minHeight: 50,
     justifyContent: 'center',
@@ -191,7 +194,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   dangerButtonText: {
-    color: '#8c2f21',
+    color: colors.danger,
     fontSize: 15,
     fontWeight: '800',
   },

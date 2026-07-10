@@ -9,21 +9,20 @@ import {
   ClipboardCheck,
   Clock,
   Crown,
-  Cutlery,
-  FireFlame,
   NavArrowLeft,
   ShareAndroid,
   Spark,
   TaskList,
 } from 'iconoir-react-native';
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, Image, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { KikoMascot } from '../components/KikoMascot';
-import { colors } from '../components/OkyoUI';
+import { RewardToast } from '../components/OkyoUI';
+import { colors } from '../theme/okyoTheme';
 import {
   defaultRestaurantPack,
   defaultScanResult,
@@ -73,6 +72,8 @@ export function ShareCardPreviewScreen() {
   const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
   const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
+  const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
+  const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
   const selectedMode = getSafeRecipeMode(route.params?.mode ?? storeMode);
   const scanContext = route.params?.scanContext;
   const shareImage = scanContext?.image ?? selectedScanImage;
@@ -115,11 +116,19 @@ export function ShareCardPreviewScreen() {
   );
   const missingScanResult = cardType === 'scan_result' && !hasScanShareContext;
 
+  // Scan-result cards only claim savings from a price the user actually paid.
+  // Demo scans are the labeled example exception.
+  const hasUserPrice = isDemoScan || userRestaurantPrice !== null;
+
   const cardData = useMemo<ShareCardData>(() => {
     const scanDishName = scanResult?.dishName ?? recipe?.title ?? cardRecipe.title;
-    const scanRestaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
     const scanHomemadeCost = recipe?.estimatedHomemadeCost ?? scanResult?.homemadeCost ?? cardRecipe.estimatedHomemadeCost;
-    const scanEstimatedSavings = recipe?.estimatedSavings ?? scanResult?.estimatedSavings ?? cardRecipe.estimatedSavings;
+    const scanRestaurantPrice = isDemoScan
+      ? scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe)
+      : userRestaurantPrice ?? 0;
+    const scanEstimatedSavings = isDemoScan
+      ? recipe?.estimatedSavings ?? scanResult?.estimatedSavings ?? cardRecipe.estimatedSavings
+      : Math.max(0, scanRestaurantPrice - scanHomemadeCost);
 
     const dataByType: Record<ShareCardType, Omit<ShareCardData, 'caption'>> = {
       scan_result: {
@@ -192,12 +201,15 @@ export function ShareCardPreviewScreen() {
 
     return {
       ...nextData,
-      caption: buildCaption(nextData),
+      caption: buildCaption(nextData, cardType === 'scan_result' ? hasUserPrice : true),
     };
   }, [
     cardRecipe,
     cardType,
     fallbackScanResult,
+    hasUserPrice,
+    isDemoScan,
+    userRestaurantPrice,
     latestChallenge?.mode,
     latestChallenge?.moneySaved,
     latestChallenge?.recipeTitle,
@@ -219,6 +231,10 @@ export function ShareCardPreviewScreen() {
   const shareStats = useMemo(() => getShareStats(cardData.recipe), [cardData.recipe]);
   const didTrackGenerated = useRef(false);
   const cardRef = useRef<View | null>(null);
+  const [shareRewardVisible, setShareRewardVisible] = useState(false);
+  const [shareRewardLabel, setShareRewardLabel] = useState('Share moment ready +20 XP');
+  const shareRewardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copiedAlertTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (didTrackGenerated.current) {
@@ -286,7 +302,10 @@ export function ShareCardPreviewScreen() {
       });
       const didShareImage = await shareImageCard();
       if (didShareImage) {
-        awardXPOnce(`share-card-${cardType}-${selectedMode}`, 20);
+        const shareEventId = `share-card-${cardType}-${selectedMode}`;
+        const willAwardShareXp = !awardedXpEvents.includes(shareEventId);
+        awardXPOnce(shareEventId, 20);
+        showShareReward(willAwardShareXp ? 'Share moment ready +20 XP' : 'Share moment ready');
         track(analyticsEvents.SHARE_COMPLETED, {
           cardType,
           dishName: cardData.dishName,
@@ -302,7 +321,10 @@ export function ShareCardPreviewScreen() {
         return;
       }
 
-      awardXPOnce(`share-card-${cardType}-${selectedMode}`, 20);
+      const shareEventId = `share-card-${cardType}-${selectedMode}`;
+      const willAwardShareXp = !awardedXpEvents.includes(shareEventId);
+      awardXPOnce(shareEventId, 20);
+      showShareReward(willAwardShareXp ? 'Share moment ready +20 XP' : 'Share moment ready');
       track(analyticsEvents.SHARE_COMPLETED, {
         cardType,
         dishName: cardData.dishName,
@@ -346,11 +368,33 @@ export function ShareCardPreviewScreen() {
     try {
       uiLog('ShareCardPreviewScreen', 'copy_caption', { cardType });
       await Clipboard.setStringAsync(cardData.caption);
-      Alert.alert('Copied', 'Share caption copied.');
+      showShareReward('Caption copied');
+      if (copiedAlertTimer.current) {
+        clearTimeout(copiedAlertTimer.current);
+      }
+      copiedAlertTimer.current = setTimeout(() => Alert.alert('Copied', 'Share caption copied.'), 520);
     } catch {
       Alert.alert('Copy unavailable', 'The caption could not be copied on this device.');
     }
   };
+
+  const showShareReward = (label: string) => {
+    if (shareRewardTimer.current) {
+      clearTimeout(shareRewardTimer.current);
+    }
+    setShareRewardLabel(label);
+    setShareRewardVisible(true);
+    shareRewardTimer.current = setTimeout(() => setShareRewardVisible(false), 1600);
+  };
+
+  useEffect(() => () => {
+    if (shareRewardTimer.current) {
+      clearTimeout(shareRewardTimer.current);
+    }
+    if (copiedAlertTimer.current) {
+      clearTimeout(copiedAlertTimer.current);
+    }
+  }, []);
 
   if (missingScanResult) {
     return (
@@ -385,7 +429,9 @@ export function ShareCardPreviewScreen() {
           </Text>
           <View style={styles.remadeRow}>
             <View style={styles.remadeLine} />
-            <Text style={styles.remadeText}>remade at home</Text>
+            <Text style={styles.remadeText}>
+              {cardType === 'scan_result' && !hasUserPrice ? 'from photo to home recipe' : 'remade at home'}
+            </Text>
             <View style={styles.remadeLine} />
           </View>
 
@@ -416,26 +462,42 @@ export function ShareCardPreviewScreen() {
         </View>
       </View>
 
-      <View style={styles.priceSummary}>
-        <View style={styles.priceColumn}>
-          <Text style={styles.priceLabel}>Restaurant estimate</Text>
-          <Text style={styles.priceValue}>{formatCurrency(cardData.restaurantPrice)}</Text>
+      {cardType === 'scan_result' && !hasUserPrice ? (
+        <View style={styles.priceSummary}>
+          <View style={styles.priceColumn}>
+            <Text style={styles.priceLabel}>Home estimate</Text>
+            <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
+          </View>
+          <View style={styles.priceColumn}>
+            <Text style={styles.priceLabel}>Ready in</Text>
+            <Text style={styles.priceValue}>
+              {getTotalTime(cardData.recipe) > 0 ? formatDuration(getTotalTime(cardData.recipe)) : 'Flexible'}
+            </Text>
+          </View>
         </View>
-        <ArrowRight color={colors.green} height={22} strokeWidth={2.4} width={22} />
-        <View style={styles.priceColumn}>
-          <Text style={styles.priceLabel}>Home estimate</Text>
-          <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
+      ) : (
+        <View style={styles.priceSummary}>
+          <View style={styles.priceColumn}>
+            <Text style={styles.priceLabel}>{isDemoScan ? 'Restaurant (example)' : 'Restaurant'}</Text>
+            <Text style={styles.priceValue}>{formatCurrency(cardData.restaurantPrice)}</Text>
+          </View>
+          <ArrowRight color={colors.green} height={22} strokeWidth={2.4} width={22} />
+          <View style={styles.priceColumn}>
+            <Text style={styles.priceLabel}>Home</Text>
+            <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
+          </View>
+          <View style={styles.savingsPill}>
+            <Text style={styles.savingsPillLabel}>Saved</Text>
+            <Text style={styles.savingsPillValue}>{formatCurrency(cardData.estimatedSavings)}</Text>
+          </View>
         </View>
-        <View style={styles.savingsPill}>
-          <Text style={styles.savingsPillLabel}>Saved</Text>
-          <Text style={styles.savingsPillValue}>{formatCurrency(cardData.estimatedSavings)}</Text>
-        </View>
-      </View>
+      )}
 
       <View style={styles.actions}>
         <PrimaryAction icon={<ShareAndroid color="#fffdf8" height={21} strokeWidth={2.2} width={21} />} label="Share Image" onPress={shareCard} />
         <SecondaryAction icon={<ClipboardCheck color={colors.coral} height={20} strokeWidth={2.2} width={20} />} label="Copy Caption" onPress={copyCaption} />
       </View>
+      <RewardToast label={shareRewardLabel} tone={shareRewardLabel.includes('XP') ? 'xp' : 'save'} visible={shareRewardVisible} />
     </ShareFrame>
   );
 }
@@ -513,9 +575,6 @@ function ShareStat({ stat }: { stat: ShareStatData }) {
           </Text>
         </View>
       </View>
-      <View style={styles.shareStatTrack}>
-        <View style={[styles.shareStatFill, { width: `${stat.strength}%` }]} />
-      </View>
     </View>
   );
 }
@@ -569,11 +628,16 @@ function getSafeCardType(cardType: unknown): ShareCardType {
     : 'scan_result';
 }
 
-function buildCaption(data: Omit<ShareCardData, 'caption'>) {
+function buildCaption(data: Omit<ShareCardData, 'caption'>, hasUserPrice: boolean) {
   const dishName = cleanDisplayText(data.dishName);
-  const modeLabel = typeof data.selectedMode === 'string' ? getModeLabel(data.selectedMode) : String(data.selectedMode);
 
-  return `${dishName} remade at home with Okyo. Restaurant estimate ${formatCurrency(data.restaurantPrice)} -> home estimate ${formatCurrency(data.homemadeCost)}. Saved about ${formatCurrency(data.estimatedSavings)} with a ${modeLabel} homemade version. Made with Okyo.`;
+  if (!hasUserPrice) {
+    const totalTime = getTotalTime(data.recipe);
+    const timePart = totalTime > 0 ? `, ready in ${totalTime} min` : '';
+    return `I turned a food photo into a home recipe with Okyo: ${dishName}. Home estimate ${formatCurrency(data.homemadeCost)}${timePart}. Made with Okyo.`;
+  }
+
+  return `I remade ${dishName} at home with Okyo. Restaurant ${formatCurrency(data.restaurantPrice)} -> home ${formatCurrency(data.homemadeCost)}. Saved about ${formatCurrency(data.estimatedSavings)}. Made with Okyo.`;
 }
 
 function getShareRecipe(
@@ -597,52 +661,31 @@ function getShareRecipe(
 type ShareStatData = {
   label: string;
   value: string;
-  strength: number;
   icon: ReactNode;
 };
 
+// Honest stats only — no invented rarity/streak scores or decorative strength
+// bars. Time, steps, and difficulty come straight from the recipe.
 function getShareStats(recipe: Recipe): ShareStatData[] {
   const totalTime = getTotalTime(recipe);
   const stepsCount = getStepCount(recipe);
   const difficultyLabel = getShareDifficulty(recipe.difficulty);
-  const rarity = getRarity(recipe);
 
   return [
     {
-      label: 'Cuisine',
-      value: getCuisineLabel(recipe),
-      strength: 76,
-      icon: <Cutlery color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-    {
       label: 'Time',
       value: totalTime > 0 ? formatDuration(totalTime) : 'Flexible',
-      strength: getTimeStrength(totalTime),
       icon: <Clock color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
     {
       label: 'Steps',
       value: stepsCount > 0 ? `${stepsCount} step${stepsCount === 1 ? '' : 's'}` : 'Recipe plan',
-      strength: Math.min(92, 35 + stepsCount * 8),
       icon: <TaskList color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
     {
       label: 'Difficulty',
       value: difficultyLabel,
-      strength: getDifficultyStrength(recipe.difficulty),
       icon: <Crown color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-    {
-      label: 'Streak',
-      value: 'Start streak',
-      strength: 38,
-      icon: <FireFlame color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-    {
-      label: 'Rarity',
-      value: rarity,
-      strength: getRarityStrength(rarity),
-      icon: <Spark color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
   ];
 }
@@ -681,127 +724,7 @@ function getShareDifficulty(difficulty: Difficulty) {
   }
 }
 
-function getDifficultyStrength(difficulty: Difficulty) {
-  switch (difficulty) {
-    case 'Hard':
-      return 86;
-    case 'Medium':
-      return 66;
-    case 'Easy':
-    default:
-      return 42;
-  }
-}
 
-function getRarity(recipe: Recipe) {
-  const totalTime = getTotalTime(recipe);
-  const stepsCount = getStepCount(recipe);
-  let score = 0;
-
-  if (recipe.difficulty === 'Hard') {
-    score += 3;
-  } else if (recipe.difficulty === 'Medium') {
-    score += 2;
-  } else {
-    score += 1;
-  }
-  if (totalTime >= 180) {
-    score += 3;
-  } else if (totalTime >= 75) {
-    score += 2;
-  } else if (totalTime >= 35) {
-    score += 1;
-  }
-  if (stepsCount >= 10) {
-    score += 2;
-  } else if (stepsCount >= 6) {
-    score += 1;
-  }
-
-  if (score >= 8) {
-    return 'Mythical';
-  }
-  if (score >= 7) {
-    return 'Legendary';
-  }
-  if (score >= 6) {
-    return 'Epic';
-  }
-  if (score >= 4) {
-    return 'Rare';
-  }
-  if (score >= 3) {
-    return 'Uncommon';
-  }
-  return 'Common';
-}
-
-function getRarityStrength(rarity: string) {
-  switch (rarity) {
-    case 'Mythical':
-      return 96;
-    case 'Legendary':
-      return 88;
-    case 'Epic':
-      return 76;
-    case 'Rare':
-      return 64;
-    case 'Uncommon':
-      return 52;
-    case 'Common':
-    default:
-      return 38;
-  }
-}
-
-function getTimeStrength(totalTime: number) {
-  if (totalTime <= 0) {
-    return 42;
-  }
-
-  return Math.min(92, Math.max(34, 30 + totalTime / 2));
-}
-
-function getCuisineLabel(recipe: Recipe) {
-  const text = `${recipe.title} ${recipe.description} ${recipe.mainIngredientsSummary ?? ''}`.toLowerCase();
-
-  if (/(sushi|katsu|ramen|teriyaki|udon|miso)/.test(text)) {
-    return 'Japanese';
-  }
-  if (/(taco|burrito|quesadilla|enchilada|salsa)/.test(text)) {
-    return 'Mexican';
-  }
-  if (/(pasta|rigatoni|pizza|parmesan|gnocchi|alfredo)/.test(text)) {
-    return 'Italian';
-  }
-  if (/(burger|sandwich|bbq|mac and cheese|fries)/.test(text)) {
-    return 'American';
-  }
-  if (/(curry|masala|paneer|naan)/.test(text)) {
-    return 'Indian';
-  }
-  if (/(pho|banh mi|lemongrass)/.test(text)) {
-    return 'Vietnamese';
-  }
-  if (/(noodle|dumpling|fried rice|chow)/.test(text)) {
-    return 'Asian-inspired';
-  }
-
-  return 'Home Style';
-}
-
-function getModeLabel(mode: RecipeMode | string) {
-  switch (mode) {
-    case 'Budget':
-      return 'Budget';
-    case 'Healthy':
-      return 'Lighter';
-    case 'Restaurant Copy':
-      return 'Restaurant Style';
-    default:
-      return String(mode);
-  }
-}
 
 function getRecipeImageUri(recipe: Recipe) {
   return getRecipeImageUrl(recipe);
@@ -1056,18 +979,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     marginTop: 2,
-  },
-  shareStatTrack: {
-    backgroundColor: '#f5e6d3',
-    borderRadius: 999,
-    height: 6,
-    marginTop: 8,
-    overflow: 'hidden',
-  },
-  shareStatFill: {
-    backgroundColor: '#f47b21',
-    borderRadius: 999,
-    height: '100%',
   },
   cardFooter: {
     alignItems: 'center',

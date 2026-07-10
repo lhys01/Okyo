@@ -11,9 +11,9 @@ import {
   PrimaryButton,
   ScreenContainer,
   SecondaryButton,
-  colors,
   sharedStyles,
 } from '../components/OkyoUI';
+import { colors, radius } from '../theme/okyoTheme';
 import {
   mockRestaurantPacks,
   type Recipe,
@@ -221,15 +221,15 @@ export function RestaurantPackDetailScreen() {
             <View style={styles.priceGrid}>
               <View style={styles.priceCell}>
                 <Text style={styles.priceLabel}>Restaurant</Text>
-                <Text style={styles.priceValue}>{formatCurrency(dish.restaurantPrice)}</Text>
+                <Text style={styles.priceValue} numberOfLines={1}>{formatCurrency(dish.restaurantPrice)}</Text>
               </View>
               <View style={styles.priceCell}>
                 <Text style={styles.priceLabel}>Homemade</Text>
-                <Text style={styles.priceValue}>{formatCurrency(dish.homemadeCost)}</Text>
+                <Text style={styles.priceValue} numberOfLines={1}>{formatCurrency(dish.homemadeCost)}</Text>
               </View>
-              <View style={styles.priceCell}>
+              <View style={[styles.priceCell, styles.priceCellSavings]}>
                 <Text style={styles.priceLabel}>Savings</Text>
-                <Text style={styles.dishSavings}>{formatCurrency(dish.estimatedSavings)}</Text>
+                <Text style={styles.dishSavings} numberOfLines={1}>{formatCurrency(dish.estimatedSavings)}</Text>
               </View>
             </View>
             <View style={styles.actions}>
@@ -317,6 +317,7 @@ const styles = StyleSheet.create({
   },
   dishCard: {
     ...sharedStyles.card,
+    borderRadius: radius.hero,
     padding: 18,
   },
   dishHeader: {
@@ -337,9 +338,13 @@ const styles = StyleSheet.create({
   },
   priceCell: {
     backgroundColor: colors.cream,
-    borderRadius: 14,
+    borderRadius: radius.chip,
+    flexBasis: '31%',
+    flexGrow: 1,
     padding: 12,
-    width: '48%',
+  },
+  priceCellSavings: {
+    backgroundColor: colors.greenSoft,
   },
   priceLabel: {
     color: colors.body,

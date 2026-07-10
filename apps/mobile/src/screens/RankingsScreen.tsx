@@ -5,10 +5,11 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
-import { BadgePill, PrimaryButton, ScreenContainer, colors, sharedStyles } from '../components/OkyoUI';
+import { BadgePill, PrimaryButton, ProgressFill, RewardToast, ScreenContainer, sharedStyles } from '../components/OkyoUI';
 import { mockBadges, type Badge, type LeaderboardEntry } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { colors, radius, shadows } from '../theme/okyoTheme';
 
 type RankingsNavigation = NativeStackNavigationProp<RootStackParamList>;
 
@@ -206,9 +207,7 @@ export function RankingsScreen() {
           <Text style={styles.xpLabel}>Progress to Level {level + 1}</Text>
           <Text style={styles.xpValue}>{xpIntoLevel}/100 XP</Text>
         </View>
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${xpIntoLevel}%` }]} />
-        </View>
+        <ProgressFill progress={xpIntoLevel / 100} style={styles.progressFillMeter} />
         <Text style={styles.progressHint}>{nextLevelXp - xp} XP to next level</Text>
       </View>
 
@@ -232,10 +231,10 @@ export function RankingsScreen() {
             return (
               <View key={badge.id} style={[styles.badgeCard, unlocked ? styles.badgeUnlocked : null]}>
                 <View style={styles.badgeHeader}>
-                  <Text style={styles.badgeName}>{badge.name}</Text>
+                  <Text style={styles.badgeName} numberOfLines={1}>{badge.name}</Text>
                   {unlocked ? <BadgePill tone="green">Unlocked</BadgePill> : null}
                 </View>
-                <Text style={styles.badgeStatus}>{unlocked ? 'Unlocked' : getBadgeHint(badge, badgeContext)}</Text>
+                <Text style={styles.badgeStatus} numberOfLines={2}>{unlocked ? 'Unlocked' : getBadgeHint(badge, badgeContext)}</Text>
               </View>
             );
           })}
@@ -265,10 +264,12 @@ export function RankingsScreen() {
             <Text style={styles.sectionTitle}>{section}</Text>
             {[...entries.slice(0, 2), userEntry].map((entry) => (
               <View key={entry.id} style={[styles.leaderRow, entry.displayName === 'You' ? styles.userRow : null]}>
-                <Text style={styles.rank}>#{entry.rank}</Text>
+                <View style={styles.rankChip}>
+                  <Text style={styles.rank}>#{entry.rank}</Text>
+                </View>
                 <View style={styles.leaderInfo}>
-                  <Text style={styles.leaderName}>{entry.displayName}</Text>
-                  <Text style={styles.leaderValue}>{entry.value}</Text>
+                  <Text style={styles.leaderName} numberOfLines={1}>{entry.displayName}</Text>
+                  <Text style={styles.leaderValue} numberOfLines={1}>{entry.value}</Text>
                 </View>
                 <Text style={styles.leaderXp}>{entry.xp} XP</Text>
               </View>
@@ -276,6 +277,11 @@ export function RankingsScreen() {
           </View>
         );
       })}
+      <RewardToast
+        label={recentBadge ? `${recentBadge.name} unlocked` : ''}
+        tone="badge"
+        visible={Boolean(recentBadge)}
+      />
     </ScreenContainer>
   );
 }
@@ -336,16 +342,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
-  progressTrack: {
-    backgroundColor: colors.border,
-    borderRadius: 999,
-    height: 12,
+  progressFillMeter: {
     marginTop: 14,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    backgroundColor: colors.coral,
-    height: '100%',
   },
   progressHint: {
     color: colors.body,
@@ -401,8 +399,9 @@ const styles = StyleSheet.create({
   },
   badgeCard: {
     backgroundColor: colors.cream,
-    borderRadius: 16,
+    borderRadius: radius.panel,
     padding: 14,
+    ...shadows.soft,
   },
   badgeUnlocked: {
     backgroundColor: colors.greenSoft,
@@ -432,20 +431,28 @@ const styles = StyleSheet.create({
   },
   leaderRow: {
     alignItems: 'center',
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
+    borderRadius: radius.chip,
     flexDirection: 'row',
     gap: 12,
+    marginTop: 6,
     minHeight: 58,
+    paddingHorizontal: 8,
   },
   userRow: {
     backgroundColor: colors.cream,
   },
-  rank: {
-    color: colors.coral,
-    fontSize: 14,
-    fontWeight: '700',
+  rankChip: {
+    alignItems: 'center',
+    backgroundColor: colors.coralSoft,
+    borderRadius: 999,
+    height: 30,
+    justifyContent: 'center',
     width: 36,
+  },
+  rank: {
+    color: colors.coralDark,
+    fontSize: 13,
+    fontWeight: '700',
   },
   leaderInfo: {
     flex: 1,

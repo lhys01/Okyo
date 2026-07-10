@@ -10,6 +10,7 @@ import {
   type LeaderboardEntry,
   type Recipe,
   type RecipeMode,
+  type SavedFoodIdea,
   type ScanResult,
 } from '../mocks';
 
@@ -95,12 +96,17 @@ type OkyoState = {
   selectedScanImage: ScanImageMetadata | null;
   latestAiDebugMetadata: AiDebugMetadata | null;
   selectedMode: RecipeMode;
+  // Restaurant price the user actually paid, entered on the result screen.
+  // Savings display requires this — AI estimates alone must not show savings.
+  userRestaurantPrice: number | null;
   savedRecipes: Recipe[];
+  savedFoodIdeas: SavedFoodIdea[];
   completedChallenges: CompletedChallenge[];
   totalMoneySaved: number;
   weeklyScanCount: number;
   isPremium: boolean;
   xp: number;
+  lastDailyCheckInDate: string | null;
   unlockedBadges: string[];
   recentBadgeUnlock: string | null;
   awardedXpEvents: string[];
@@ -125,13 +131,16 @@ type OkyoState = {
   setSelectedScanImage: (image: ScanImageMetadata | null) => void;
   setLatestAiDebugMetadata: (metadata: AiDebugMetadata | null) => void;
   setSelectedMode: (mode: RecipeMode) => void;
+  setUserRestaurantPrice: (price: number | null) => void;
   saveRecipe: (recipe: Recipe) => void;
+  saveFoodIdea: (idea: SavedFoodIdea) => void;
   removeSavedRecipe: (recipeId: string) => void;
   completeChallenge: (challenge: CompletedChallenge) => void;
   incrementMoneySaved: (amount: number) => void;
   incrementWeeklyScanCount: () => void;
   addXP: (points: number) => void;
   awardXPOnce: (eventId: string, points: number) => void;
+  claimDailyCheckIn: (dateKey: string) => void;
   unlockBadge: (badgeId: string) => void;
   clearRecentBadgeUnlock: () => void;
   setPremium: (isPremium: boolean) => void;
@@ -159,12 +168,15 @@ export const useOkyoStore = create<OkyoState>()(
       selectedScanImage: null,
       latestAiDebugMetadata: null,
       selectedMode: 'Restaurant Copy',
+      userRestaurantPrice: null,
       savedRecipes: [],
+      savedFoodIdeas: [],
       completedChallenges: [],
       totalMoneySaved: 0,
       weeklyScanCount: 0,
       isPremium: false,
       xp: 0,
+      lastDailyCheckInDate: null,
       unlockedBadges: [],
       recentBadgeUnlock: null,
       awardedXpEvents: [],
@@ -206,6 +218,7 @@ export const useOkyoStore = create<OkyoState>()(
 
           return {
             ...getLatestScanSessionState(latestScanSession),
+            userRestaurantPrice: null,
           };
         });
         if (outgoingScanImageUri) {
@@ -283,6 +296,7 @@ export const useOkyoStore = create<OkyoState>()(
             latestScanStatus: null,
             latestScanSession: null,
             selectedScanImage: null,
+            userRestaurantPrice: null,
           };
         }),
       setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
@@ -292,6 +306,7 @@ export const useOkyoStore = create<OkyoState>()(
       setSelectedScanImage: (image) => set({ selectedScanImage: image }),
       setLatestAiDebugMetadata: (metadata) => set({ latestAiDebugMetadata: metadata }),
       setSelectedMode: (mode) => set({ selectedMode: mode }),
+      setUserRestaurantPrice: (price) => set({ userRestaurantPrice: price }),
       saveRecipe: (recipe) =>
         set((state) => {
           const existingRecipe = state.savedRecipes.find((savedRecipe) => savedRecipe.id === recipe.id);
@@ -310,6 +325,14 @@ export const useOkyoStore = create<OkyoState>()(
                 ? attachRecipeImageUri(savedRecipe, realRecipeImageUri)
                 : savedRecipe,
             ),
+          };
+        }),
+      saveFoodIdea: (idea) =>
+        set((state) => {
+          const savedFoodIdeas = Array.isArray(state.savedFoodIdeas) ? state.savedFoodIdeas : [];
+          const withoutDuplicate = savedFoodIdeas.filter((savedIdea) => savedIdea.id !== idea.id);
+          return {
+            savedFoodIdeas: [idea, ...withoutDuplicate].slice(0, 50),
           };
         }),
       removeSavedRecipe: (recipeId) => {
@@ -363,6 +386,26 @@ export const useOkyoStore = create<OkyoState>()(
             xp: state.xp + points,
           };
         }),
+      claimDailyCheckIn: (dateKey) =>
+        set((state) => {
+          if (state.lastDailyCheckInDate === dateKey) {
+            return state;
+          }
+
+          const eventId = `daily-check-in-${dateKey}`;
+          const newEvents = state.awardedXpEvents.includes(eventId)
+            ? state.awardedXpEvents
+            : [...state.awardedXpEvents, eventId];
+          if (!state.awardedXpEvents.includes(eventId)) {
+            track(analyticsEvents.XP_EVENT_RECORDED, { eventId, xpAmount: 5 });
+          }
+
+          return {
+            awardedXpEvents: newEvents.length > 5000 ? newEvents.slice(-5000) : newEvents,
+            lastDailyCheckInDate: dateKey,
+            xp: state.awardedXpEvents.includes(eventId) ? state.xp : state.xp + 5,
+          };
+        }),
       unlockBadge: (badgeId) =>
         set((state) => {
           if (state.unlockedBadges.includes(badgeId)) {
@@ -389,9 +432,11 @@ export const useOkyoStore = create<OkyoState>()(
 
           return {
             savedRecipes: [],
+            savedFoodIdeas: [],
             completedChallenges: [],
             totalMoneySaved: 0,
             xp: 0,
+            lastDailyCheckInDate: null,
             unlockedBadges: [],
             recentBadgeUnlock: null,
             awardedXpEvents: [],
@@ -437,12 +482,15 @@ export const useOkyoStore = create<OkyoState>()(
         selectedScanImage: state.selectedScanImage,
         latestAiDebugMetadata: state.latestAiDebugMetadata,
         selectedMode: state.selectedMode,
+        userRestaurantPrice: state.userRestaurantPrice,
         savedRecipes: state.savedRecipes,
+        savedFoodIdeas: Array.isArray(state.savedFoodIdeas) ? state.savedFoodIdeas : [],
         completedChallenges: state.completedChallenges,
         totalMoneySaved: state.totalMoneySaved,
         weeklyScanCount: state.weeklyScanCount,
         isPremium: state.isPremium,
         xp: state.xp,
+        lastDailyCheckInDate: state.lastDailyCheckInDate,
         unlockedBadges: state.unlockedBadges,
         awardedXpEvents: state.awardedXpEvents,
         leaderboardEntries: state.leaderboardEntries,
@@ -514,6 +562,7 @@ function getClearedLatestScanState() {
     latestScanRecipe: null,
     selectedScanImage: null,
     latestAiDebugMetadata: null,
+    userRestaurantPrice: null,
   };
 }
 

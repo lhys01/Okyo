@@ -1,14 +1,15 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Camera, NavArrowLeft, Sparks } from 'iconoir-react-native';
+import { Camera, Sparks } from 'iconoir-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { KikoMascot } from '../components/KikoMascot';
-import { colors } from '../components/OkyoUI';
+import { ProgressFill } from '../components/OkyoUI';
+import { colors, fontFamilies, radius, shadows, spacing, surfaces, typography } from '../theme/okyoTheme';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getRealScanImageUri } from '../utils/recipeImages';
@@ -129,22 +130,13 @@ export function AnalysisLoadingScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.topBar}>
-          <Pressable
-            accessibilityLabel="Back to scan"
-            accessibilityRole="button"
-            onPress={goBackToScan}
-            style={({ pressed }) => [styles.backPill, pressed ? styles.pressed : null]}
-          >
-            <NavArrowLeft color={colors.charcoal} height={24} strokeWidth={2.35} width={24} />
-            <Text style={styles.backPillText}>Scan</Text>
-          </Pressable>
           <View pointerEvents="none" style={styles.topTitleWrap}>
             <Text style={styles.topTitle}>Analyzing</Text>
           </View>
         </View>
 
         <View style={styles.hero}>
-          <KikoMascot pose="scanning" size={150} style={styles.heroMascot} />
+          <KikoMascot animated="thinking" pose="scanning" size={150} style={styles.heroMascot} />
           {scanImageUri ? (
             <View style={styles.scanImageWrap}>
               <Image
@@ -155,7 +147,7 @@ export function AnalysisLoadingScreen() {
               <Text style={styles.scanImageCaption}>Your photo · analyzing</Text>
             </View>
           ) : null}
-          <Text style={styles.kicker}>SCANNING</Text>
+          <Text style={styles.kicker}>Scanning</Text>
           <Text style={styles.title}>Kiko is reading your plate…</Text>
           <Text style={styles.subtitle}>
             Finding the homemade version. This can take a few seconds, and Okyo only shows a result it trusts.
@@ -168,6 +160,10 @@ export function AnalysisLoadingScreen() {
         </View>
 
         <View style={styles.progressCardWrap}>
+          <ProgressFill
+            progress={(pulseIndex + 1) / loadingSteps.length}
+            style={styles.analysisProgressFill}
+          />
           <View style={styles.progressCard} accessibilityRole="progressbar">
             {loadingSteps.map((step, index) => {
               const isActive = index === pulseIndex;
@@ -217,42 +213,24 @@ const styles = StyleSheet.create({
   topBar: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
+    marginTop: spacing.xs,
     minHeight: 64,
     position: 'relative',
-  },
-  backPill: {
-    alignItems: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 999,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 8,
-    left: 0,
-    minHeight: 48,
-    paddingHorizontal: 14,
-    position: 'absolute',
-    top: 8,
-  },
-  backPillText: {
-    color: colors.body,
-    fontSize: 17,
-    fontWeight: '700',
   },
   topTitleWrap: {
     alignItems: 'center',
     bottom: 0,
     justifyContent: 'center',
-    left: 90,
+    left: 0,
     position: 'absolute',
-    right: 90,
+    right: 0,
     top: 0,
   },
   topTitle: {
     color: colors.charcoal,
+    fontFamily: fontFamilies.display,
     fontSize: 21,
-    fontWeight: '700',
+    fontWeight: '800',
     textAlign: 'center',
   },
   hero: {
@@ -270,9 +248,12 @@ const styles = StyleSheet.create({
     marginTop: -8,
   },
   scanImageThumb: {
-    borderRadius: 20,
-    height: 96,
-    width: 96,
+    borderColor: colors.card,
+    borderRadius: radius.card,
+    borderWidth: 3,
+    height: 104,
+    width: 104,
+    ...shadows.card,
   },
   scanImageCaption: {
     color: colors.muted,
@@ -282,24 +263,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   kicker: {
-    color: colors.coral,
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: 0,
-    marginBottom: 16,
+    ...typography.label,
+    color: colors.coralDark,
+    fontSize: 14,
+    marginBottom: 12,
   },
   title: {
-    color: colors.charcoal,
-    fontSize: 33,
-    fontWeight: '700',
+    ...typography.hero,
+    fontSize: 32,
     lineHeight: 39,
   },
   subtitle: {
-    color: colors.body,
+    ...typography.body,
     fontSize: 17,
-    fontWeight: '700',
     lineHeight: 25,
-    marginTop: 18,
+    marginTop: 16,
   },
   stillWorkingText: {
     color: colors.muted,
@@ -311,9 +289,13 @@ const styles = StyleSheet.create({
   progressCardWrap: {
     marginTop: 40,
   },
+  analysisProgressFill: {
+    marginBottom: 12,
+  },
   progressCard: {
+    ...surfaces.card,
     gap: 4,
-    padding: 12,
+    padding: spacing.sm,
   },
   stepRow: {
     alignItems: 'center',
@@ -340,24 +322,26 @@ const styles = StyleSheet.create({
   backButton: {
     alignItems: 'center',
     alignSelf: 'center',
-    backgroundColor: '#fffdf8',
-    borderColor: colors.border,
-    borderRadius: 18,
-    borderWidth: 1,
+    backgroundColor: colors.card,
+    borderColor: colors.borderStrong,
+    borderRadius: 999,
+    borderWidth: 1.5,
     flexDirection: 'row',
     gap: 14,
     justifyContent: 'center',
     marginTop: 38,
     minHeight: 56,
     paddingHorizontal: 36,
+    ...shadows.soft,
   },
   backButtonText: {
-    color: colors.body,
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 17,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   pressed: {
-    opacity: 0.78,
-    transform: [{ scale: 0.99 }],
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
 });
