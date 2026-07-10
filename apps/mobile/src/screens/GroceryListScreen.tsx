@@ -107,7 +107,6 @@ export function GroceryListScreen() {
   const [exportToastVisible, setExportToastVisible] = useState(false);
   const [exportToastLabel, setExportToastLabel] = useState('Grocery list exported');
   const exportToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const copiedAlertTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
@@ -210,9 +209,6 @@ export function GroceryListScreen() {
     if (exportToastTimer.current) {
       clearTimeout(exportToastTimer.current);
     }
-    if (copiedAlertTimer.current) {
-      clearTimeout(copiedAlertTimer.current);
-    }
   }, []);
 
   const copyList = async () => {
@@ -235,10 +231,6 @@ export function GroceryListScreen() {
         screen: 'GroceryListScreen',
         source: 'copy',
       });
-      if (copiedAlertTimer.current) {
-        clearTimeout(copiedAlertTimer.current);
-      }
-      copiedAlertTimer.current = setTimeout(() => Alert.alert('Copied', 'Grocery list copied.'), 520);
     } catch {
       Alert.alert('Copy unavailable', 'The grocery list could not be copied on this device.');
     }

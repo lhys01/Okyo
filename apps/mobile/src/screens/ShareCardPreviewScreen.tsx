@@ -234,7 +234,6 @@ export function ShareCardPreviewScreen() {
   const [shareRewardVisible, setShareRewardVisible] = useState(false);
   const [shareRewardLabel, setShareRewardLabel] = useState('Share moment ready +20 XP');
   const shareRewardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const copiedAlertTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (didTrackGenerated.current) {
@@ -369,10 +368,6 @@ export function ShareCardPreviewScreen() {
       uiLog('ShareCardPreviewScreen', 'copy_caption', { cardType });
       await Clipboard.setStringAsync(cardData.caption);
       showShareReward('Caption copied');
-      if (copiedAlertTimer.current) {
-        clearTimeout(copiedAlertTimer.current);
-      }
-      copiedAlertTimer.current = setTimeout(() => Alert.alert('Copied', 'Share caption copied.'), 520);
     } catch {
       Alert.alert('Copy unavailable', 'The caption could not be copied on this device.');
     }
@@ -390,9 +385,6 @@ export function ShareCardPreviewScreen() {
   useEffect(() => () => {
     if (shareRewardTimer.current) {
       clearTimeout(shareRewardTimer.current);
-    }
-    if (copiedAlertTimer.current) {
-      clearTimeout(copiedAlertTimer.current);
     }
   }, []);
 
