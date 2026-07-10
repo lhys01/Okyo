@@ -65,6 +65,8 @@ import {
 } from '../utils/makeItMine';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { buildSmartGrocerySummary, type SmartGrocerySummary } from '../utils/smartGrocery';
+import { useRecipeAdaptationPlan } from '../utils/useRecipeAdaptationPlan';
+import type { RecipeAdaptationPlan } from '../api/recipeAdaptationClient';
 import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
@@ -193,6 +195,12 @@ export function RecipeDetailScreen() {
     [mealRoutinePreference, onboardingGoal, qualityReport, recipe, savedFoodIdeas, savedRecipes],
   );
   const [selectedAdaptationId, setSelectedAdaptationId] = useState<RecipeAdaptationGoal | null>(null);
+  const adaptationContext = useMemo(() => ({
+    source: savedFoodIdeas.some((idea) => idea.extractedRecipe?.id === recipe?.id) ? 'foodIdea' as const : 'savedRecipe' as const,
+    skillLevel: recipe?.difficulty,
+    timePreference: mealRoutinePreference === 'quick_easy' ? 'under30' : undefined,
+    budgetPreference: mealRoutinePreference === 'budget_meals' ? 'low' : undefined,
+  }), [mealRoutinePreference, recipe?.difficulty, recipe?.id, savedFoodIdeas]);
   const [saveToastVisible, setSaveToastVisible] = useState(false);
   const [saveToastLabel, setSaveToastLabel] = useState('Saved to your library');
   const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -206,6 +214,11 @@ export function RecipeDetailScreen() {
     }
   }, [adaptationOptions, selectedAdaptationId]);
   const selectedAdaptation = adaptationOptions.find((option) => option.id === selectedAdaptationId) ?? adaptationOptions[0] ?? null;
+  const backendAdaptationPlan = useRecipeAdaptationPlan(recipe, selectedAdaptationId, adaptationContext);
+  const displayedAdaptation = useMemo(
+    () => (selectedAdaptation ? getDisplayAdaptationOption(selectedAdaptation, backendAdaptationPlan) : null),
+    [backendAdaptationPlan, selectedAdaptation],
+  );
   const [coachingLoading, setCoachingLoading] = useState(false);
 
   useFocusEffect(
@@ -436,11 +449,11 @@ export function RecipeDetailScreen() {
 
             {qualityReport ? <RecipeQualityCard compact report={qualityReport} /> : null}
 
-            {selectedAdaptation ? (
+            {displayedAdaptation ? (
               <MakeItMineSection
                 options={adaptationOptions}
-                selectedId={selectedAdaptation.id}
-                selectedOption={selectedAdaptation}
+                selectedId={displayedAdaptation.id}
+                selectedOption={displayedAdaptation}
                 onSelect={setSelectedAdaptationId}
               />
             ) : null}
@@ -1320,6 +1333,36 @@ type MakeItMineSectionProps = {
   selectedId: RecipeAdaptationGoal;
   selectedOption: RecipeAdaptationOption;
 };
+
+function getDisplayAdaptationOption(
+  localOption: RecipeAdaptationOption,
+  backendPlan: RecipeAdaptationPlan | null,
+): RecipeAdaptationOption {
+  if (!backendPlan) {
+    return localOption;
+  }
+  const planChanges = uniqueTextList([
+    ...backendPlan.changes.map((change) => change.detail ?? ''),
+    ...backendPlan.speedIdeas,
+    ...backendPlan.budgetIdeas,
+    ...backendPlan.healthIdeas,
+    ...backendPlan.proteinIdeas,
+    ...backendPlan.pantryIdeas,
+  ]).slice(0, 3);
+
+  return {
+    ...localOption,
+    helper: 'Preview changes',
+    promise: backendPlan.summary,
+    changes: planChanges.length > 0 ? planChanges : localOption.changes,
+    tradeoff: backendPlan.tradeoffs[0] ?? backendPlan.warnings[0] ?? localOption.tradeoff,
+    confidence: backendPlan.confidence === 'high' ? 'High' : 'Medium',
+  };
+}
+
+function uniqueTextList(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
 
 function MakeItMineSection({ onSelect, options, selectedId, selectedOption }: MakeItMineSectionProps) {
   return (

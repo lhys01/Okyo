@@ -26,9 +26,11 @@ import {
 } from './store.js';
 import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
 import { validatePaidFallbackAtStartup } from './services/openRouterProvider.js';
+import { buildRecipeAdaptationPlan } from './services/recipeAdaptationService.js';
 import { buildRecipeQualityReport } from './services/recipeCheckService.js';
 import type { ApiFailure, ApiResponse } from './types.js';
 import type { Recipe } from './types.js';
+import type { RecipeAdaptationResponse } from './types/recipeAdaptation.js';
 import type { RecipeCheckResponse } from './types/recipeQuality.js';
 
 const port = Number(process.env.PORT ?? 8081);
@@ -93,6 +95,34 @@ const recipeCheckRequestSchema = z.object({
     userGoal: z.string().min(1).max(240).optional(),
     timePreference: z.string().min(1).max(120).optional(),
     skillLevel: z.string().min(1).max(80).optional(),
+  }).strict().optional(),
+}).strict();
+const recipeAdaptationGoalSchema = z.enum([
+  'faster',
+  'cheaper',
+  'healthier',
+  'lighter',
+  'beginner',
+  'higherProtein',
+  'pantryFriendly',
+  'leftovers',
+  'lessSpicy',
+  'moreSpicy',
+  'moreFlavor',
+]);
+const recipeAdaptationSourceSchema = z.enum(['scan', 'foodIdea', 'savedRecipe', 'manual']);
+const recipeAdaptationContextListSchema = z.array(z.string().min(1).max(120)).max(30);
+const recipeAdaptationRequestSchema = z.object({
+  recipe: recipeCheckRecipeSchema,
+  goals: z.array(recipeAdaptationGoalSchema).min(1).max(4),
+  context: z.object({
+    source: recipeAdaptationSourceSchema.optional(),
+    skillLevel: z.string().min(1).max(80).optional(),
+    timePreference: z.string().min(1).max(120).optional(),
+    budgetPreference: z.string().min(1).max(120).optional(),
+    availableIngredients: recipeAdaptationContextListSchema.optional(),
+    dislikes: recipeAdaptationContextListSchema.optional(),
+    equipment: recipeAdaptationContextListSchema.optional(),
   }).strict().optional(),
 }).strict();
 
@@ -210,6 +240,14 @@ app.post('/v1/recipes/check', (request, response) => {
   const body = parseRequest(recipeCheckRequestSchema, request.body);
   const report = buildRecipeQualityReport(coerceRecipeForCheck(body.recipe), body.context);
   const payload: RecipeCheckResponse = { ok: true, report };
+
+  response.json(payload);
+});
+
+app.post('/v1/recipes/adapt', (request, response) => {
+  const body = parseRequest(recipeAdaptationRequestSchema, request.body);
+  const adaptation = buildRecipeAdaptationPlan(coerceRecipeForCheck(body.recipe), body.goals, body.context);
+  const payload: RecipeAdaptationResponse = { ok: true, adaptation };
 
   response.json(payload);
 });
