@@ -443,6 +443,7 @@ function recordRecipeQualityForResult(args: {
         analysis,
         analysis.dishName ?? '',
         result.recipe?.ingredients.map((i) => i.name),
+        result.recipe?.ingredients.map((i) => ({ name: i.name, quantity: i.quantity })),
       ).warnCounts
     : {};
 
@@ -3193,6 +3194,55 @@ function getDefaultSubstitutions() {
   return ['Adjust ingredients to taste or substitute similar pantry staples.'];
 }
 
+// Strategy coherence for wrapped/filled dishes. A recipe is either shortcut
+// (prepared/frozen base) or from-scratch (wrappers + raw filling + prep steps)
+// — never both, and never the finished scanned dish pretending to be a raw
+// ingredient ("fried wontons" in the list of a fried-wonton recipe).
+const WRAPPED_DISH_RE = /\b(wonton|dumpling|gyoza|potsticker|pot sticker|mandu|spring roll|egg roll)s?\b/i;
+const FINISHED_DISH_INGREDIENT_RE = /\b(?:fried|cooked|prepared|leftover)\s+(wonton|dumpling|gyoza|potsticker|spring roll|egg roll)s?\b/i;
+const PREPARED_BASE_RE = /\b(?:frozen|store-?bought|pre-?made|ready-?made)\b/i;
+const SCRATCH_WRAPPER_RE = /\bwrappers?\b/i;
+const SCRATCH_FILLING_RE = /\bground\s+(?:pork|beef|chicken|turkey|meat)\b/i;
+
+export function enforceDishStrategy(ingredients: RecipeIngredient[], dishText: string): RecipeIngredient[] {
+  if (!WRAPPED_DISH_RE.test(dishText)) {
+    return ingredients;
+  }
+
+  const isScratchComponent = (name: string) => SCRATCH_WRAPPER_RE.test(name) || SCRATCH_FILLING_RE.test(name);
+  const finishedIndex = ingredients.findIndex((ingredient) => FINISHED_DISH_INGREDIENT_RE.test(ingredient.name));
+
+  // Finished dish listed as an ingredient → this is really a shortcut recipe.
+  // Rename it honestly and drop the raw from-scratch components.
+  if (finishedIndex >= 0) {
+    return ingredients
+      .map((ingredient, index) =>
+        index === finishedIndex
+          ? {
+              ...ingredient,
+              // "frozen <base>s" keeps the downstream shortcut detection and
+              // addIngredientIfMissing keywords ("frozen wonton") matching.
+              name: ingredient.name.replace(
+                FINISHED_DISH_INGREDIENT_RE,
+                (_match, base: string) => `frozen ${base}s`,
+              ),
+            }
+          : ingredient,
+      )
+      .filter((ingredient, index) => index === finishedIndex || !isScratchComponent(ingredient.name));
+  }
+
+  // Prepared base mixed with raw wrapper/filling → keep the shortcut, drop the
+  // scratch components so steps and grocery list stay coherent.
+  const hasPreparedBase = ingredients.some((ingredient) => PREPARED_BASE_RE.test(ingredient.name));
+  const hasScratchComponents = ingredients.some((ingredient) => isScratchComponent(ingredient.name));
+  if (hasPreparedBase && hasScratchComponents) {
+    return ingredients.filter((ingredient) => !isScratchComponent(ingredient.name));
+  }
+
+  return ingredients;
+}
+
 function ensureCoreIngredients(
   ingredients: RecipeIngredient[],
   analysis: FoodImageAnalysis,
@@ -3206,7 +3256,7 @@ function ensureCoreIngredients(
     ...analysis.visibleIngredients,
     ...analysis.likelyIngredients,
   ].join(' ').toLowerCase();
-  const result = [...ingredients];
+  const result = enforceDishStrategy([...ingredients], dishText);
 
   if (dishText.includes('burger')) {
     addIngredientIfMissing(result, ['bun', 'brioche', 'roll'], {
@@ -3912,6 +3962,7 @@ function collectCoachingWarnings(
   analysis: FoodImageAnalysis,
   dishName: string,
   recipeIngredients?: string[],
+  ingredientDetails?: Array<{ name: string; quantity?: string }>,
 ): CoachingWarningResult {
   const warnCounts: Record<string, number> = {};
   const warnings: CoachingWarning[] = [];
@@ -4169,6 +4220,46 @@ function collectCoachingWarnings(
     }
   }
 
+  // Strategy coherence — the finished scanned dish must never appear as an
+  // ingredient ("fried wontons" inside a fried-wonton recipe).
+  if (recipeIngredients) {
+    for (const ingredientName of recipeIngredients) {
+      if (FINISHED_DISH_INGREDIENT_RE.test(ingredientName)) {
+        warn('[recipe-quality] finished dish listed as ingredient', { dish: dishName, ingredient: ingredientName });
+      }
+    }
+  }
+
+  // Quantity contradiction — the classic failure is frying oil: "2 tbsp" in the
+  // ingredient list while a step says "heat 2 cups of oil". Compare the unit
+  // class (spoon vs cup) between the listed oil and any oil amount in steps.
+  if (ingredientDetails) {
+    const oilIngredient = ingredientDetails.find(
+      (item) => /\boil\b/i.test(item.name) && item.quantity,
+    );
+    const oilUnitClass = oilIngredient?.quantity && /\b(tbsp|tsp|tablespoons?|teaspoons?)\b/i.test(oilIngredient.quantity)
+      ? 'spoon'
+      : oilIngredient?.quantity && /\bcups?\b/i.test(oilIngredient.quantity)
+        ? 'cup'
+        : null;
+    if (oilUnitClass) {
+      for (const step of steps) {
+        const stepOil = /(\d+(?:\/\d+)?)\s*(cups?|tbsp|tsp|tablespoons?|teaspoons?)\s+(?:of\s+)?[a-z ]*\boil\b/i.exec(step.text ?? '');
+        if (!stepOil) {
+          continue;
+        }
+        const stepUnitClass = /cups?/i.test(stepOil[2]) ? 'cup' : 'spoon';
+        if (stepUnitClass !== oilUnitClass) {
+          warn('[recipe-quality] oil quantity contradiction', {
+            dish: dishName,
+            listed: oilIngredient?.quantity,
+            step: stepOil[0],
+          });
+        }
+      }
+    }
+  }
+
   // Per-phase coverage — phases 3 (Cooking), 4 (Assembly), 5 (Finishing)
   for (const requiredPhase of [3, 4, 5]) {
     const hasPhaseSteps = steps.some((s) => s.phase === requiredPhase);
@@ -4195,8 +4286,9 @@ function auditStepCoachingQuality(
   analysis: FoodImageAnalysis,
   dishName: string,
   recipeIngredients?: string[],
+  ingredientDetails?: Array<{ name: string; quantity?: string }>,
 ): CoachingWarningResult {
-  const result = collectCoachingWarnings(steps, analysis, dishName, recipeIngredients);
+  const result = collectCoachingWarnings(steps, analysis, dishName, recipeIngredients, ingredientDetails);
   for (const { tag, ctx } of result.warnings) {
     console.warn(tag, ctx);
   }
