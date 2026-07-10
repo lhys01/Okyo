@@ -22,7 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { analyticsEvents, track } from '../analytics/track';
 import { KikoMascot } from '../components/KikoMascot';
 import { RewardToast } from '../components/OkyoUI';
-import { colors } from '../theme/okyoTheme';
+import { colors, shadows } from '../theme/okyoTheme';
 import {
   defaultRestaurantPack,
   defaultScanResult,
@@ -398,7 +398,7 @@ export function ShareCardPreviewScreen() {
           <Text style={styles.emptyBody}>
             Okyo needs a completed food scan and recipe before it can build a share card.
           </Text>
-          <PrimaryAction icon={<Camera color="#fffdf8" height={20} strokeWidth={2.2} width={20} />} label="Start a scan" onPress={() => navigation.navigate('MainTabs', { screen: 'ScanScreen' })} />
+          <PrimaryAction icon={<Camera color={colors.onCoral} height={20} strokeWidth={2.2} width={20} />} label="Start a scan" onPress={() => navigation.navigate('MainTabs', { screen: 'ScanScreen' })} />
         </View>
       </ShareFrame>
     );
@@ -486,7 +486,7 @@ export function ShareCardPreviewScreen() {
       )}
 
       <View style={styles.actions}>
-        <PrimaryAction icon={<ShareAndroid color="#fffdf8" height={21} strokeWidth={2.2} width={21} />} label="Share Image" onPress={shareCard} />
+        <PrimaryAction icon={<ShareAndroid color={colors.onCoral} height={21} strokeWidth={2.2} width={21} />} label="Share Image" onPress={shareCard} />
         <SecondaryAction icon={<ClipboardCheck color={colors.coral} height={20} strokeWidth={2.2} width={20} />} label="Copy Caption" onPress={copyCaption} />
       </View>
       <RewardToast label={shareRewardLabel} tone={shareRewardLabel.includes('XP') ? 'xp' : 'save'} visible={shareRewardVisible} />
@@ -595,22 +595,6 @@ function SecondaryAction({ icon, label, onPress }: { icon: ReactNode; label: str
       <Text style={styles.secondaryActionText}>{label}</Text>
     </Pressable>
   );
-}
-
-function getCardLabel(cardType: ShareCardType) {
-  switch (cardType) {
-    case 'challenge_result':
-      return 'Challenge result';
-    case 'ranking':
-      return 'Weekly ranking';
-    case 'badge':
-      return 'Badge unlocked';
-    case 'restaurant_pack':
-      return 'Restaurant pack';
-    case 'scan_result':
-    default:
-      return 'Scan result';
-  }
 }
 
 function getSafeCardType(cardType: unknown): ShareCardType {
@@ -822,15 +806,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   shareCard: {
-    backgroundColor: '#fffdf8',
+    backgroundColor: colors.cardWarm,
     borderRadius: 24,
     maxWidth: 326,
     padding: 14,
-    shadowColor: '#3b2f20',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.1,
-    shadowRadius: 24,
     width: '100%',
+    ...shadows.hero,
   },
   cardTitle: {
     color: colors.charcoal,
@@ -1051,7 +1032,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   primaryActionText: {
-    color: '#fffdf8',
+    color: colors.onCoral,
     fontSize: 16,
     fontWeight: '700',
   },
@@ -1077,11 +1058,7 @@ const styles = StyleSheet.create({
     gap: 14,
     marginTop: 24,
     padding: 24,
-    shadowColor: '#4a3a28',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
-    elevation: 2,
+    ...shadows.card,
   },
   emptyMascot: {
     marginBottom: 2,
