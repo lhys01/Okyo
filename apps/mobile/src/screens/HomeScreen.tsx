@@ -64,8 +64,9 @@ export function HomeScreen() {
   const todayKey = getLocalDateKey();
   const dailySpark = useMemo(() => getDailySpark(todayKey), [todayKey]);
   const [dailyRewardVisible, setDailyRewardVisible] = useState(false);
+  const [claimedVisibleDailySpark, setClaimedVisibleDailySpark] = useState(false);
   const dailyRewardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const shouldShowDailyCheckIn = lastDailyCheckInDate !== todayKey;
+  const shouldShowDailyCheckIn = lastDailyCheckInDate !== todayKey && !claimedVisibleDailySpark;
   const commandCenter = useMemo(
     () => deriveHomeCommandCenter({
       latestScanRecipe,
@@ -188,9 +189,14 @@ export function HomeScreen() {
       clearTimeout(dailyRewardTimer.current);
     }
     claimDailyCheckIn(todayKey);
+    setClaimedVisibleDailySpark(true);
     setDailyRewardVisible(true);
     dailyRewardTimer.current = setTimeout(() => setDailyRewardVisible(false), 1600);
   };
+
+  useEffect(() => {
+    setClaimedVisibleDailySpark(false);
+  }, [todayKey]);
 
   useEffect(() => () => {
     if (dailyRewardTimer.current) {
