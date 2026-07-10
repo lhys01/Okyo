@@ -6,21 +6,13 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
 import { BadgePill, PrimaryButton, ProgressFill, RewardToast, ScreenContainer, sharedStyles } from '../components/OkyoUI';
-import { mockBadges, type Badge, type LeaderboardEntry } from '../mocks';
+import { mockBadges, type Badge } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { colors, radius, shadows } from '../theme/okyoTheme';
 
 type RankingsNavigation = NativeStackNavigationProp<RootStackParamList>;
 
-const leaderboardSections = [
-  'Biggest Saver This Week',
-  'Best Match Score',
-  'Most Dupes Completed',
-  'Best Budget Dupe',
-  'Best Healthy Swap',
-  'Rising Cook',
-];
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 
 function getLevel(xp: number) {
@@ -72,51 +64,18 @@ function getBadgeHint(badge: Badge, context: {
   }
 }
 
-function getFallbackEntries(section: string): LeaderboardEntry[] {
-  const entriesBySection: Record<string, LeaderboardEntry[]> = {
-    'Biggest Saver This Week': [
-      { id: 'mock-saver-1', rank: 1, displayName: 'Maya', category: section, value: '$92 saved', xp: 420 },
-      { id: 'mock-saver-2', rank: 2, displayName: 'Jordan', category: section, value: '$81 saved', xp: 390 },
-    ],
-    'Best Match Score': [
-      { id: 'mock-match-1', rank: 1, displayName: 'Avery', category: section, value: '9.4/10 match', xp: 360 },
-      { id: 'mock-match-2', rank: 2, displayName: 'Sam', category: section, value: '9.1/10 match', xp: 330 },
-    ],
-    'Most Dupes Completed': [
-      { id: 'mock-dupes-1', rank: 1, displayName: 'Riley', category: section, value: '7 dupes', xp: 410 },
-      { id: 'mock-dupes-2', rank: 2, displayName: 'Noah', category: section, value: '5 dupes', xp: 305 },
-    ],
-    'Best Budget Dupe': [
-      { id: 'mock-budget-1', rank: 1, displayName: 'Priya', category: section, value: '$34 saved', xp: 300 },
-      { id: 'mock-budget-2', rank: 2, displayName: 'Kai', category: section, value: '$28 saved', xp: 260 },
-    ],
-    'Best Healthy Swap': [
-      { id: 'mock-healthy-1', rank: 1, displayName: 'Lena', category: section, value: '8.8/10 healthy', xp: 285 },
-      { id: 'mock-healthy-2', rank: 2, displayName: 'Theo', category: section, value: '8.4/10 healthy', xp: 245 },
-    ],
-    'Rising Cook': [
-      { id: 'mock-rising-1', rank: 1, displayName: 'Morgan', category: section, value: '+140 XP', xp: 270 },
-      { id: 'mock-rising-2', rank: 2, displayName: 'Jess', category: section, value: '+120 XP', xp: 240 },
-    ],
-  };
-
-  return entriesBySection[section] ?? [];
-}
-
 export function RankingsScreen() {
   const navigation = useNavigation<RankingsNavigation>();
   const xp = useOkyoStore((state) => state.xp);
   const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const recentBadgeUnlock = useOkyoStore((state) => state.recentBadgeUnlock);
   const clearRecentBadgeUnlock = useOkyoStore((state) => state.clearRecentBadgeUnlock);
-  const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
   const didTrackView = useRef(false);
   const safeXp = typeof xp === 'number' && Number.isFinite(xp) ? xp : 0;
   const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
-  const safeLeaderboardEntries = Array.isArray(leaderboardEntries) ? leaderboardEntries : [];
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeTotalMoneySaved = typeof totalMoneySaved === 'number' && Number.isFinite(totalMoneySaved)
@@ -169,24 +128,6 @@ export function RankingsScreen() {
     });
   }, [safeXp]);
 
-  const getUserValueForSection = (section: string) => {
-    switch (section) {
-      case 'Biggest Saver This Week':
-        return `${formatCurrency(safeTotalMoneySaved + safeSavedRecipes.reduce((total, recipe) => total + (typeof recipe?.estimatedSavings === 'number' ? recipe.estimatedSavings : 0), 0))} saved`;
-      case 'Best Match Score':
-        return bestMatchScore > 0 ? `${bestMatchScore.toFixed(1)}/10 match` : 'No score yet';
-      case 'Most Dupes Completed':
-        return `${savedRecipeCount + completedChallengeCount} dupes`;
-      case 'Best Budget Dupe':
-        return hasBudgetSave ? `${formatCurrency(bestSavings)} saved` : 'Try Budget mode';
-      case 'Best Healthy Swap':
-        return hasHealthyChallenge ? `${bestMatchScore.toFixed(1)}/10 healthy` : 'Try Healthy mode';
-      case 'Rising Cook':
-      default:
-        return `+${safeXp} XP`;
-    }
-  };
-
   return (
     <ScreenContainer>
       <Text style={styles.kicker}>Rankings</Text>
@@ -197,7 +138,7 @@ export function RankingsScreen() {
         <View style={styles.lowActivityCard}>
           <Text style={styles.lowActivityTitle}>Your ranking is warming up</Text>
           <Text style={styles.lowActivityText}>
-            Scan, save, export a grocery list, or finish a Dupe Challenge to start earning XP. Mock leaderboards are still shown below.
+            Scan, save, export a grocery list, or finish a Dupe Challenge to start earning XP.
           </Text>
         </View>
       ) : null}
@@ -247,36 +188,13 @@ export function RankingsScreen() {
         </PrimaryButton>
       </View>
 
-      {leaderboardSections.map((section) => {
-        const seededEntries = safeLeaderboardEntries.filter((entry) => entry?.category === section);
-        const entries = seededEntries.length > 0 ? seededEntries : getFallbackEntries(section);
-        const userEntry: LeaderboardEntry = {
-          id: `you-${section}`,
-          rank: 3,
-          displayName: 'You',
-          category: section,
-          value: getUserValueForSection(section),
-          xp: safeXp,
-        };
-
-        return (
-          <View key={section} style={styles.leaderboardSection}>
-            <Text style={styles.sectionTitle}>{section}</Text>
-            {[...entries.slice(0, 2), userEntry].map((entry) => (
-              <View key={entry.id} style={[styles.leaderRow, entry.displayName === 'You' ? styles.userRow : null]}>
-                <View style={styles.rankChip}>
-                  <Text style={styles.rank}>#{entry.rank}</Text>
-                </View>
-                <View style={styles.leaderInfo}>
-                  <Text style={styles.leaderName} numberOfLines={1}>{entry.displayName}</Text>
-                  <Text style={styles.leaderValue} numberOfLines={1}>{entry.value}</Text>
-                </View>
-                <Text style={styles.leaderXp}>{entry.xp} XP</Text>
-              </View>
-            ))}
-          </View>
-        );
-      })}
+      <View style={styles.leaderboardSection}>
+        <Text style={styles.sectionTitle}>Rankings</Text>
+        <Text style={styles.emptyRankingsTitle}>Rankings are not available yet.</Text>
+        <Text style={styles.emptyRankingsBody}>
+          Keep cooking with Okyo — this area will become useful when real progress data is ready.
+        </Text>
+      </View>
       <RewardToast
         label={recentBadge ? `${recentBadge.name} unlocked` : ''}
         tone="badge"
@@ -429,47 +347,15 @@ const styles = StyleSheet.create({
     marginTop: 14,
     padding: 18,
   },
-  leaderRow: {
-    alignItems: 'center',
-    borderRadius: radius.chip,
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 6,
-    minHeight: 58,
-    paddingHorizontal: 8,
-  },
-  userRow: {
-    backgroundColor: colors.cream,
-  },
-  rankChip: {
-    alignItems: 'center',
-    backgroundColor: colors.coralSoft,
-    borderRadius: 999,
-    height: 30,
-    justifyContent: 'center',
-    width: 36,
-  },
-  rank: {
-    color: colors.coralDark,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  leaderInfo: {
-    flex: 1,
-  },
-  leaderName: {
+  emptyRankingsTitle: {
     color: colors.charcoal,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
   },
-  leaderValue: {
+  emptyRankingsBody: {
     color: colors.body,
-    fontSize: 13,
-    marginTop: 2,
-  },
-  leaderXp: {
-    color: colors.green,
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 6,
   },
 });
