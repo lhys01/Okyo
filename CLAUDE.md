@@ -17,6 +17,13 @@ Warm premium cookbook + liquid iOS glass (translucency/depth used purposefully â
 - Cares most about: scan reliability, recipe quality, onboarding, retention, premium UI, honest product UX.
 - Dislikes: generic AI copy, ugly data UI, overcomplicated explanations, stale mock data, huge risky rewrites.
 
+## Design-First Asset Workflow
+
+- Design the screen or interaction first in Figma or OpenPencil. Use these as screen-design tools for hierarchy, composition, states, and interaction intent.
+- When a screen needs original visual material, generate real bitmap assets with Draw Things or ComfyUI. Store approved repo assets under a relative path such as `apps/mobile/assets/generated/` and document the intended use briefly.
+- Then implement the design in React Native: layout, state, navigation, accessibility, loading/error states, and interactions belong in code. Do not improvise artwork with ad-hoc gradients, placeholder blobs, or decorative shapes when a real asset is needed.
+- Keep MCP settings, local runtime output, generated plugin folders, screenshots, and reference material out of source commits unless explicitly curated for the product.
+
 ## Hard Rules
 
 - **OpenRouter/gpt-4o-mini is the default model path** â€” never change it unless explicitly asked.

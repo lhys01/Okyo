@@ -33,6 +33,13 @@ Okyo is an AI food companion, not a calorie tracker, not a generic recipe app, a
 - Run app: `cd apps/mobile && npm run sim` (Expo, port 8082, clears cache)
 - Diff check: `git diff --stat apps/mobile/src`
 
+## Design-First Asset Workflow
+
+1. Design the screen in Figma or OpenPencil first. Use the design tool to settle composition, hierarchy, states, and interaction intent before writing React Native layout code.
+2. Generate original visual assets with Draw Things or ComfyUI when the screen needs real imagery, mascot art, food photography, or textures. Prefer approved repo-relative paths such as `apps/mobile/assets/generated/`.
+3. Implement the approved design in React Native. Code owns layout, state, navigation, accessibility, loading/error states, and interaction behavior; it should not become an improvised illustration tool.
+4. Keep local MCP settings, generated plugin/runtime output, screenshots, and unapproved references out of commits. Review asset provenance and intended use before adding generated files.
+
 ## Exact workflow
 
 0. For redesigns of existing screens, check `docs/design/` prior audits first (`SCREEN_BY_SCREEN_AUDIT.md`, `DESIGN_VIOLATIONS.md`, `CARD_INVENTORY.md`) — the screen may already have documented violations and an agreed direction.
