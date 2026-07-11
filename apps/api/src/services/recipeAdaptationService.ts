@@ -551,10 +551,14 @@ function containsAny(value: string, keywords: string[]) {
 
 function getGoalLabel(goal: RecipeAdaptationGoal) {
   switch (goal) {
+    case 'beginner':
+      return 'easier for beginners';
     case 'higherProtein':
       return 'more filling';
     case 'pantryFriendly':
       return 'pantry-friendly';
+    case 'leftovers':
+      return 'better with leftovers';
     case 'lessSpicy':
       return 'less spicy';
     case 'moreSpicy':
