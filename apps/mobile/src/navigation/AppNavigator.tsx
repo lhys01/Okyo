@@ -21,14 +21,26 @@ import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { uiLog } from '../utils/uiDebug';
+import { defaultScanResult, getSafeRecipeForMode, getSafeRecipeMode } from '../mocks';
 import { MainTabs } from './MainTabs';
 import type { RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+const devResultSummaryQaScanSessionId = 'dev-result-summary-qa';
+const shouldOpenDevResultSummaryQa =
+  typeof __DEV__ !== 'undefined' &&
+  __DEV__ &&
+  process.env.EXPO_PUBLIC_OKYO_RESULT_SUMMARY_QA === '1';
 
 export function AppNavigator() {
   const hasCompletedOnboarding = useOkyoStore((state) => state.hasCompletedOnboarding);
   const didTrackAppOpen = useRef(false);
+  const didSeedDevResultSummaryQa = useRef(false);
+
+  if (shouldOpenDevResultSummaryQa && !didSeedDevResultSummaryQa.current) {
+    didSeedDevResultSummaryQa.current = true;
+    seedDevResultSummaryQa();
+  }
 
   useEffect(() => {
     if (didTrackAppOpen.current) {
@@ -61,7 +73,7 @@ export function AppNavigator() {
   return (
     <Stack.Navigator
       key="main"
-      initialRouteName="MainTabs"
+      initialRouteName={shouldOpenDevResultSummaryQa ? 'ResultSummaryScreen' : 'MainTabs'}
       screenOptions={{
         contentStyle: { backgroundColor: colors.background },
         headerBackButtonDisplayMode: 'generic',
@@ -126,4 +138,34 @@ export function AppNavigator() {
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false, title: 'Okyo' }} />
     </Stack.Navigator>
   );
+}
+
+function seedDevResultSummaryQa() {
+  const state = useOkyoStore.getState();
+  const mode = getSafeRecipeMode(state.selectedMode);
+
+  if (
+    state.scanSessionId === devResultSummaryQaScanSessionId &&
+    state.latestScanStatus === 'success' &&
+    state.latestScanResult?.id === defaultScanResult.id
+  ) {
+    return;
+  }
+
+  state.setSelectedMode(mode);
+  state.beginLatestScanSession({
+    scanSessionId: devResultSummaryQaScanSessionId,
+    latestScanStatus: 'success',
+    latestScanFailure: null,
+    latestScanResult: defaultScanResult,
+    latestScanRecipe: getSafeRecipeForMode(mode),
+    selectedScanImage: { source: 'mock', placeholder: true },
+    latestAiDebugMetadata: {
+      aiSource: 'mock_ai',
+      confidence: defaultScanResult.confidence,
+      fallbackReason: 'dev_result_summary_qa',
+    },
+    source: 'mock',
+    reason: 'AppNavigator.devResultSummaryQa',
+  });
 }

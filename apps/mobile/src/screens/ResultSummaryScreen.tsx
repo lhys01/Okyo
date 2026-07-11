@@ -43,6 +43,10 @@ import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'ResultSummaryScreen'>;
 type ResultSummaryRoute = RouteProp<RootStackParamList, 'ResultSummaryScreen'>;
+const shouldPinDevResultSummaryQa =
+  typeof __DEV__ !== 'undefined' &&
+  __DEV__ &&
+  process.env.EXPO_PUBLIC_OKYO_RESULT_SUMMARY_QA === '1';
 
 export function ResultSummaryScreen() {
   const navigation = useNavigation<ResultSummaryNavigation>();
@@ -553,6 +557,8 @@ export function ResultSummaryScreen() {
         ) : null}
       </View>
 
+      {shouldPinDevResultSummaryQa && qualityReport ? <RecipeQualityCard compact report={qualityReport} /> : null}
+
       {shouldShowDishConfirmation && scanResult ? (
         <View style={styles.confirmCard}>
           <Text style={styles.confirmLabel}>Best guess based on the photo.</Text>
@@ -742,7 +748,7 @@ export function ResultSummaryScreen() {
         </View>
       </View>
 
-      {qualityReport ? <RecipeQualityCard compact report={qualityReport} /> : null}
+      {!shouldPinDevResultSummaryQa && qualityReport ? <RecipeQualityCard compact report={qualityReport} /> : null}
       </Animated.View>
     </ResultFrame>
   );
