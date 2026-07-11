@@ -6,6 +6,7 @@ import {
   Camera,
   Cart,
   CheckCircle,
+  MagicWand,
   NavArrowLeft,
   OpenBook,
   PlusCircle,
@@ -393,6 +394,10 @@ export function ResultSummaryScreen() {
     navigation.navigate('SettingsScreen');
   };
 
+  const openRecipeTools = () => {
+    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: selectedMode } });
+  };
+
   if (shouldShowFailure) {
     return (
       <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
@@ -696,7 +701,7 @@ export function ResultSummaryScreen() {
       </View>
 
       <View style={styles.actions}>
-        <ResultPrimaryButton onPress={() => navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: selectedMode } })}>
+        <ResultPrimaryButton onPress={openRecipeTools}>
           <OpenBook color={colors.onCoral} height={25} strokeWidth={2.15} width={25} />
           <Text style={styles.resultPrimaryButtonText}>View recipe</Text>
         </ResultPrimaryButton>
@@ -718,6 +723,8 @@ export function ResultSummaryScreen() {
           />
         </View>
       </View>
+
+      <NextWithOkyoCard onOpenRecipe={openRecipeTools} />
 
       <View style={styles.matchCard}>
         <View style={styles.matchTopRow}>
@@ -882,6 +889,66 @@ function ResultPrimaryButton({ children, onPress }: ResultPrimaryButtonProps) {
     >
       {children}
     </Pressable>
+  );
+}
+
+type NextWithOkyoCardProps = {
+  onOpenRecipe: () => void;
+};
+
+const nextWithOkyoItems = [
+  {
+    title: 'Check this recipe',
+    body: 'Spot tricky steps before you cook.',
+  },
+  {
+    title: 'Make it fit me',
+    body: 'Adjust the plan from the recipe view.',
+  },
+  {
+    title: 'Build groceries',
+    body: 'Turn ingredients into a smarter list.',
+  },
+  {
+    title: 'Cook with guidance',
+    body: 'Use step-by-step help when you start.',
+  },
+];
+
+function NextWithOkyoCard({ onOpenRecipe }: NextWithOkyoCardProps) {
+  return (
+    <View style={styles.nextCard}>
+      <View style={styles.nextHeaderRow}>
+        <View style={styles.nextIconBubble}>
+          <MagicWand color={colors.coral} height={21} strokeWidth={2.2} width={21} />
+        </View>
+        <View style={styles.nextHeaderCopy}>
+          <Text style={styles.nextKicker}>What Okyo can do next</Text>
+          <Text style={styles.nextTitle}>Open the recipe to check, adapt, shop, or cook.</Text>
+        </View>
+      </View>
+
+      <View style={styles.nextGrid}>
+        {nextWithOkyoItems.map((item) => (
+          <View key={item.title} style={styles.nextItem}>
+            <View style={styles.nextDot} />
+            <View style={styles.nextItemCopy}>
+              <Text style={styles.nextItemTitle}>{item.title}</Text>
+              <Text style={styles.nextItemBody}>{item.body}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+
+      <Pressable
+        accessibilityRole="button"
+        onPress={onOpenRecipe}
+        style={({ pressed }) => [styles.nextLinkButton, pressed ? styles.pressed : null]}
+      >
+        <Text style={styles.nextLinkText}>Open recipe tools</Text>
+        <ArrowRight color={colors.coral} height={19} strokeWidth={2.35} width={19} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -1535,6 +1602,103 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 24,
     marginTop: 7,
+  },
+  nextCard: {
+    ...surfaces.card,
+    gap: 16,
+    marginTop: 16,
+    minWidth: 0,
+    padding: 18,
+  },
+  nextHeaderRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 12,
+    minWidth: 0,
+  },
+  nextIconBubble: {
+    alignItems: 'center',
+    backgroundColor: colors.coralSoft,
+    borderRadius: 999,
+    height: 42,
+    justifyContent: 'center',
+    width: 42,
+  },
+  nextHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  nextKicker: {
+    color: colors.coral,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0,
+  },
+  nextTitle: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 19,
+    fontWeight: '800',
+    lineHeight: 24,
+    marginTop: 4,
+  },
+  nextGrid: {
+    gap: 10,
+  },
+  nextItem: {
+    alignItems: 'flex-start',
+    backgroundColor: colors.cream,
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    minWidth: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  nextDot: {
+    backgroundColor: colors.green,
+    borderRadius: 999,
+    height: 7,
+    marginTop: 7,
+    width: 7,
+  },
+  nextItemCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  nextItemTitle: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 15,
+    fontWeight: '800',
+    lineHeight: 20,
+  },
+  nextItemBody: {
+    color: colors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 13,
+    fontWeight: '400',
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  nextLinkButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.coralSoft,
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 7,
+    minHeight: 42,
+    paddingHorizontal: 14,
+  },
+  nextLinkText: {
+    color: colors.coral,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 14,
+    fontWeight: '800',
   },
   standaloneScanPreview: {
     backgroundColor: colors.cream,
