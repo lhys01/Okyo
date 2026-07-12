@@ -8,9 +8,11 @@
     "start": "node dist/server.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test:auth": "node --import tsx --test src/auth/*.test.ts src/middleware/supabaseAuth.test.ts"
+    "test:auth": "node --import tsx --test src/auth/*.test.ts src/middleware/supabaseAuth.test.ts",
+    "test:persistence": "node --import tsx --test src/database/*.test.ts src/persistence/*.test.ts src/routes/ownedRecipe.test.ts src/config/debugRoute.test.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.100.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.19.2",

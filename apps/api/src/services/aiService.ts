@@ -43,7 +43,6 @@ import {
 } from './recipeIngredientValidation.js';
 import { logScanEvaluation } from './scanEvalLogger.js';
 import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
-import { getGeneratedRecipe, storeGeneratedRecipe } from '../store.js';
 
 // Bump when the vision/recipe prompt or post-processing pipeline changes substantially.
 // Any cached scan result with a different version is automatically stale.
@@ -58,8 +57,12 @@ type ScanCacheEntry =
 const scanCache = new Map<string, ScanCacheEntry>();
 const SCAN_CACHE_MAX_ENTRIES = 2000;
 
-function getScanCacheKey(dataUrl: string, mode: string): string {
-  return createHash('sha1').update(dataUrl).digest('hex') + ':' + mode + ':' + RECIPE_PIPELINE_VERSION;
+function getScanCacheKey(cacheScope: string, dataUrl: string, mode: string): string {
+  return createHash('sha256')
+    .update(cacheScope)
+    .update('\0')
+    .update(dataUrl)
+    .digest('hex') + ':' + mode + ':' + RECIPE_PIPELINE_VERSION;
 }
 
 // Lazily sweeps expired entries and, if still oversized, drops the oldest
@@ -353,7 +356,6 @@ export async function generateRecipeFromDish(
 
     // Store recipe for deferred coaching — enriched on Guided Cooking tap, not on scan.
     if (result.recipe) {
-      storeGeneratedRecipe(result.recipe);
     }
 
     const initialScore = result.recipe?.structuredSteps?.length
@@ -376,7 +378,6 @@ export async function generateRecipeFromDish(
     if (finalResult.recipe && isPlatterStyleMeal(input.analysis)) {
       finalResult = await ensureComponentCoverage(finalResult, input.analysis, config);
       if (finalResult.recipe) {
-        storeGeneratedRecipe(finalResult.recipe);
       }
     }
 
@@ -395,7 +396,6 @@ export async function generateRecipeFromDish(
       }
       if (enforced.changed || enforced.report.missingGroceryItems.length > 0) {
         finalResult = { ...finalResult, recipe: closedRecipe };
-        storeGeneratedRecipe(closedRecipe);
       }
       if (
         enforced.report.unknownStepIngredients.length > 0 ||
@@ -467,9 +467,8 @@ function recordRecipeQualityForResult(args: {
 // Called when the user taps Guided Cooking — not during the scan itself.
 // Returns null if the recipe has expired from the store (>1 day old).
 export async function enrichRecipeCoaching(
-  recipeId: string,
+  recipe: Recipe,
 ): Promise<{ structuredSteps: RecipeStep[] } | null> {
-  const recipe = getGeneratedRecipe(recipeId);
   if (!recipe?.structuredSteps?.length) {
     return null;
   }
@@ -520,7 +519,9 @@ export function estimateIngredientCosts(input: EstimateIngredientCostsInput): In
   throw new Error('Cost estimate validation failed');
 }
 
-export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
+export async function createAiScan(
+  input: AnalyzeFoodImageInput & { cacheScope: string },
+): Promise<AiScanSuccessResult> {
   const config = getAiConfig({ fableActive: input.fableActive });
   const uploadedImage = hasRealUploadedImage(input);
   const providerVisible = isProviderVisibleImage(input.image);
@@ -575,7 +576,7 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
   // without re-running vision or recipe generation. Only keyed when a real dataUrl
   // is present; placeholder / URI-only scans fall through to live generation.
   const scanCacheKey = input.image?.dataUrl
-    ? getScanCacheKey(input.image.dataUrl, input.mode)
+    ? getScanCacheKey(input.cacheScope, input.image.dataUrl, input.mode)
     : null;
   if (scanCacheKey) {
     const cached = scanCache.get(scanCacheKey);

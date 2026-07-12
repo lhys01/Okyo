@@ -4,7 +4,13 @@ import { z } from 'zod';
 
 import { getAiConfig, getPublicAiConfig } from './config/aiConfig.js';
 import { validateSupabaseAuthConfigAtStartup } from './auth/config.js';
+import { getScanRecipeDatabaseGateway } from './database/client.js';
+import {
+  SupabaseDatabaseConfigurationError,
+  validateSupabaseDatabaseConfigAtStartup,
+} from './database/config.js';
 import { getCostControlConfig } from './config/costControlConfig.js';
+import { isAiDebugRouteAvailable } from './config/debugRoute.js';
 import { validateEpicureConfigAtStartup } from './config/openRouter.js';
 import {
   checkAndIncrementFableCap,
@@ -16,7 +22,6 @@ import { mountV1Authentication } from './middleware/supabaseAuth.js';
 import {
   awardXp,
   createChallenge,
-  getLibrary,
   getRecipe,
   getRestaurantPack,
   getRestaurantPacks,
@@ -24,12 +29,23 @@ import {
   getScan,
   getWeeklyRankings,
   getXpDefinitions,
-  saveRecipe,
 } from './store.js';
 import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
 import { validatePaidFallbackAtStartup } from './services/openRouterProvider.js';
 import { buildRecipeAdaptationPlan } from './services/recipeAdaptationService.js';
 import { buildRecipeQualityReport } from './services/recipeCheckService.js';
+import {
+  createOwnedRecipeGetHandler,
+  findOwnedOrEditorialRecipe,
+  getAuthenticatedUserId,
+} from './routes/ownedRecipe.js';
+import { runPersistedScan } from './persistence/persistedScanService.js';
+import {
+  createScanRecipeRepository,
+  InvalidPersistedRecipeError,
+  PersistenceUnavailableError,
+  type ScanRecipeRepository,
+} from './persistence/scanRecipeRepository.js';
 import type { ApiFailure, ApiResponse } from './types.js';
 import type { Recipe } from './types.js';
 import type { RecipeAdaptationResponse } from './types/recipeAdaptation.js';
@@ -39,6 +55,7 @@ const port = Number(process.env.PORT ?? 8081);
 const app = express();
 const maxImageDataUrlChars = 12_000_000;
 const jsonBodyLimit = '16mb';
+let scanRecipeRepository: ScanRecipeRepository | null = null;
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
 const scanSourceSchema = z.enum(['camera', 'photos']);
@@ -153,7 +170,7 @@ app.get('/health', (_request, response) => {
 });
 
 app.get('/debug/ai-config', (_request, response) => {
-  if (process.env.NODE_ENV === 'production') {
+  if (!isAiDebugRouteAvailable(process.env.NODE_ENV)) {
     sendError(response.status(404), 'not_found', 'Not found.');
     return;
   }
@@ -167,6 +184,7 @@ mountV1Authentication(app);
 app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) => {
   try {
     const body = parseRequest(scanRequestSchema, normalizeScanRequestInput(request.body));
+    const userId = getAuthenticatedUserId(request);
 
     // Configurable image size guard (secondary check; Zod schema is the primary).
     const imageSizeBytes = body.image?.dataUrlSizeBytes ?? body.image?.dataUrl?.length ?? 0;
@@ -214,11 +232,16 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
     });
 
     logScanRequest(body, request.get('content-type'));
-    const result = await createAiScan({
-      image: body.image,
-      mode: body.mode,
-      source: body.source,
-      fableActive,
+    const result = await runPersistedScan({
+      userId,
+      repository: getScanRecipeRepository(),
+      generate: () => createAiScan({
+        image: body.image,
+        mode: body.mode,
+        source: body.source,
+        fableActive,
+        cacheScope: userId,
+      }),
     });
 
     sendOk(response.status(201), {
@@ -258,31 +281,38 @@ app.post('/v1/recipes/adapt', (request, response) => {
   response.json(payload);
 });
 
-app.get('/v1/recipes/:recipeId', (request, response) => {
-  const recipe = getRecipe(request.params.recipeId);
+app.get('/v1/recipes/:recipeId', createOwnedRecipeGetHandler({
+  getRepository: getScanRecipeRepository,
+  getEditorialRecipe: getRecipe,
+}));
 
-  if (!recipe) {
-    sendNotFound(response, 'recipe_not_found', 'Recipe was not found in mock data.');
-    return;
+app.post('/v1/recipes/:recipeId/save', async (request, response, next) => {
+  try {
+    const userId = getAuthenticatedUserId(request);
+    const recipe = await findOwnedOrEditorialRecipe({
+      userId,
+      recipeId: request.params.recipeId,
+      repository: getScanRecipeRepository(),
+      getEditorialRecipe: getRecipe,
+    });
+    if (!recipe) {
+      sendNotFound(response, 'recipe_not_found', 'Recipe was not found.');
+      return;
+    }
+    const library = await getScanRecipeRepository().listOwnedRecipes(userId);
+    sendOk(response, { saved: true, recipe, library });
+  } catch (error) {
+    next(error);
   }
-
-  sendOk(response, { recipe });
 });
 
-app.post('/v1/recipes/:recipeId/save', (request, response) => {
-  const recipe = getRecipe(request.params.recipeId);
-
-  if (!recipe) {
-    sendNotFound(response, 'recipe_not_found', 'Recipe was not found in mock data.');
-    return;
+app.get('/v1/library', async (request, response, next) => {
+  try {
+    const recipes = await getScanRecipeRepository().listOwnedRecipes(getAuthenticatedUserId(request));
+    sendOk(response, { recipes });
+  } catch (error) {
+    next(error);
   }
-
-  const library = saveRecipe(recipe);
-  sendOk(response, { saved: true, recipe, library });
-});
-
-app.get('/v1/library', (_request, response) => {
-  sendOk(response, { recipes: getLibrary() });
 });
 
 app.get('/v1/savings', (_request, response) => {
@@ -317,13 +347,20 @@ app.get('/v1/rankings/weekly', (_request, response) => {
 
 app.post('/v1/recipes/:recipeId/coaching', scanRateLimitMiddleware, async (request, response, next) => {
   try {
+    const recipe = await getScanRecipeRepository().findOwnedRecipe(
+      getAuthenticatedUserId(request),
+      request.params.recipeId,
+    );
+    if (!recipe) {
+      sendNotFound(response, 'recipe_not_found', 'Recipe not found or expired. Please scan again.');
+      return;
+    }
     if (!checkAndIncrementGlobalAiCap()) {
       sendError(response.status(429), 'ai_daily_cap_exceeded', "Okyo has reached its daily scan limit. Try again tomorrow.");
       return;
     }
-
     logCostEvent('coaching_cap_consumed', { recipeId: request.params.recipeId });
-    const result = await enrichRecipeCoaching(request.params.recipeId);
+    const result = await enrichRecipeCoaching(recipe);
     if (!result) {
       sendNotFound(response, 'recipe_not_found', 'Recipe not found or expired. Please scan again.');
       return;
@@ -374,10 +411,24 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
     return;
   }
 
+  if (
+    error instanceof PersistenceUnavailableError ||
+    error instanceof InvalidPersistedRecipeError ||
+    error instanceof SupabaseDatabaseConfigurationError
+  ) {
+    sendError(
+      response.status(503),
+      'persistence_unavailable',
+      'Recipe storage is temporarily unavailable. Please try again.',
+    );
+    return;
+  }
+
   sendError(response.status(500), 'internal_error', 'Unexpected API error.');
 });
 
 validateSupabaseAuthConfigAtStartup();
+validateSupabaseDatabaseConfigAtStartup();
 
 app.listen(port, () => {
   console.log(`Okyo API listening on http://localhost:${port}`);
@@ -391,6 +442,12 @@ app.listen(port, () => {
 function parseRequest<TSchema extends z.ZodTypeAny>(schema: TSchema, value: unknown): z.infer<TSchema> {
   return schema.parse(value);
 }
+
+function getScanRecipeRepository() {
+  scanRecipeRepository ??= createScanRecipeRepository(getScanRecipeDatabaseGateway());
+  return scanRecipeRepository;
+}
+
 
 function coerceRecipeForCheck(value: z.infer<typeof recipeCheckRecipeSchema>): Recipe {
   return value as unknown as Recipe;

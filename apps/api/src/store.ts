@@ -17,13 +17,11 @@ import type {
   XpEventDefinition,
 } from './types.js';
 
-// In-memory demo store — no DB yet, so cap growth to bound process memory
-// under repeated-request abuse. Oldest entries drop first (FIFO).
-const MAX_SAVED_RECIPES = 500;
+// In-memory demo state remains only for explicitly non-V1 challenge/XP data.
+// Generated recipes and their ownership are persisted in Supabase.
 const MAX_COMPLETED_CHALLENGES = 2000;
 const MAX_AWARDED_XP_EVENTS = 5000;
 
-const savedRecipes: Recipe[] = [];
 const completedChallenges: CompletedChallenge[] = [];
 const awardedXpEvents: AwardedXpEvent[] = [];
 
@@ -32,39 +30,6 @@ function pushBounded<T>(list: T[], item: T, maxSize: number): void {
   if (list.length > maxSize) {
     list.splice(0, list.length - maxSize);
   }
-}
-
-// Deferred coaching store: recipes awaiting on-demand coaching enrichment.
-// Keyed by recipe.id. TTL = 1 day (survives the typical user session).
-const GENERATED_RECIPE_TTL_MS = 24 * 60 * 60 * 1000;
-const GENERATED_RECIPE_MAX_ENTRIES = 2000;
-const generatedRecipeStore = new Map<string, { recipe: Recipe; expiresAt: number }>();
-
-export function storeGeneratedRecipe(recipe: Recipe): void {
-  generatedRecipeStore.set(recipe.id, { recipe, expiresAt: Date.now() + GENERATED_RECIPE_TTL_MS });
-
-  const now = Date.now();
-  for (const [key, entry] of generatedRecipeStore) {
-    if (entry.expiresAt <= now) {
-      generatedRecipeStore.delete(key);
-    }
-  }
-  if (generatedRecipeStore.size > GENERATED_RECIPE_MAX_ENTRIES) {
-    const overflow = generatedRecipeStore.size - GENERATED_RECIPE_MAX_ENTRIES;
-    const oldestKeys = [...generatedRecipeStore.keys()].slice(0, overflow);
-    for (const key of oldestKeys) {
-      generatedRecipeStore.delete(key);
-    }
-  }
-}
-
-export function getGeneratedRecipe(recipeId: string): Recipe | null {
-  const entry = generatedRecipeStore.get(recipeId);
-  if (!entry || Date.now() > entry.expiresAt) {
-    generatedRecipeStore.delete(recipeId);
-    return null;
-  }
-  return entry.recipe;
 }
 
 export function getScan(scanId: string) {
@@ -76,18 +41,6 @@ export function getRecipe(recipeId: string) {
     mockRecipes.find((recipe) => recipe.id === recipeId) ??
     mockRecipes.find((recipe) => recipe.id.startsWith(`${recipeId}-`))
   );
-}
-
-export function saveRecipe(recipe: Recipe) {
-  if (!savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id)) {
-    pushBounded(savedRecipes, recipe, MAX_SAVED_RECIPES);
-  }
-
-  return savedRecipes;
-}
-
-export function getLibrary() {
-  return [...savedRecipes];
 }
 
 export function createChallenge(input: {
@@ -138,16 +91,15 @@ export function awardXp(eventType: string, sourceId?: string) {
 }
 
 export function getSavingsSummary() {
-  const savedRecipeSavings = savedRecipes.reduce((total, recipe) => total + recipe.estimatedSavings, 0);
   const challengeSavings = completedChallenges.reduce((total, challenge) => total + challenge.moneySaved, 0);
-  const totalEstimatedSaved = savedRecipeSavings + challengeSavings;
-  const completedDupeCount = savedRecipes.length + completedChallenges.length;
+  const totalEstimatedSaved = challengeSavings;
+  const completedDupeCount = completedChallenges.length;
 
   return {
     totalEstimatedSaved,
-    savedRecipeSavings,
+    savedRecipeSavings: 0,
     challengeSavings,
-    savedRecipeCount: savedRecipes.length,
+    savedRecipeCount: 0,
     completedChallengeCount: completedChallenges.length,
     averageSavingsPerDupe: completedDupeCount > 0 ? totalEstimatedSaved / completedDupeCount : 0,
   };
