@@ -27,6 +27,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { OKYO_API_BASE_URL } from '../api/config';
+import { authenticatedFetch } from '../api/authenticatedClient';
 import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
@@ -341,7 +342,7 @@ export function RecipeDetailScreen() {
     }
 
     setCoachingLoading(true);
-    fetch(`${OKYO_API_BASE_URL}/v1/recipes/${recipe!.id}/coaching`, { method: 'POST' })
+    authenticatedFetch(`${OKYO_API_BASE_URL}/v1/recipes/${recipe!.id}/coaching`, { method: 'POST' })
       .then(async (res) => {
         if (res.ok) {
           const data = await res.json() as { ok: boolean; data?: { structuredSteps?: RecipeStep[] } };

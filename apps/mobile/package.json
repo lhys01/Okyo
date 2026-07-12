@@ -10,6 +10,7 @@
     "@react-navigation/native": "^7.2.4",
     "@react-navigation/native-stack": "^7.15.1",
     "@shopify/react-native-skia": "2.4.18",
+    "@supabase/supabase-js": "^2.100.0",
     "expo": "~55.0.0",
     "expo-blur": "~55.0.14",
     "expo-clipboard": "~55.0.13",
@@ -28,11 +29,13 @@
     "react-native-safe-area-context": "~5.6.2",
     "react-native-screens": "~4.23.0",
     "react-native-svg": "^15.15.3",
+    "react-native-url-polyfill": "^2.0.0",
     "react-native-view-shot": "4.0.3",
     "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "tsx": "^4.23.0",
     "typescript": "~5.9.2"
   },
   "scripts": {
@@ -40,7 +43,8 @@
     "sim": "expo start -c --host lan --port 8082",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test:auth": "node --import tsx --test src/auth/*.test.ts src/api/authenticatedFetch.test.ts"
   },
   "private": true
 }

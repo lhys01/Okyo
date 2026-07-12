@@ -1,4 +1,5 @@
 import { OKYO_API_BASE_URL } from './config';
+import { authenticatedFetch } from './authenticatedClient';
 import type { Recipe, RecipeQualityReport } from '../mocks';
 
 const recipeCheckTimeoutMs = 8000;
@@ -49,7 +50,7 @@ export async function checkRecipeQualityWithBackend(
   const timeout = setTimeout(() => controller.abort(), recipeCheckTimeoutMs);
 
   try {
-    const response = await fetch(`${OKYO_API_BASE_URL}/v1/recipes/check`, {
+    const response = await authenticatedFetch(`${OKYO_API_BASE_URL}/v1/recipes/check`, {
       body: JSON.stringify({ recipe, context }),
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',

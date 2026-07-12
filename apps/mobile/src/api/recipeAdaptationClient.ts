@@ -1,4 +1,5 @@
 import { OKYO_API_BASE_URL } from './config';
+import { authenticatedFetch } from './authenticatedClient';
 import type { Recipe } from '../mocks';
 import type { RecipeAdaptationGoal as LocalRecipeAdaptationGoal } from '../utils/makeItMine';
 
@@ -82,7 +83,7 @@ export async function adaptRecipeWithBackend(
   const backendGoal = backendGoalByLocalGoal[goal];
 
   try {
-    const response = await fetch(`${OKYO_API_BASE_URL}/v1/recipes/adapt`, {
+    const response = await authenticatedFetch(`${OKYO_API_BASE_URL}/v1/recipes/adapt`, {
       body: JSON.stringify({ recipe, goals: [backendGoal], context }),
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',

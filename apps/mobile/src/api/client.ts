@@ -1,4 +1,5 @@
 import { OKYO_API_BASE_URL, OKYO_API_TIMEOUT_MS, OKYO_DEV_MODEL_OVERRIDE } from './config';
+import { authenticatedFetch } from './authenticatedClient';
 import type { ApiResponse, CreateScanRequest, CreateScanResult } from './types';
 
 // Thrown for any non-2xx or `{ ok: false }` API response. `code` is the
@@ -30,7 +31,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   logApiRequest(path, requestBody, body);
 
   try {
-    const response = await fetch(`${OKYO_API_BASE_URL}${path}`, {
+    const response = await authenticatedFetch(`${OKYO_API_BASE_URL}${path}`, {
       body: requestBody,
       headers: getJsonHeaders(path),
       method: 'POST',
