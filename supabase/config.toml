@@ -1,0 +1,5 @@
+project_id = "pdaqegoiopdbclwmwtjv"
+
+[auth]
+enabled = true
+enable_anonymous_sign_ins = true
