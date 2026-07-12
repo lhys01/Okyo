@@ -14,8 +14,11 @@ import {
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, Share, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ImageBackground, Pressable, Share, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+// Design-first asset (see apps/mobile/assets/textures/README.md).
+const linenTexture = require('../../assets/textures/linen-warm.png');
 
 import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
@@ -400,6 +403,7 @@ type ScreenFrameProps = {
 function ScreenFrame({ children, onBack, rewardToast, showBack = true, subtitle, title }: ScreenFrameProps) {
   return (
     <SafeAreaView style={styles.safeArea}>
+      <ImageBackground resizeMode="repeat" source={linenTexture} style={styles.linenBackdrop}>
       <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
         <View style={styles.topBar}>
           {showBack ? (
@@ -421,6 +425,7 @@ function ScreenFrame({ children, onBack, rewardToast, showBack = true, subtitle,
         </View>
         {children}
       </ScrollView>
+      </ImageBackground>
       {rewardToast}
     </SafeAreaView>
   );
@@ -594,21 +599,11 @@ function SmartGrocerySummaryCard({ summary }: { summary: SmartGrocerySummary }) 
           <Text style={styles.smartSummaryBody}>{summary.subheadline}</Text>
         </View>
       </View>
-      <View style={styles.smartMetricRow}>
-        <SmartMetric label="Need to buy" value={summary.needToBuy.length} />
-        <SmartMetric label="Probably have" value={summary.probablyHave.length} />
-        <SmartMetric label="Swaps" value={summary.swaps.length} />
-      </View>
+      <Text style={styles.smartCountLine}>
+        {summary.needToBuy.length} to buy · {summary.probablyHave.length} probably in your pantry
+        {summary.swaps.length > 0 ? ` · ${summary.swaps.length} smart ${summary.swaps.length === 1 ? 'swap' : 'swaps'}` : ''}
+      </Text>
       {summary.savingsHint ? <Text style={styles.smartSavingsHint}>{summary.savingsHint}</Text> : null}
-    </View>
-  );
-}
-
-function SmartMetric({ label, value }: { label: string; value: number }) {
-  return (
-    <View style={styles.smartMetric}>
-      <Text style={styles.smartMetricValue}>{value}</Text>
-      <Text numberOfLines={1} style={styles.smartMetricLabel}>{label}</Text>
     </View>
   );
 }
@@ -1013,6 +1008,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     flex: 1,
   },
+  linenBackdrop: {
+    flex: 1,
+  },
   screenContent: {
     flexGrow: 1,
     paddingBottom: layout.scrollClearance,
@@ -1268,34 +1266,13 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 3,
   },
-  smartMetricRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 14,
-  },
-  smartMetric: {
-    backgroundColor: colors.cream,
-    borderRadius: 16,
-    flex: 1,
-    minWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-  },
-  smartMetricValue: {
-    color: colors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 20,
-    fontWeight: '800',
-    lineHeight: 24,
-    textAlign: 'center',
-  },
-  smartMetricLabel: {
-    color: colors.body,
+  smartCountLine: {
+    color: colors.muted,
     fontFamily: fontFamilies.bold,
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
-    marginTop: 2,
-    textAlign: 'center',
+    lineHeight: 19,
+    marginTop: 12,
   },
   smartSavingsHint: {
     color: colors.green,
@@ -1367,12 +1344,11 @@ const styles = StyleSheet.create({
     marginTop: 16,
     overflow: 'hidden',
   },
+  // Flat list group — the kitchen-list look: no card box, rows separated by
+  // hairlines directly on the linen backdrop.
   smartSectionCard: {
-    ...surfaces.panel,
-    marginTop: 14,
-    overflow: 'hidden',
-    paddingHorizontal: 14,
-    paddingTop: 14,
+    marginTop: 22,
+    paddingHorizontal: 4,
   },
   smartSectionHeader: {
     alignItems: 'center',

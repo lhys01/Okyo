@@ -8,17 +8,16 @@ import {
   Cart,
   Check,
   Clock,
-  FireFlame,
   Leaf,
   MoneySquare,
   NavArrowLeft,
   ShareAndroid,
   Spark,
-  User,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -64,7 +63,8 @@ import {
   type RecipeAdaptationOption,
 } from '../utils/makeItMine';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
-import { buildSmartGrocerySummary, type SmartGrocerySummary } from '../utils/smartGrocery';
+// Design-first asset (see apps/mobile/assets/art/guided-cooking/README.md).
+const celebrationArt = require('../../assets/art/guided-cooking/celebration-warm.png');
 import { useRecipeAdaptationPlan } from '../utils/useRecipeAdaptationPlan';
 import type { RecipeAdaptationPlan } from '../api/recipeAdaptationClient';
 import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
@@ -181,7 +181,6 @@ export function RecipeDetailScreen() {
     skillLevel: recipe?.difficulty,
     userGoal: onboardingGoal ?? undefined,
   });
-  const smartGrocerySummary = useMemo(() => buildSmartGrocerySummary(recipe), [recipe]);
   const adaptationOptions = useMemo(
     () => (recipe
       ? deriveAdaptationOptions(recipe, {
@@ -424,11 +423,9 @@ export function RecipeDetailScreen() {
               </Text>
             </View>
 
-            <View style={styles.quickStatsRow}>
-              <QuickStat label="Total Time" value={`${totalTime} min`} icon={<Clock color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
-              <QuickStat label="Difficulty" value={recipe.skillLevel ?? recipe.difficulty} icon={<FireFlame color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
-              <QuickStat label="Servings" value={`${recipe.servings}`} icon={<User color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
-            </View>
+            <Text style={styles.metaLine}>
+              {totalTime} min · {recipe.skillLevel ?? recipe.difficulty} · Serves {recipe.servings}
+            </Text>
 
             <Text style={styles.description}>{displayDescription}</Text>
 
@@ -439,13 +436,15 @@ export function RecipeDetailScreen() {
               <SecondaryIconAction icon={<ShareAndroid color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Share" onPress={openShareRecipe} />
             </View>
 
-            <SmartGroceryPreviewCard summary={smartGrocerySummary} onOpen={openGroceryList} />
-            <CookCoachReadyCard onStart={openCookingSteps} />
-
-            <View style={styles.modeSection}>
-              <Text style={styles.sectionSmallTitle}>Style: {getModeLabel(selectedMode)}</Text>
-              {strategyNote ? <Text style={styles.strategyNote}>{strategyNote}</Text> : null}
-            </View>
+            {strategyNote ? (
+              <View style={styles.kikoTipBlock}>
+                <KikoMascot animated="idle" pose="cooking" size={52} />
+                <View style={styles.kikoTipCopy}>
+                  <Text style={styles.kikoTipLabel}>{getModeLabel(selectedMode)} — Kiko's take</Text>
+                  <Text style={styles.kikoTipText}>{strategyNote}</Text>
+                </View>
+              </View>
+            ) : null}
 
             {qualityReport ? <RecipeQualityCard compact report={qualityReport} /> : null}
 
@@ -852,6 +851,7 @@ export function RecipeStepsScreen() {
 
           <ScrollView contentContainerStyle={styles.completionScrollContent} showsVerticalScrollIndicator={false}>
             <View style={styles.completionCard}>
+              <Image resizeMode="contain" source={celebrationArt} style={styles.completionArt} />
               <Text style={styles.completionEyebrow}>You made it.</Text>
               <FoodImage
                 fallbackLabel="Recipe image"
@@ -1235,24 +1235,6 @@ function getCookCoachTipToneStyle(tone: CookCoachTip['tone']) {
 }
 
 
-type QuickStatProps = {
-  icon: ReactNode;
-  label: string;
-  value: string;
-};
-
-function QuickStat({ icon, label, value }: QuickStatProps) {
-  return (
-    <View style={styles.quickStat}>
-      <View style={styles.quickStatIcon}>{icon}</View>
-      <Text adjustsFontSizeToFit minimumFontScale={0.78} numberOfLines={1} style={styles.quickStatValue}>
-        {value}
-      </Text>
-      <Text numberOfLines={1} style={styles.quickStatLabel}>{label}</Text>
-    </View>
-  );
-}
-
 type InfoCardProps = {
   children: ReactNode;
   title: string;
@@ -1264,66 +1246,6 @@ function InfoCard({ children, title }: InfoCardProps) {
       <Text style={styles.infoCardTitle}>{title}</Text>
       {children}
     </View>
-  );
-}
-
-function SmartGroceryPreviewCard({ onOpen, summary }: { onOpen: () => void; summary: SmartGrocerySummary }) {
-  const hasItems = summary.needToBuy.length + summary.probablyHave.length + summary.optional.length > 0;
-
-  if (!hasItems) {
-    return null;
-  }
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onOpen}
-      style={({ pressed }) => [styles.smartGroceryPreviewCard, pressed ? styles.pressed : null]}
-    >
-      <View style={styles.smartGroceryPreviewCopy}>
-        <Text style={styles.smartGroceryPreviewTitle}>Smart grocery preview</Text>
-        <Text style={styles.smartGroceryPreviewBody}>
-          Okyo separated what you likely need to buy from pantry basics.
-        </Text>
-        <View style={styles.smartGroceryPreviewStats}>
-          <SmartGroceryPreviewStat label="Need" value={summary.needToBuy.length} />
-          <SmartGroceryPreviewStat label="Probably have" value={summary.probablyHave.length} />
-          <SmartGroceryPreviewStat label="Swaps" value={summary.swaps.length} />
-        </View>
-      </View>
-      <View style={styles.smartGroceryPreviewAction}>
-        <Cart color={colors.coral} height={18} strokeWidth={2.2} width={18} />
-        <Text style={styles.smartGroceryPreviewActionText}>Open grocery list</Text>
-      </View>
-    </Pressable>
-  );
-}
-
-function SmartGroceryPreviewStat({ label, value }: { label: string; value: number }) {
-  return (
-    <View style={styles.smartGroceryPreviewStat}>
-      <Text style={styles.smartGroceryPreviewStatValue}>{value}</Text>
-      <Text numberOfLines={1} style={styles.smartGroceryPreviewStatLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function CookCoachReadyCard({ onStart }: { onStart: () => void }) {
-  return (
-    <PressableScale
-      accessibilityRole="button"
-      onPress={onStart}
-      style={styles.cookCoachReadyCard}
-    >
-      <View style={styles.cookCoachReadyIcon}>
-        <KikoMascot animated="idle" pose="cooking" size={42} />
-      </View>
-      <View style={styles.cookCoachReadyCopy}>
-        <Text style={styles.cookCoachReadyTitle}>Cook Coach ready</Text>
-        <Text style={styles.cookCoachReadyBody}>Timers, rescue tips, and visual cues are ready when you cook.</Text>
-      </View>
-      <Text style={styles.cookCoachReadyCta}>Start cooking</Text>
-    </PressableScale>
   );
 }
 
@@ -1573,7 +1495,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   recipePhoto: {
-    aspectRatio: 1.78,
+    aspectRatio: 1.15,
     backgroundColor: colors.cream,
     borderRadius: 32,
     justifyContent: 'center',
@@ -1642,38 +1564,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  quickStatsRow: {
-    flexDirection: 'row',
-    marginTop: 18,
-    paddingHorizontal: 4,
-    paddingVertical: 15,
-  },
-  quickStat: {
-    alignItems: 'center',
-    flex: 1,
-    minWidth: 0,
-    paddingHorizontal: 3,
-  },
-  quickStatIcon: {
-    height: 20,
-    marginBottom: 5,
-    width: 20,
-  },
-  quickStatValue: {
-    color: colors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 15,
-    fontWeight: '800',
-    lineHeight: 18,
-    textAlign: 'center',
-  },
-  quickStatLabel: {
+  metaLine: {
     color: colors.muted,
     fontFamily: fontFamilies.bold,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: '700',
-    marginTop: 2,
-    textAlign: 'center',
+    lineHeight: 20,
+    marginTop: 14,
   },
   description: {
     color: colors.charcoal,
@@ -1682,16 +1579,31 @@ const styles = StyleSheet.create({
     lineHeight: 27,
     marginTop: 18,
   },
-  modeSection: {
-    marginTop: 24,
-    paddingBottom: 16,
+  kikoTipBlock: {
+    ...surfaces.tint,
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 14,
+    marginTop: 20,
+    padding: 16,
   },
-  strategyNote: {
-    color: colors.muted,
-    fontFamily: fontFamilies.body,
+  kikoTipCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  kikoTipLabel: {
+    color: colors.coralDark,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 13,
+    fontWeight: '800',
     lineHeight: 18,
-    marginTop: 4,
+  },
+  kikoTipText: {
+    color: colors.body,
+    fontFamily: fontFamilies.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 3,
   },
   sectionSmallTitle: {
     color: colors.charcoal,
@@ -2055,112 +1967,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     textAlign: 'center',
-  },
-  smartGroceryPreviewCard: {
-    ...surfaces.panel,
-    gap: 14,
-    marginTop: 14,
-    padding: 16,
-  },
-  smartGroceryPreviewCopy: {
-    minWidth: 0,
-  },
-  smartGroceryPreviewTitle: {
-    color: colors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 17,
-    fontWeight: '800',
-    lineHeight: 22,
-  },
-  smartGroceryPreviewBody: {
-    color: colors.muted,
-    fontFamily: fontFamilies.body,
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 4,
-  },
-  smartGroceryPreviewStats: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  smartGroceryPreviewStat: {
-    backgroundColor: colors.cream,
-    borderRadius: 14,
-    flex: 1,
-    minWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-  },
-  smartGroceryPreviewStatValue: {
-    color: colors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 18,
-    fontWeight: '800',
-    lineHeight: 22,
-    textAlign: 'center',
-  },
-  smartGroceryPreviewStatLabel: {
-    color: colors.muted,
-    fontFamily: fontFamilies.bold,
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 2,
-    textAlign: 'center',
-  },
-  smartGroceryPreviewAction: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    gap: 6,
-  },
-  smartGroceryPreviewActionText: {
-    color: colors.coral,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  cookCoachReadyCard: {
-    ...surfaces.panel,
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 12,
-    padding: 14,
-  },
-  cookCoachReadyIcon: {
-    alignItems: 'center',
-    backgroundColor: colors.cream,
-    borderRadius: 999,
-    height: 54,
-    justifyContent: 'center',
-    width: 54,
-  },
-  cookCoachReadyCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  cookCoachReadyTitle: {
-    color: colors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 16,
-    fontWeight: '800',
-    lineHeight: 21,
-  },
-  cookCoachReadyBody: {
-    color: colors.muted,
-    fontFamily: fontFamilies.body,
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 2,
-  },
-  cookCoachReadyCta: {
-    color: colors.coral,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 13,
-    fontWeight: '800',
-    maxWidth: 82,
-    textAlign: 'right',
   },
   guidedScreenContent: {
     flex: 1,
@@ -2601,8 +2407,14 @@ const styles = StyleSheet.create({
   completionCard: {
     ...surfaces.card,
     alignItems: 'center',
+    backgroundColor: colors.cardWarm,
     borderRadius: radius.hero,
     padding: 22,
+  },
+  completionArt: {
+    height: 64,
+    marginBottom: 4,
+    width: '100%',
   },
   completionScrollContent: {
     flexGrow: 1,
