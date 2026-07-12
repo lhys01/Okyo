@@ -1,7 +1,7 @@
 # System Ownership Map
 
-Branch: `activation-audit-v1`  
-Date: 2026-06-17  
+Branch: `activation-audit-v1`
+Date: 2026-06-17
 Method: Code trace only. No prior reports trusted.
 
 ---
@@ -57,7 +57,7 @@ startScan('camera', await copyToDocuments(cameraImage))      [ScanScreen.tsx ~L2
 startScan('photos', await copyToDocuments(photosImage))      [ScanScreen.tsx ~L285]
 ```
 
-**Owner at this point**: Documents has the scan image. Cache URI is abandoned.  
+**Owner at this point**: Documents has the scan image. Cache URI is abandoned.
 **IMPORTANT**: `copyToDocuments` runs BEFORE `beginLatestScanSession` is called inside `startScan`. So the Documents file is created first, then the session begins.
 
 ---
@@ -100,7 +100,7 @@ API response received                                         [ScanScreen.tsx ~L
   → navigation.navigate('ResultSummaryScreen')
 ```
 
-**Owner at this point**: Store.selectedScanImage.uri = Documents URI.  
+**Owner at this point**: Store.selectedScanImage.uri = Documents URI.
 All 3 recipes have `.image.uri` = Documents URI (via `attachScanImageUri`).
 
 ---
@@ -136,7 +136,7 @@ User taps save button → saveRecipe(recipe)                   [ResultSummaryScr
       → returns { ...recipe, imageUri: documentsUri, imageStatus:'ready' }
 ```
 
-**Owner at this point**: `recipe.imageUri` = Documents URI.  
+**Owner at this point**: `recipe.imageUri` = Documents URI.
 This URI is the canonical save-time snapshot. It never changes unless recipe is re-saved.
 
 ---

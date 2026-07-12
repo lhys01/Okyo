@@ -1,6 +1,6 @@
 # Final Production Decision
 
-Branch: `activation-audit-v1`  
+Branch: `activation-audit-v1`
 Date: 2026-06-18
 
 ---
@@ -132,14 +132,14 @@ const startOnboardingScan = async (source: ScanSource, image?: ScanImageMetadata
 
 ## What Passes
 
-All 9 attack loops from the first audit pass.  
+All 9 attack loops from the first audit pass.
 All 10 attack loops from this audit pass, except:
 - Loop 1 (partial): Real-photo onboarding scan has cache URI bug
 - Loop 6 (partial): Env var fix has a silent failure mode (addressed by dev warning)
 
 All ownership invariants hold for the main scan flow:
 - Scan session guard prevents crossover ✓
-- Image ownership is deterministic ✓  
+- Image ownership is deterministic ✓
 - Saved recipes retain their image URI ✓
 - Cleanup fires correctly ✓
 

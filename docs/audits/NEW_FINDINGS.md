@@ -1,7 +1,7 @@
 # New Findings — Second Production Review
 
-Branch: `activation-audit-v1`  
-Date: 2026-06-18  
+Branch: `activation-audit-v1`
+Date: 2026-06-18
 Method: Independent code re-read. Prior audit conclusions treated as unverified. No finding marked PASS without code evidence.
 
 ---
@@ -25,7 +25,7 @@ All 10 attack loops run against fresh code reads. Every claim from previous audi
 - Network unavailable: `handleDemoScanWithoutApi()` fires → mock recipe rendered from `getSafeRecipeForMode()`
 - Demo scan never needs `copyToDocuments` (placeholder flag guards it) ✓
 
-**Survives**: YES  
+**Survives**: YES
 **Finding**: None for demo path. Real image path has new HIGH (see Loop 3).
 
 ---
@@ -51,7 +51,7 @@ In WelcomeScreen (`startOnboardingScan` catch block at line 275-307):
 - `source === 'camera'` or `'photos'` → sets `scanError`, returns to scan step → user can retry ✓
 - `source === 'mock'` → `handleDemoScanWithoutApi()` → shows demo recipe without API ✓
 
-**Survives**: YES  
+**Survives**: YES
 **Finding**: None. Offline failure is handled gracefully in both scan paths.
 
 ---
@@ -80,7 +80,7 @@ Zustand persist without a version:
 
 **Risk**: A field type change between versions could produce unexpected runtime behavior. For the CURRENT first launch, there are no prior versions — not an issue. For future versions, a `version` + `migrate` function should be added.
 
-**Survives**: YES (for first launch)  
+**Survives**: YES (for first launch)
 **Finding**: LOW — no `migrate` function is acceptable for v1, but should be added before v2 ships.
 
 ---
@@ -99,7 +99,7 @@ Zustand persist without a version:
 
 No error boundary needed — Zustand handles this internally.
 
-**Survives**: YES  
+**Survives**: YES
 **Finding**: None.
 
 ---
@@ -117,7 +117,7 @@ No error boundary needed — Zustand handles this internally.
 - `FoodImage` component renders Spark icon fallback ✓
 - No crash. Graceful fallback. ✓
 
-**Survives**: YES  
+**Survives**: YES
 **Finding**: None.
 
 ---
@@ -128,7 +128,7 @@ No error boundary needed — Zustand handles this internally.
 
 **Expected**: Production URL used.
 
-**Actual**: 
+**Actual**:
 - No `.env` file → `process.env.EXPO_PUBLIC_OKYO_API_URL` is `undefined` at build time
 - `undefined ?? 'http://192.168.2.42:8081'` → fallback used
 - Production app hits `http://192.168.2.42:8081` → 100% network failures
@@ -158,7 +158,7 @@ No error boundary needed — Zustand handles this internally.
 - Real image scan fails → error shown → user can retry on scan step ✓
 - Demo scan: `handleDemoScanWithoutApi()` → local mock data shown ✓
 
-**Survives**: YES  
+**Survives**: YES
 **Finding**: None. API outage handled gracefully.
 
 ---
@@ -194,7 +194,7 @@ const fallbackResult = uploadedImage
 - Demo scan + OpenRouter down → mock data returned ✓
 - Correct behavior: never shows mock pasta result for a failed real scan ✓
 
-**Survives**: YES  
+**Survives**: YES
 **Finding**: None. OpenRouter outage handled correctly per CLAUDE.md rules.
 
 ---
@@ -217,7 +217,7 @@ Any real food photo at 400px/0.28 quality → `dataUrl.length < 12,000,000` → 
 
 **Memory during compression**: `ImageManipulator.manipulateAsync` runs natively — doesn't block JS thread. Memory usage is transient.
 
-**Survives**: YES  
+**Survives**: YES
 **Finding**: None.
 
 ---
@@ -252,7 +252,7 @@ After 100 scans:
 - `latestScanSession`: bounded (~24KB latest only)
 - Total: well within acceptable limits
 
-**Survives**: YES  
+**Survives**: YES
 **Finding**: None specific to this loop.
 
 ---
@@ -263,7 +263,7 @@ After 100 scans:
 
 ### NEW HIGH — Onboarding Scan Images Stored in Cache, Not Documents
 
-**Discovery method**: Direct code trace of `WelcomeScreen.startOnboardingScan()`.  
+**Discovery method**: Direct code trace of `WelcomeScreen.startOnboardingScan()`.
 **Previously undetected because**: Prior audits only traced the `ScanScreen` path. `WelcomeScreen` was not audited for image persistence.
 
 **Evidence** (from code, not assumptions):
@@ -404,7 +404,7 @@ Yes — `tryDemoScan()` uses `createDemoImage()` (placeholder). Demo path is saf
 
 **So the bug only affects users who scan a real photo.** This is a large portion of engaged users (the ones who photograph an actual meal).
 
-**Is the cache URI actually unreliable?**  
+**Is the cache URI actually unreliable?**
 iOS documentation: "The system may clear cache data when more storage space is needed by the system." In practice, iOS background app refresh kills process state but does NOT immediately evict cache files on restart. However, iOS can evict cache files:
 - When storage is low (< 1GB free)
 - During system updates
@@ -417,10 +417,10 @@ iOS documentation: "The system may clear cache data when more storage space is n
 
 ### Round 2: Challenge the CRITICAL finding (API URL)
 
-**Is `process.env.EXPO_PUBLIC_OKYO_API_URL` correctly supported in SDK 55?**  
+**Is `process.env.EXPO_PUBLIC_OKYO_API_URL` correctly supported in SDK 55?**
 Verified: Expo SDK 49+ introduced `EXPO_PUBLIC_*` env vars. SDK 55 fully supports them. No additional config in `app.json` required. ✓
 
-**Could the `??` operator fail?**  
+**Could the `??` operator fail?**
 `??` is nullish coalescing — handles `undefined` and `null`. Metro/Babel supports it. Node.js 14+/Hermes supports it. ✓
 
 **Does it work correctly at build time vs runtime?**
@@ -434,5 +434,5 @@ Screens that call the API:
 3. Any others?
 
 ```bash
-grep -rn "createMockScan\|createAiScan" apps/mobile/src/ 
+grep -rn "createMockScan\|createAiScan" apps/mobile/src/
 ```

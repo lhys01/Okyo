@@ -1,7 +1,7 @@
 # Updated Risk Ranking
 
-Branch: `activation-audit-v1`  
-Date: 2026-06-18  
+Branch: `activation-audit-v1`
+Date: 2026-06-18
 Supersedes: TOP_10_RISKS.md
 
 ---
@@ -41,9 +41,9 @@ All previous findings re-verified independently from code. No previous findings 
 
 ### C1: Hardcoded local IP as API URL
 
-**File**: `apps/mobile/src/api/config.ts:1`  
-**Code**: `export const OKYO_API_BASE_URL = 'http://192.168.2.42:8081';`  
-**Breaks**: All production scans for all users  
+**File**: `apps/mobile/src/api/config.ts:1`
+**Code**: `export const OKYO_API_BASE_URL = 'http://192.168.2.42:8081';`
+**Breaks**: All production scans for all users
 **Fix**: `process.env.EXPO_PUBLIC_OKYO_API_URL ?? 'http://192.168.2.42:8081'`
 
 ---
@@ -71,7 +71,7 @@ All previous findings re-verified independently from code. No previous findings 
 
 **Why missed**: Previous audit only traced `ScanScreen`. `WelcomeScreen` has its own separate scan path with similar structure but missing the Documents copy step.
 
-**Fix**: 
+**Fix**:
 1. Extract `copyToDocuments` from `ScanScreen.tsx` to `apps/mobile/src/utils/scanImageStorage.ts`
 2. Import and call it in `WelcomeScreen.startOnboardingScan()` before `beginLatestScanSession`
 

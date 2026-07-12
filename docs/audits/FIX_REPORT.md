@@ -1,6 +1,6 @@
 # Fix Report
 
-Branch: `scan-realism-v2`  
+Branch: `scan-realism-v2`
 Fixes applied after: BREAK_REPORT.md
 
 ---

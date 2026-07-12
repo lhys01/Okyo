@@ -1,14 +1,14 @@
 # Scale Failure Report
 
-Branch: `activation-audit-v1`  
-Date: 2026-06-17  
+Branch: `activation-audit-v1`
+Date: 2026-06-17
 Method: Reason through actual code paths. No estimates — follow the data.
 
 ---
 
 ## Simulation Setup
 
-Each "scan" = user opens ScanScreen, picks an image, scan succeeds.  
+Each "scan" = user opens ScanScreen, picks an image, scan succeeds.
 Baseline: 1 save per 5 scans (conservative power user).
 
 ---
@@ -135,7 +135,7 @@ For a normal user (1 scan/day, 20% save rate):
 - After 1 year (365 scans, 73 saves): **~590KB total** — no issue
 - After 3 years (1,095 scans, 219 saves): **~1.8MB total** — no issue
 
-**Result at realistic scale: PASS**  
+**Result at realistic scale: PASS**
 **Result at extreme scale (10K scans + 2K saves): MEDIUM** — startup degradation
 
 ### `awardedXpEvents.includes()` (O(n)) at 20,000 entries

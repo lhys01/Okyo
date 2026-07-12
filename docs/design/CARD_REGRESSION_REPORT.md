@@ -1,7 +1,7 @@
 # Card Regression Report — Okyo Mobile
 
-**Audit Date:** 2026-06-18  
-**Auditor:** Staff Engineer (Hostile Review)  
+**Audit Date:** 2026-06-18
+**Auditor:** Staff Engineer (Hostile Review)
 **Status:** INVESTIGATING
 
 ---
@@ -49,27 +49,27 @@
 
 ### Finding 1: KitchenLetterScreen.tsx closeButton still has shadow
 
-**Line:** 119  
-**Issue:** `...shadows.card` spread still present  
+**Line:** 119
+**Issue:** `...shadows.card` spread still present
 **Status:** ⚠ Should be removed (button doesn't need card shadow)
 
 ### Finding 2: LibraryScreen.tsx searchBox shadow removed but elevation not checked
 
-**Line:** 581  
-**Change:** shadowColor/shadowOpacity/shadowRadius removed ✓  
+**Line:** 581
+**Change:** shadowColor/shadowOpacity/shadowRadius removed ✓
 **Status:** ✓ VERIFIED
 
 ### Finding 3: ScanScreen and WelcomeScreen marked modified in git status
 
-**Files:** apps/mobile/src/screens/ScanScreen.tsx, apps/mobile/src/screens/WelcomeScreen.tsx  
-**Status:** ⚠ MODIFIED BUT PRE-EXISTING (from commits a5d565f, earlier)  
-**Finding:** Changes are from PREVIOUS commits, NOT this card removal session  
+**Files:** apps/mobile/src/screens/ScanScreen.tsx, apps/mobile/src/screens/WelcomeScreen.tsx
+**Status:** ⚠ MODIFIED BUT PRE-EXISTING (from commits a5d565f, earlier)
+**Finding:** Changes are from PREVIOUS commits, NOT this card removal session
 **Verdict:** ✓ NOT A VIOLATION
 
 ### Finding 4: MainTabs and ShareCardPreviewScreen modified
 
-**Status:** ⚠ MODIFIED BUT PRE-EXISTING  
-**Finding:** Changes are navigation/image logic from previous commits, NOT card removal  
+**Status:** ⚠ MODIFIED BUT PRE-EXISTING
+**Finding:** Changes are navigation/image logic from previous commits, NOT card removal
 **Verdict:** ✓ NOT A VIOLATION
 
 ---

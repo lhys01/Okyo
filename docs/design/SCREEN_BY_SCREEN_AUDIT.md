@@ -1,7 +1,7 @@
 # Screen-by-Screen Audit — Okyo Mobile Card Removal
 
-**Date:** 2026-06-18  
-**Auditor:** Hostile Review  
+**Date:** 2026-06-18
+**Auditor:** Hostile Review
 
 ---
 

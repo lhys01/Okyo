@@ -811,6 +811,12 @@ export function validateRecipeStructure(output: OpenRouterRecipeOutput): string[
     const instruction = (step.step || step.instruction || step.text || '').trim();
     if (!instruction) issues.push('step_missing_instruction');
     if (!(step.title || '').trim()) issues.push('step_missing_title');
+    if (!nonEmpty(step.ingredients) && !nonEmpty(step.ingredientsUsed)) {
+      issues.push('step_missing_ingredients');
+    }
+    if (!nonEmpty(step.tools) && !nonEmpty(step.toolsUsed)) {
+      issues.push('step_missing_tools');
+    }
   }
 
   const numbers = steps.map((step) =>

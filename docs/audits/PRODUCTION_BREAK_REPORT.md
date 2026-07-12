@@ -1,7 +1,7 @@
 # Production Break Report — Attack Loops A-I
 
-Branch: `activation-audit-v1`  
-Date: 2026-06-17  
+Branch: `activation-audit-v1`
+Date: 2026-06-17
 Method: 9 attack loops. All prior audit conclusions treated as unverified. Code only.
 
 ---
@@ -64,9 +64,9 @@ saveRecipe: (recipe) => set((state) => {
 
 Recipe A has `id = 'recipe-abc'`, Recipe B has `id = 'recipe-xyz'`. They cannot collide unless they have the same ID.
 
-**Starter recipe ID uniqueness check** (from previous fix):  
-IDs now include `scanSessionId.slice(-8)` — 8-char suffix with ~2B entropy.  
-Same dish scanned twice → `scan-starter-chicken-tikka-masala-restaurant-copy-a1b2c3d4` vs `scan-starter-chicken-tikka-masala-restaurant-copy-e5f6g7h8`.  
+**Starter recipe ID uniqueness check** (from previous fix):
+IDs now include `scanSessionId.slice(-8)` — 8-char suffix with ~2B entropy.
+Same dish scanned twice → `scan-starter-chicken-tikka-masala-restaurant-copy-a1b2c3d4` vs `scan-starter-chicken-tikka-masala-restaurant-copy-e5f6g7h8`.
 **IDs are distinct.** ✓
 
 **Result: PASS** — Recipe IDs are unique per scan session.
@@ -184,7 +184,7 @@ const response = await fetch(`${OKYO_API_BASE_URL}${path}`, {
 - `writeLatestScanSession({ latestScanStatus: 'failed', latestScanFailure: ... })`
 - ResultSummaryScreen shows failure state → user can retry
 
-**Documents file**: Created BEFORE the API call. On failure, the Documents file remains.  
+**Documents file**: Created BEFORE the API call. On failure, the Documents file remains.
 Does `clearLatestScan` get called? Only if user navigates away. If user retries immediately (same scan session), the old Documents file is the `outgoingScanImageUri` captured on the next `beginLatestScanSession` → gets cleaned up. ✓
 
 **LOW finding**: If network fails AND user force-quits the app without navigating:
@@ -256,7 +256,7 @@ const imageUri = getRecipeImageUrl(cardRecipe, scanContext.image?.uri);
 
 ## Conclusion
 
-No new image ownership, recipe ownership, or persistence bugs found.  
-All attack loops pass.  
-The critical production failure (hardcoded IP) is a deployment configuration error, not a logic error in the scan system.  
+No new image ownership, recipe ownership, or persistence bugs found.
+All attack loops pass.
+The critical production failure (hardcoded IP) is a deployment configuration error, not a logic error in the scan system.
 The scan/image/ownership system is sound.

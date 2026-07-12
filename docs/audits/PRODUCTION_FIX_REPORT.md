@@ -1,7 +1,7 @@
 # Production Fix Report
 
-Branch: `activation-audit-v1`  
-Fixes applied after: PRODUCTION_BREAK_REPORT.md + TOP_10_RISKS.md  
+Branch: `activation-audit-v1`
+Fixes applied after: PRODUCTION_BREAK_REPORT.md + TOP_10_RISKS.md
 Date: 2026-06-17
 
 ---
@@ -29,7 +29,7 @@ export const OKYO_API_BASE_URL = process.env.EXPO_PUBLIC_OKYO_API_URL ?? 'http:/
 EXPO_PUBLIC_OKYO_API_URL=http://192.168.2.42:8081
 ```
 
-**How it works**  
+**How it works**
 Expo SDK 55 reads `EXPO_PUBLIC_*` variables from `.env`, `.env.local`, `.env.production` at build time and inlines them into the JS bundle. `process.env.EXPO_PUBLIC_OKYO_API_URL` resolves to the string at build time. The fallback `'http://192.168.2.42:8081'` is retained so existing dev setups (with no `.env` file) continue to work without changes.
 
 **Production deployment steps**:

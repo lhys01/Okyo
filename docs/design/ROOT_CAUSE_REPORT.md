@@ -1,6 +1,6 @@
 # Root Cause Report — Text Rendering Issues
-**Date:** 2026-06-18  
-**Auditor:** Hostile Staff Engineer  
+**Date:** 2026-06-18
+**Auditor:** Hostile Staff Engineer
 
 ---
 

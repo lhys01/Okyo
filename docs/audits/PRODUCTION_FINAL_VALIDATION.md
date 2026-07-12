@@ -1,6 +1,6 @@
 # Production Final Validation
 
-Branch: `activation-audit-v1`  
+Branch: `activation-audit-v1`
 Run after: PRODUCTION_FIX_REPORT.md applied + TypeScript verified clean
 
 ---
@@ -25,7 +25,7 @@ Run after: PRODUCTION_FIX_REPORT.md applied + TypeScript verified clean
 
 ### C1: API URL
 
-**Before**: `export const OKYO_API_BASE_URL = 'http://192.168.2.42:8081';`  
+**Before**: `export const OKYO_API_BASE_URL = 'http://192.168.2.42:8081';`
 **After**: `export const OKYO_API_BASE_URL = process.env.EXPO_PUBLIC_OKYO_API_URL ?? 'http://192.168.2.42:8081';`
 
 | Scenario | Expected | Status |
@@ -42,7 +42,7 @@ Run after: PRODUCTION_FIX_REPORT.md applied + TypeScript verified clean
 
 ### M1: `awardedXpEvents` cap
 
-**Before**: Array grows indefinitely.  
+**Before**: Array grows indefinitely.
 **After**: `newEvents.length > 5000 ? newEvents.slice(-5000) : newEvents`
 
 | Scenario | Expected | Status |
@@ -89,7 +89,7 @@ Run after: PRODUCTION_FIX_REPORT.md applied + TypeScript verified clean
 
 ## Single Most Likely Failure After Launch
 
-**Before fix**: `http://192.168.2.42:8081` causes 100% scan failure for all production users.  
+**Before fix**: `http://192.168.2.42:8081` causes 100% scan failure for all production users.
 **After fix**: No issue causes immediate failure at launch scale.
 
 The next most likely failure after the API URL fix would be the AI daily cap (200 calls/day) being exhausted on a busy launch day, causing `ai_daily_cap_exceeded` for users after the 200th real AI scan. This is visible in cost event logs and the cap is configurable via `AI_DAILY_REQUEST_CAP` in `.env`.

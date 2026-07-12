@@ -61,10 +61,10 @@ test('does not invent restaurant price when a photo has no visible price', () =>
   assert.equal(analysis.homemadeCostEstimate, 8);
 });
 
-test('keeps broad possible dish names for uncertain food', () => {
+test('keeps relevant possible dish names and drops generic alternatives for uncertain food', () => {
   const analysis = normalizeVisionOutput({
     dishName: 'charred grill plate',
-    possibleDishNames: ['mixed restaurant plate', 'grilled meat plate', 'loaded sandwich'],
+    possibleDishNames: ['mixed restaurant plate', 'grilled meat plate', 'grilled chicken plate'],
     scanState: 'food_present_uncertain_dish',
     broadDishCategory: 'grilled meat',
     cuisine: 'Restaurant-style',
@@ -88,8 +88,8 @@ test('keeps broad possible dish names for uncertain food', () => {
 
   assert.deepEqual(analysis.possibleDishNames.slice(0, 3), [
     'Charred Grill Plate',
-    'Mixed Restaurant Plate',
     'Grilled Meat Plate',
+    'Grilled Chicken Plate',
   ]);
 });
 

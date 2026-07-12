@@ -1,7 +1,7 @@
 # Okyo Scan Realism & Image Persistence Audit Report
 
-Branch: `scan-realism-v2`  
-Scope: Scan image persistence, ownership, screen realism, fallback honesty  
+Branch: `scan-realism-v2`
+Scope: Scan image persistence, ownership, screen realism, fallback honesty
 Prohibited: Onboarding redesign, RevenueCat, navigation structure, AI/OpenRouter logic
 
 ---
@@ -26,7 +26,7 @@ Prohibited: Onboarding redesign, RevenueCat, navigation structure, AI/OpenRouter
 
 ### Critical (Pre-Fix)
 
-**C1 — Cold restart wipes food photos**  
+**C1 — Cold restart wipes food photos**
 File: `screens/ScanScreen.tsx`
 
 `expo-image-manipulator` writes compressed images to `NSCachesDirectory`. iOS may clear this directory when the app is terminated or under memory pressure, wiping the user's scan image URI permanently. On cold restart, `selectedScanImage.uri` pointed to a non-existent file.
@@ -35,7 +35,7 @@ Status: **FIXED** — `copyToDocuments()` now copies the image to `NSDocumentDir
 
 ---
 
-**C2 — Scan session contamination (Recipe A shows Recipe B's image)**  
+**C2 — Scan session contamination (Recipe A shows Recipe B's image)**
 File: `state/useOkyoStore.ts`, `screens/LibraryScreen.tsx`, `screens/HomeScreen.tsx`
 
 `writeSavedRecipeContext()` previously preserved `latestScanSession` when opening a saved recipe. On `RecipeDetailScreen`, `getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage))` resolves the image. If a prior scan session was still in state, its `selectedScanImage` (e.g. a photo of a burger) would render on a saved pasta recipe. The user's most recent scan photo contaminated every saved recipe opened from Library/Home.
@@ -46,7 +46,7 @@ Status: **FIXED** — `writeSavedRecipeContext()` now writes `latestScanSession:
 
 ### High (Pre-Fix)
 
-**H1 — Recipes in scan session not stamped with imageUri**  
+**H1 — Recipes in scan session not stamped with imageUri**
 File: `state/useOkyoStore.ts`
 
 `writeLatestScanSession()` stored `latestScanRecipes` without stamping `imageUri` on each recipe. When `RecipeDetailScreen` read `recipe.imageUri`, it was undefined. The screen fell through to `selectedScanImage` fallback, which worked only while the scan session was active — failing after any navigation that cleared the session.
@@ -55,7 +55,7 @@ Status: **FIXED** — `createLatestScanSession()` calls `attachScanImageUri(reci
 
 ---
 
-**H2 — Saved recipes not stamped with imageUri at save time**  
+**H2 — Saved recipes not stamped with imageUri at save time**
 File: `screens/RecipeDetailScreen.tsx`
 
 `saveRecipe(recipe)` was called without attaching the scan image URI. Saved recipes had no `imageUri`. After a cold restart or after `writeSavedRecipeContext()` cleared `selectedScanImage`, the recipe image was permanently lost.
@@ -64,7 +64,7 @@ Status: **FIXED** — Save call is now `saveRecipe(attachRealScanImage(recipe, s
 
 ---
 
-**H3 — AnalysisLoadingScreen showed no user food photo**  
+**H3 — AnalysisLoadingScreen showed no user food photo**
 File: `screens/AnalysisLoadingScreen.tsx`
 
 The loading screen showed Kiko mascot + progress steps only. The user's food photo was in state (`selectedScanImage`) before the screen rendered, but was never displayed. The product felt disconnected — the user couldn't verify their photo was being processed.
@@ -75,7 +75,7 @@ Status: **FIXED** — A 96×96 food photo thumbnail is now shown below the Kiko 
 
 ### Medium (Pre-Fix)
 
-**M1 — ShareCardPreviewScreen: missing placeholder guard**  
+**M1 — ShareCardPreviewScreen: missing placeholder guard**
 File: `screens/ShareCardPreviewScreen.tsx`
 
 `imageUri: shareImage?.uri ? shareImage.uri : getRecipeImageUri(cardRecipe)` did not check `shareImage.placeholder`. A placeholder URI (used in demo scans) could silently resolve as a real URI, or an undefined path could break the native `<Image>` component.
@@ -84,7 +84,7 @@ Status: **FIXED** — All five card types now use `(!shareImage?.placeholder && 
 
 ---
 
-**M2 — ResultSummaryScreen: savings hidden on real scans**  
+**M2 — ResultSummaryScreen: savings hidden on real scans**
 File: `screens/ResultSummaryScreen.tsx`
 
 `canShowSavings = isDemoScan || userRestaurantPrice !== null`. For real scans, `isDemoScan = false` and `userRestaurantPrice = null` (empty text input). Savings were hidden until the user manually typed a price, even when the AI scan result included a `restaurantPrice`.
@@ -93,7 +93,7 @@ Status: **FIXED** — `restaurantPriceInput` is pre-filled with `scanResult.rest
 
 ---
 
-**M3 — ResultSummaryScreen: identical kicker regardless of scan confidence**  
+**M3 — ResultSummaryScreen: identical kicker regardless of scan confidence**
 File: `screens/ResultSummaryScreen.tsx`
 
 The kicker text previously said "Okyo understood your food" for all scan outcomes including low-confidence or partial results, creating false certainty.
@@ -102,7 +102,7 @@ Status: **FIXED** — Kicker is now confidence-aware: `isUncertainResult ? 'Okyo
 
 ---
 
-**M4 — ResultSummaryScreen: misleading dish name confirmNote**  
+**M4 — ResultSummaryScreen: misleading dish name confirmNote**
 File: `screens/ResultSummaryScreen.tsx`
 
 The `confirmNote` text said "Using this guess for the recipe shown below", implying that editing the dish name would regenerate the recipe. It does not — `dishNameOverride` is local UI state only.
@@ -113,7 +113,7 @@ Status: **FIXED** — Copy now reads "Edit if the name is off. Recipe content fo
 
 ### Low (Remaining)
 
-**L1 — `getStorageLocation()` misclassifies iOS simulator Documents paths**  
+**L1 — `getStorageLocation()` misclassifies iOS simulator Documents paths**
 File: `utils/imageValidation.ts`
 
 iOS simulator Documents paths resolve as `/private/var/mobile/Containers/...` (with the `/private` prefix) rather than `/var/mobile/...`. `getStorageLocation()` checks for `FileSystem.documentDirectory` which starts without `/private`. Valid permanent URIs on the simulator are reported as `'unknown'` instead of `'documents'` in trace logs.
@@ -122,14 +122,14 @@ Status: **Open** — Does not affect functionality. Trace logs will show `storag
 
 ---
 
-**L2 — Legacy saved recipes missing imageUri**  
+**L2 — Legacy saved recipes missing imageUri**
 All saved recipes in AsyncStorage from before `attachRealScanImage()` was introduced have no `imageUri`. These recipes show a spark icon fallback when opened from Library/Home.
 
 Status: **Open (low priority)** — Only affects dev installs during development. Production users will not have legacy data. No migration needed for launch.
 
 ---
 
-**L3 — HomeScreen recent timeline has no per-item image trace**  
+**L3 — HomeScreen recent timeline has no per-item image trace**
 File: `screens/HomeScreen.tsx`
 
 Timeline recipe rows call `getRecipeImageUrl(recipe)` with no fallback and no `imageTraceLog()`. Image source is untraceable for individual timeline items.

@@ -1,7 +1,7 @@
 # Text Rendering Audit — Okyo Mobile
-**Date:** 2026-06-18  
-**Auditor:** Hostile Staff Engineer  
-**Scope:** All screens, shared components, theme system  
+**Date:** 2026-06-18
+**Auditor:** Hostile Staff Engineer
+**Scope:** All screens, shared components, theme system
 
 ---
 

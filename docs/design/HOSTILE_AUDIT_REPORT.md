@@ -1,7 +1,7 @@
 # Hostile Audit Report — Text Rendering Fixes
-**Date:** 2026-06-18  
-**Auditor:** Hostile Staff Engineer  
-**Required:** 5 loops minimum, 2 consecutive clean passes  
+**Date:** 2026-06-18
+**Auditor:** Hostile Staff Engineer
+**Required:** 5 loops minimum, 2 consecutive clean passes
 
 ---
 

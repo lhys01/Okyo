@@ -1,8 +1,8 @@
 # Design Violations Report — Card Removal Implementation
 
-**Date:** 2026-06-18  
-**Auditor:** Hostile Staff Review  
-**Severity:** MEDIUM  
+**Date:** 2026-06-18
+**Auditor:** Hostile Staff Review
+**Severity:** MEDIUM
 
 ---
 
@@ -96,8 +96,8 @@ a5d565f Polish recipe flow and food image UI    ← BEFORE this session
 |---|---|---|---|---|---|
 | Unnecessary shadow | KitchenLetterScreen | 119 | Design inconsistency | MEDIUM | Remove `...shadows.card` |
 
-**Total Violations:** 1  
-**Total Pre-existing (not violations):** 0  
+**Total Violations:** 1
+**Total Pre-existing (not violations):** 0
 
 ---
 

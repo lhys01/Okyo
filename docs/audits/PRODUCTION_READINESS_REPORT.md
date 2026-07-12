@@ -1,7 +1,7 @@
 # Production Readiness Report
 
-Branch: `activation-audit-v1`  
-Date: 2026-06-17  
+Branch: `activation-audit-v1`
+Date: 2026-06-17
 Scope: Mobile app + API backend. No redesigns. Code inspection only.
 
 ---

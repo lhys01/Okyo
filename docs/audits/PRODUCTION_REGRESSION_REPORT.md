@@ -1,7 +1,7 @@
 # Production Regression Report
 
-Branch: `activation-audit-v1`  
-Date: 2026-06-17  
+Branch: `activation-audit-v1`
+Date: 2026-06-17
 Scope: Regression check for all changes made across scan-realism-v2 and activation-audit-v1 branches.
 
 ---
@@ -91,7 +91,7 @@ No regressions. The cap is unreachable for any real user in the foreseeable futu
 - `removeSavedRecipe()` → deletes recipe's Documents image + removes from array. Safe.
 - `beginLatestScanSession()` → replaces scan session + deletes previous unsaved image. Safe.
 
-**Could any data be lost silently?**  
+**Could any data be lost silently?**
 - `latestScanStatus: 'pending'` survives kill → on restart, if user navigates to ResultSummaryScreen... they can't. Navigation resets to MainTabs. No path to ResultSummaryScreen from cold start without a new scan. Data is present but unreachable, not lost.
 - Zustand persist serializes on every state change. If the app is killed mid-serialization: AsyncStorage's SQLite/filesystem backend provides write atomicity. The previous valid state is preserved.
 
@@ -139,19 +139,19 @@ No regressions. The cap is unreachable for any real user in the foreseeable futu
 
 ### Loop 5: What hidden assumption am I making?
 
-**Assumption 1**: `expo-file-system` Documents directory path is stable between app versions.  
+**Assumption 1**: `expo-file-system` Documents directory path is stable between app versions.
 **Reality**: iOS guarantees the Documents directory path doesn't change across updates for the same bundle ID. ✓
 
-**Assumption 2**: `getPreviewImageMetadata` always strips `dataUrl` before any store write.  
+**Assumption 2**: `getPreviewImageMetadata` always strips `dataUrl` before any store write.
 **Reality**: Checked. Every path to `beginLatestScanSession` or `writeLatestScanSession` that provides `selectedScanImage` calls `getPreviewImageMetadata` first. ✓ (Line 52, 92, 187, 207 of ScanScreen.tsx)
 
-**Assumption 3**: The `EXPO_PUBLIC_*` env var mechanism works in Expo SDK 55 with no extra config.  
+**Assumption 3**: The `EXPO_PUBLIC_*` env var mechanism works in Expo SDK 55 with no extra config.
 **Reality**: Expo SDK 49+ introduced this. SDK 55 supports it. No `app.config.js` change needed. `process.env.EXPO_PUBLIC_VARNAME` is inlined at build time. ✓
 
-**Assumption 4**: The `??` fallback in `process.env.EXPO_PUBLIC_OKYO_API_URL ?? 'http://...'` compiles correctly in Expo's Metro bundler.  
+**Assumption 4**: The `??` fallback in `process.env.EXPO_PUBLIC_OKYO_API_URL ?? 'http://...'` compiles correctly in Expo's Metro bundler.
 **Reality**: Metro uses Babel, which handles nullish coalescing (`??`). `process.env.X` is replaced by the string value at build time. If the variable is not set, it becomes `undefined`, and the fallback is used. ✓
 
-**Assumption 5**: React Native's `AsyncStorage` handles large values gracefully.  
+**Assumption 5**: React Native's `AsyncStorage` handles large values gracefully.
 **Reality**: RocksDB (Android) and LevelDB/filesystem (iOS) both handle MB-scale values. Performance degrades at multi-MB sizes (slower JSON.parse), but there's no hard crash. ✓ (Documented as MEDIUM concern, not Critical)
 
 **Hidden assumption found**: The `deleteUnusedScanImage` function checks `recipe.imageUri === uri` with strict equality. If the same physical file is referenced by two slightly different URI strings (e.g., with/without trailing slash, or with different percent-encoding), the check fails and the file is not deleted.

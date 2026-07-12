@@ -1,6 +1,6 @@
 # Final Validation
 
-Branch: `scan-realism-v2`  
+Branch: `scan-realism-v2`
 Run after: FIX_REPORT.md applied + TypeScript verified clean
 
 ---
@@ -72,7 +72,7 @@ If a user saves a recipe and then immediately scans again:
 
 ### Starter recipe ID uniqueness
 
-Before: `scan-starter-chicken-tikka-masala-restaurant-copy`  
+Before: `scan-starter-chicken-tikka-masala-restaurant-copy`
 After: `scan-starter-chicken-tikka-masala-restaurant-copy-a1b2c3d4`
 
 The suffix is `scanSessionId.slice(-8)` where `scanSessionId = scan-{source}-{Date.now()}-{Math.random().toString(36).slice(2, 8)}`. The random component is 6 chars (alphanumeric, base 36) → suffix entropy ≈ 2 billion unique values. Collision probability for 1000 scans of same dish: ~0.00005%. ✓

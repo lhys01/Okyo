@@ -1,7 +1,7 @@
 # Break Report — Adversarial QA
 
-Branch: `scan-realism-v2`  
-Method: 9 attack loops. All previous audit conclusions treated as unverified until proven by code.  
+Branch: `scan-realism-v2`
+Method: 9 attack loops. All previous audit conclusions treated as unverified until proven by code.
 Date: 2026-06-17
 
 ---
