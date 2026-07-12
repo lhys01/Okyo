@@ -3,6 +3,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { z } from 'zod';
 
 import { getAiConfig, getPublicAiConfig } from './config/aiConfig.js';
+import { validateSupabaseAuthConfigAtStartup } from './auth/config.js';
 import { getCostControlConfig } from './config/costControlConfig.js';
 import { validateEpicureConfigAtStartup } from './config/openRouter.js';
 import {
@@ -11,6 +12,7 @@ import {
   logCostEvent,
   scanRateLimitMiddleware,
 } from './middleware/costControls.js';
+import { mountV1Authentication } from './middleware/supabaseAuth.js';
 import {
   awardXp,
   createChallenge,
@@ -157,6 +159,10 @@ app.get('/debug/ai-config', (_request, response) => {
   }
   sendOk(response, getPublicAiConfig());
 });
+
+// All current /v1 routes are user-specific or spend provider capacity. Keep
+// the public health/debug endpoints above this single authentication boundary.
+mountV1Authentication(app);
 
 app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) => {
   try {
@@ -370,6 +376,8 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
 
   sendError(response.status(500), 'internal_error', 'Unexpected API error.');
 });
+
+validateSupabaseAuthConfigAtStartup();
 
 app.listen(port, () => {
   console.log(`Okyo API listening on http://localhost:${port}`);
