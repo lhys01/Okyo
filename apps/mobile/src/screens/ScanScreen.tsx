@@ -16,7 +16,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { ApiError, createMockScan } from '../api/client';
+import { createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
@@ -30,6 +30,7 @@ import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { hasFoodEvidence, isFoodScanState, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
 import { copyToDocuments } from '../utils/scanImageStorage';
 import { uiLog } from '../utils/uiDebug';
+import { getUploadFailureReasonFromError } from './scanErrorMessage';
 
 type ScanNavigation = NativeStackNavigationProp<RootStackParamList, 'ScanScreen'>;
 
@@ -920,42 +921,6 @@ function getMimeTypeFromFileName(fileName: string | null | undefined) {
   }
 
   return 'image/jpeg';
-}
-
-function getUploadFailureReasonFromError(error: unknown) {
-  // Classify by the server's stable error code first — message text is UI
-  // copy and can change without warning, so it should never drive branching.
-  if (error instanceof ApiError) {
-    switch (error.code) {
-      case 'image_payload_too_large':
-        return 'This photo was too large to scan. Try a smaller image.';
-      case 'fable_not_enabled':
-        return 'Okyo had trouble scanning this photo. Try again in a second.';
-      case 'fable_daily_cap_exceeded':
-        return 'Okyo has reached its daily scan limit. Try again tomorrow.';
-      case 'ai_daily_cap_exceeded':
-        return 'Okyo has reached its daily scan limit. Try again tomorrow.';
-      case 'rate_limit_exceeded':
-        return 'Too many scan requests. Please wait a moment before trying again.';
-      default:
-        return 'Okyo had trouble scanning this photo. Try again in a second.';
-    }
-  }
-
-  const message = error instanceof Error ? error.message : '';
-  if (message.toLowerCase().includes('too large')) {
-    return 'This photo was too large to scan. Try a smaller image.';
-  }
-  if (
-    message.toLowerCase().includes('network') ||
-    message.toLowerCase().includes('abort') ||
-    message.toLowerCase().includes('fetch') ||
-    message.toLowerCase().includes('failed to fetch')
-  ) {
-    return 'Okyo could not reach the scanner. Check the API server and try again.';
-  }
-
-  return 'Okyo had trouble scanning this photo. Try again in a second.';
 }
 
 function getPreviewImageMetadata(image: ScanImageMetadata | undefined): ScanImageMetadata | null {

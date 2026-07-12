@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { getAiConfig } from '../config/aiConfig.js';
 import type { AiConfig } from '../config/aiConfig.js';
+import { isQuotaError, type ProviderQuota } from '../quota/providerQuota.js';
 import type {
   DetectedComponent,
   Difficulty,
@@ -229,12 +230,14 @@ export type AnalyzeFoodImageInput = {
   // cap have already been validated upstream (server.ts). getAiConfig()
   // still requires FABLE_ENABLED itself before honoring this.
   fableActive?: boolean;
+  quota: ProviderQuota;
 };
 
 export type GenerateRecipeFromDishInput = {
   analysis: FoodImageAnalysis;
   mode: RecipeMode;
   fableActive?: boolean;
+  quota: ProviderQuota;
 };
 
 export type EstimateIngredientCostsInput = {
@@ -292,6 +295,7 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
     config,
     image: input.image,
     mode: input.mode,
+    quota: input.quota,
   });
   logAi('openrouter_ai', getAiLogDetails(config, config.openRouterVisionModel, { stage: 'vision' }));
   const normalized = normalizeVisionOutput(output);
@@ -350,6 +354,7 @@ export async function generateRecipeFromDish(
       analysis: input.analysis,
       config,
       mode: input.mode,
+      quota: input.quota,
     });
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterTextModel, { stage: 'recipe' }));
     const result = createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
@@ -376,7 +381,7 @@ export async function generateRecipeFromDish(
     // component appears in ingredientGroups.
     let finalResult = result;
     if (finalResult.recipe && isPlatterStyleMeal(input.analysis)) {
-      finalResult = await ensureComponentCoverage(finalResult, input.analysis, config);
+      finalResult = await ensureComponentCoverage(finalResult, input.analysis, config, input.quota);
       if (finalResult.recipe) {
       }
     }
@@ -468,6 +473,7 @@ function recordRecipeQualityForResult(args: {
 // Returns null if the recipe has expired from the store (>1 day old).
 export async function enrichRecipeCoaching(
   recipe: Recipe,
+  quota: ProviderQuota,
 ): Promise<{ structuredSteps: RecipeStep[] } | null> {
   if (!recipe?.structuredSteps?.length) {
     return null;
@@ -486,13 +492,15 @@ export async function enrichRecipeCoaching(
       weaknesses,
       dishName: recipe.title,
       config,
+      quota,
     });
     const repairedSteps = applyCoachingPatches(steps, patches, weaknesses);
     const repairedScore = calculateRecipeCoachingScore(repairedSteps);
     const initialScore = calculateRecipeCoachingScore(steps);
     // Only return repaired steps if they didn't regress the score.
     return { structuredSteps: repairedScore >= initialScore ? repairedSteps : steps };
-  } catch {
+  } catch (error) {
+    if (isQuotaError(error)) throw error;
     // Fail gracefully — return uncoached steps so Guided Cooking still opens.
     return { structuredSteps: steps };
   }
@@ -644,7 +652,12 @@ export async function createAiScan(
       scanState: analysis.scanState,
     });
     const recipeStartedAt = Date.now();
-    const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive });
+    const generatedRecipe = await generateRecipeFromDish({
+      analysis,
+      mode: input.mode,
+      fableActive: input.fableActive,
+      quota: input.quota,
+    });
     const recipeMs = Date.now() - recipeStartedAt;
     const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
     logScanDebug('api_scan_recipe_result', {
@@ -4419,11 +4432,11 @@ function getFallbackLogDetails(
   model: string,
 ) {
   if (error instanceof OpenRouterProviderError) {
-    return error.failure;
+    const { openRouterErrorMessage: _privateProviderMessage, ...safeFailure } = error.failure;
+    return safeFailure;
   }
 
   return getAiLogDetails(config, model, {
-    openRouterErrorMessage: error instanceof Error ? error.message : 'Unknown OpenRouter error.',
     reason: 'openrouter_unknown_error',
   });
 }
@@ -4587,6 +4600,7 @@ async function ensureComponentCoverage(
   result: GeneratedRecipeOutput,
   analysis: FoodImageAnalysis,
   config: AiConfig,
+  quota: ProviderQuota,
 ): Promise<GeneratedRecipeOutput> {
   const detected = analysis.detectedComponents ?? [];
   if (detected.length === 0) return result;
@@ -4611,6 +4625,7 @@ async function ensureComponentCoverage(
         config,
         missingComponents,
         existingIngredientGroups: recipe.ingredientGroups ?? [],
+        quota,
       });
       repairedRecipe = mergeRepairIntoRecipe(recipe, repairOutput, analysis);
       // mergeRepairIntoRecipe appends steps after the serve step; re-run the
@@ -4623,6 +4638,7 @@ async function ensureComponentCoverage(
       }
       repairAddedComponents = repairOutput.ingredientGroups.length;
     } catch (repairError) {
+      if (isQuotaError(repairError)) throw repairError;
       console.warn('[component-coverage] repair failed', {
         dish: analysis.dishName,
         reason: repairError instanceof OpenRouterProviderError ? repairError.failure.reason : 'unknown',

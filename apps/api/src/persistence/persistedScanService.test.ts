@@ -75,12 +75,19 @@ test('AI failure records only a fixed sanitized category for the verified user',
 test('recipe persistence failure rejects the scan instead of claiming success', async () => {
   const calls: Array<{ operation: string; value: unknown }> = [];
   const repository = recordingRepository(calls, { failRecipe: true });
+  let providerSpendAccounted = false;
   await assert.rejects(runPersistedScan({
     userId,
     repository,
     idFactory: () => durableId,
-    generate: async () => makeScanResult(),
+    generate: async (scanId) => {
+      assert.equal(scanId, durableId);
+      // Provider finalization occurs inside generation, before recipe storage.
+      providerSpendAccounted = true;
+      return makeScanResult();
+    },
   }), PersistenceUnavailableError);
+  assert.equal(providerSpendAccounted, true);
   assert.equal(calls.some((call) => call.operation === 'update:succeeded'), false);
   assert.equal(calls.at(-1)?.operation, 'update:failed');
 });

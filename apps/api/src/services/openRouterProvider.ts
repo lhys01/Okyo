@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import type { AiConfig } from '../config/aiConfig.js';
+import { isQuotaError, type ProviderQuota } from '../quota/providerQuota.js';
 import type { RecipeMode, RecipeStep, ScanImageMetadata } from '../types.js';
 import type { FoodImageAnalysis } from './aiService.js';
 import { isEpicureEnabled } from '../config/openRouter.js';
@@ -240,6 +241,7 @@ export async function analyzeFoodImageWithOpenRouter(input: {
   config: AiConfig;
   image?: ScanImageMetadata;
   mode: RecipeMode;
+  quota: ProviderQuota;
 }) {
   const imageUrl = getSafeImageUrl(input.image);
   logOpenRouterDebug('api_openrouter_has_image_payload', {
@@ -321,6 +323,7 @@ export async function analyzeFoodImageWithOpenRouter(input: {
 
     return useRetry ? retryOutput : firstOutput;
   } catch (error) {
+    if (isQuotaError(error)) throw error;
     logOpenRouterDebug('openrouter_scan_quality_retry_failed', {
       originalDishName: firstOutput.dishName,
       retryReason,
@@ -352,7 +355,7 @@ function getOpenRouterErrorReason(error: unknown) {
 }
 
 async function callVisionOnce(
-  input: { config: AiConfig; image?: ScanImageMetadata; mode: RecipeMode },
+  input: { config: AiConfig; image?: ScanImageMetadata; mode: RecipeMode; quota: ProviderQuota },
   promptText: string,
   stage: string,
 ) {
@@ -377,6 +380,7 @@ async function callVisionOnce(
     model: input.config.openRouterVisionModel,
     maxTokens: Math.min(input.config.maxOutputTokens, 900),
     stage,
+    quota: input.quota,
   });
 
   const output = openRouterVisionOutputSchema.safeParse(json);
@@ -590,6 +594,7 @@ export async function generateRecipeWithOpenRouter(input: {
   analysis: FoodImageAnalysis;
   config: AiConfig;
   mode?: RecipeMode;
+  quota: ProviderQuota;
 }) {
   // ── Epicure enrichment (additive) ───────────────────────────────────────────
   // Runs BEFORE recipe generation. When the feature flag is off, no key is set,
@@ -628,8 +633,9 @@ export async function generateRecipeWithOpenRouter(input: {
         dishName: input.analysis.dishName,
         ingredients: [...input.analysis.visibleIngredients, ...input.analysis.likelyIngredients],
         mode,
-      });
+      }, undefined, input.quota);
     } catch (enrichError) {
+      if (isQuotaError(enrichError)) throw enrichError;
       logOpenRouterDebug('epicure_enrichment_unexpected_error', {
         reason: enrichError instanceof Error ? enrichError.message : 'unknown',
       });
@@ -684,7 +690,6 @@ export async function generateRecipeWithOpenRouter(input: {
 
     logOpenRouterDebug('openrouter_recipe_retry', {
       firstReason: firstError.failure.reason,
-      firstErrorMessage: firstError.failure.openRouterErrorMessage,
       model: input.config.openRouterTextModel,
       retryPrompt: 'compact',
       retryMaxTokens: 1024,
@@ -746,6 +751,7 @@ export async function generateRecipeWithOpenRouter(input: {
     });
     return storeRecipeCache(cacheKey, usedRepair ? repaired : firstOutput, input.analysis.dishName);
   } catch (repairError) {
+    if (isQuotaError(repairError)) throw repairError;
     logOpenRouterDebug('openrouter_recipe_quality_repair_failed', {
       reason: repairError instanceof OpenRouterProviderError ? repairError.failure.reason : 'unknown',
     });
@@ -756,7 +762,7 @@ export async function generateRecipeWithOpenRouter(input: {
 // Fail-closed structural enforcement. Returns a structurally valid recipe or
 // throws OpenRouterProviderError — never a fabricated/templated recipe.
 async function enforceRecipeStructure(
-  input: { analysis: FoodImageAnalysis; config: AiConfig },
+  input: { analysis: FoodImageAnalysis; config: AiConfig; quota: ProviderQuota },
   output: OpenRouterRecipeOutput,
 ): Promise<OpenRouterRecipeOutput> {
   const issues = validateRecipeStructure(output);
@@ -831,7 +837,7 @@ export function validateRecipeStructure(output: OpenRouterRecipeOutput): string[
 }
 
 async function callRecipeStage(
-  input: { analysis: FoodImageAnalysis; config: AiConfig },
+  input: { analysis: FoodImageAnalysis; config: AiConfig; quota: ProviderQuota },
   userPrompt: string,
   maxTokens: number,
   stage: string,
@@ -848,6 +854,7 @@ async function callRecipeStage(
       ],
       maxTokens: Math.min(input.config.maxOutputTokens, maxTokens),
       stage,
+      quota: input.quota,
     },
     getRecipeModelChain(input.config),
   );
@@ -964,6 +971,7 @@ async function callOpenRouterJson(input: {
   messages: OpenRouterMessage[];
   model: string;
   stage?: string;
+  quota: ProviderQuota;
 }) {
   if (!input.config.openRouterApiKey) {
     throw createOpenRouterError(input.config, input.model, 'openrouter_missing_key', {
@@ -978,9 +986,18 @@ async function callOpenRouterJson(input: {
     stage: input.stage ?? 'unknown',
   });
 
+  const operation = input.stage ?? 'unknown';
+  const reservation = await input.quota.reserveAttempt({
+    provider: input.config.provider,
+    model: input.model,
+    operation,
+  });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), input.config.timeoutMs);
   const startedAt = Date.now(); // [scan_timing] per-call latency
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let actualCostUsd: number | undefined;
 
   try {
     const response = await fetch(openRouterEndpoint, {
@@ -1018,7 +1035,6 @@ async function callOpenRouterJson(input: {
         model: input.model,
         stage: input.stage ?? 'unknown',
         status: response.status,
-        message: errorMessage,
         durationMs: Date.now() - startedAt,
       });
       throw createOpenRouterError(input.config, input.model, 'openrouter_http_error', {
@@ -1036,6 +1052,10 @@ async function callOpenRouterJson(input: {
       ? (usage as Record<string, unknown>).completion_tokens as number : undefined;
     const totalTokens = typeof (usage as Record<string, unknown> | undefined)?.total_tokens === 'number'
       ? (usage as Record<string, unknown>).total_tokens as number : undefined;
+    const providerCost = (usage as Record<string, unknown> | undefined)?.cost;
+    inputTokens = promptTokens;
+    outputTokens = completionTokens;
+    actualCostUsd = typeof providerCost === 'number' ? providerCost : undefined;
     logOpenRouterDebug('openrouter_response_shape', responseShape);
     console.log('[token_usage]', {
       model: input.model,
@@ -1055,17 +1075,28 @@ async function callOpenRouterJson(input: {
       finishReason: responseShape.finishReason,
     });
     const assistantText = extractAssistantTextFromOpenRouterResponse(responseJson, input.config, input.model);
-    logOpenRouterDebug('api_openrouter_response_text_preview', {
-      length: assistantText.length,
-      preview: assistantText.slice(0, 300),
-    });
-    return parseJsonContent(
+    logOpenRouterDebug('api_openrouter_response_text', { length: assistantText.length });
+    const parsed = parseJsonContent(
       assistantText,
       input.config,
       input.model,
       responseShape.finishReason,
     );
+    await input.quota.completeAttempt(reservation, {
+      outcome: 'success',
+      inputTokens,
+      outputTokens,
+      actualCostUsd,
+    });
+    return parsed;
   } catch (error) {
+    await input.quota.completeAttempt(reservation, {
+      outcome: 'failure',
+      failureCategory: getProviderAttemptFailureCategory(error),
+      inputTokens,
+      outputTokens,
+      actualCostUsd,
+    });
     if (error instanceof OpenRouterProviderError) {
       throw error;
     }
@@ -1090,6 +1121,13 @@ async function callOpenRouterJson(input: {
   }
 }
 
+function getProviderAttemptFailureCategory(error: unknown): string {
+  if (error instanceof OpenRouterProviderError) return error.failure.reason;
+  if (isAbortError(error)) return 'openrouter_timeout';
+  if (error instanceof TypeError) return 'openrouter_network_error';
+  return 'openrouter_unknown_error';
+}
+
 // ─── Model failover and backoff ───────────────────────────────────────────────
 
 type CallJsonBase = {
@@ -1097,6 +1135,7 @@ type CallJsonBase = {
   maxTokens: number;
   messages: OpenRouterMessage[];
   stage?: string;
+  quota: ProviderQuota;
 };
 
 function isFailoverError(error: unknown): boolean {
@@ -1739,6 +1778,7 @@ export async function repairStepCoachingWithAI(input: {
   weaknesses: { stepIndex: number; weakFields: string[] }[];
   dishName: string;
   config: AiConfig;
+  quota: ProviderQuota;
 }): Promise<StepCoachingPatch[]> {
   const weakStepData = input.weaknesses.map(({ stepIndex, weakFields }) => {
     const step = input.steps[stepIndex];
@@ -1795,6 +1835,7 @@ export async function repairStepCoachingWithAI(input: {
       ],
       maxTokens,
       stage: 'coaching_repair',
+      quota: input.quota,
     },
     getRecipeModelChain(input.config),
   );
@@ -1829,6 +1870,7 @@ export async function callComponentRepairWithOpenRouter(input: {
   config: AiConfig;
   missingComponents: string[];
   existingIngredientGroups: Array<{ component: string; items: unknown[] }>;
+  quota: ProviderQuota;
 }): Promise<ComponentRepairOutput> {
   const existing = input.existingIngredientGroups.map((g) => g.component).filter(Boolean).join(', ');
   const prompt = [
@@ -1855,6 +1897,7 @@ export async function callComponentRepairWithOpenRouter(input: {
       ],
       maxTokens: Math.min(input.config.maxOutputTokens, 2400),
       stage: 'component_coverage_repair',
+      quota: input.quota,
     },
     getRecipeModelChain(input.config),
   );

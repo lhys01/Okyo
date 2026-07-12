@@ -18,6 +18,7 @@
  */
 
 import type { RecipeMode } from '../types.js';
+import { isQuotaError, type ProviderQuota } from '../quota/providerQuota.js';
 import {
   getOpenRouterConfig,
   isEpicureEnabled,
@@ -68,6 +69,7 @@ const EMPTY_SUGGESTIONS: EpicureSuggestions = {
 export async function getEpicureSuggestions(
   ingredients: string[],
   config: OpenRouterConfig = getOpenRouterConfig(),
+  quota?: ProviderQuota,
 ): Promise<EpicureSuggestions> {
   const cleanIngredients = normalizeIngredientList(ingredients);
   if (!isEpicureEnabled(config)) {
@@ -80,9 +82,13 @@ export async function getEpicureSuggestions(
   }
 
   try {
-    const raw = await requestEpicureModel(cleanIngredients, config);
+    if (!quota) {
+      throw new Error('Persistent quota context is required for Epicure.');
+    }
+    const raw = await requestEpicureModel(cleanIngredients, config, quota);
     return normalizeEpicureSuggestions(raw);
   } catch (error) {
+    if (isQuotaError(error)) throw error;
     console.warn('[epicure] EPICURE_FAILURE — suggestion request failed, continuing without enrichment', {
       reason: error instanceof Error ? error.message : String(error),
     });
@@ -100,6 +106,7 @@ export async function getEpicureSuggestions(
 export async function enrichRecipeContext(
   input: EnrichRecipeContextInput,
   config: OpenRouterConfig = getOpenRouterConfig(),
+  quota?: ProviderQuota,
 ): Promise<EnrichedRecipeContext | null> {
   const detectedIngredients = normalizeIngredientList(input.ingredients);
 
@@ -114,7 +121,7 @@ export async function enrichRecipeContext(
     return null;
   }
 
-  const suggestions = await getEpicureSuggestions(detectedIngredients, config);
+  const suggestions = await getEpicureSuggestions(detectedIngredients, config, quota);
   const suggestionCount = countSuggestions(suggestions);
 
   logEpicureUsage({
@@ -293,6 +300,7 @@ function buildEpicurePrompt(ingredients: string[]): string {
 async function requestEpicureModel(
   ingredients: string[],
   config: OpenRouterConfig,
+  quota: ProviderQuota,
 ): Promise<unknown> {
   if (!config.apiKey) {
     throw new Error('OPENROUTER_API_KEY is missing.');
@@ -305,10 +313,18 @@ async function requestEpicureModel(
     timeoutMs: config.timeoutMs,
   });
 
+  const reservation = await quota.reserveAttempt({
+    provider: 'openrouter',
+    model: config.model,
+    operation: 'epicure_enrichment',
+  });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
   const startedAt = Date.now(); // [scan_timing] epicure pre-call latency
 
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let actualCostUsd: number | undefined;
   try {
     const response = await fetch(openRouterEndpoint, {
       method: 'POST',
@@ -342,16 +358,19 @@ async function requestEpicureModel(
     });
 
     if (!response.ok) {
-      const errorBody = await response.text().catch(() => '(unreadable)');
       console.error('[epicure] EPICURE_HTTP_ERROR', {
         model: config.model,
         status: response.status,
-        body: errorBody.slice(0, 300),
       });
-      throw new Error(`Epicure HTTP ${response.status}: ${errorBody.slice(0, 120)}`);
+      throw new Error(`Epicure HTTP ${response.status}`);
     }
 
     const json = (await response.json()) as unknown;
+    const usage = typeof json === 'object' && json ? (json as Record<string, unknown>).usage : undefined;
+    const usageRecord = typeof usage === 'object' && usage ? usage as Record<string, unknown> : undefined;
+    inputTokens = typeof usageRecord?.prompt_tokens === 'number' ? usageRecord.prompt_tokens : undefined;
+    outputTokens = typeof usageRecord?.completion_tokens === 'number' ? usageRecord.completion_tokens : undefined;
+    actualCostUsd = typeof usageRecord?.cost === 'number' ? usageRecord.cost : undefined;
     const content = extractAssistantContent(json);
     if (!content) {
       console.warn('[epicure] EPICURE_EMPTY_CONTENT', { model: config.model });
@@ -364,7 +383,22 @@ async function requestEpicureModel(
       contentLength: content.length,
       durationMs: Date.now() - startedAt,
     });
+    await quota.completeAttempt(reservation, {
+      outcome: 'success',
+      inputTokens,
+      outputTokens,
+      actualCostUsd,
+    });
     return parsed;
+  } catch (error) {
+    await quota.completeAttempt(reservation, {
+      outcome: 'failure',
+      failureCategory: error instanceof Error && error.name === 'AbortError' ? 'openrouter_timeout' : 'epicure_failure',
+      inputTokens,
+      outputTokens,
+      actualCostUsd,
+    });
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

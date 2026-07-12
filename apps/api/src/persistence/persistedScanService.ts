@@ -12,7 +12,7 @@ const generatedRecipeTtlMs = 24 * 60 * 60 * 1000;
 export async function runPersistedScan(options: {
   userId: string;
   repository: ScanRecipeRepository;
-  generate: () => Promise<AiScanSuccessResult>;
+  generate: (scanId: string) => Promise<AiScanSuccessResult>;
   idFactory?: () => string;
   now?: () => number;
 }): Promise<AiScanSuccessResult> {
@@ -30,7 +30,7 @@ export async function runPersistedScan(options: {
       status: 'processing',
     });
 
-    const generated = normalizePersistentIds(await options.generate(), id);
+    const generated = normalizePersistentIds(await options.generate(id), id);
     if (!generated.recipe) {
       throw new PersistenceUnavailableError();
     }

@@ -37,45 +37,10 @@ export function scanRateLimitMiddleware(request: Request, response: Response, ne
   return next();
 }
 
-// ─── Global Daily AI Request Cap ─────────────────────────────────────────────
-//
-// In-memory counter, resets at midnight UTC or on restart.
-// Use a persistent counter (DB/Redis) before public launch.
-
-let globalDailyAiRequests = 0;
-let globalDailyResetAt = 0;
-
-export function checkAndIncrementGlobalAiCap(): boolean {
-  const config = getCostControlConfig();
-  const now = Date.now();
-
-  if (now >= globalDailyResetAt) {
-    if (globalDailyAiRequests > 0) {
-      logCostEvent('global_ai_cap_daily_reset', { previousCount: globalDailyAiRequests });
-    }
-    globalDailyAiRequests = 0;
-    globalDailyResetAt = getNextMidnightUtc();
-  }
-
-  if (globalDailyAiRequests >= config.aiDailyRequestCap) {
-    logCostEvent('global_ai_cap_exceeded', { count: globalDailyAiRequests, cap: config.aiDailyRequestCap });
-    return false;
-  }
-
-  globalDailyAiRequests += 1;
-  logCostEvent('global_ai_cap_incremented', { count: globalDailyAiRequests, cap: config.aiDailyRequestCap });
-  return true;
-}
-
-export function getGlobalAiRequestCount(): number {
-  return globalDailyAiRequests;
-}
-
 // ─── Fable 5 Daily Request Cap ───────────────────────────────────────────────
 //
-// Separate counter from the global AI cap above — Fable 5 is opt-in and much
-// more expensive per request, so it must never share headroom with the
-// default OpenRouter cap. Same in-memory/midnight-UTC-reset pattern.
+// Additional model-specific kill cap. Persistent per-attempt quota enforcement
+// remains authoritative for every Fable provider call.
 
 let fableDailyRequests = 0;
 let fableDailyResetAt = 0;

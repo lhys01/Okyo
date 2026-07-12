@@ -6,8 +6,10 @@ export type CostControlConfig = {
   // Per-IP scan rate limit: max requests per window
   scanRateLimitWindowMs: number;
   scanRateLimitMax: number;
-  // Global daily AI request cap (in-memory, resets on restart — use DB before public launch)
+  // Global daily provider-attempt cap, enforced persistently by Supabase.
   aiDailyRequestCap: number;
+  // Per-user provider-attempt cap, enforced persistently by Supabase.
+  aiUserDailyRequestCap: number;
   // Maximum allowed image payload size for scan requests (bytes)
   maxScanImageBytes: number;
   // Image generation kill switch (scaffold — image gen not yet active)
@@ -22,7 +24,8 @@ export function getCostControlConfig(): CostControlConfig {
   return {
     scanRateLimitWindowMs: getPositiveInteger(process.env.SCAN_RATE_LIMIT_WINDOW_MS, 60_000),
     scanRateLimitMax: getPositiveInteger(process.env.SCAN_RATE_LIMIT_MAX, 10),
-    aiDailyRequestCap: getPositiveInteger(process.env.AI_DAILY_REQUEST_CAP, 200),
+    aiDailyRequestCap: getPersistentPositiveCap(process.env.AI_DAILY_REQUEST_CAP, 200),
+    aiUserDailyRequestCap: getPersistentPositiveCap(process.env.AI_USER_DAILY_REQUEST_CAP, 20),
     maxScanImageBytes: getPositiveInteger(process.env.MAX_SCAN_IMAGE_BYTES, 10_000_000),
     imageGenEnabled: process.env.IMAGE_GEN_ENABLED === 'true',
     imageGenDailyRequestCap: getPositiveInteger(process.env.IMAGE_GEN_DAILY_REQUEST_CAP, 0),
@@ -36,6 +39,14 @@ export function getCostControlConfig(): CostControlConfig {
 function getPositiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+// Missing values use safe server defaults. Explicitly invalid persistent caps
+// become zero so the quota service fails closed instead of silently widening.
+function getPersistentPositiveCap(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === '') return fallback;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 // Same as getPositiveInteger but 0 is a valid, meaningful value (explicitly

@@ -14,10 +14,13 @@ import { isAiDebugRouteAvailable } from './config/debugRoute.js';
 import { validateEpicureConfigAtStartup } from './config/openRouter.js';
 import {
   checkAndIncrementFableCap,
-  checkAndIncrementGlobalAiCap,
   logCostEvent,
   scanRateLimitMiddleware,
 } from './middleware/costControls.js';
+import {
+  createProviderQuota,
+  getQuotaApiError,
+} from './quota/providerQuota.js';
 import { mountV1Authentication } from './middleware/supabaseAuth.js';
 import {
   awardXp,
@@ -195,13 +198,6 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
       return;
     }
 
-    // Global daily AI request cap — only counts real uploaded images.
-    const isRealAiScan = Boolean(body.image) && !body.image?.placeholder;
-    if (isRealAiScan && !checkAndIncrementGlobalAiCap()) {
-      sendError(response.status(429), 'ai_daily_cap_exceeded', "Okyo has reached its daily scan limit. Try again tomorrow.");
-      return;
-    }
-
     // Fable 5 opt-in — private header only, never a user-facing toggle.
     // Missing/mismatched header always falls through to the default
     // OpenRouter path unchanged.
@@ -235,12 +231,13 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
     const result = await runPersistedScan({
       userId,
       repository: getScanRecipeRepository(),
-      generate: () => createAiScan({
+      generate: (scanId) => createAiScan({
         image: body.image,
         mode: body.mode,
         source: body.source,
         fableActive,
         cacheScope: userId,
+        quota: createProviderQuota({ userId, requestId: scanId }),
       }),
     });
 
@@ -347,20 +344,19 @@ app.get('/v1/rankings/weekly', (_request, response) => {
 
 app.post('/v1/recipes/:recipeId/coaching', scanRateLimitMiddleware, async (request, response, next) => {
   try {
+    const userId = getAuthenticatedUserId(request);
     const recipe = await getScanRecipeRepository().findOwnedRecipe(
-      getAuthenticatedUserId(request),
+      userId,
       request.params.recipeId,
     );
     if (!recipe) {
       sendNotFound(response, 'recipe_not_found', 'Recipe not found or expired. Please scan again.');
       return;
     }
-    if (!checkAndIncrementGlobalAiCap()) {
-      sendError(response.status(429), 'ai_daily_cap_exceeded', "Okyo has reached its daily scan limit. Try again tomorrow.");
-      return;
-    }
-    logCostEvent('coaching_cap_consumed', { recipeId: request.params.recipeId });
-    const result = await enrichRecipeCoaching(recipe);
+    const result = await enrichRecipeCoaching(
+      recipe,
+      createProviderQuota({ userId, requestId: request.params.recipeId }),
+    );
     if (!result) {
       sendNotFound(response, 'recipe_not_found', 'Recipe not found or expired. Please scan again.');
       return;
@@ -421,6 +417,12 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
       'persistence_unavailable',
       'Recipe storage is temporarily unavailable. Please try again.',
     );
+    return;
+  }
+
+  const quotaError = getQuotaApiError(error);
+  if (quotaError) {
+    sendError(response.status(quotaError.status), quotaError.code, quotaError.message);
     return;
   }
 

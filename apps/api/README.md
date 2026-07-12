@@ -115,3 +115,29 @@ Current typed service functions:
 - `createAiScan(input)` powers `POST /v1/scans` and combines analysis, recipe generation, costs, and safe scan states.
 
 These functions return validated structured data with confidence scores. Treat all AI-assisted food identification, recipe, cost, and savings details as estimates.
+
+## Persistent provider quotas
+
+Every billable provider attempt reserves capacity through Supabase before the
+network request starts. One reservation means one real provider attempt, so
+vision/recipe retries, fallback models, Epicure, component repair, and coaching
+each reserve separately when they actually call OpenRouter. Cache hits and
+validation that finishes before a provider request do not consume capacity.
+
+`reserve_scan_capacity` atomically maintains the per-user UTC-day counter and
+creates the corresponding `provider_spend_events` row. After the attempt, the API
+updates that same row with a sanitized outcome, reliable provider token counts,
+and OpenRouter-reported cost when present. Missing cost remains null; no estimate
+is invented. A finalization failure is logged as an operational telemetry error
+and never reruns the provider call. Reservation denial fails with a sanitized
+429, while quota-infrastructure failure fails closed with a sanitized 503.
+The server-generated scan/recipe UUID is included in the controlled request
+category for correlation. The current schema has no latency or attempt-key
+column, so it cannot guarantee exactly-once finalization across a process crash;
+an interrupted attempt safely remains as a reserved event rather than being
+silently erased.
+
+The IP sliding-window limiter and the stricter Fable model cap remain as
+defense-in-depth abuse/cost controls. They are not authoritative daily quota
+storage; persistent Supabase reservation is still required for every provider
+attempt.
