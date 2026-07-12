@@ -1,11 +1,9 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  Crown,
   NavArrowRight,
   Settings,
   StatsUpSquare,
-  Trophy,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -26,11 +24,10 @@ export function ProfileScreen() {
   const navigation = useNavigation<ProfileNavigation>();
   const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
   const weeklyGoal = useOkyoStore((state) => state.weeklyGoal);
-  const isPremium = useOkyoStore((state) => state.isPremium);
 
   const weeklyTarget = getWeeklyGoalCount(weeklyGoal);
 
-  const goTo = (screen: 'SavingsDashboardScreen' | 'RankingsScreen' | 'SettingsScreen' | 'PaywallScreen') => {
+  const goTo = (screen: 'SavingsDashboardScreen' | 'SettingsScreen') => {
     uiLog('ProfileScreen', 'open_row', { screen });
     navigation.navigate(screen);
   };
@@ -68,18 +65,6 @@ export function ProfileScreen() {
             label="Savings"
             meta="Kitchen ledger"
             onPress={() => goTo('SavingsDashboardScreen')}
-          />
-          <ProfileRow
-            icon={<Trophy color={colors.coral} height={22} strokeWidth={2} width={22} />}
-            label="Rankings"
-            meta="XP and badges"
-            onPress={() => goTo('RankingsScreen')}
-          />
-          <ProfileRow
-            icon={<Crown color={colors.charcoal} height={22} strokeWidth={2} width={22} />}
-            label={isPremium ? 'Okyo Plus active' : 'Okyo Plus'}
-            meta={isPremium ? 'Unlimited scans enabled' : 'Unlimited scans preview'}
-            onPress={() => goTo('PaywallScreen')}
           />
           <ProfileRow
             icon={<Settings color={colors.charcoal} height={22} strokeWidth={2} width={22} />}

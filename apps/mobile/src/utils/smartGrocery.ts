@@ -1,4 +1,5 @@
 import type { GroceryCategory, GroceryListItem, Recipe, RecipeIngredient } from '../mocks';
+import { ingredientNameMatchesList } from './ingredientMatching';
 
 export type SmartGroceryPriority = 'needToBuy' | 'probablyHave' | 'optional';
 
@@ -130,12 +131,15 @@ export function isPantryStaple(name: string) {
   return PANTRY_STAPLES.some((staple) => normalized === staple || normalized.includes(staple));
 }
 
-export function buildSmartGrocerySummary(recipe: Recipe | null | undefined): SmartGrocerySummary {
+export function buildSmartGrocerySummary(
+  recipe: Recipe | null | undefined,
+  options: { allowIngredientFallback?: boolean } = {},
+): SmartGrocerySummary {
   if (!recipe) {
     return createEmptySummary();
   }
 
-  const rawItems = getRawItems(recipe);
+  const rawItems = getRawItems(recipe, options.allowIngredientFallback ?? true);
   const mergedItems = mergeExactDuplicates(rawItems);
   const needToBuy: SmartGroceryItem[] = [];
   const probablyHave: SmartGroceryItem[] = [];
@@ -170,6 +174,23 @@ export function buildSmartGrocerySummary(recipe: Recipe | null | undefined): Sma
   };
 }
 
+export function getValidatedServerGroceryItems(recipe: Recipe): GroceryListItem[] {
+  const recipeIngredients = (Array.isArray(recipe.ingredients) ? recipe.ingredients : [])
+    .filter((ingredient) => ingredient?.name?.trim());
+
+  if (recipeIngredients.length === 0 || !Array.isArray(recipe.groceryItems)) {
+    return [];
+  }
+
+  return recipe.groceryItems.filter((item) =>
+    Boolean(item?.name?.trim() && item?.quantity?.trim()) &&
+    (
+      ingredientNameMatchesList(item.name, recipeIngredients) ||
+      (item.sourceIngredient ? ingredientNameMatchesList(item.sourceIngredient, recipeIngredients) : false)
+    ),
+  );
+}
+
 export function formatSmartGroceryItem(item: SmartGroceryItem) {
   const quantity = typeof item.quantity === 'number' ? String(item.quantity) : item.quantity?.trim() ?? '';
   const name = cleanDisplayText(item.name);
@@ -195,8 +216,8 @@ export function buildSmartGroceryListText(recipe: Recipe, summary = buildSmartGr
   return [`${cleanDisplayText(recipe.title)} Grocery List`, ...sections].join('\n\n');
 }
 
-function getRawItems(recipe: Recipe): RawSmartItem[] {
-  const groceryItems = Array.isArray(recipe.groceryItems) ? recipe.groceryItems : [];
+function getRawItems(recipe: Recipe, allowIngredientFallback: boolean): RawSmartItem[] {
+  const groceryItems = getValidatedServerGroceryItems(recipe);
   if (groceryItems.length > 0) {
     return groceryItems
       .filter((item) => item?.name?.trim())
@@ -209,6 +230,10 @@ function getRawItems(recipe: Recipe): RawSmartItem[] {
         pantryStaple: item.pantryStaple,
         original: item,
       }));
+  }
+
+  if (!allowIngredientFallback) {
+    return [];
   }
 
   return (Array.isArray(recipe.ingredients) ? recipe.ingredients : [])

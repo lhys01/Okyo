@@ -38,13 +38,13 @@ import {
 } from '../mocks';
 import type { MainTabParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { ingredientNameMatchesList } from '../utils/ingredientMatching';
 import { getModeLabel } from '../utils/modeDisplay';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import {
   buildSmartGroceryListText,
   buildSmartGrocerySummary,
   formatSmartGroceryItem,
+  getValidatedServerGroceryItems,
   type SmartGroceryItem,
   type SmartGrocerySummary,
   type SmartGrocerySwap,
@@ -94,10 +94,21 @@ export function GroceryListScreen() {
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const recipe = getGroceryRecipe(selectedMode, latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, isDemoScan);
+  const isRealScannedRecipe = Boolean(
+    recipe &&
+    !isDemoScan &&
+    (getRealScanImageUri(selectedScanImage) || recipe.imageUri),
+  );
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
-  const items = useMemo(() => (recipe ? buildItems(recipe) : []), [recipe]);
-  const smartSummary = useMemo(() => buildSmartGrocerySummary(recipe), [recipe]);
+  const items = useMemo(
+    () => (recipe ? buildItems(recipe, !isRealScannedRecipe) : []),
+    [isRealScannedRecipe, recipe],
+  );
+  const smartSummary = useMemo(
+    () => buildSmartGrocerySummary(recipe, { allowIngredientFallback: !isRealScannedRecipe }),
+    [isRealScannedRecipe, recipe],
+  );
   const smartItems = useMemo(() => getSmartItems(smartSummary), [smartSummary]);
   const listText = useMemo(() => (recipe ? buildSmartGroceryListText(recipe, smartSummary) : ''), [recipe, smartSummary]);
   const savedGroceryRecipes = useMemo(
@@ -756,37 +767,25 @@ function getCategory(item: Pick<RecipeIngredient, 'name' | 'pantryItem'> & { pan
   return 'Pantry';
 }
 
-function buildItems(recipe: Recipe): GroceryItem[] {
-  const groceryItems = Array.isArray(recipe.groceryItems) ? recipe.groceryItems : [];
+function buildItems(recipe: Recipe, allowIngredientFallback = true): GroceryItem[] {
+  const groceryItems = getValidatedServerGroceryItems(recipe);
   const recipeIngredients = (Array.isArray(recipe.ingredients) ? recipe.ingredients : [])
     .filter((ingredient) => ingredient?.name?.trim());
   if (groceryItems.length > 0) {
-    // recipe.ingredients is the source of truth: drop grocery entries that do
-    // not resolve to a recipe ingredient. Protects against legacy saved recipes
-    // with model-invented grocery items.
-    const consistentItems = groceryItems.filter((item) => isRecipeBackedGroceryItem(item, recipeIngredients));
-    if (consistentItems.length > 0) {
-      return consistentItems.map((item) => ({
-        ...item,
-        category: getDisplayCategory(item.category),
-        id: `${recipe.id}-${item.category}-${item.name}`,
-        pantryItem: isPantryItem(item),
-        pantryStaple: item.pantryStaple ?? isPantryItem(item),
-      }));
-    }
-    // Every grocery entry failed the consistency check — rebuild from ingredients below.
+    return groceryItems.map((item) => ({
+      ...item,
+      category: getDisplayCategory(item.category),
+      id: `${recipe.id}-${item.category}-${item.name}`,
+      pantryItem: isPantryItem(item),
+      pantryStaple: item.pantryStaple ?? isPantryItem(item),
+    }));
+  }
+
+  if (!allowIngredientFallback) {
+    return [];
   }
 
   return recipeIngredients.flatMap((ingredient) => toFallbackGroceryItems(recipe.id, ingredient));
-}
-
-function isRecipeBackedGroceryItem(item: GroceryListItem, recipeIngredients: RecipeIngredient[]) {
-  if (recipeIngredients.length === 0) {
-    return false;
-  }
-
-  return ingredientNameMatchesList(item.name, recipeIngredients) ||
-    (item.sourceIngredient ? ingredientNameMatchesList(item.sourceIngredient, recipeIngredients) : false);
 }
 
 function buildListText(recipe: Recipe, items: GroceryItem[]) {

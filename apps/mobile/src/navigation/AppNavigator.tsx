@@ -8,11 +8,9 @@ import { ChallengeCompleteScreen } from '../screens/ChallengeCompleteScreen';
 import { DupeChallengeScreen } from '../screens/DupeChallengeScreen';
 import { FoodIdeaScreen } from '../screens/FoodIdeaScreen';
 import { GoalScreen } from '../screens/GoalScreen';
-import { PaywallScreen } from '../screens/PaywallScreen';
 import { RestaurantPackDetailScreen } from '../screens/RestaurantPackDetailScreen';
 import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
 import { KitchenLetterScreen } from '../screens/KitchenLetterScreen';
-import { RankingsScreen } from '../screens/RankingsScreen';
 import { RecommendationCategoryScreen } from '../screens/RecommendationCategoryScreen';
 import { SavingsDashboardScreen } from '../screens/SavingsDashboardScreen';
 import { ScanScreen } from '../screens/ScanScreen';
@@ -117,13 +115,11 @@ export function AppNavigator() {
         component={RestaurantPackDetailScreen}
         options={{ title: 'Pack Detail' }}
       />
-      <Stack.Screen name="PaywallScreen" component={PaywallScreen} options={{ title: 'Okyo Plus' }} />
       <Stack.Screen
         name="SavingsDashboardScreen"
         component={SavingsDashboardScreen}
         options={{ headerShown: false, title: 'Savings' }}
       />
-      <Stack.Screen name="RankingsScreen" component={RankingsScreen} options={{ title: 'Rankings' }} />
       <Stack.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
       <Stack.Screen
         name="RecommendationCategoryScreen"

@@ -28,9 +28,7 @@ export type RootStackParamList = {
   DupeChallengeScreen: { mode?: RecipeMode } | undefined;
   ChallengeCompleteScreen: { challengeId?: string } | undefined;
   RestaurantPackDetailScreen: { packId?: string } | undefined;
-  PaywallScreen: undefined;
   SavingsDashboardScreen: undefined;
-  RankingsScreen: undefined;
   SettingsScreen: undefined;
   RecommendationCategoryScreen: { category?: string } | undefined;
   KitchenLetterScreen: undefined;

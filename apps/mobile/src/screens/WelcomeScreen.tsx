@@ -13,7 +13,6 @@ import {
   OnboardingFirstResultScreen,
   OnboardingHeroScreen,
   OnboardingLoadingScreen,
-  OnboardingPaywallScreen,
   OnboardingScanCard,
   OnboardingScreenShell,
   OnboardingStatefulButton,
@@ -46,8 +45,7 @@ type OnboardingScreenKey =
   | 'reminder'
   | 'scan'
   | 'loading'
-  | 'firstResult'
-  | 'paywall';
+  | 'firstResult';
 
 const maxImageDataUrlBytes = 12_000_000;
 const maxProcessedImageWidth = 1400;
@@ -59,7 +57,6 @@ const progressSteps: OnboardingScreenKey[] = [
   'loading',
   'scan',
   'firstResult',
-  'paywall',
 ];
 
 type WeeklyGoalOption = {
@@ -96,7 +93,6 @@ export function WelcomeScreen() {
   const setNotificationChoice = useOkyoStore((state) => state.setNotificationChoice);
   const markFirstOnboardingScanCompleted = useOkyoStore((state) => state.markFirstOnboardingScanCompleted);
   const markFirstOnboardingResultSeen = useOkyoStore((state) => state.markFirstOnboardingResultSeen);
-  const markPaywallShown = useOkyoStore((state) => state.markPaywallShown);
   const resultRecipe = latestScanRecipe;
 
   useEffect(() => {
@@ -157,7 +153,7 @@ export function WelcomeScreen() {
 
   const goBack = () => {
     const currentIndex = progressSteps.indexOf(screenKey);
-    if (currentIndex <= 0 || screenKey === 'loading' || screenKey === 'firstResult' || screenKey === 'paywall') {
+    if (currentIndex <= 0 || screenKey === 'loading' || screenKey === 'firstResult') {
       return;
     }
 
@@ -390,13 +386,7 @@ export function WelcomeScreen() {
     return false;
   };
 
-  const showPaywall = () => {
-    markPaywallShown();
-    setScreenKey('paywall');
-  };
-
   const finishOnboarding = () => {
-    markPaywallShown();
     track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'WelcomeScreen' });
     completeOnboarding();
     if (notificationChoice === 'remind_me') {
@@ -449,17 +439,7 @@ export function WelcomeScreen() {
         recipeTitle={getFirstResultTitle(latestScanResult?.dishName, resultRecipe.title)}
         savingsText={getSavingsText(latestScanResult, resultRecipe)}
         timeText={getTimeText(resultRecipe)}
-        onContinue={showPaywall}
-      />
-    );
-  }
-
-  if (screenKey === 'paywall') {
-    return (
-      <OnboardingPaywallScreen
         onContinue={finishOnboarding}
-        onRestore={() => Alert.alert('Restore Purchases', 'Purchases are not active in this build yet.')}
-        progress={progress}
       />
     );
   }

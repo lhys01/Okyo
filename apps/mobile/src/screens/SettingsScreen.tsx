@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import appConfig from '../../app.json';
 import { analyticsEvents, track } from '../analytics/track';
@@ -7,6 +7,7 @@ import { uiLog } from '../utils/uiDebug';
 import { SecondaryButton, sharedStyles } from '../components/OkyoUI';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { colors, radius, spacing, typography } from '../theme/okyoTheme';
+import { legalUrls } from '../config/legalConfig';
 
 export function SettingsScreen() {
   const resetOnboarding = useOkyoStore((state) => state.resetOnboarding);
@@ -27,6 +28,19 @@ export function SettingsScreen() {
 
   const showUnavailable = (label: string) => {
     Alert.alert(label, 'This setting is not enabled in this preview build.');
+  };
+
+  const openLegalDestination = async (label: string, url: string | undefined) => {
+    if (!url) {
+      Alert.alert(label, `${label} is not configured for this development build.`);
+      return;
+    }
+
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert(label, `Okyo could not open the ${label.toLowerCase()} destination.`);
+    }
   };
 
   const confirmResetOnboarding = () => {
@@ -89,13 +103,16 @@ export function SettingsScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Help and legal</Text>
-        <Pressable style={styles.linkRow} onPress={() => showUnavailable('Privacy Policy')}>
+        <Text style={styles.privacySummary}>
+          Food photos are sent to OpenRouter and downstream AI providers for analysis. The backend processes the upload without retaining the image. Saved recipes and photo copies stay on this device until you remove the recipe or clear local data. During the cohort, backend operational logs may include dish labels, status, timing, model and token usage, but not raw photo contents. Mobile analytics and crash reporting are not enabled in this build.
+        </Text>
+        <Pressable style={styles.linkRow} onPress={() => openLegalDestination('Privacy Policy', legalUrls.privacy)}>
           <Text style={styles.linkText}>Privacy Policy</Text>
         </Pressable>
-        <Pressable style={styles.linkRow} onPress={() => showUnavailable('Support')}>
+        <Pressable style={styles.linkRow} onPress={() => openLegalDestination('Support', legalUrls.support)}>
           <Text style={styles.linkText}>Support</Text>
         </Pressable>
-        <Pressable style={styles.linkRow} onPress={() => showUnavailable('Terms')}>
+        <Pressable style={styles.linkRow} onPress={() => openLegalDestination('Terms', legalUrls.terms)}>
           <Text style={styles.linkText}>Terms</Text>
         </Pressable>
       </View>
@@ -145,6 +162,12 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     fontSize: 18,
     fontWeight: '700',
+    marginBottom: 12,
+  },
+  privacySummary: {
+    ...typography.caption,
+    color: colors.body,
+    lineHeight: 19,
     marginBottom: 12,
   },
   row: {

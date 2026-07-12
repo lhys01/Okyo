@@ -17,7 +17,7 @@ import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { colors, radius, shadows, spacing, typography } from '../theme/okyoTheme';
 
-type PaywallNavigation = NativeStackNavigationProp<RootStackParamList, 'PaywallScreen'>;
+type PaywallNavigation = NativeStackNavigationProp<RootStackParamList>;
 
 const weeklyFreeScanLimit = 3;
 
