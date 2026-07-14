@@ -95,3 +95,54 @@ test('output schema carries a single recipe (no per-mode keys)', () => {
   assert.equal('restaurantCopy' in parsed, false);
   assert.ok(Array.isArray(parsed.steps));
 });
+
+test('normalizes a single substitution string into an array', () => {
+  const parsed = openRouterRecipeOutputSchema.parse({
+    ...buildValidRecipe(),
+    substitutions: '  Use Greek yogurt instead of sour cream.  ',
+  });
+
+  assert.deepEqual(parsed.substitutions, ['Use Greek yogurt instead of sour cream.']);
+});
+
+test('preserves an array of substitution strings', () => {
+  const substitutions = ['Use tofu instead of chicken.', 'Swap spinach for kale.'];
+  const parsed = openRouterRecipeOutputSchema.parse({
+    ...buildValidRecipe(),
+    substitutions,
+  });
+
+  assert.deepEqual(parsed.substitutions, substitutions);
+});
+
+test('converts an array of substitution objects into strings', () => {
+  const parsed = openRouterRecipeOutputSchema.parse({
+    ...buildValidRecipe(),
+    substitutions: [
+      {
+        ingredient: 'sour cream',
+        substitute: 'Greek yogurt',
+        note: 'Use the same amount.',
+      },
+      {
+        from: 'spinach',
+        to: 'kale',
+        description: 'Cook it a little longer.',
+      },
+    ],
+  });
+
+  assert.deepEqual(parsed.substitutions, [
+    'sour cream: Greek yogurt Use the same amount.',
+    'spinach: kale Cook it a little longer.',
+  ]);
+});
+
+test('normalizes an empty substitution string into an empty array', () => {
+  const parsed = openRouterRecipeOutputSchema.parse({
+    ...buildValidRecipe(),
+    substitutions: '',
+  });
+
+  assert.deepEqual(parsed.substitutions, []);
+});

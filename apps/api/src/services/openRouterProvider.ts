@@ -175,16 +175,23 @@ const recipeVariantSchema = z.object({
   steps: z.array(z.union([z.string(), recipeStepSchema])).optional().default([]),
   avoidMistake: flexibleText,
   mistakeWarning: flexibleText,
-  substitutions: z.array(z.union([
+  substitutions: z.union([
     z.string(),
-    z.record(z.unknown()).transform((obj) => {
-      const r = obj as Record<string, unknown>;
-      const from = String(r.ingredient ?? r.name ?? r.from ?? '');
-      const to = String(r.substitute ?? r.replacement ?? r.to ?? '');
-      const note = String(r.note ?? r.description ?? '');
-      return [from && `${from}:`, to, note].filter(Boolean).join(' ').trim();
-    }),
-  ])).optional().default([]),
+    z.array(z.union([
+      z.string(),
+      z.record(z.unknown()).transform((obj) => {
+        const r = obj as Record<string, unknown>;
+        const from = String(r.ingredient ?? r.name ?? r.from ?? '');
+        const to = String(r.substitute ?? r.replacement ?? r.to ?? '');
+        const note = String(r.note ?? r.description ?? '');
+        return [from && `${from}:`, to, note].filter(Boolean).join(' ').trim();
+      }),
+    ])),
+  ]).optional().default([]).transform((value) => {
+    if (Array.isArray(value)) return value;
+    const substitution = value.trim();
+    return substitution ? [substitution] : [];
+  }),
   storageAndReheating: flexibleText,
   storage: flexibleText,
   groceryItems: z.array(z.object({
