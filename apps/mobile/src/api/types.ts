@@ -46,6 +46,7 @@ export type ScanImageMetadata = {
 };
 
 export type CreateScanRequest = {
+  requestId: string;
   source: ScanSource;
   mode?: RecipeMode;
   image?: ScanImageMetadata;

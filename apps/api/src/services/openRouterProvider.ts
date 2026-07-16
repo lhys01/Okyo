@@ -12,6 +12,15 @@ import {
   type EnrichedRecipeContext,
 } from './epicureService.js';
 import { ingredientsMatch } from './recipeIngredientValidation.js';
+import {
+  getRemainingScanMs,
+  ScanCancelledError,
+  ScanDeadlineExceededError,
+  throwIfScanCancelled,
+  waitForScanDelay,
+  type ScanExecutionContext,
+} from './scanDeadline.js';
+import { logScanMetric } from '../telemetry/scanTelemetry.js';
 
 const openRouterEndpoint = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -249,7 +258,7 @@ export async function analyzeFoodImageWithOpenRouter(input: {
   image?: ScanImageMetadata;
   mode: RecipeMode;
   quota: ProviderQuota;
-}) {
+} & Partial<ScanExecutionContext>) {
   const imageUrl = getSafeImageUrl(input.image);
   logOpenRouterDebug('api_openrouter_has_image_payload', {
     hasImagePayload: Boolean(imageUrl),
@@ -276,7 +285,8 @@ export async function analyzeFoodImageWithOpenRouter(input: {
       retryPrompt: 'compact_vision',
       stage: 'vision_initial_output',
     });
-    await waitMs(3500);
+    logRetryMetric(input, 'vision_initial_retry', retryReason);
+    await waitForScanDelay(3500, input.signal, input.deadlineAt);
     firstOutput = await callVisionOnce(input, getCompactVisionRetryPrompt(input.image, input.mode), 'vision_initial_retry');
     logOpenRouterDebug('openrouter_scan_quality_retry_result', {
       retryReason,
@@ -310,6 +320,7 @@ export async function analyzeFoodImageWithOpenRouter(input: {
     ? getCompactVisionRetryPrompt(input.image, input.mode)
     : getFocusedVisionRetryPrompt(input.image, input.mode, firstOutput);
   try {
+    logRetryMetric(input, 'vision_quality_retry', retryReason ?? 'quality_retry');
     const retryOutput = await callVisionOnce(input, retryPrompt, 'vision_quality_retry');
     const retryQuality = evaluateVisionQuality(retryOutput);
     const useRetry = isTooUnclearRetry
@@ -362,7 +373,12 @@ function getOpenRouterErrorReason(error: unknown) {
 }
 
 async function callVisionOnce(
-  input: { config: AiConfig; image?: ScanImageMetadata; mode: RecipeMode; quota: ProviderQuota },
+  input: {
+    config: AiConfig;
+    image?: ScanImageMetadata;
+    mode: RecipeMode;
+    quota: ProviderQuota;
+  } & Partial<ScanExecutionContext>,
   promptText: string,
   stage: string,
 ) {
@@ -602,7 +618,7 @@ export async function generateRecipeWithOpenRouter(input: {
   config: AiConfig;
   mode?: RecipeMode;
   quota: ProviderQuota;
-}) {
+} & Partial<ScanExecutionContext>) {
   // ── Epicure enrichment (additive) ───────────────────────────────────────────
   // Runs BEFORE recipe generation. When the feature flag is off, no key is set,
   // or the call fails, enrichRecipeContext returns null and the recipe prompt is
@@ -640,9 +656,14 @@ export async function generateRecipeWithOpenRouter(input: {
         dishName: input.analysis.dishName,
         ingredients: [...input.analysis.visibleIngredients, ...input.analysis.likelyIngredients],
         mode,
-      }, undefined, input.quota);
+      }, undefined, input.quota, {
+        requestId: input.requestId,
+        signal: input.signal,
+        deadlineAt: input.deadlineAt,
+      });
     } catch (enrichError) {
       if (isQuotaError(enrichError)) throw enrichError;
+      throwIfScanCancelled(input.signal, input.deadlineAt);
       logOpenRouterDebug('epicure_enrichment_unexpected_error', {
         reason: enrichError instanceof Error ? enrichError.message : 'unknown',
       });
@@ -702,7 +723,8 @@ export async function generateRecipeWithOpenRouter(input: {
       retryMaxTokens: 1024,
     });
 
-    await waitMs(3500);
+    logRetryMetric(input, 'recipe_retry', firstError.failure.reason);
+    await waitForScanDelay(3500, input.signal, input.deadlineAt);
     firstOutput = await callRecipeStage(input, getCompactRecipeRetryPrompt(input.analysis), 1024, 'recipe_retry');
   }
 
@@ -740,7 +762,8 @@ export async function generateRecipeWithOpenRouter(input: {
   });
 
   try {
-    await waitMs(250);
+    logRetryMetric(input, 'recipe_quality_repair', issues.join(','));
+    await waitForScanDelay(250, input.signal, input.deadlineAt);
     const repaired = await callRecipeStage(
       input,
       getRecipeRepairPrompt(input.analysis, firstOutput, issues),
@@ -769,7 +792,11 @@ export async function generateRecipeWithOpenRouter(input: {
 // Fail-closed structural enforcement. Returns a structurally valid recipe or
 // throws OpenRouterProviderError — never a fabricated/templated recipe.
 async function enforceRecipeStructure(
-  input: { analysis: FoodImageAnalysis; config: AiConfig; quota: ProviderQuota },
+  input: {
+    analysis: FoodImageAnalysis;
+    config: AiConfig;
+    quota: ProviderQuota;
+  } & Partial<ScanExecutionContext>,
   output: OpenRouterRecipeOutput,
 ): Promise<OpenRouterRecipeOutput> {
   const issues = validateRecipeStructure(output);
@@ -783,7 +810,8 @@ async function enforceRecipeStructure(
     willRepair: true,
   });
 
-  await waitMs(250);
+  logRetryMetric(input, 'recipe_structure_repair', issues.join(','));
+  await waitForScanDelay(250, input.signal, input.deadlineAt);
   const repaired = await callRecipeStage(
     input,
     getRecipeStructureRepairPrompt(input.analysis, issues),
@@ -844,7 +872,11 @@ export function validateRecipeStructure(output: OpenRouterRecipeOutput): string[
 }
 
 async function callRecipeStage(
-  input: { analysis: FoodImageAnalysis; config: AiConfig; quota: ProviderQuota },
+  input: {
+    analysis: FoodImageAnalysis;
+    config: AiConfig;
+    quota: ProviderQuota;
+  } & Partial<ScanExecutionContext>,
   userPrompt: string,
   maxTokens: number,
   stage: string,
@@ -862,6 +894,9 @@ async function callRecipeStage(
       maxTokens: Math.min(input.config.maxOutputTokens, maxTokens),
       stage,
       quota: input.quota,
+      requestId: input.requestId,
+      signal: input.signal,
+      deadlineAt: input.deadlineAt,
     },
     getRecipeModelChain(input.config),
   );
@@ -979,7 +1014,8 @@ async function callOpenRouterJson(input: {
   model: string;
   stage?: string;
   quota: ProviderQuota;
-}) {
+} & Partial<ScanExecutionContext>) {
+  throwIfScanCancelled(input.signal, input.deadlineAt);
   if (!input.config.openRouterApiKey) {
     throw createOpenRouterError(input.config, input.model, 'openrouter_missing_key', {
       openRouterErrorMessage: 'OpenRouter API key is missing.',
@@ -1000,13 +1036,22 @@ async function callOpenRouterJson(input: {
     operation,
   });
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), input.config.timeoutMs);
+  const remainingMs = getRemainingScanMs(input.deadlineAt);
+  const attemptTimeoutMs = Math.min(input.config.timeoutMs, remainingMs ?? input.config.timeoutMs);
+  let providerTimedOut = false;
+  const timeout = setTimeout(() => {
+    providerTimedOut = true;
+    controller.abort();
+  }, Math.max(1, attemptTimeoutMs));
+  const cancelFromScan = () => controller.abort(input.signal?.reason);
+  input.signal?.addEventListener('abort', cancelFromScan, { once: true });
   const startedAt = Date.now(); // [scan_timing] per-call latency
   let inputTokens: number | undefined;
   let outputTokens: number | undefined;
   let actualCostUsd: number | undefined;
 
   try {
+    throwIfScanCancelled(input.signal, input.deadlineAt);
     const response = await fetch(openRouterEndpoint, {
       body: JSON.stringify({
         max_tokens: input.maxTokens,
@@ -1065,6 +1110,7 @@ async function callOpenRouterJson(input: {
     actualCostUsd = typeof providerCost === 'number' ? providerCost : undefined;
     logOpenRouterDebug('openrouter_response_shape', responseShape);
     console.log('[token_usage]', {
+      requestId: input.requestId,
       model: input.model,
       stage: input.stage ?? 'unknown',
       promptTokens,
@@ -1095,6 +1141,18 @@ async function callOpenRouterJson(input: {
       outputTokens,
       actualCostUsd,
     });
+    if (input.requestId) {
+      logScanMetric({
+        requestId: input.requestId,
+        stage: `provider_${input.stage ?? 'unknown'}`,
+        durationMs: Date.now() - startedAt,
+        details: {
+          model: input.model,
+          inputTokens,
+          outputTokens,
+        },
+      });
+    }
     return parsed;
   } catch (error) {
     await input.quota.completeAttempt(reservation, {
@@ -1104,11 +1162,24 @@ async function callOpenRouterJson(input: {
       outputTokens,
       actualCostUsd,
     });
+    if (input.requestId) {
+      logScanMetric({
+        requestId: input.requestId,
+        stage: `provider_${input.stage ?? 'unknown'}`,
+        durationMs: Date.now() - startedAt,
+        status: input.signal?.aborted ? 'cancelled' : 'failure',
+        details: {
+          model: input.model,
+          reason: getProviderAttemptFailureCategory(error),
+        },
+      });
+    }
+    throwIfScanCancelled(input.signal, input.deadlineAt);
     if (error instanceof OpenRouterProviderError) {
       throw error;
     }
 
-    if (isAbortError(error)) {
+    if (providerTimedOut || isAbortError(error)) {
       throw createOpenRouterError(input.config, input.model, 'openrouter_timeout', {
         openRouterErrorMessage: 'OpenRouter request timed out.',
       });
@@ -1125,10 +1196,13 @@ async function callOpenRouterJson(input: {
     });
   } finally {
     clearTimeout(timeout);
+    input.signal?.removeEventListener('abort', cancelFromScan);
   }
 }
 
 function getProviderAttemptFailureCategory(error: unknown): string {
+  if (error instanceof ScanDeadlineExceededError) return 'scan_deadline_exceeded';
+  if (error instanceof ScanCancelledError) return 'scan_cancelled';
   if (error instanceof OpenRouterProviderError) return error.failure.reason;
   if (isAbortError(error)) return 'openrouter_timeout';
   if (error instanceof TypeError) return 'openrouter_network_error';
@@ -1143,7 +1217,7 @@ type CallJsonBase = {
   messages: OpenRouterMessage[];
   stage?: string;
   quota: ProviderQuota;
-};
+} & Partial<ScanExecutionContext>;
 
 function isFailoverError(error: unknown): boolean {
   if (!(error instanceof OpenRouterProviderError)) return false;
@@ -1159,15 +1233,12 @@ function isBackoffError(error: unknown): boolean {
     [429, 503].includes(error.failure.httpStatus ?? 0);
 }
 
-function waitMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string[]): Promise<unknown> {
   let lastError: unknown = new Error('recipe_model_chain_empty');
   let failoverCount = 0;
   for (let i = 0; i < models.length; i++) {
     const model = models[i];
+    throwIfScanCancelled(base.signal, base.deadlineAt);
     logOpenRouterDebug('recipe_model_attempt', { model, attempt: i + 1, stage: base.stage });
     try {
       const result = await callOpenRouterJson({ ...base, model });
@@ -1192,9 +1263,14 @@ async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string
       });
       if (!isFailoverError(error)) throw error;
       if (i < models.length - 1) {
+        logRetryMetric(base, base.stage ?? 'provider_failover', info?.reason ?? 'unknown', model);
         logOpenRouterDebug('recipe_model_fallback', { from: model, to: models[i + 1], attempt: i + 2, stage: base.stage });
         if (isBackoffError(error)) {
-          await waitMs(RECIPE_FAILOVER_DELAYS_MS[i] ?? RECIPE_FAILOVER_DELAYS_MS[RECIPE_FAILOVER_DELAYS_MS.length - 1]);
+          await waitForScanDelay(
+            RECIPE_FAILOVER_DELAYS_MS[i] ?? RECIPE_FAILOVER_DELAYS_MS[RECIPE_FAILOVER_DELAYS_MS.length - 1],
+            base.signal,
+            base.deadlineAt,
+          );
         }
       }
     }
@@ -1878,7 +1954,7 @@ export async function callComponentRepairWithOpenRouter(input: {
   missingComponents: string[];
   existingIngredientGroups: Array<{ component: string; items: unknown[] }>;
   quota: ProviderQuota;
-}): Promise<ComponentRepairOutput> {
+} & Partial<ScanExecutionContext>): Promise<ComponentRepairOutput> {
   const existing = input.existingIngredientGroups.map((g) => g.component).filter(Boolean).join(', ');
   const prompt = [
     `The recipe for "${input.analysis.dishName}" is missing these platter components: ${input.missingComponents.join(', ')}.`,
@@ -1905,6 +1981,9 @@ export async function callComponentRepairWithOpenRouter(input: {
       maxTokens: Math.min(input.config.maxOutputTokens, 2400),
       stage: 'component_coverage_repair',
       quota: input.quota,
+      requestId: input.requestId,
+      signal: input.signal,
+      deadlineAt: input.deadlineAt,
     },
     getRecipeModelChain(input.config),
   );
@@ -1916,4 +1995,19 @@ export async function callComponentRepairWithOpenRouter(input: {
     });
   }
   return output.data;
+}
+
+function logRetryMetric(
+  input: Partial<ScanExecutionContext>,
+  stage: string,
+  reason: string,
+  model?: string,
+): void {
+  if (!input.requestId) return;
+  logScanMetric({
+    requestId: input.requestId,
+    stage: 'retry_or_repair',
+    durationMs: 0,
+    details: { retryStage: stage, reason, model },
+  });
 }

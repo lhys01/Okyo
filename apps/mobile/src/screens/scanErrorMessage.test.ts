@@ -32,6 +32,28 @@ test('existing rate-limit and generic scan failures remain supported', () => {
   );
 });
 
+test('mobile timeout and connection failures have distinct honest copy', () => {
+  assert.equal(
+    getUploadFailureReasonFromError(Object.assign(new Error('timed out'), {
+      name: 'ScanRequestTimeoutError',
+    })),
+    'This scan took too long. Try again with a clear, well-lit food photo.',
+  );
+  assert.equal(
+    getUploadFailureReasonFromError(Object.assign(new Error('offline'), {
+      name: 'ScanConnectionError',
+    })),
+    'Okyo could not reach the scanner. Check your connection and try again.',
+  );
+});
+
+test('server scan deadline uses the timeout copy', () => {
+  assert.equal(
+    getUploadFailureReasonFromError(apiError('scan_timeout', 'internal timeout detail', 504)),
+    'This scan took too long. Try again with a clear, well-lit food photo.',
+  );
+});
+
 function apiError(code: string, message: string, httpStatus: number) {
   return Object.assign(new Error(message), { name: 'ApiError', code, httpStatus });
 }

@@ -17,6 +17,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
+import { OKYO_MAX_SCAN_IMAGE_DATA_URL_BYTES } from '../api/config';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
@@ -28,13 +29,12 @@ import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore, type LatestScanFailure } from '../state/useOkyoStore';
 import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { hasFoodEvidence, isFoodScanState, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
-import { copyToDocuments } from '../utils/scanImageStorage';
+import { markMobileScanStarted, measureMobileScanStage } from '../utils/scanTelemetry';
 import { uiLog } from '../utils/uiDebug';
 import { getUploadFailureReasonFromError } from './scanErrorMessage';
 
 type ScanNavigation = NativeStackNavigationProp<RootStackParamList, 'ScanScreen'>;
 
-const maxImageDataUrlBytes = 12_000_000;
 const maxProcessedImageWidth = 1400;
 const tabBarSafePadding = 260;
 
@@ -48,9 +48,9 @@ export function ScanScreen() {
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
 
-  const startScan = (source: ScanSource, image?: ScanImageMetadata) => {
+  const startScan = (source: ScanSource, requestId: string, image?: ScanImageMetadata) => {
     const uploadedImage = isRealUploadedImage(source, image);
-    const scanSessionId = createScanSessionId(source);
+    const scanSessionId = requestId;
     const previewImage = getPreviewImageMetadata(image);
     logDev('okyo_scan_start', {
       hasImage: Boolean(image),
@@ -77,7 +77,7 @@ export function ScanScreen() {
     });
     navigation.navigate('AnalysisLoadingScreen', { scanSessionId });
 
-    createMockScan({ image, mode: selectedMode, source })
+    createMockScan({ requestId, image, mode: selectedMode, source })
       .then((result) => {
         if (!isActiveScanSession(scanSessionId)) {
           logIgnoredScanSessionWrite(scanSessionId, 'ScanScreen.api_response_stale');
@@ -244,8 +244,14 @@ export function ScanScreen() {
         return;
       }
 
-      const cameraImage = await getImageMetadata(result.assets[0], 'camera');
-      startScan('camera', await copyToDocuments(cameraImage));
+      const requestId = createScanSessionId('camera');
+      markMobileScanStarted(requestId);
+      const cameraImage = await measureMobileScanStage(
+        requestId,
+        'image_preparation',
+        () => getImageMetadata(result.assets[0], 'camera'),
+      );
+      startScan('camera', requestId, cameraImage);
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Camera unavailable.',
@@ -274,8 +280,14 @@ export function ScanScreen() {
         return;
       }
 
-      const photosImage = await getImageMetadata(result.assets[0], 'photos');
-      startScan('photos', await copyToDocuments(photosImage));
+      const requestId = createScanSessionId('photos');
+      markMobileScanStarted(requestId);
+      const photosImage = await measureMobileScanStage(
+        requestId,
+        'image_preparation',
+        () => getImageMetadata(result.assets[0], 'photos'),
+      );
+      startScan('photos', requestId, photosImage);
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Image picker failed.',
@@ -487,7 +499,11 @@ async function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: Sca
   const processed = await getProcessedImage(asset);
   const dataUrl = getImageDataUrl(processed.base64, processed.mimeType);
   const dataUrlSizeBytes = dataUrl ? getUtf8SizeBytes(dataUrl) : undefined;
-  const shouldSendDataUrl = Boolean(dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes);
+  const shouldSendDataUrl = Boolean(
+    dataUrl &&
+    dataUrlSizeBytes !== undefined &&
+    dataUrlSizeBytes <= OKYO_MAX_SCAN_IMAGE_DATA_URL_BYTES
+  );
   logDev('okyo_scan_data_url_exists', { exists: Boolean(dataUrl) });
   logDev('okyo_scan_data_url_length', { length: dataUrl?.length ?? 0, sizeBytes: dataUrlSizeBytes ?? 0 });
   logDev('okyo_scan_conversion_error', {
@@ -579,7 +595,11 @@ async function getProcessedImage(asset: ImagePicker.ImagePickerAsset) {
         conversionError: dataUrl ? undefined : 'image_base64_missing',
       };
 
-      if (dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes) {
+      if (
+        dataUrl &&
+        dataUrlSizeBytes !== undefined &&
+        dataUrlSizeBytes <= OKYO_MAX_SCAN_IMAGE_DATA_URL_BYTES
+      ) {
         logProcessedImageAttempt(attempt.maxWidth, attempt.compress, result.width, result.height, dataUrlSizeBytes, true);
         return latestResult;
       }

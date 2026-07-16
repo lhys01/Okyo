@@ -1,6 +1,12 @@
 import type { ApiError } from '../api/client';
 
 export function getUploadFailureReasonFromError(error: unknown) {
+  if (error instanceof Error && error.name === 'ScanRequestTimeoutError') {
+    return 'This scan took too long. Try again with a clear, well-lit food photo.';
+  }
+  if (error instanceof Error && error.name === 'ScanConnectionError') {
+    return 'Okyo could not reach the scanner. Check your connection and try again.';
+  }
   if (isApiError(error)) {
     switch (error.code) {
       case 'image_payload_too_large':
@@ -15,6 +21,8 @@ export function getUploadFailureReasonFromError(error: unknown) {
         return 'Okyo could not reach the scanner. Please try again in a moment.';
       case 'rate_limit_exceeded':
         return 'Too many scan requests. Please wait a moment before trying again.';
+      case 'scan_timeout':
+        return 'This scan took too long. Try again with a clear, well-lit food photo.';
       default:
         return 'Okyo had trouble scanning this photo. Try again in a second.';
     }

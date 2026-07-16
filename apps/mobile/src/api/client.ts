@@ -1,6 +1,7 @@
 import { OKYO_API_BASE_URL, OKYO_API_TIMEOUT_MS, OKYO_DEV_MODEL_OVERRIDE } from './config';
 import { authenticatedFetch } from './authenticatedClient';
 import type { ApiResponse, CreateScanRequest, CreateScanResult } from './types';
+import { logMobileScanMetric } from '../utils/scanTelemetry';
 
 // Thrown for any non-2xx or `{ ok: false }` API response. `code` is the
 // server's stable error code (e.g. "fable_not_enabled", "rate_limit_exceeded")
@@ -20,22 +21,52 @@ export class ApiError extends Error {
   }
 }
 
+export class ScanRequestTimeoutError extends Error {
+  readonly requestId: string;
+
+  constructor(requestId: string) {
+    super('The scan request timed out.');
+    this.name = 'ScanRequestTimeoutError';
+    this.requestId = requestId;
+  }
+}
+
+export class ScanConnectionError extends Error {
+  readonly requestId: string;
+
+  constructor(requestId: string, cause?: unknown) {
+    super('The scan service could not be reached.', { cause });
+    this.name = 'ScanConnectionError';
+    this.requestId = requestId;
+  }
+}
+
 export async function createMockScan(request: CreateScanRequest): Promise<CreateScanResult> {
   return postJson<CreateScanResult>('/v1/scans', request);
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const requestId = getRequestId(body);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), OKYO_API_TIMEOUT_MS);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, OKYO_API_TIMEOUT_MS);
   const requestBody = JSON.stringify(body);
   logApiRequest(path, requestBody, body);
+  const uploadStartedAt = Date.now();
 
   try {
     const response = await authenticatedFetch(`${OKYO_API_BASE_URL}${path}`, {
       body: requestBody,
-      headers: getJsonHeaders(path),
+      headers: getJsonHeaders(path, requestId),
       method: 'POST',
       signal: controller.signal,
+    });
+    logMobileScanMetric(requestId, 'upload', Date.now() - uploadStartedAt, {
+      httpStatus: response.status,
+      requestBytes: requestBody.length,
     });
 
     const payload = await response.json() as ApiResponse<T>;
@@ -54,14 +85,30 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     }
 
     return payload.data;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if (timedOut || (error instanceof Error && error.name === 'AbortError')) {
+      logMobileScanMetric(requestId, 'mobile_request_failure', Date.now() - uploadStartedAt, {
+        reason: 'timeout',
+      });
+      throw new ScanRequestTimeoutError(requestId);
+    }
+    if (error instanceof TypeError || (error instanceof Error && /network|fetch/i.test(error.message))) {
+      logMobileScanMetric(requestId, 'mobile_request_failure', Date.now() - uploadStartedAt, {
+        reason: 'connection',
+      });
+      throw new ScanConnectionError(requestId, error);
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function getJsonHeaders(path: string): Record<string, string> {
+function getJsonHeaders(path: string, requestId: string): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'x-okyo-request-id': requestId,
   };
 
   if (path === '/v1/scans' && OKYO_DEV_MODEL_OVERRIDE === 'fable') {
@@ -69,6 +116,19 @@ function getJsonHeaders(path: string): Record<string, string> {
   }
 
   return headers;
+}
+
+function getRequestId(body: unknown): string {
+  if (
+    body &&
+    typeof body === 'object' &&
+    'requestId' in body &&
+    typeof body.requestId === 'string' &&
+    body.requestId.trim()
+  ) {
+    return body.requestId.trim();
+  }
+  return `mobile-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function logApiRequest(path: string, requestBody: string, body: unknown) {

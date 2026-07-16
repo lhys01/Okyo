@@ -4,6 +4,10 @@ declare global {
       auth?: Readonly<{
         userId: string;
       }>;
+      scanContext?: Readonly<{
+        requestId: string;
+        ingressStartedAt: number;
+      }>;
     }
   }
 }

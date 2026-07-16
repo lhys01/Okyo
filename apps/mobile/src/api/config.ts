@@ -19,6 +19,9 @@ if (__DEV__ && requestedDevModel && requestedDevModel !== 'fable') {
 
 export const OKYO_API_BASE_URL = configuredApiUrl ?? developmentApiFallback;
 export const OKYO_API_TIMEOUT_MS = 60000;
+// The API defaults to a 10 MB scan-image guard. Keep mobile comfortably below
+// it so JSON/base64 overhead and environment differences do not cause 413s.
+export const OKYO_MAX_SCAN_IMAGE_DATA_URL_BYTES = 8_000_000;
 export const OKYO_DEV_MODEL_OVERRIDE: OkyoModelOverride | undefined =
   __DEV__ && requestedDevModel === 'fable' ? 'fable' : undefined;
 
