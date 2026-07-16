@@ -6,7 +6,6 @@ import type { GroceryListItem, Recipe, RecipeIngredient, RecipeStep } from '../t
 
 // Culinary synonym groups — each group maps to a single canonical form (index 0).
 // Used to match equivalent ingredient names across different cuisines and dialects.
-// Plurals are included explicitly; auto-desingularization handles simple -s endings.
 const INGREDIENT_SYNONYM_GROUPS: string[][] = [
   ['scallion', 'scallions', 'green onion', 'green onions', 'spring onion', 'spring onions'],
   ['cilantro', 'coriander', 'fresh coriander'],
@@ -21,45 +20,134 @@ const INGREDIENT_SYNONYM_GROUPS: string[][] = [
   ['yogurt', 'yoghurt', 'yogurts', 'yoghurts'],
   ['arugula', 'rocket', 'arugulas'],
   ['shrimp', 'prawn', 'prawns', 'shrimps'],
-  ['ground meat', 'mince', 'minced meat', 'ground beef', 'minced beef'],
 ];
+
+const quantityPrefixPattern = new RegExp(
+  [
+    '^',
+    '(?:about\\s+|approximately\\s+|approx\\.?\\s+)?',
+    '(?:',
+    '\\d+\\s+\\d+\\/\\d+',
+    '|\\d+\\/\\d+',
+    '|\\d+(?:\\.\\d+)?',
+    '|[¼½¾⅓⅔⅛⅜⅝⅞]',
+    '|one|two|three|four|five|six|seven|eight|nine|ten',
+    '|a|an|half|quarter|pinch|dash|handful',
+    ')',
+    '\\s*',
+  ].join(''),
+  'i',
+);
+
+const measurementPrefixPattern = new RegExp(
+  [
+    '^(?:',
+    'cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lbs?|grams?|g|',
+    'kilograms?|kg|milliliters?|ml|liters?|l|cloves?|slices?|pieces?|cans?|jars?|',
+    'packages?|packs?|bunches?|sprigs?|stalks?|heads?|fillets?|breasts?|thighs?',
+    ')\\b\\s*(?:of\\s+)?',
+  ].join(''),
+  'i',
+);
+
+const preparationWords = new Set([
+  'about', 'approximately', 'boneless', 'chilled', 'chopped', 'coarsely', 'cold',
+  'cooked', 'crushed', 'cubed', 'deseeded', 'diced', 'divided', 'drained', 'dried',
+  'extra', 'finely', 'fresh', 'freshly', 'frozen', 'grated', 'halved', 'julienned', 'large', 'lightly',
+  'medium', 'melted', 'minced', 'optional', 'peeled', 'prepared', 'quartered',
+  'rinsed', 'roughly', 'seeded', 'shredded', 'skinless', 'sliced', 'small', 'softened',
+  'thinly', 'toasted', 'trimmed', 'virgin', 'warm',
+]);
+
+function normalizeIngredientText(name: string): string {
+  let normalized = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[–—-]/g, ' ')
+    .replace(/[^\p{L}\p{N}\s/]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  normalized = normalized.replace(quantityPrefixPattern, '').trim();
+  normalized = normalized.replace(measurementPrefixPattern, '').trim();
+  normalized = normalized
+    .replace(/\b(?:for|to)\s+(?:serving|garnish|frying|cooking|greasing)\b.*$/i, '')
+    .replace(/\bto taste\b$/i, '')
+    .trim();
+
+  const tokens = normalized
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => !preparationWords.has(token))
+    .map(singularizeIngredientToken);
+  return tokens.join(' ').trim();
+}
+
+function singularizeIngredientToken(token: string): string {
+  if (token.endsWith('ies') && token.length > 4) return `${token.slice(0, -3)}y`;
+  if (token.endsWith('oes') && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith('ses') && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith('s') && !token.endsWith('ss') && token.length > 3) return token.slice(0, -1);
+  return token;
+}
 
 // Build a normalized alias → canonical index lookup at module load time.
 const INGREDIENT_SYNONYM_LOOKUP = new Map<string, number>(
   INGREDIENT_SYNONYM_GROUPS.flatMap((group, idx) =>
-    group.map((alias) => [alias.toLowerCase().trim(), idx]),
+    group.map((alias) => [normalizeIngredientText(alias), idx]),
   ),
 );
 
-// Returns the canonical form of an ingredient name for comparison.
-// Handles synonyms and simple plural auto-stripping.
+// Returns the canonical ingredient concept after removing quantities,
+// punctuation, preparation descriptors, simple plurals, and known synonyms.
 export function canonicalIngredientName(name: string): string {
-  const lower = name.toLowerCase().trim();
-  const direct = INGREDIENT_SYNONYM_LOOKUP.get(lower);
+  const normalized = normalizeIngredientText(name);
+  const direct = INGREDIENT_SYNONYM_LOOKUP.get(normalized);
   if (direct !== undefined) {
     return INGREDIENT_SYNONYM_GROUPS[direct][0];
   }
-  // Strip a trailing 's' for simple plurals not in the synonym map.
-  if (lower.endsWith('s') && lower.length > 3) {
-    const singular = lower.slice(0, -1);
-    const singularIdx = INGREDIENT_SYNONYM_LOOKUP.get(singular);
-    if (singularIdx !== undefined) {
-      return INGREDIENT_SYNONYM_GROUPS[singularIdx][0];
-    }
-  }
-  return lower;
+  return normalized;
 }
 
-// Returns true when two ingredient strings are considered the same after synonym
-// expansion and substring matching (e.g. "chicken breast" matches "chicken").
+const safeGenericIngredientAliases = new Set(['oil', 'salt', 'pepper']);
+const distinctIngredientProductTokens = new Set([
+  'broth', 'cheese', 'cream', 'flour', 'milk', 'oil', 'paste', 'powder',
+  'sauce', 'starch', 'stock', 'syrup', 'vinegar',
+]);
+
+// Returns true when two ingredient strings are considered the same after shared
+// culinary normalization. Generic "oil" safely matches a named cooking oil, but
+// two different named oils do not match each other.
 export function ingredientsMatch(recipeIngredient: string, stepIngredient: string): boolean {
   const a = canonicalIngredientName(recipeIngredient);
   const b = canonicalIngredientName(stepIngredient);
-  return a === b || a.includes(b) || b.includes(a);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (safeGenericIngredientAliases.has(a) && b.split(' ').includes(a)) return true;
+  if (safeGenericIngredientAliases.has(b) && a.split(' ').includes(b)) return true;
+
+  const aTokens = a.split(' ').filter(Boolean);
+  const bTokens = b.split(' ').filter(Boolean);
+  const shorter = aTokens.length <= bTokens.length ? aTokens : bTokens;
+  const longer = aTokens.length <= bTokens.length ? bTokens : aTokens;
+  if (shorter.length === 0 || !shorter.every((token) => longer.includes(token))) {
+    return false;
+  }
+  const extraTokens = longer.filter((token) => !shorter.includes(token));
+  return !extraTokens.some((token) => distinctIngredientProductTokens.has(token));
+}
+
+export function findMatchingIngredientName(
+  reference: string,
+  ingredientNames: string[],
+): string | undefined {
+  return ingredientNames.find((ingredientName) => ingredientsMatch(ingredientName, reference));
 }
 
 function matchesAnyIngredient(name: string, ingredientNames: string[]): boolean {
-  return ingredientNames.some((ingredientName) => ingredientsMatch(ingredientName, name));
+  return findMatchingIngredientName(name, ingredientNames) !== undefined;
 }
 
 export type IngredientClosureReport = {

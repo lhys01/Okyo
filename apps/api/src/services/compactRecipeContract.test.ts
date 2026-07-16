@@ -162,19 +162,22 @@ test('compact provider output is canonical and reused across selected modes', as
   }
 });
 
-test('one targeted patch repairs a critical compact defect using the previous output', async () => {
+test('one targeted repair returns a complete compact object using the previous output', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
+  let repairPrompt = '';
   const unsafe = chickenRecipe({
     title: 'Repair Lemon Chicken',
     steps: chickenRecipe().steps.map((step) => ({ ...step, safetyNote: '' })),
   });
-  globalThis.fetch = async () => {
+  globalThis.fetch = async (_url, init) => {
     calls += 1;
     if (calls === 1) return providerResponse(unsafe);
-    return providerResponse({
-      steps: chickenRecipe().steps,
-    });
+    const body = JSON.parse(String(init?.body)) as {
+      messages?: Array<{ role?: string; content?: string }>;
+    };
+    repairPrompt = body.messages?.find((message) => message.role === 'user')?.content ?? '';
+    return providerResponse(chickenRecipe({ title: 'Repair Lemon Chicken' }));
   };
   try {
     const output = await generateRecipeWithOpenRouter({
@@ -186,6 +189,9 @@ test('one targeted patch repairs a critical compact defect using the previous ou
     });
     assert.equal(calls, 2);
     assert.match(JSON.stringify(output.steps), /165/);
+    assert.match(repairPrompt, /missing_safety_poultry/);
+    assert.match(repairPrompt, /Full canonical ingredient list/);
+    assert.match(repairPrompt, /Previous output/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -278,6 +284,51 @@ test('missing quantities and unlisted step ingredients are critical defects', ()
   assert.ok(validateCompactRecipeOutput(unlistedButter, analysis()).includes(
     'step_uses_unlisted_ingredients',
   ));
+});
+
+test('missing time or completion cues remain a critical compact defect', () => {
+  const missingCue = chickenRecipe({
+    steps: chickenRecipe().steps.map((step, index) => index === 1
+      ? {
+          instruction: 'Heat the olive oil in the skillet.',
+          doneWhen: '',
+          safetyNote: '',
+        }
+      : step),
+  });
+  assert.ok(validateCompactRecipeOutput(missingCue, analysis()).includes(
+    'step_missing_time_or_completion_cue',
+  ));
+});
+
+test('an invalid compact repair fails closed after the one repair budget', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const unsafe = chickenRecipe({
+    steps: chickenRecipe().steps.map((step) => ({ ...step, safetyNote: '' })),
+  });
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(unsafe);
+  };
+  try {
+    await assert.rejects(
+      generateRecipeWithOpenRouter({
+        analysis: analysis({ dishName: 'Invalid Repair Lemon Chicken' }),
+        config,
+        mode: 'Restaurant Copy',
+        quota,
+        requestId: 'compact-invalid-repair',
+      }),
+      (error: unknown) => {
+        assert.equal(error instanceof Error && error.name, 'RecipeValidationError');
+        return true;
+      },
+    );
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('simple foods and drinks permit appropriately short compact recipes', () => {

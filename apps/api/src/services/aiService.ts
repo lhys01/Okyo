@@ -26,22 +26,24 @@ import type {
 } from '../types.js';
 import {
   analyzeFoodImageWithOpenRouter,
-  callComponentRepairWithOpenRouter,
   generateRecipeWithOpenRouter,
   isDrinkAnalysisText,
   isGenericDishName,
   OpenRouterProviderError,
   repairStepCoachingWithAI,
-  type ComponentRepairOutput,
   type OpenRouterRecipeOutput,
   type OpenRouterRecipeVariant,
   type OpenRouterVisionOutput,
   type StepCoachingPatch,
 } from './openRouterProvider.js';
 import {
-  enforceStepIngredientClosure,
   ingredientsMatch,
+  validateIngredientClosure,
 } from './recipeIngredientValidation.js';
+import {
+  RecipeGenerationError,
+  RecipeValidationError,
+} from './recipeGenerationError.js';
 import { logScanEvaluation } from './scanEvalLogger.js';
 import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
 import { throwIfScanCancelled, type ScanExecutionContext } from './scanDeadline.js';
@@ -49,7 +51,7 @@ import { logScanMetric, measureScanStage } from '../telemetry/scanTelemetry.js';
 
 // Bump when the vision/recipe prompt or post-processing pipeline changes substantially.
 // Any cached scan result with a different version is automatically stale.
-const RECIPE_PIPELINE_VERSION = 'v3';
+const RECIPE_PIPELINE_VERSION = 'v4-reliability';
 const SCAN_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 h success cache
 const SCAN_REJECTION_CACHE_TTL_MS = 60 * 60 * 1000; // 1 h rejection cache
 
@@ -377,10 +379,6 @@ export async function generateRecipeFromDish(
       ? createCompactRecipeFromOpenRouterOutput(output, input.analysis, input.mode)
       : createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
 
-    // Store recipe for deferred coaching — enriched on Guided Cooking tap, not on scan.
-    if (result.recipe) {
-    }
-
     const initialScore = result.recipe?.structuredSteps?.length
       ? calculateRecipeCoachingScore(result.recipe.structuredSteps)
       : 0;
@@ -403,43 +401,20 @@ export async function generateRecipeFromDish(
         finalResult,
         input.analysis,
         config,
-        input.quota,
-        input,
       );
-      if (finalResult.recipe) {
-      }
     }
 
     // Ingredient closure enforcement: recipe.ingredients is the single source
-    // of truth. The provider's quality-repair pass already had one chance to
-    // fix unlisted step ingredients; anything still unknown here is
-    // deterministically stripped — never invented, never a scan failure.
+    // of truth. Validate only after all local recipe transformations. Unknown
+    // step references fail closed instead of being silently removed.
     if (finalResult.recipe) {
-      const enforced = enforceStepIngredientClosure(finalResult.recipe);
-      let closedRecipe = enforced.recipe;
-      const missingGroceryItems = closedRecipe.isCompactRecipe
-        ? []
-        : enforced.report.missingGroceryItems;
-      if (missingGroceryItems.length > 0) {
-        closedRecipe = {
-          ...closedRecipe,
-          groceryItems: getGroceryItems(closedRecipe.ingredients, input.analysis),
-        };
-      }
-      if (enforced.changed || missingGroceryItems.length > 0) {
-        finalResult = { ...finalResult, recipe: closedRecipe };
-      }
-      if (
-        enforced.report.unknownStepIngredients.length > 0 ||
-        missingGroceryItems.length > 0
-      ) {
-        console.warn('[recipe_consistency]', {
-          recipeId: closedRecipe.id,
-          unknownStepIngredients: enforced.report.unknownStepIngredients,
-          missingGroceryItems,
-          strippedStepIngredients: enforced.strippedStepIngredients,
-          repaired: enforced.report.unknownStepIngredients.length === 0,
+      const closure = validateIngredientClosure(finalResult.recipe);
+      if (closure.unknownStepIngredients.length > 0) {
+        console.error('[recipe_consistency] ingredient closure failed closed', {
+          recipeId: finalResult.recipe.id,
+          unknownStepIngredients: closure.unknownStepIngredients,
         });
+        throw new RecipeValidationError(['step_uses_unlisted_ingredients']);
       }
     }
 
@@ -450,6 +425,16 @@ export async function generateRecipeFromDish(
     return finalResult;
   } catch (error) {
     // Fail-closed: throw on recipe generation failure. Never return a fabricated result.
+    if (
+      error instanceof RecipeGenerationError ||
+      error instanceof RecipeValidationError ||
+      isQuotaError(error)
+    ) {
+      throw error;
+    }
+    if (error instanceof OpenRouterProviderError) {
+      throw new RecipeGenerationError(error.failure.reason);
+    }
     throw error;
   }
 }
@@ -1079,19 +1064,6 @@ function createRecipeFromVariant(
   const structuredSteps = getStructuredSteps(variant.steps, steps, analysis, ingredients.map((i) => i.name));
   const isCompactRecipe = Array.isArray(variant.steps) && variant.steps.length > 0 && variant.steps.every((s) => typeof s === 'string');
   const ingredientGroups = getIngredientGroups(variant.ingredientGroups, ingredients, analysis);
-  const spicePairings = getSpicePairings(variant.spicePairings, analysis);
-  const cookingTerms = getCookingTerms(variant.cookingTerms, steps);
-  const groceryItems = getGroceryItems(ingredients, analysis);
-  const mistakeWarning = cleanRecipeCopy(getShortText(
-    variant.mistakeWarning || variant.avoidMistake,
-    getDefaultAvoidMistake(analysis),
-    140,
-  ));
-  const storage = cleanRecipeCopy(getShortText(
-    variant.storage || variant.storageAndReheating,
-    getDefaultStorageAndReheating(analysis),
-    160,
-  ));
 
   return sanitizeRecipeVagueness({
     id: `${options.idPrefix ?? 'ai'}-${slugify(analysis.dishName)}-${slugify(mode)}`,
@@ -1112,19 +1084,13 @@ function createRecipeFromVariant(
     ingredientGroups,
     steps,
     structuredSteps,
-    substitutions: getSafeList(variant.substitutions, getDefaultSubstitutions(), 3).map(cleanRecipeCopy),
-    pantryNote: 'Assumes salt, pepper, and basic oil are on hand.',
+    substitutions: [],
+    pantryNote: '',
     confidenceNote: `${options.confidenceNotePrefix ?? 'AI-assisted testing output.'} Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
     mainIngredientsSummary: getDefaultMainIngredientsSummary(ingredients),
     equipment: getSafeList(variant.equipment, getDefaultEquipment(analysis), 5).map(cleanRecipeCopy),
-    bestFor: getDefaultBestFor(),
-    avoidMistake: mistakeWarning,
-    mistakeWarning,
-    storageAndReheating: storage,
-    storage,
-    groceryItems,
-    spicePairings,
-    cookingTerms,
+    spicePairings: [],
+    cookingTerms: [],
     isCompactRecipe: isCompactRecipe || undefined,
   }, analysis);
 }
@@ -4785,16 +4751,12 @@ function isPlatterStyleMeal(analysis: FoodImageAnalysis): boolean {
 }
 
 function extractGeneratedComponents(recipe: Recipe): string[] {
-  if (recipe.isCompactRecipe) {
-    return [
-      recipe.title,
-      ...recipe.ingredients.map((ingredient) => ingredient.name),
-      ...recipe.steps,
-    ];
-  }
-  return (recipe.ingredientGroups ?? [])
-    .map((g) => g.component)
-    .filter((c): c is string => Boolean(c));
+  return [
+    recipe.title,
+    ...recipe.ingredients.map((ingredient) => ingredient.name),
+    ...recipe.steps,
+    ...(recipe.ingredientGroups ?? []).map((group) => group.component),
+  ].filter(Boolean);
 }
 
 function computeCoverage(
@@ -4832,50 +4794,10 @@ function isComponentCovered(detectedName: string, generatedComponents: string[])
   });
 }
 
-function mergeRepairIntoRecipe(
-  recipe: Recipe,
-  repair: ComponentRepairOutput,
-  analysis: FoodImageAnalysis,
-): Recipe {
-  // Deduplicate: skip repair groups whose component name already matches an
-  // existing group (same fuzzy rule as coverage matching — prevents double-groups
-  // when the matcher had a false negative and repair re-generated the same item).
-  const existingGroupNames = (recipe.ingredientGroups ?? []).map((g) => g.component);
-  const newGroups: RecipeIngredientGroup[] = repair.ingredientGroups
-    .filter((g) => g.component && g.items.length > 0 && !isComponentCovered(g.component, existingGroupNames))
-    .map((g) => ({ component: g.component, items: g.items.map(toRecipeIngredient) }));
-
-  const newIngredients = repair.ingredients.map(toRecipeIngredient);
-  const newStepTexts = repair.steps.map(getStepText).filter(Boolean) as string[];
-
-  // Renumber: repair steps arrive with stepNumber starting at 1. Offset them
-  // so structuredSteps has no duplicate stepNumbers after merge.
-  const stepOffset = recipe.structuredSteps?.length ?? 0;
-  const newStructuredSteps = repair.steps
-    .map((s, i) => toStructuredStep(s, newStepTexts[i] ?? '', analysis))
-    .filter((s): s is RecipeStep => Boolean(s?.text))
-    .map((s, i) => ({ ...s, stepNumber: stepOffset + i + 1 }));
-
-  const allIngredients = [...recipe.ingredients, ...newIngredients];
-
-  return {
-    ...recipe,
-    ingredientGroups: [...(recipe.ingredientGroups ?? []), ...newGroups],
-    ingredients: allIngredients,
-    steps: [...recipe.steps, ...newStepTexts],
-    structuredSteps: recipe.structuredSteps
-      ? [...recipe.structuredSteps, ...newStructuredSteps]
-      : recipe.structuredSteps,
-    groceryItems: getGroceryItems(allIngredients, analysis),
-  };
-}
-
 async function ensureComponentCoverage(
   result: GeneratedRecipeOutput,
   analysis: FoodImageAnalysis,
   config: AiConfig,
-  quota: ProviderQuota,
-  execution: Partial<ScanExecutionContext>,
 ): Promise<GeneratedRecipeOutput> {
   const detected = analysis.detectedComponents ?? [];
   if (detected.length === 0) return result;
@@ -4883,70 +4805,7 @@ async function ensureComponentCoverage(
   const recipe = result.recipe!;
   const generated = extractGeneratedComponents(recipe);
   const { coveragePercent, missingComponents } = computeCoverage(detected, generated);
-
-  const repairNeeded = coveragePercent < 90 && missingComponents.length > 0;
-  let repairAddedComponents = 0;
-  let repairedRecipe = recipe;
-
-  if (repairNeeded) {
-    if (recipe.isCompactRecipe) {
-      console.error('[component-coverage] compact recipe failed closed', {
-        dish: analysis.dishName,
-        coveragePercent,
-        missing: missingComponents,
-      });
-      throw new Error('RECIPE_GENERATION_FAILED: compact_platter_coverage_below_90');
-    }
-    console.log('[component-coverage] repair triggered', {
-      dish: analysis.dishName,
-      coveragePercent,
-      missing: missingComponents,
-    });
-    try {
-      if (execution.requestId) {
-        logScanMetric({
-          requestId: execution.requestId,
-          stage: 'retry_or_repair',
-          durationMs: 0,
-          details: {
-            retryStage: 'component_coverage_repair',
-            reason: 'platter_coverage_below_90',
-            missingComponentCount: missingComponents.length,
-          },
-        });
-      }
-      const repairOutput = await callComponentRepairWithOpenRouter({
-        analysis,
-        config,
-        missingComponents,
-        existingIngredientGroups: recipe.ingredientGroups ?? [],
-        quota,
-        requestId: execution.requestId,
-        signal: execution.signal,
-        deadlineAt: execution.deadlineAt,
-      });
-      repairedRecipe = mergeRepairIntoRecipe(recipe, repairOutput, analysis);
-      // mergeRepairIntoRecipe appends steps after the serve step; re-run the
-      // timeline validator so component repair steps land before serve.
-      if (repairedRecipe.structuredSteps) {
-        repairedRecipe = {
-          ...repairedRecipe,
-          structuredSteps: validateTimeline(repairedRecipe.structuredSteps),
-        };
-      }
-      repairAddedComponents = repairOutput.ingredientGroups.length;
-    } catch (repairError) {
-      if (isQuotaError(repairError)) throw repairError;
-      console.warn('[component-coverage] repair failed', {
-        dish: analysis.dishName,
-        reason: repairError instanceof OpenRouterProviderError ? repairError.failure.reason : 'unknown',
-      });
-    }
-  }
-
-  // Re-measure coverage on the final recipe so analytics reflect actual outcome.
-  const finalGenerated = extractGeneratedComponents(repairedRecipe);
-  const { coveragePercent: finalCoveragePercent } = computeCoverage(detected, finalGenerated);
+  const coverageFailed = coveragePercent < 90 && missingComponents.length > 0;
 
   void recordPlatterCoverage({
     dish: analysis.dishName,
@@ -4957,13 +4816,20 @@ async function ensureComponentCoverage(
     missingComponentCount: missingComponents.length,
     missingComponentNames: missingComponents,
     coveragePercent,
-    finalCoveragePercent,
-    repairTriggered: repairNeeded,
-    repairAddedComponents,
-    repairSucceeded: repairNeeded && finalCoveragePercent > coveragePercent,
+    finalCoveragePercent: coveragePercent,
+    repairTriggered: false,
+    repairAddedComponents: 0,
+    repairSucceeded: false,
   });
 
-  return repairNeeded && repairAddedComponents > 0
-    ? { ...result, recipe: repairedRecipe }
-    : result;
+  if (coverageFailed) {
+    console.error('[component-coverage] recipe failed closed after provider repair budget', {
+      dish: analysis.dishName,
+      coveragePercent,
+      missing: missingComponents,
+    });
+    throw new RecipeValidationError(['platter_coverage_below_90']);
+  }
+
+  return result;
 }

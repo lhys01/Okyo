@@ -6,6 +6,10 @@ import {
   ScanDeadlineExceededError,
   throwIfScanCancelled,
 } from '../services/scanDeadline.js';
+import {
+  RecipeGenerationError,
+  RecipeValidationError,
+} from '../services/recipeGenerationError.js';
 import { logScanMetric, measureScanStage } from '../telemetry/scanTelemetry.js';
 import type { Recipe } from '../types.js';
 import {
@@ -178,6 +182,12 @@ function sanitizeScanFailure(error: unknown): {
   }
   if (error instanceof ScanCancelledError) {
     return { status: 'failed', category: 'scan_cancelled' };
+  }
+  if (error instanceof RecipeValidationError) {
+    return { status: 'failed', category: 'recipe_validation_failed' };
+  }
+  if (error instanceof RecipeGenerationError) {
+    return { status: 'failed', category: 'recipe_generation_failed' };
   }
   const message = error instanceof Error ? error.message : '';
   if (message.startsWith('AI_UNAVAILABLE:')) return { status: 'failed', category: 'ai_unavailable' };
