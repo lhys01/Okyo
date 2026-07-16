@@ -88,13 +88,11 @@ export function AnalysisLoadingScreen() {
       return;
     }
 
-    const finish = setTimeout(() => {
-      didNavigate.current = true;
-      uiLog('AnalysisLoadingScreen', 'navigate_result', { status: latestScanStatus });
-      navigation.navigate('ResultSummaryScreen', { scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined });
-    }, 750);
-
-    return () => clearTimeout(finish);
+    didNavigate.current = true;
+    uiLog('AnalysisLoadingScreen', 'navigate_result', { status: latestScanStatus });
+    navigation.navigate('ResultSummaryScreen', {
+      scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined,
+    });
   }, [latestScanStatus, navigation, route.params?.scanSessionId, scanSessionId]);
 
   // Safety net: the scan store always receives a terminal write (the API client

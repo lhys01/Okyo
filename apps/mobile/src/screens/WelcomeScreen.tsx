@@ -7,6 +7,7 @@ import { Alert, Animated, Easing, Pressable, StyleSheet, Text, View } from 'reac
 
 import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
+import { OKYO_MAX_SCAN_IMAGE_DATA_URL_BYTES } from '../api/config';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import {
   KikoSpeechBubble,
@@ -33,7 +34,11 @@ import {
 import { colors, fontFamilies, shadows } from '../theme/okyoTheme';
 import { scheduleOkyoDailyReminder } from '../utils/notifications';
 import { hasFoodEvidence, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
-import { copyToDocuments } from '../utils/scanImageStorage';
+import {
+  logMobileScreenReveal,
+  markMobileScanStarted,
+  measureMobileScanStage,
+} from '../utils/scanTelemetry';
 import { uiLog } from '../utils/uiDebug';
 
 type WelcomeNavigation = NativeStackNavigationProp<RootStackParamList, 'WelcomeScreen'>;
@@ -47,7 +52,6 @@ type OnboardingScreenKey =
   | 'loading'
   | 'firstResult';
 
-const maxImageDataUrlBytes = 12_000_000;
 const maxProcessedImageWidth = 1400;
 
 const progressSteps: OnboardingScreenKey[] = [
@@ -84,6 +88,7 @@ export function WelcomeScreen() {
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
+  const scanSessionId = useOkyoStore((state) => state.scanSessionId);
   const completeOnboarding = useOkyoStore((state) => state.completeOnboarding);
   const beginLatestScanSession = useOkyoStore((state) => state.beginLatestScanSession);
   const writeLatestScanSession = useOkyoStore((state) => state.writeLatestScanSession);
@@ -104,6 +109,12 @@ export function WelcomeScreen() {
     uiLog('WelcomeScreen', 'enter_onboarding_flow');
     track(analyticsEvents.ONBOARDING_START, { screen: 'WelcomeScreen' });
   }, []);
+
+  useEffect(() => {
+    if (screenKey === 'firstResult') {
+      logMobileScreenReveal(scanSessionId);
+    }
+  }, [scanSessionId, screenKey]);
 
   useEffect(() => {
     if (screenKey !== 'splash') {
@@ -210,7 +221,14 @@ export function WelcomeScreen() {
         return;
       }
 
-      await startOnboardingScan('camera', await getImageMetadata(result.assets[0], 'camera'));
+      const requestId = createScanSessionId('camera');
+      markMobileScanStarted(requestId);
+      const image = await measureMobileScanStage(
+        requestId,
+        'image_preparation',
+        () => getImageMetadata(result.assets[0], 'camera'),
+      );
+      await startOnboardingScan('camera', requestId, image);
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Camera unavailable.',
@@ -234,7 +252,14 @@ export function WelcomeScreen() {
         return;
       }
 
-      await startOnboardingScan('photos', await getImageMetadata(result.assets[0], 'photos'));
+      const requestId = createScanSessionId('photos');
+      markMobileScanStarted(requestId);
+      const image = await measureMobileScanStage(
+        requestId,
+        'image_preparation',
+        () => getImageMetadata(result.assets[0], 'photos'),
+      );
+      await startOnboardingScan('photos', requestId, image);
     } catch (error) {
       track(analyticsEvents.RESULT_ERROR, {
         errorMessage: error instanceof Error ? error.message : 'Image picker failed.',
@@ -245,14 +270,17 @@ export function WelcomeScreen() {
     }
   };
 
-  const startOnboardingScan = async (source: ScanSource, image?: ScanImageMetadata) => {
+  const startOnboardingScan = async (
+    source: ScanSource,
+    requestId: string,
+    image?: ScanImageMetadata,
+  ) => {
     if (isScanSubmitting) {
       return;
     }
 
-    const scanSessionId = createScanSessionId(source);
-    const persistedImage = (image && !image.placeholder) ? await copyToDocuments(image) : image;
-    const previewImage = getPreviewImageMetadata(persistedImage);
+    const scanSessionId = requestId;
+    const previewImage = getPreviewImageMetadata(image);
     setIsScanSubmitting(true);
     setScanError(null);
     setScreenKey('loading');
@@ -270,13 +298,13 @@ export function WelcomeScreen() {
     });
 
     try {
-      const result = await createMockScan({ image, mode: selectedMode, source });
+      const result = await createMockScan({ requestId, image, mode: selectedMode, source });
       if (!isActiveScanSession(scanSessionId)) {
         return;
       }
 
       const handled = handleScanResult({
-        fallbackImage: persistedImage,
+        fallbackImage: image,
         result,
         scanSessionId,
         source,
@@ -285,6 +313,7 @@ export function WelcomeScreen() {
       if (!handled) {
         setScreenKey('scan');
         setScanError(getScanFailureReason(result));
+        logMobileScreenReveal(scanSessionId);
       }
     } catch (error) {
       if (!isActiveScanSession(scanSessionId)) {
@@ -314,6 +343,7 @@ export function WelcomeScreen() {
       });
       setScreenKey('scan');
       setScanError(failureReason);
+      logMobileScreenReveal(scanSessionId);
     } finally {
       setIsScanSubmitting(false);
     }
@@ -720,7 +750,11 @@ async function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: Sca
   const processed = await getProcessedImage(asset);
   const dataUrl = getImageDataUrl(processed.base64, processed.mimeType);
   const dataUrlSizeBytes = dataUrl ? dataUrl.length : undefined;
-  const shouldSendDataUrl = Boolean(dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes);
+  const shouldSendDataUrl = Boolean(
+    dataUrl &&
+    dataUrlSizeBytes !== undefined &&
+    dataUrlSizeBytes <= OKYO_MAX_SCAN_IMAGE_DATA_URL_BYTES
+  );
 
   return {
     fileName: getProcessedFileName(asset.fileName),
@@ -781,7 +815,11 @@ async function getProcessedImage(asset: ImagePicker.ImagePickerAsset) {
         conversionError: dataUrl ? undefined : 'image_base64_missing',
       };
 
-      if (dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes) {
+      if (
+        dataUrl &&
+        dataUrlSizeBytes !== undefined &&
+        dataUrlSizeBytes <= OKYO_MAX_SCAN_IMAGE_DATA_URL_BYTES
+      ) {
         return latestResult;
       }
     } catch (_error) {

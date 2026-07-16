@@ -44,6 +44,8 @@ import {
 } from './recipeIngredientValidation.js';
 import { logScanEvaluation } from './scanEvalLogger.js';
 import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
+import { throwIfScanCancelled, type ScanExecutionContext } from './scanDeadline.js';
+import { logScanMetric, measureScanStage } from '../telemetry/scanTelemetry.js';
 
 // Bump when the vision/recipe prompt or post-processing pipeline changes substantially.
 // Any cached scan result with a different version is automatically stale.
@@ -222,7 +224,7 @@ export type GeneratedRecipeOutput = z.infer<typeof generatedRecipeOutputSchema> 
 };
 export type IngredientCostEstimate = z.infer<typeof ingredientCostEstimateSchema>;
 
-export type AnalyzeFoodImageInput = {
+export type AnalyzeFoodImageInput = Partial<ScanExecutionContext> & {
   image?: ScanImageMetadata;
   source: ScanSource;
   mode: RecipeMode;
@@ -233,7 +235,7 @@ export type AnalyzeFoodImageInput = {
   quota: ProviderQuota;
 };
 
-export type GenerateRecipeFromDishInput = {
+export type GenerateRecipeFromDishInput = Partial<ScanExecutionContext> & {
   analysis: FoodImageAnalysis;
   mode: RecipeMode;
   fableActive?: boolean;
@@ -282,6 +284,7 @@ export class FoodRejectionError extends Error {
 
 export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<FoodImageAnalysis> {
   const config = getAiConfig({ fableActive: input.fableActive });
+  throwIfScanCancelled(input.signal, input.deadlineAt);
 
   logScanDebug('api_openrouter_call_start', {
     imageDataUrlExists: Boolean(input.image?.dataUrl),
@@ -296,6 +299,9 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
     image: input.image,
     mode: input.mode,
     quota: input.quota,
+    requestId: input.requestId,
+    signal: input.signal,
+    deadlineAt: input.deadlineAt,
   });
   logAi('openrouter_ai', getAiLogDetails(config, config.openRouterVisionModel, { stage: 'vision' }));
   const normalized = normalizeVisionOutput(output);
@@ -347,6 +353,7 @@ export async function generateRecipeFromDish(
   input: GenerateRecipeFromDishInput,
 ): Promise<GeneratedRecipeOutput> {
   const config = getAiConfig({ fableActive: input.fableActive });
+  throwIfScanCancelled(input.signal, input.deadlineAt);
 
   const startedAt = Date.now();
   try {
@@ -355,6 +362,9 @@ export async function generateRecipeFromDish(
       config,
       mode: input.mode,
       quota: input.quota,
+      requestId: input.requestId,
+      signal: input.signal,
+      deadlineAt: input.deadlineAt,
     });
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterTextModel, { stage: 'recipe' }));
     const result = createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
@@ -381,7 +391,13 @@ export async function generateRecipeFromDish(
     // component appears in ingredientGroups.
     let finalResult = result;
     if (finalResult.recipe && isPlatterStyleMeal(input.analysis)) {
-      finalResult = await ensureComponentCoverage(finalResult, input.analysis, config, input.quota);
+      finalResult = await ensureComponentCoverage(
+        finalResult,
+        input.analysis,
+        config,
+        input.quota,
+        input,
+      );
       if (finalResult.recipe) {
       }
     }
@@ -590,10 +606,26 @@ export async function createAiScan(
     const cached = scanCache.get(scanCacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       console.log('[scan_cache]', { hit: true, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8), ttl: 'valid' });
+      if (input.requestId) {
+        logScanMetric({
+          requestId: input.requestId,
+          stage: 'scan_cache',
+          durationMs: 0,
+          details: { hit: true },
+        });
+      }
       if (cached.kind === 'success') return cached.result;
       throw cached.error;
     }
     console.log('[scan_cache]', { hit: false, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8) });
+    if (input.requestId) {
+      logScanMetric({
+        requestId: input.requestId,
+        stage: 'scan_cache',
+        durationMs: 0,
+        details: { hit: false },
+      });
+    }
   }
 
   // [scan_timing] orchestration timers. Per-OpenRouter-call timing is logged
@@ -601,8 +633,15 @@ export async function createAiScan(
   // this gives the end-to-end and deterministic-stage breakdown.
   const scanStartedAt = Date.now();
   try {
+    throwIfScanCancelled(input.signal, input.deadlineAt);
     const visionStartedAt = Date.now();
-    const analysis = await analyzeFoodImage(input);
+    const analysis = input.requestId
+      ? await measureScanStage({
+          requestId: input.requestId,
+          stage: 'vision_call',
+          run: () => analyzeFoodImage(input),
+        })
+      : await analyzeFoodImage(input);
     const visionMs = Date.now() - visionStartedAt;
     const foodDrinkVisible = Boolean(analysis.isFoodImage || isFoodScanState(analysis.scanState));
     logScanDebug('api_scan_vision_result', {
@@ -652,12 +691,22 @@ export async function createAiScan(
       scanState: analysis.scanState,
     });
     const recipeStartedAt = Date.now();
-    const generatedRecipe = await generateRecipeFromDish({
+    const recipeInput: GenerateRecipeFromDishInput = {
       analysis,
       mode: input.mode,
       fableActive: input.fableActive,
       quota: input.quota,
-    });
+      requestId: input.requestId,
+      signal: input.signal,
+      deadlineAt: input.deadlineAt,
+    };
+    const generatedRecipe = input.requestId
+      ? await measureScanStage({
+          requestId: input.requestId,
+          stage: 'recipe_call',
+          run: () => generateRecipeFromDish(recipeInput),
+        })
+      : await generateRecipeFromDish(recipeInput);
     const recipeMs = Date.now() - recipeStartedAt;
     const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
     logScanDebug('api_scan_recipe_result', {
@@ -748,6 +797,14 @@ export async function createAiScan(
       recipeMs, // includes Epicure pre-call + recipe + structure/quality/component repairs
       totalMs: Date.now() - scanStartedAt,
     });
+    if (input.requestId) {
+      logScanMetric({
+        requestId: input.requestId,
+        stage: 'ai_scan_total',
+        durationMs: Date.now() - scanStartedAt,
+        details: { scanState: analysis.scanState },
+      });
+    }
 
     if (scanCacheKey) {
       scanCache.set(scanCacheKey, { kind: 'success', result, expiresAt: Date.now() + SCAN_CACHE_TTL_MS });
@@ -761,6 +818,15 @@ export async function createAiScan(
       model: config.openRouterVisionModel,
       errorMessage,
     });
+    if (input.requestId) {
+      logScanMetric({
+        requestId: input.requestId,
+        stage: 'ai_scan_total',
+        durationMs: Date.now() - scanStartedAt,
+        status: 'failure',
+        details: { reason: error instanceof Error ? error.name : 'unknown' },
+      });
+    }
     throw error;
   }
 }
@@ -4601,6 +4667,7 @@ async function ensureComponentCoverage(
   analysis: FoodImageAnalysis,
   config: AiConfig,
   quota: ProviderQuota,
+  execution: Partial<ScanExecutionContext>,
 ): Promise<GeneratedRecipeOutput> {
   const detected = analysis.detectedComponents ?? [];
   if (detected.length === 0) return result;
@@ -4620,12 +4687,27 @@ async function ensureComponentCoverage(
       missing: missingComponents,
     });
     try {
+      if (execution.requestId) {
+        logScanMetric({
+          requestId: execution.requestId,
+          stage: 'retry_or_repair',
+          durationMs: 0,
+          details: {
+            retryStage: 'component_coverage_repair',
+            reason: 'platter_coverage_below_90',
+            missingComponentCount: missingComponents.length,
+          },
+        });
+      }
       const repairOutput = await callComponentRepairWithOpenRouter({
         analysis,
         config,
         missingComponents,
         existingIngredientGroups: recipe.ingredientGroups ?? [],
         quota,
+        requestId: execution.requestId,
+        signal: execution.signal,
+        deadlineAt: execution.deadlineAt,
       });
       repairedRecipe = mergeRepairIntoRecipe(recipe, repairOutput, analysis);
       // mergeRepairIntoRecipe appends steps after the serve step; re-run the

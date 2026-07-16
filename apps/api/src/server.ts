@@ -21,6 +21,7 @@ import {
   createProviderQuota,
   getQuotaApiError,
 } from './quota/providerQuota.js';
+import { requestContextMiddleware } from './middleware/requestContext.js';
 import { mountV1Authentication } from './middleware/supabaseAuth.js';
 import {
   awardXp,
@@ -34,6 +35,12 @@ import {
   getXpDefinitions,
 } from './store.js';
 import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
+import {
+  getScanDeadlineMs,
+  ScanCancelledError,
+  ScanDeadlineExceededError,
+} from './services/scanDeadline.js';
+import { logScanMetric } from './telemetry/scanTelemetry.js';
 import { validatePaidFallbackAtStartup } from './services/openRouterProvider.js';
 import { buildRecipeAdaptationPlan } from './services/recipeAdaptationService.js';
 import { buildRecipeQualityReport } from './services/recipeCheckService.js';
@@ -82,6 +89,7 @@ const scanImageMetadataSchema = z.object({
   conversionError: z.string().min(1).max(120).optional(),
 }).strict();
 const scanRequestSchema = z.object({
+  requestId: z.string().min(8).max(128).optional(),
   source: scanSourceSchema.optional().default('camera'),
   mode: recipeModeSchema.optional().default('Restaurant Copy'),
   image: scanImageMetadataSchema.optional(),
@@ -148,8 +156,19 @@ const recipeAdaptationRequestSchema = z.object({
   }).strict().optional(),
 }).strict();
 
+app.use(requestContextMiddleware());
 app.use(cors());
 app.use(express.json({ limit: jsonBodyLimit }));
+app.use((request, _response, next) => {
+  if (request.path === '/v1/scans' && request.scanContext) {
+    logScanMetric({
+      requestId: request.scanContext.requestId,
+      stage: 'api_ingress',
+      durationMs: Date.now() - request.scanContext.ingressStartedAt,
+    });
+  }
+  next();
+});
 
 // Minimal manual security headers — no dependency needed for this small a surface.
 app.use((_request, response, next) => {
@@ -185,6 +204,21 @@ app.get('/debug/ai-config', (_request, response) => {
 mountV1Authentication(app);
 
 app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) => {
+  const requestId = request.scanContext?.requestId ?? 'missing-request-id';
+  const controller = new AbortController();
+  const deadlineAt = (request.scanContext?.ingressStartedAt ?? Date.now()) + getScanDeadlineMs();
+  const deadlineTimer = setTimeout(
+    () => controller.abort(new ScanDeadlineExceededError()),
+    Math.max(0, deadlineAt - Date.now()),
+  );
+  const cancelForClientDisconnect = () => {
+    if (!response.writableEnded && !controller.signal.aborted) {
+      controller.abort(new ScanCancelledError());
+    }
+  };
+  request.once('aborted', cancelForClientDisconnect);
+  response.once('close', cancelForClientDisconnect);
+
   try {
     const body = parseRequest(scanRequestSchema, normalizeScanRequestInput(request.body));
     const userId = getAuthenticatedUserId(request);
@@ -231,13 +265,19 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
     const result = await runPersistedScan({
       userId,
       repository: getScanRecipeRepository(),
-      generate: (scanId) => createAiScan({
+      requestId,
+      signal: controller.signal,
+      deadlineAt,
+      generate: () => createAiScan({
         image: body.image,
         mode: body.mode,
         source: body.source,
         fableActive,
         cacheScope: userId,
-        quota: createProviderQuota({ userId, requestId: scanId }),
+        quota: createProviderQuota({ userId, requestId }),
+        requestId,
+        signal: controller.signal,
+        deadlineAt,
       }),
     });
 
@@ -248,6 +288,10 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
     });
   } catch (error) {
     next(error);
+  } finally {
+    clearTimeout(deadlineTimer);
+    request.off('aborted', cancelForClientDisconnect);
+    response.off('close', cancelForClientDisconnect);
   }
 });
 
@@ -383,6 +427,22 @@ app.get('/v1/restaurant-packs/:packId', (request, response) => {
 });
 
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+  if (error instanceof ScanDeadlineExceededError) {
+    sendError(
+      response.status(504),
+      'scan_timeout',
+      'This scan took too long. Please try again with a clear, well-lit food photo.',
+    );
+    return;
+  }
+
+  if (error instanceof ScanCancelledError) {
+    if (!response.headersSent) {
+      sendError(response.status(499), 'scan_cancelled', 'The scan request was cancelled.');
+    }
+    return;
+  }
+
   if (error instanceof FoodRejectionError) {
     sendError(
       response.status(422),

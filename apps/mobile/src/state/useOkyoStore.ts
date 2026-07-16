@@ -13,6 +13,7 @@ import {
   type SavedFoodIdea,
   type ScanResult,
 } from '../mocks';
+import { copyToDocuments } from '../utils/scanImageStorage';
 
 export type OnboardingGoal =
   | 'Save money'
@@ -149,7 +150,7 @@ type OkyoState = {
 
 export const useOkyoStore = create<OkyoState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       hasCompletedOnboarding: false,
       hasSeenOnboarding: false,
       onboardingGoal: null,
@@ -307,7 +308,7 @@ export const useOkyoStore = create<OkyoState>()(
       setLatestAiDebugMetadata: (metadata) => set({ latestAiDebugMetadata: metadata }),
       setSelectedMode: (mode) => set({ selectedMode: mode }),
       setUserRestaurantPrice: (price) => set({ userRestaurantPrice: price }),
-      saveRecipe: (recipe) =>
+      saveRecipe: (recipe) => {
         set((state) => {
           const existingRecipe = state.savedRecipes.find((savedRecipe) => savedRecipe.id === recipe.id);
           if (!existingRecipe) {
@@ -326,7 +327,26 @@ export const useOkyoStore = create<OkyoState>()(
                 : savedRecipe,
             ),
           };
-        }),
+        });
+
+        const state = get();
+        const imageUri = getRecipeRealImageUri(recipe);
+        if (!imageUri || imageUri.includes('/okyo-scan-images/')) return;
+        const scanImage = state.selectedScanImage?.uri === imageUri
+          ? state.selectedScanImage
+          : { uri: imageUri, mimeType: 'image/jpeg', placeholder: false };
+        void copyToDocuments(scanImage, { requestId: state.scanSessionId ?? undefined })
+          .then((persistedImage) => {
+            if (!persistedImage.uri || persistedImage.uri === imageUri) return;
+            set((latestState) => ({
+              savedRecipes: latestState.savedRecipes.map((savedRecipe) =>
+                savedRecipe.id === recipe.id
+                  ? attachRecipeImageUri(savedRecipe, persistedImage.uri!)
+                  : savedRecipe,
+              ),
+            }));
+          });
+      },
       saveFoodIdea: (idea) =>
         set((state) => {
           const savedFoodIdeas = Array.isArray(state.savedFoodIdeas) ? state.savedFoodIdeas : [];

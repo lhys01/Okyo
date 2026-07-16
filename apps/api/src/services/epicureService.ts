@@ -25,6 +25,12 @@ import {
   type OpenRouterConfig,
 } from '../config/openRouter.js';
 import { logEpicureUsage } from './epicureAnalytics.js';
+import {
+  getRemainingScanMs,
+  throwIfScanCancelled,
+  type ScanExecutionContext,
+} from './scanDeadline.js';
+import { logScanMetric } from '../telemetry/scanTelemetry.js';
 
 const openRouterEndpoint = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -70,6 +76,7 @@ export async function getEpicureSuggestions(
   ingredients: string[],
   config: OpenRouterConfig = getOpenRouterConfig(),
   quota?: ProviderQuota,
+  execution: Partial<ScanExecutionContext> = {},
 ): Promise<EpicureSuggestions> {
   const cleanIngredients = normalizeIngredientList(ingredients);
   if (!isEpicureEnabled(config)) {
@@ -85,10 +92,11 @@ export async function getEpicureSuggestions(
     if (!quota) {
       throw new Error('Persistent quota context is required for Epicure.');
     }
-    const raw = await requestEpicureModel(cleanIngredients, config, quota);
+    const raw = await requestEpicureModel(cleanIngredients, config, quota, execution);
     return normalizeEpicureSuggestions(raw);
   } catch (error) {
     if (isQuotaError(error)) throw error;
+    throwIfScanCancelled(execution.signal, execution.deadlineAt);
     console.warn('[epicure] EPICURE_FAILURE — suggestion request failed, continuing without enrichment', {
       reason: error instanceof Error ? error.message : String(error),
     });
@@ -107,6 +115,7 @@ export async function enrichRecipeContext(
   input: EnrichRecipeContextInput,
   config: OpenRouterConfig = getOpenRouterConfig(),
   quota?: ProviderQuota,
+  execution: Partial<ScanExecutionContext> = {},
 ): Promise<EnrichedRecipeContext | null> {
   const detectedIngredients = normalizeIngredientList(input.ingredients);
 
@@ -121,7 +130,7 @@ export async function enrichRecipeContext(
     return null;
   }
 
-  const suggestions = await getEpicureSuggestions(detectedIngredients, config, quota);
+  const suggestions = await getEpicureSuggestions(detectedIngredients, config, quota, execution);
   const suggestionCount = countSuggestions(suggestions);
 
   logEpicureUsage({
@@ -301,7 +310,9 @@ async function requestEpicureModel(
   ingredients: string[],
   config: OpenRouterConfig,
   quota: ProviderQuota,
+  execution: Partial<ScanExecutionContext>,
 ): Promise<unknown> {
+  throwIfScanCancelled(execution.signal, execution.deadlineAt);
   if (!config.apiKey) {
     throw new Error('OPENROUTER_API_KEY is missing.');
   }
@@ -319,13 +330,20 @@ async function requestEpicureModel(
     operation: 'epicure_enrichment',
   });
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+  const remainingMs = getRemainingScanMs(execution.deadlineAt);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    Math.max(1, Math.min(config.timeoutMs, remainingMs ?? config.timeoutMs)),
+  );
+  const cancelFromScan = () => controller.abort(execution.signal?.reason);
+  execution.signal?.addEventListener('abort', cancelFromScan, { once: true });
   const startedAt = Date.now(); // [scan_timing] epicure pre-call latency
 
   let inputTokens: number | undefined;
   let outputTokens: number | undefined;
   let actualCostUsd: number | undefined;
   try {
+    throwIfScanCancelled(execution.signal, execution.deadlineAt);
     const response = await fetch(openRouterEndpoint, {
       method: 'POST',
       headers: {
@@ -389,6 +407,14 @@ async function requestEpicureModel(
       outputTokens,
       actualCostUsd,
     });
+    if (execution.requestId) {
+      logScanMetric({
+        requestId: execution.requestId,
+        stage: 'provider_epicure_enrichment',
+        durationMs: Date.now() - startedAt,
+        details: { model: config.model, inputTokens, outputTokens },
+      });
+    }
     return parsed;
   } catch (error) {
     await quota.completeAttempt(reservation, {
@@ -398,9 +424,20 @@ async function requestEpicureModel(
       outputTokens,
       actualCostUsd,
     });
+    if (execution.requestId) {
+      logScanMetric({
+        requestId: execution.requestId,
+        stage: 'provider_epicure_enrichment',
+        durationMs: Date.now() - startedAt,
+        status: execution.signal?.aborted ? 'cancelled' : 'failure',
+        details: { model: config.model },
+      });
+    }
+    throwIfScanCancelled(execution.signal, execution.deadlineAt);
     throw error;
   } finally {
     clearTimeout(timeout);
+    execution.signal?.removeEventListener('abort', cancelFromScan);
   }
 }
 

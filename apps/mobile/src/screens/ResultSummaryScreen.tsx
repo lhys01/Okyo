@@ -38,6 +38,7 @@ import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getRealScanImageUri } from '../utils/recipeImages';
 import { isUsableScan } from '../utils/scanDecision';
+import { logMobileScreenReveal } from '../utils/scanTelemetry';
 import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
@@ -128,6 +129,10 @@ export function ResultSummaryScreen() {
   const shouldShowDishConfirmation = Boolean(isRealScan && scanResult && isUncertainResult);
   const homemadeEstimate = selectedRecipe?.estimatedHomemadeCost ?? scanResult?.homemadeCost ?? null;
   const canShowSavings = isDemoScan || userRestaurantPrice !== null;
+
+  useEffect(() => {
+    logMobileScreenReveal(routeScanSessionId ?? scanSessionId);
+  }, [routeScanSessionId, scanSessionId]);
   const estimatedSavings = isDemoScan
     ? selectedRecipe?.estimatedSavings ?? 0
     : userRestaurantPrice !== null && homemadeEstimate !== null

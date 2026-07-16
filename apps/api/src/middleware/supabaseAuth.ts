@@ -6,6 +6,7 @@ import {
   createSupabaseJwtVerifier,
   type AccessTokenVerifier,
 } from '../auth/verifier.js';
+import { logScanMetric } from '../telemetry/scanTelemetry.js';
 import type { ApiFailure } from '../types.js';
 
 type AuthLogger = {
@@ -21,8 +22,10 @@ export function createSupabaseAuthMiddleware(options: {
   const logger = options.logger ?? console;
 
   return async function supabaseAuthMiddleware(request, response, next) {
+    const startedAt = Date.now();
     const tokenResult = extractBearerToken(request);
     if (!tokenResult.ok) {
+      logAuthentication(request, startedAt, 'failure', tokenResult.category);
       reject(response, logger, request, 401, tokenResult.category, 'authentication_required');
       return;
     }
@@ -30,14 +33,17 @@ export function createSupabaseAuthMiddleware(options: {
     try {
       const identity = await options.verifier.verify(tokenResult.token);
       request.auth = Object.freeze({ userId: identity.userId });
+      logAuthentication(request, startedAt, 'success');
       next();
     } catch (error) {
       const infrastructureFailure = error instanceof AccessTokenVerificationError &&
         error.category === 'verifier_unavailable';
       if (infrastructureFailure) {
+        logAuthentication(request, startedAt, 'failure', 'verifier_unavailable');
         reject(response, logger, request, 503, 'verifier_unavailable', 'auth_verifier_unavailable');
         return;
       }
+      logAuthentication(request, startedAt, 'failure', 'invalid_token');
       reject(response, logger, request, 401, 'invalid_token', 'invalid_auth_token');
     }
   };
@@ -54,10 +60,12 @@ export function mountV1Authentication(
   }
 
   app.use('/v1', (request: Request, response: Response, next: NextFunction) => {
+    const startedAt = Date.now();
     try {
       const middleware = createSupabaseAuthMiddleware({ verifier: getDefaultVerifier(), logger });
       void middleware(request, response, next);
     } catch {
+      logAuthentication(request, startedAt, 'failure', 'verifier_configuration');
       reject(response, logger, request, 503, 'verifier_configuration', 'auth_verifier_unavailable');
     }
   });
@@ -107,4 +115,20 @@ function reject(
     },
   };
   response.status(status).json(payload);
+}
+
+function logAuthentication(
+  request: Request,
+  startedAt: number,
+  status: 'success' | 'failure',
+  reason?: string,
+) {
+  if (!request.scanContext || request.path !== '/scans') return;
+  logScanMetric({
+    requestId: request.scanContext.requestId,
+    stage: 'authentication',
+    durationMs: Date.now() - startedAt,
+    status,
+    details: { reason },
+  });
 }

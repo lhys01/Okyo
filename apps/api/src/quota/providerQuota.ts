@@ -1,5 +1,6 @@
 import { getCostControlConfig } from '../config/costControlConfig.js';
 import { logCostEvent } from '../middleware/costControls.js';
+import { logScanMetric } from '../telemetry/scanTelemetry.js';
 import {
   getQuotaRepository,
   type ProviderSpendCompletion,
@@ -73,8 +74,16 @@ export function createProviderQuota(options: {
 
   return {
     async reserveAttempt(input) {
+      const startedAt = Date.now();
       const config = getCostControlConfig();
       if (config.aiUserDailyRequestCap < 1 || config.aiDailyRequestCap < 1) {
+        logScanMetric({
+          requestId: options.requestId,
+          stage: 'quota_reserve',
+          durationMs: Date.now() - startedAt,
+          status: 'failure',
+          details: { operation: sanitizeLabel(input.operation), reason: 'disabled' },
+        });
         throw new QuotaUnavailableError();
       }
 
@@ -90,22 +99,50 @@ export function createProviderQuota(options: {
           globalDailyCap: config.aiDailyRequestCap,
         });
       } catch {
+        logScanMetric({
+          requestId: options.requestId,
+          stage: 'quota_reserve',
+          durationMs: Date.now() - startedAt,
+          status: 'failure',
+          details: { operation, reason: 'repository_unavailable' },
+        });
         logCostEvent('persistent_quota_unavailable', { operation });
         throw new QuotaUnavailableError();
       }
 
       if (!reservation.allowed) {
+        logScanMetric({
+          requestId: options.requestId,
+          stage: 'quota_reserve',
+          durationMs: Date.now() - startedAt,
+          status: 'failure',
+          details: { operation, reason: sanitizeReason(reservation.reason) },
+        });
         logCostEvent('persistent_quota_denied', { operation, reason: sanitizeReason(reservation.reason) });
         throw new QuotaDeniedError();
       }
       if (!reservation.spendEventId) {
+        logScanMetric({
+          requestId: options.requestId,
+          stage: 'quota_reserve',
+          durationMs: Date.now() - startedAt,
+          status: 'failure',
+          details: { operation, reason: 'invalid_result' },
+        });
         logCostEvent('persistent_quota_invalid_result', { operation });
         throw new QuotaUnavailableError();
       }
+      logScanMetric({
+        requestId: options.requestId,
+        stage: 'quota_reserve',
+        durationMs: Date.now() - startedAt,
+        details: { operation },
+      });
       return { spendEventId: reservation.spendEventId, operation };
     },
 
     async completeAttempt(reservation, completion) {
+      const startedAt = Date.now();
       const spend: ProviderSpendCompletion = {
         requestCategory: buildCategory(
           options.requestId,
@@ -124,7 +161,20 @@ export function createProviderQuota(options: {
           spendEventId: reservation.spendEventId,
           spend,
         });
+        logScanMetric({
+          requestId: options.requestId,
+          stage: 'quota_complete',
+          durationMs: Date.now() - startedAt,
+          details: { operation: reservation.operation, outcome: completion.outcome },
+        });
       } catch {
+        logScanMetric({
+          requestId: options.requestId,
+          stage: 'quota_complete',
+          durationMs: Date.now() - startedAt,
+          status: 'failure',
+          details: { operation: reservation.operation, outcome: completion.outcome },
+        });
         // The provider must never be called twice because telemetry finalization
         // failed. The RPC-created reservation row remains as durable evidence.
         logCostEvent('provider_spend_finalize_failed', { operation: reservation.operation });

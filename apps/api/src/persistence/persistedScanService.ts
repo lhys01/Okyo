@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import type { AiScanSuccessResult } from '../services/aiService.js';
+import {
+  ScanCancelledError,
+  ScanDeadlineExceededError,
+  throwIfScanCancelled,
+} from '../services/scanDeadline.js';
+import { logScanMetric, measureScanStage } from '../telemetry/scanTelemetry.js';
 import type { Recipe } from '../types.js';
 import {
   PersistenceUnavailableError,
@@ -13,60 +19,102 @@ export async function runPersistedScan(options: {
   userId: string;
   repository: ScanRecipeRepository;
   generate: (scanId: string) => Promise<AiScanSuccessResult>;
+  requestId?: string;
+  signal?: AbortSignal;
+  deadlineAt?: number;
   idFactory?: () => string;
   now?: () => number;
 }): Promise<AiScanSuccessResult> {
   const id = (options.idFactory ?? randomUUID)();
   const now = options.now ?? Date.now;
   const startedAt = now();
+  const requestId = options.requestId ?? id;
   let sessionCreated = false;
 
   try {
-    await options.repository.createScanSession({ id, userId: options.userId });
+    throwIfScanCancelled(options.signal, options.deadlineAt);
+    await measureScanStage({
+      requestId,
+      stage: 'scan_persistence_create',
+      run: () => options.repository.createScanSession({ id, userId: options.userId }),
+    });
     sessionCreated = true;
-    await options.repository.updateScanSession({
-      id,
-      userId: options.userId,
-      status: 'processing',
+    throwIfScanCancelled(options.signal, options.deadlineAt);
+    await measureScanStage({
+      requestId,
+      stage: 'scan_persistence_processing',
+      run: () => options.repository.updateScanSession({
+        id,
+        userId: options.userId,
+        status: 'processing',
+      }),
     });
 
-    const generated = normalizePersistentIds(await options.generate(id), id);
+    throwIfScanCancelled(options.signal, options.deadlineAt);
+    const generated = normalizePersistentIds(await measureScanStage({
+      requestId,
+      stage: 'scan_generation',
+      run: () => options.generate(id),
+    }), id);
     if (!generated.recipe) {
       throw new PersistenceUnavailableError();
     }
+    const recipe = generated.recipe;
 
-    await options.repository.createGeneratedRecipe({
-      id,
-      userId: options.userId,
-      recipe: generated.recipe,
-      expiresAt: new Date(startedAt + generatedRecipeTtlMs).toISOString(),
+    throwIfScanCancelled(options.signal, options.deadlineAt);
+    await measureScanStage({
+      requestId,
+      stage: 'final_persistence_recipe',
+      run: () => options.repository.createGeneratedRecipe({
+        id,
+        userId: options.userId,
+        recipe,
+        expiresAt: new Date(startedAt + generatedRecipeTtlMs).toISOString(),
+      }),
     });
-    await options.repository.updateScanSession({
-      id,
-      userId: options.userId,
-      status: 'succeeded',
-      provider: generated.aiProvider,
-      model: generated.visionModel,
-      latencyMs: Math.max(0, now() - startedAt),
-      completedAt: new Date(now()).toISOString(),
+    throwIfScanCancelled(options.signal, options.deadlineAt);
+    await measureScanStage({
+      requestId,
+      stage: 'final_persistence_status',
+      run: () => options.repository.updateScanSession({
+        id,
+        userId: options.userId,
+        status: 'succeeded',
+        provider: generated.aiProvider,
+        model: generated.visionModel,
+        latencyMs: Math.max(0, now() - startedAt),
+        completedAt: new Date(now()).toISOString(),
+      }),
     });
+    logScanMetric({ requestId, stage: 'persisted_scan_total', durationMs: now() - startedAt });
     return generated;
   } catch (error) {
     if (sessionCreated) {
       const failure = sanitizeScanFailure(error);
       try {
-        await options.repository.updateScanSession({
-          id,
-          userId: options.userId,
-          status: failure.status,
-          failureCategory: failure.category,
-          latencyMs: Math.max(0, now() - startedAt),
-          completedAt: new Date(now()).toISOString(),
+        await measureScanStage({
+          requestId,
+          stage: 'final_persistence_failure',
+          run: () => options.repository.updateScanSession({
+            id,
+            userId: options.userId,
+            status: failure.status,
+            failureCategory: failure.category,
+            latencyMs: Math.max(0, now() - startedAt),
+            completedAt: new Date(now()).toISOString(),
+          }),
         });
       } catch {
         // Preserve the original failure; never include database/provider details.
       }
     }
+    logScanMetric({
+      requestId,
+      stage: 'persisted_scan_total',
+      durationMs: now() - startedAt,
+      status: 'failure',
+      details: { reason: sanitizeScanFailure(error).category },
+    });
     throw error;
   }
 }
@@ -124,6 +172,12 @@ function sanitizeScanFailure(error: unknown): {
   }
   if (error instanceof PersistenceUnavailableError) {
     return { status: 'failed', category: 'persistence_unavailable' };
+  }
+  if (error instanceof ScanDeadlineExceededError) {
+    return { status: 'failed', category: 'scan_timeout' };
+  }
+  if (error instanceof ScanCancelledError) {
+    return { status: 'failed', category: 'scan_cancelled' };
   }
   const message = error instanceof Error ? error.message : '';
   if (message.startsWith('AI_UNAVAILABLE:')) return { status: 'failed', category: 'ai_unavailable' };
