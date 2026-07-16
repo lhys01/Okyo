@@ -14,6 +14,7 @@ const config: AiConfig = {
   openRouterTextModel: 'primary-model',
   timeoutMs: 1000,
   maxOutputTokens: 1024,
+  compactRecipeEnabled: false,
   fableEnabled: false,
   fableModel: 'fable-model',
   isFableActive: false,

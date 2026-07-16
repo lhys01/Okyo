@@ -240,9 +240,38 @@ export const openRouterRecipeOutputSchema = recipeVariantSchema.extend({
   dishName: z.string().optional().default(''),
 });
 
+const compactMinutesSchema = z.union([z.number(), z.string()]).transform((value) => {
+  const parsed = typeof value === 'number' ? value : Number(value.match(/\d+/)?.[0]);
+  return Number.isFinite(parsed) ? Math.round(parsed) : Number.NaN;
+}).pipe(z.number().int().min(0));
+
+const compactRecipeStepSchema = z.object({
+  instruction: z.string().min(1),
+  doneWhen: z.string().optional().default(''),
+  safetyNote: z.string().optional().default(''),
+});
+
+export const compactRecipeOutputSchema = z.object({
+  title: z.string().min(1),
+  ingredients: z.array(z.string()).min(1),
+  equipment: z.array(z.string()).max(6).optional().default([]),
+  steps: z.array(compactRecipeStepSchema).min(1),
+  prepTime: compactMinutesSchema,
+  cookTime: compactMinutesSchema,
+  totalTime: compactMinutesSchema,
+  servings: z.union([z.number(), z.string()]).transform((value) => {
+    const parsed = typeof value === 'number' ? value : Number(value.match(/\d+/)?.[0]);
+    return Number.isFinite(parsed) ? Math.round(parsed) : Number.NaN;
+  }).pipe(z.number().int().min(1).max(12)),
+  difficulty: z.enum(['Easy', 'Medium', 'Hard']),
+});
+
+const compactRecipePatchSchema = compactRecipeOutputSchema.partial();
+
 export type OpenRouterVisionOutput = z.input<typeof openRouterVisionOutputSchema>;
 export type OpenRouterRecipeOutput = z.infer<typeof openRouterRecipeOutputSchema>;
 export type OpenRouterRecipeVariant = z.infer<typeof recipeVariantSchema>;
+export type CompactRecipeOutput = z.infer<typeof compactRecipeOutputSchema>;
 
 type OpenRouterContentPart =
   | { type: 'text'; text: string }
@@ -273,7 +302,11 @@ export async function analyzeFoodImageWithOpenRouter(input: {
 
   let firstOutput: z.infer<typeof openRouterVisionOutputSchema>;
   try {
-    firstOutput = await callVisionOnce(input, getVisionPrompt(input.image, input.mode), 'vision');
+    firstOutput = await callVisionOnce(
+      input,
+      getVisionPrompt(input.image, input.mode, input.config.compactRecipeEnabled),
+      'vision',
+    );
   } catch (error) {
     if (!isRetryableVisionOutputError(error)) {
       throw error;
@@ -287,7 +320,11 @@ export async function analyzeFoodImageWithOpenRouter(input: {
     });
     logRetryMetric(input, 'vision_initial_retry', retryReason);
     await waitForScanDelay(3500, input.signal, input.deadlineAt);
-    firstOutput = await callVisionOnce(input, getCompactVisionRetryPrompt(input.image, input.mode), 'vision_initial_retry');
+    firstOutput = await callVisionOnce(
+      input,
+      getCompactVisionRetryPrompt(input.image, input.mode, input.config.compactRecipeEnabled),
+      'vision_initial_retry',
+    );
     logOpenRouterDebug('openrouter_scan_quality_retry_result', {
       retryReason,
       retryDishName: firstOutput.dishName,
@@ -317,8 +354,13 @@ export async function analyzeFoodImageWithOpenRouter(input: {
   // direct prompt and accept any result that finds food. Failures keep the first result.
   const isTooUnclearRetry = firstOutput.scanState === 'too_unclear';
   const retryPrompt = isTooUnclearRetry
-    ? getCompactVisionRetryPrompt(input.image, input.mode)
-    : getFocusedVisionRetryPrompt(input.image, input.mode, firstOutput);
+    ? getCompactVisionRetryPrompt(input.image, input.mode, input.config.compactRecipeEnabled)
+    : getFocusedVisionRetryPrompt(
+        input.image,
+        input.mode,
+        firstOutput,
+        input.config.compactRecipeEnabled,
+      );
   try {
     logRetryMetric(input, 'vision_quality_retry', retryReason ?? 'quality_retry');
     const retryOutput = await callVisionOnce(input, retryPrompt, 'vision_quality_retry');
@@ -560,12 +602,17 @@ export function validatePaidFallbackAtStartup(): void {
   }
 }
 
-function getRecipeCacheKey(analysis: FoodImageAnalysis, mode: RecipeMode): string {
+function getRecipeCacheKey(
+  analysis: FoodImageAnalysis,
+  mode: RecipeMode,
+  compactRecipeEnabled: boolean,
+): string {
   const data = JSON.stringify({
     d: analysis.dishName.trim().toLowerCase(),
     i: [...analysis.visibleIngredients].sort().map((s) => s.trim().toLowerCase()),
-    m: mode,
+    m: compactRecipeEnabled ? 'canonical' : mode,
     c: analysis.broadDishCategory.trim().toLowerCase(),
+    contract: compactRecipeEnabled ? 'compact-v1' : 'full-v1',
   });
   return createHash('sha1').update(data).digest('hex');
 }
@@ -588,8 +635,13 @@ function addStepImagePrompts(recipe: OpenRouterRecipeOutput, dishName: string): 
   };
 }
 
-function storeRecipeCache(key: string, recipe: OpenRouterRecipeOutput, dish: string): OpenRouterRecipeOutput {
-  const processed = addStepImagePrompts(recipe, dish);
+function storeRecipeCache(
+  key: string,
+  recipe: OpenRouterRecipeOutput,
+  dish: string,
+  options: { addImagePrompts?: boolean } = {},
+): OpenRouterRecipeOutput {
+  const processed = options.addImagePrompts === false ? recipe : addStepImagePrompts(recipe, dish);
   recipeCache.set(key, { recipe: processed, expiresAt: Date.now() + RECIPE_CACHE_TTL_MS });
   sweepRecipeCache();
   logOpenRouterDebug('recipe_cache_store', { key: key.slice(0, 8), dish });
@@ -626,13 +678,17 @@ export async function generateRecipeWithOpenRouter(input: {
   const mode: RecipeMode = input.mode ?? 'Restaurant Copy';
 
   // Cache check — skips Epicure and recipe generation entirely on a hit.
-  const cacheKey = getRecipeCacheKey(input.analysis, mode);
+  const cacheKey = getRecipeCacheKey(input.analysis, mode, input.config.compactRecipeEnabled);
   const cached = recipeCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     logOpenRouterDebug('recipe_cache_hit', { key: cacheKey.slice(0, 8), dish: input.analysis.dishName, mode });
     return cached.recipe;
   }
   logOpenRouterDebug('recipe_cache_miss', { key: cacheKey.slice(0, 8), dish: input.analysis.dishName, mode });
+
+  if (input.config.compactRecipeEnabled) {
+    return generateCompactRecipeWithOpenRouter(input, cacheKey);
+  }
 
   let enrichment: EnrichedRecipeContext | null = null;
   const visionEpicure = input.analysis.epicureSuggestions;
@@ -787,6 +843,446 @@ export async function generateRecipeWithOpenRouter(input: {
     });
     return storeRecipeCache(cacheKey, firstOutput, input.analysis.dishName);
   }
+}
+
+async function generateCompactRecipeWithOpenRouter(
+  input: {
+    analysis: FoodImageAnalysis;
+    config: AiConfig;
+    mode?: RecipeMode;
+    quota: ProviderQuota;
+  } & Partial<ScanExecutionContext>,
+  cacheKey: string,
+): Promise<OpenRouterRecipeOutput> {
+  const prompt = getCompactRecipePrompt(input.analysis);
+  console.log('[recipe_contract_size]', {
+    requestId: input.requestId,
+    contract: 'compact-v1',
+    promptChars: prompt.length,
+    estimatedPromptTokens: Math.ceil(prompt.length / 4),
+    maxOutputTokens: Math.min(input.config.maxOutputTokens, 1024),
+  });
+
+  let firstJson: unknown;
+  try {
+    firstJson = await callCompactRecipeJson(input, prompt, 'compact_recipe', 1024);
+  } catch (error) {
+    if (!isCompactRepairableProviderError(error)) throw error;
+    logRetryMetric(
+      input,
+      'compact_recipe_repair',
+      error instanceof OpenRouterProviderError ? error.failure.reason : 'provider_output_unavailable',
+    );
+    return repairCompactRecipe(input, cacheKey, undefined, [
+      error instanceof OpenRouterProviderError ? error.failure.reason : 'provider_output_unavailable',
+    ]);
+  }
+
+  const firstParsed = compactRecipeOutputSchema.safeParse(firstJson);
+  const firstIssues = firstParsed.success
+    ? validateCompactRecipeOutput(firstParsed.data, input.analysis)
+    : getCompactSchemaIssues(firstParsed.error);
+  if (firstParsed.success && firstIssues.length === 0) {
+    return storeRecipeCache(
+      cacheKey,
+      compactRecipeToCanonicalOutput(normalizeCompactRecipeTimes(firstParsed.data)),
+      input.analysis.dishName,
+      { addImagePrompts: false },
+    );
+  }
+
+  logRetryMetric(input, 'compact_recipe_repair', firstIssues.join(','));
+  return repairCompactRecipe(input, cacheKey, firstJson, firstIssues);
+}
+
+async function repairCompactRecipe(
+  input: {
+    analysis: FoodImageAnalysis;
+    config: AiConfig;
+    mode?: RecipeMode;
+    quota: ProviderQuota;
+  } & Partial<ScanExecutionContext>,
+  cacheKey: string,
+  previousOutput: unknown,
+  issues: string[],
+): Promise<OpenRouterRecipeOutput> {
+  throwIfScanCancelled(input.signal, input.deadlineAt);
+  const repairJson = await callCompactRecipeJson(
+    input,
+    getCompactRecipeRepairPrompt(input.analysis, previousOutput, issues),
+    'compact_recipe_repair',
+    900,
+  );
+  const patch = compactRecipePatchSchema.safeParse(repairJson);
+  if (!patch.success) {
+    throw createOpenRouterError(
+      input.config,
+      input.config.openRouterTextModel,
+      'openrouter_invalid_schema',
+      { openRouterErrorMessage: getSchemaErrorMessage(patch.error) },
+    );
+  }
+
+  const previousRecord = getRecord(previousOutput) ?? {};
+  const merged = compactRecipeOutputSchema.safeParse({ ...previousRecord, ...patch.data });
+  if (!merged.success) {
+    throw createOpenRouterError(
+      input.config,
+      input.config.openRouterTextModel,
+      'openrouter_invalid_schema',
+      { openRouterErrorMessage: getSchemaErrorMessage(merged.error) },
+    );
+  }
+
+  const normalized = normalizeCompactRecipeTimes(merged.data);
+  const remainingIssues = validateCompactRecipeOutput(normalized, input.analysis);
+  if (remainingIssues.length > 0) {
+    throw createOpenRouterError(
+      input.config,
+      input.config.openRouterTextModel,
+      'openrouter_invalid_schema',
+      {
+        openRouterErrorMessage:
+          `Compact recipe remained unsafe or uncookable after one targeted repair: ${remainingIssues.join(', ')}`,
+      },
+    );
+  }
+
+  return storeRecipeCache(
+    cacheKey,
+    compactRecipeToCanonicalOutput(normalized),
+    input.analysis.dishName,
+    { addImagePrompts: false },
+  );
+}
+
+async function callCompactRecipeJson(
+  input: {
+    analysis: FoodImageAnalysis;
+    config: AiConfig;
+    quota: ProviderQuota;
+  } & Partial<ScanExecutionContext>,
+  prompt: string,
+  stage: string,
+  maxTokens: number,
+): Promise<unknown> {
+  return callOpenRouterJsonWithFailover(
+    {
+      config: input.config,
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You are Okyo, a cautious professional chef generating one canonical home-cook recipe.',
+            'Return only valid JSON. Never return variants, markdown, explanations, step numbers, phases, per-step ingredient arrays, or per-step tool arrays.',
+            'Food detection has already happened. Preserve the identified dish and cover every visible platter component.',
+          ].join(' '),
+        },
+        { role: 'user', content: prompt },
+      ],
+      maxTokens: Math.min(input.config.maxOutputTokens, maxTokens),
+      stage,
+      quota: input.quota,
+      requestId: input.requestId,
+      signal: input.signal,
+      deadlineAt: input.deadlineAt,
+    },
+    getRecipeModelChain(input.config),
+  );
+}
+
+export function getCompactRecipePrompt(analysis: FoodImageAnalysis): string {
+  const isPlatter = isPlatterAnalysis(analysis);
+  const isDrink = isDrinkAnalysisText([
+    analysis.dishName,
+    analysis.broadDishCategory,
+    ...analysis.visibleIngredients,
+  ].join(' '));
+  return [
+    `Create one realistic inspired-by home recipe for "${analysis.dishName}".`,
+    'Return ONLY one minified JSON object with exactly these keys:',
+    '{"title":"...","ingredients":["exact quantity ingredient"],"equipment":["..."],"steps":[{"instruction":"...","doneWhen":"optional sensory completion cue","safetyNote":"required only for food-safety hazards"}],"prepTime":10,"cookTime":20,"totalTime":30,"servings":2,"difficulty":"Easy|Medium|Hard"}',
+    'Do not add description, substitutions, tips, explanations, questions, decision branches, cooking terms, spice pairings, flavor boosts, grocery items, image prompts, prices, savings, storage, sharing copy, modes, or variants.',
+    'Every ingredient must begin with a usable exact quantity. "Some", "as needed", or a bare ingredient name is invalid. "To taste" is allowed only for salt, pepper, acid, or hot sauce.',
+    'Choose one coherent strategy: either shortcut ingredients or from-scratch ingredients, never both. Never list the finished dish as an ingredient.',
+    isDrink
+      ? 'Use 3-6 concise drink steps.'
+      : isPlatter
+        ? 'Use enough concise steps to cook every component; more than 8 is allowed only when coverage requires it.'
+        : 'Use 5-8 concise steps for a normal cooked dish. Plain whole foods may use 2-5 steps.',
+    'Each instruction must be directly cookable and contain a time, an observable sensory completion cue, or both. Name actual ingredients and actions; never say "cook until done", "prepare ingredients", or "mix everything".',
+    'doneWhen is optional and should appear only when it adds a useful color, texture, temperature, or doneness check.',
+    'Safety is mandatory: poultry 165°F/74°C; ground meat 160°F/71°C; pork and cooked fish 145°F/63°C. Raw-fish dishes must specify sushi-grade or previously frozen fish kept cold. Put the applicable rule in safetyNote on the relevant step.',
+    isPlatter
+      ? `Name and cook every detected component in the ingredients and steps. Required components: ${(analysis.detectedComponents ?? []).map((component) => component.name.trim()).filter(Boolean).slice(0, 12).join(', ') || 'every distinct visible component'}.`
+      : '',
+    'Keep equipment compact: only tools genuinely required.',
+    `Dish evidence: ${JSON.stringify({
+      dishName: analysis.dishName,
+      cuisine: analysis.cuisine,
+      category: analysis.broadDishCategory,
+      visibleIngredients: analysis.visibleIngredients,
+      likelyIngredients: analysis.likelyIngredients.slice(0, 8),
+      visibleComponents: analysis.visibleComponents,
+    })}`,
+  ].join('\n');
+}
+
+export function getRecipePromptSizeComparison(analysis: FoodImageAnalysis): {
+  fullPromptChars: number;
+  compactPromptChars: number;
+  estimatedFullPromptTokens: number;
+  estimatedCompactPromptTokens: number;
+} {
+  const fullPromptChars = getRecipePrompt(analysis, null, 'Restaurant Copy').length;
+  const compactPromptChars = getCompactRecipePrompt(analysis).length;
+  return {
+    fullPromptChars,
+    compactPromptChars,
+    estimatedFullPromptTokens: Math.ceil(fullPromptChars / 4),
+    estimatedCompactPromptTokens: Math.ceil(compactPromptChars / 4),
+  };
+}
+
+function getCompactRecipeRepairPrompt(
+  analysis: FoodImageAnalysis,
+  previousOutput: unknown,
+  issues: string[],
+): string {
+  const hasPreviousOutput = getRecord(previousOutput) !== null;
+  return [
+    `Patch the previous compact recipe for "${analysis.dishName}".`,
+    `Critical defects: ${issues.join(', ')}.`,
+    hasPreviousOutput
+      ? 'Return ONLY a JSON object containing the defective top-level fields and their complete replacement values. Do not return unchanged fields.'
+      : 'The previous output was unavailable. Return one complete replacement compact recipe object.',
+    'Allowed keys: title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, difficulty.',
+    'The same compact rules still apply: exact ingredient quantities; cookable instructions with time or sensory completion; required safetyNote; complete platter coverage.',
+    `Previous output: ${JSON.stringify(previousOutput ?? {})}`,
+    `Dish evidence: ${JSON.stringify({
+      dishName: analysis.dishName,
+      category: analysis.broadDishCategory,
+      visibleIngredients: analysis.visibleIngredients,
+      likelyIngredients: analysis.likelyIngredients.slice(0, 8),
+      components: (analysis.detectedComponents ?? []).map((component) => component.name),
+    })}`,
+  ].join('\n');
+}
+
+function normalizeCompactRecipeTimes(output: CompactRecipeOutput): CompactRecipeOutput {
+  const prepTime = Math.max(0, output.prepTime);
+  const cookTime = Math.max(0, output.cookTime);
+  const calculatedTotal = prepTime + cookTime;
+  return {
+    ...output,
+    prepTime,
+    cookTime,
+    totalTime: calculatedTotal > 0 ? calculatedTotal : Math.max(1, output.totalTime),
+    equipment: [...new Set(output.equipment.map((item) => item.trim()).filter(Boolean))].slice(0, 6),
+  };
+}
+
+function compactRecipeToCanonicalOutput(output: CompactRecipeOutput): OpenRouterRecipeOutput {
+  return openRouterRecipeOutputSchema.parse({
+    title: output.title,
+    ingredients: output.ingredients,
+    equipment: output.equipment,
+    steps: output.steps.map((step) => ({
+      step: step.instruction,
+      doneWhen: step.doneWhen || undefined,
+      safetyNote: step.safetyNote || undefined,
+    })),
+    prepTime: output.prepTime,
+    cookTime: output.cookTime,
+    totalTime: output.totalTime,
+    activeTime: output.prepTime + Math.min(output.cookTime, 10),
+    servings: output.servings,
+    difficulty: output.difficulty,
+    skillLevel: output.difficulty,
+  });
+}
+
+export function validateCompactRecipeOutput(
+  output: CompactRecipeOutput,
+  analysis: FoodImageAnalysis,
+): string[] {
+  const issues: string[] = [];
+  const isPlatter = isPlatterAnalysis(analysis);
+  const isDrink = isDrinkAnalysisText(`${analysis.dishName} ${analysis.broadDishCategory}`);
+  const isSimple = /\b(plain|whole|sliced|fresh|boiled egg|toast|fruit|watermelon|berries|grapes|banana)\b/i.test(
+    `${analysis.dishName} ${analysis.broadDishCategory}`,
+  );
+  const isRawFishDish = /\b(sushi|sashimi|ceviche|raw fish)\b/i.test(
+    `${analysis.dishName} ${analysis.broadDishCategory}`,
+  );
+
+  if (!output.title.trim()) issues.push('missing_title');
+  if (output.ingredients.length === 0) issues.push('missing_ingredients');
+  if (output.ingredients.some((ingredient) => !hasCompactIngredientAmount(ingredient))) {
+    issues.push('ingredient_missing_exact_quantity');
+  }
+  if (output.totalTime < 1) issues.push('invalid_total_time');
+  if (!isSimple && !isDrink && output.equipment.length === 0) issues.push('missing_equipment');
+
+  const minSteps = isSimple ? 2 : isDrink || isRawFishDish ? 3 : 5;
+  const maxSteps = isPlatter ? 14 : isDrink || isRawFishDish ? 6 : 8;
+  if (output.steps.length < minSteps) issues.push('too_few_steps');
+  if (output.steps.length > maxSteps) issues.push('too_many_steps');
+
+  for (const step of output.steps) {
+    if (!hasCompactInstructionCompletion(step.instruction, step.doneWhen)) {
+      issues.push('step_missing_time_or_completion_cue');
+    }
+    if (hasVagueCompactInstruction(step.instruction)) {
+      issues.push('vague_step');
+    }
+  }
+
+  if (hasUnlistedCompactStepIngredients(output)) {
+    issues.push('step_uses_unlisted_ingredients');
+  }
+
+  const safetyRequirement = getCompactSafetyRequirement(analysis, output.ingredients);
+  const safetyNotes = output.steps.map((step) => step.safetyNote).join(' ');
+  if (safetyRequirement && !safetyRequirement.pattern.test(safetyNotes)) {
+    issues.push(`missing_safety_${safetyRequirement.code}`);
+  }
+
+  if (isPlatter) {
+    const coverage = getCompactComponentCoverage(
+      (analysis.detectedComponents ?? []).map((component) => component.name),
+      [
+        output.title,
+        ...output.ingredients.map(getCompactIngredientName),
+        ...output.steps.map((step) => step.instruction),
+      ],
+    );
+    if (coverage.coveragePercent < 90) issues.push('platter_coverage_below_90');
+  }
+
+  return [...new Set(issues)];
+}
+
+function getCompactSchemaIssues(error: z.ZodError): string[] {
+  return [...new Set(error.issues.map((issue) =>
+    `invalid_${issue.path.length > 0 ? issue.path.join('_') : 'schema'}`))];
+}
+
+function hasCompactIngredientAmount(value: string): boolean {
+  const text = value.trim().toLowerCase();
+  if (/^(?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|one|two|three|four|five|six|a|an|pinch|dash)\b/.test(text)) {
+    return true;
+  }
+  if (/\bto taste$/.test(text)) {
+    return /\b(salt|pepper|lemon|lime|vinegar|hot sauce)\b/.test(text);
+  }
+  return false;
+}
+
+function hasCompactInstructionCompletion(instruction: string, doneWhen: string): boolean {
+  const text = `${instruction} ${doneWhen}`;
+  return /\b\d+(?:\s*[-–]\s*\d+)?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/i.test(text) ||
+    /\b(golden|browned|opaque|translucent|tender|crisp|crispy|fragrant|bubbling|simmering|thickened|coats?|set|firm|flaky|juices run clear|no pink|internal temperature|°f|°c|smooth|glossy|charred|softened|cold|chilled)\b/i.test(text);
+}
+
+function hasVagueCompactInstruction(instruction: string): boolean {
+  return /\bcook until done\b|\bprepare (?:the )?ingredients\b|\bmix everything\b|\bmain ingredient\b/i.test(
+    instruction,
+  );
+}
+
+const compactIngredientWords = [
+  'butter', 'oil', 'salt', 'pepper', 'garlic', 'onion', 'ginger', 'sugar',
+  'flour', 'egg', 'eggs', 'milk', 'cream', 'cheese', 'rice', 'pasta',
+  'noodles', 'chicken', 'beef', 'pork', 'lamb', 'turkey', 'fish', 'salmon',
+  'cod', 'shrimp', 'prawn', 'tofu', 'tomato', 'potato', 'carrot', 'broccoli',
+  'soy sauce', 'vinegar', 'lemon', 'lime', 'cilantro', 'parsley', 'basil',
+  'paprika', 'cumin', 'chili', 'stock', 'broth', 'water', 'mayonnaise', 'mustard',
+];
+
+function hasUnlistedCompactStepIngredients(output: CompactRecipeOutput): boolean {
+  const ingredientText = output.ingredients.join(' ').toLowerCase();
+  const stepText = output.steps.map((step) => step.instruction).join(' ').toLowerCase();
+  return compactIngredientWords.some((candidate) =>
+    new RegExp(`\\b${candidate.replace(' ', '\\s+')}\\b`, 'i').test(stepText) &&
+    !new RegExp(`\\b${candidate.replace(' ', '\\s+')}\\b`, 'i').test(ingredientText));
+}
+
+function getCompactSafetyRequirement(
+  analysis: FoodImageAnalysis,
+  ingredients: string[],
+): { code: string; pattern: RegExp } | null {
+  const text = `${analysis.dishName} ${analysis.broadDishCategory} ${ingredients.join(' ')}`.toLowerCase();
+  if (/\b(sushi|sashimi|ceviche|raw fish)\b/.test(text)) {
+    return { code: 'raw_fish', pattern: /\b(sushi[- ]grade|previously frozen|keep chilled|keep cold)\b/i };
+  }
+  if (/\b(chicken|poultry|turkey|duck)\b/.test(text)) {
+    return { code: 'poultry', pattern: /\b165\s*°?\s*f\b|\b74\s*°?\s*c\b/i };
+  }
+  if (/\b(ground|minced|burger|meatball|sausage)\b/.test(text) && /\b(beef|pork|lamb|meat)\b/.test(text)) {
+    return { code: 'ground_meat', pattern: /\b160\s*°?\s*f\b|\b71\s*°?\s*c\b/i };
+  }
+  if (/\b(pork|fish|salmon|cod|tilapia|tuna|trout)\b/.test(text)) {
+    return { code: 'pork_or_fish', pattern: /\b145\s*°?\s*f\b|\b63\s*°?\s*c\b/i };
+  }
+  return null;
+}
+
+function getCompactComponentCoverage(
+  detectedComponents: string[],
+  generatedComponents: string[],
+): { coveragePercent: number; missingComponents: string[] } {
+  if (detectedComponents.length === 0) {
+    return { coveragePercent: 100, missingComponents: [] };
+  }
+  const missingComponents = detectedComponents.filter((detected) =>
+    !isCompactComponentCovered(detected, generatedComponents));
+  return {
+    coveragePercent: Math.round((1 - missingComponents.length / detectedComponents.length) * 100),
+    missingComponents,
+  };
+}
+
+function isCompactComponentCovered(detected: string, generated: string[]): boolean {
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+  const detectedNormalized = normalize(detected);
+  return generated.some((component) => {
+    const componentNormalized = normalize(component);
+    if (
+      componentNormalized === detectedNormalized ||
+      componentNormalized.includes(detectedNormalized) ||
+      detectedNormalized.includes(componentNormalized)
+    ) {
+      return true;
+    }
+    const detectedTokens = detectedNormalized.split(' ').filter((token) => token.length > 2);
+    const componentTokens = componentNormalized.split(' ').filter((token) => token.length > 2);
+    if (detectedTokens.length === 0 || componentTokens.length === 0) return false;
+    const shorter = detectedTokens.length <= componentTokens.length ? detectedTokens : componentTokens;
+    const longer = detectedTokens.length <= componentTokens.length ? componentTokens : detectedTokens;
+    const hits = shorter.filter((token) =>
+      longer.some((other) => other.includes(token) || token.includes(other)));
+    return hits.length >= Math.ceil(shorter.length * 0.6);
+  });
+}
+
+function getCompactIngredientName(value: string): string {
+  return value
+    .replace(
+      /^(?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|one|two|three|four|five|six|a|an|pinch|dash)\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|g|grams?|ml|cloves?|slices?|cans?|bunches?|pieces?|packages?|large|medium|small)?\s+/i,
+      '',
+    )
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .trim();
+}
+
+function isCompactRepairableProviderError(error: unknown): boolean {
+  return error instanceof OpenRouterProviderError && [
+    'openrouter_empty_content',
+    'openrouter_invalid_json',
+    'openrouter_invalid_schema',
+    'openrouter_output_truncated',
+  ].includes(error.failure.reason);
 }
 
 // Fail-closed structural enforcement. Returns a structurally valid recipe or
@@ -1279,14 +1775,21 @@ async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string
 }
 
 const visionJsonContract = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}';
+const compactVisionJsonContract = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "confidenceReason": string}';
 
 // Extends the base contract with inline Epicure fields. Used only in the primary vision
 // call when Epicure is enabled — saves one sequential AI call (~8-12s) vs the old flow.
 const visionJsonContractWithEpicure = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string, "epicureSuggestions": {"complementaryIngredients": string[], "healthySubstitutions": {"ingredient": "substitute"}, "budgetSubstitutions": {"ingredient": "substitute"}}}';
 
-function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode) {
-  const epicureEnabled = isEpicureEnabled();
-  const contract = epicureEnabled ? visionJsonContractWithEpicure : visionJsonContract;
+function getVisionPrompt(
+  image: ScanImageMetadata | undefined,
+  mode: RecipeMode,
+  compactRecipeEnabled = false,
+) {
+  const epicureEnabled = !compactRecipeEnabled && isEpicureEnabled();
+  const contract = compactRecipeEnabled
+    ? compactVisionJsonContract
+    : epicureEnabled ? visionJsonContractWithEpicure : visionJsonContract;
   return [
     'Analyze this real-world restaurant, cafe, or takeout food or drink photo for a testing-only Okyo prototype.',
     'Return ONLY valid JSON in the assistant message content. Do not put JSON in reasoning. Do not return markdown. Do not explain.',
@@ -1318,31 +1821,41 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
     'If the image is too blurry/dark/blocked to know whether food is visible, set scanState too_unclear, isFoodImage false, confidence below 40, and rejectionReason to ask for a clearer food photo.',
     'If food is visible but uncertain, do NOT say "could not recognize" or "failed"; provide a broad best guess with lower confidence instead of failure.',
     'confidence may be 0-100. Use lower confidence when the image is unclear, partial, or screenshot-like.',
-    'Do not invent exact restaurant menu prices from a photo. Set restaurantPriceEstimate to 0 unless a menu, receipt, visible price, or user-provided price is available in metadata.',
-    'homemadeCostEstimate may be a cautious grocery-cost estimate for making a similar recipe at home.',
-    'Use cautious estimates. Never present food identification, cost, or ingredients as exact.',
+    ...(!compactRecipeEnabled ? [
+      'Do not invent exact restaurant menu prices from a photo. Set restaurantPriceEstimate to 0 unless a menu, receipt, visible price, or user-provided price is available in metadata.',
+      'homemadeCostEstimate may be a cautious grocery-cost estimate for making a similar recipe at home.',
+      'Use cautious estimates. Never present food identification, cost, or ingredients as exact.',
+    ] : [
+      'Never present food identification or ingredients as exact.',
+    ]),
     'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
     'If no actual image is available, return a cautious low-confidence result based only on metadata.',
     ...(epicureEnabled ? [
       'epicureSuggestions: return up to 5 complementaryIngredients (common accompaniments for this dish), up to 3 healthySubstitutions (healthier swap for a key ingredient, as {"original":"swap"}), and up to 3 budgetSubstitutions (cheaper swap, same format). Only include swaps that make sense for this specific dish.',
     ] : []),
-    `Requested recipe mode: ${mode}.`,
+    ...(!compactRecipeEnabled ? [`Requested recipe mode: ${mode}.`] : []),
     `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
   ].join('\n');
 }
 
-function getCompactVisionRetryPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode) {
+function getCompactVisionRetryPrompt(
+  image: ScanImageMetadata | undefined,
+  mode: RecipeMode,
+  compactRecipeEnabled = false,
+) {
   return [
     'Analyze this image for Okyo. Food and drinks are valid scans.',
     'Return ONLY valid JSON. No markdown. No explanation.',
     'Use exactly this JSON shape:',
-    visionJsonContract,
+    compactRecipeEnabled ? compactVisionJsonContract : visionJsonContract,
     'First decide whether visible food or drink exists. If no food or drink is visible, use scanState not_food. If the photo is too blurry or dark to identify anything, use too_unclear.',
     'If any food or drink is visible, do not hard reject. Give the most specific honest dish or drink name supported by the image, with lower confidence if uncertain.',
     'Drinks must be named as drinks, such as smoothie, latte, shake, juice, boba, coffee, or matcha. Never call a drink a plate or bowl.',
     'Avoid generic names like Food Plate, Restaurant Plate, Meal, Dish, Bowl, Drink, or Unknown Dish when a more specific visible guess is possible.',
-    'Set restaurantPriceEstimate to 0 unless a visible menu, receipt, or price is in the image.',
-    `Requested recipe mode: ${mode}.`,
+    ...(!compactRecipeEnabled
+      ? ['Set restaurantPriceEstimate to 0 unless a visible menu, receipt, or price is in the image.']
+      : []),
+    ...(!compactRecipeEnabled ? [`Requested recipe mode: ${mode}.`] : []),
     `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
   ].join('\n');
 }
@@ -1351,6 +1864,7 @@ function getFocusedVisionRetryPrompt(
   image: ScanImageMetadata | undefined,
   mode: RecipeMode,
   firstOutput: z.infer<typeof openRouterVisionOutputSchema>,
+  compactRecipeEnabled = false,
 ) {
   const clues = [
     ...(firstOutput.visibleIngredients ?? []),
@@ -1362,13 +1876,15 @@ function getFocusedVisionRetryPrompt(
     'Look at this food or drink photo again. A previous analysis returned a name that was too generic to be useful.',
     `Previous guess: "${firstOutput.dishName ?? 'none'}". Visible clues from the previous pass: ${clues.join(', ') || 'none recorded'}.`,
     'Return ONLY valid JSON. No markdown. No explanations. Use exactly these fields:',
-    visionJsonContract,
+    compactRecipeEnabled ? compactVisionJsonContract : visionJsonContract,
     'Name the MOST SPECIFIC dish or drink the image supports, built from visible components: descriptor + main item, like "Berry Smoothie", "Iced Matcha Latte", "Creamy Tomato Pasta", "Cheeseburger", "Grilled Chicken Rice Bowl", or "Chocolate Cake".',
     'If the image shows a drink in a cup or glass (smoothie, milkshake, latte, iced coffee, juice, boba), the dishName MUST say so. Never call a drink a plate, bowl, or meal.',
     'Generic names like "Mixed Restaurant Plate", "Food Plate", "Meal", "Dish", "Plate", or "Bowl" are wrong when any specific food or drink is identifiable. Prefer a specific guess with lower confidence.',
     'Include 2-4 possibleDishNames that are specific alternates of the same visible food or drink.',
-    'Stay honest: keep scanState accurate, lower confidence instead of inventing details, set restaurantPriceEstimate to 0 unless a menu or receipt is visible, and use not_food only when no food or drink is visible at all.',
-    `Requested recipe mode: ${mode}.`,
+    compactRecipeEnabled
+      ? 'Stay honest: keep scanState accurate, lower confidence instead of inventing details, and use not_food only when no food or drink is visible at all.'
+      : 'Stay honest: keep scanState accurate, lower confidence instead of inventing details, set restaurantPriceEstimate to 0 unless a menu or receipt is visible, and use not_food only when no food or drink is visible at all.',
+    ...(!compactRecipeEnabled ? [`Requested recipe mode: ${mode}.`] : []),
     `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
   ].join('\n');
 }

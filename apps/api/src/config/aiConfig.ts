@@ -25,6 +25,7 @@ export type AiConfig = {
   openRouterTextModel: string;
   timeoutMs: number;
   maxOutputTokens: number;
+  compactRecipeEnabled: boolean;
   // Fable 5 rides the same OpenRouter provider/endpoint — it is a model
   // selection, not a second provider integration.
   fableEnabled: boolean;
@@ -43,6 +44,7 @@ export type PublicAiConfig = {
   textModel: string;
   timeoutMs: number;
   maxOutputTokens: number;
+  compactRecipeEnabled: boolean;
   fableEnabled: boolean;
 };
 
@@ -72,6 +74,7 @@ export function getAiConfig(options?: GetAiConfigOptions): AiConfig {
     openRouterTextModel,
     timeoutMs: getTimeoutMs(process.env.AI_TIMEOUT_MS),
     maxOutputTokens: getPositiveInteger(process.env.AI_MAX_OUTPUT_TOKENS, defaultMaxOutputTokens),
+    compactRecipeEnabled: process.env.COMPACT_RECIPE_PIPELINE === 'true',
     fableEnabled,
     fableModel,
     isFableActive,
@@ -89,6 +92,7 @@ export function getPublicAiConfig(): PublicAiConfig {
     textModel: config.openRouterTextModel,
     timeoutMs: config.timeoutMs,
     maxOutputTokens: config.maxOutputTokens,
+    compactRecipeEnabled: config.compactRecipeEnabled,
     fableEnabled: config.fableEnabled,
   };
 }
