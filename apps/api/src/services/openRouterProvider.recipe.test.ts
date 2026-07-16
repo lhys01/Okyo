@@ -1,29 +1,43 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { openRouterRecipeOutputSchema, validateRecipeStructure } from './openRouterProvider.js';
+import type { FoodImageAnalysis } from './aiService.js';
+import {
+  normalizeFullRecipeOutput,
+  openRouterRecipeOutputSchema,
+  validateRecipeStructure,
+} from './openRouterProvider.js';
 
-function buildStep(index: number, overrides: Record<string, unknown> = {}) {
+function buildStep(index: number, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    stepNumber: index,
     title: `Step ${index}`,
-    step: `Do action number ${index} for about ${index} minutes until golden.`,
-    ingredients: ['olive oil'],
-    tools: ['skillet'],
+    step: `Heat the olive oil for ${index} minutes until golden.`,
     ...overrides,
   };
 }
 
-function buildValidRecipe(stepCount = 6) {
+function buildValidRecipe(stepCount = 6): {
+  dishName: string;
+  title: string;
+  ingredients: string[];
+  equipment?: string[];
+  steps: Record<string, unknown>[];
+} {
   return {
     dishName: 'Creamy Tomato Pasta',
     title: 'Creamy Tomato Pasta',
-    ingredients: ['8 oz rigatoni', '1 cup tomato sauce', '1/2 cup cream', '1/4 cup parmesan'],
+    ingredients: [
+      '8 oz rigatoni',
+      '1 cup tomato sauce',
+      '1/2 cup cream',
+      '1/4 cup parmesan',
+      '2 tbsp olive oil',
+    ],
     steps: Array.from({ length: stepCount }, (_, i) => buildStep(i + 1)),
   };
 }
 
-test('accepts a single structured recipe with the canonical step contract', () => {
+test('accepts a single structured recipe without derivable step metadata', () => {
   const parsed = openRouterRecipeOutputSchema.parse(buildValidRecipe());
   assert.deepEqual(validateRecipeStructure(parsed), []);
 });
@@ -51,18 +65,30 @@ test('rejects when steps is not an array', () => {
   assert.ok(validateRecipeStructure(parsed).includes('too_few_steps'));
 });
 
-test('flags a step missing ingredients', () => {
+test('normalization derives missing step numbers, phases, ingredient arrays, and tool arrays locally', () => {
   const recipe = buildValidRecipe();
-  recipe.steps[2] = buildStep(3, { ingredients: [] });
+  recipe.equipment = ['skillet'];
+  recipe.steps[2] = buildStep(3, {
+    title: '',
+    step: 'Heat the olive oil in the skillet for 3 minutes until golden.',
+    ingredients: [],
+    tools: [],
+    stepNumber: 99,
+    phase: 6,
+  });
   const parsed = openRouterRecipeOutputSchema.parse(recipe);
-  assert.ok(validateRecipeStructure(parsed).includes('step_missing_ingredients'));
-});
-
-test('flags a step missing tools', () => {
-  const recipe = buildValidRecipe();
-  recipe.steps[1] = buildStep(2, { tools: [] });
-  const parsed = openRouterRecipeOutputSchema.parse(recipe);
-  assert.ok(validateRecipeStructure(parsed).includes('step_missing_tools'));
+  const normalized = normalizeFullRecipeOutput(parsed, {
+    dishName: 'Creamy Tomato Pasta',
+    broadDishCategory: 'pasta/noodles',
+    detectedComponents: [],
+  } as unknown as FoodImageAnalysis);
+  const step = normalized.steps[2];
+  assert.equal(typeof step === 'object' && step.stepNumber, 3);
+  assert.ok(typeof step === 'object' && step.phase !== undefined);
+  assert.deepEqual(typeof step === 'object' && step.ingredients, ['olive oil']);
+  assert.deepEqual(typeof step === 'object' && step.tools, ['skillet']);
+  assert.ok(typeof step === 'object' && step.title.length > 0);
+  assert.deepEqual(validateRecipeStructure(normalized), []);
 });
 
 test('flags a step missing its instruction text', () => {
@@ -72,20 +98,11 @@ test('flags a step missing its instruction text', () => {
   assert.ok(validateRecipeStructure(parsed).includes('step_missing_instruction'));
 });
 
-test('flags non-sequential stepNumber', () => {
+test('step numbers are not part of provider validation', () => {
   const recipe = buildValidRecipe();
   recipe.steps[3] = buildStep(99); // gap in numbering
   const parsed = openRouterRecipeOutputSchema.parse(recipe);
-  assert.ok(validateRecipeStructure(parsed).includes('stepNumber_not_sequential'));
-});
-
-test('flags missing stepNumber', () => {
-  const recipe = buildValidRecipe();
-  const broken = buildStep(4);
-  delete (broken as Record<string, unknown>).stepNumber;
-  recipe.steps[3] = broken;
-  const parsed = openRouterRecipeOutputSchema.parse(recipe);
-  assert.ok(validateRecipeStructure(parsed).includes('stepNumber_missing'));
+  assert.deepEqual(validateRecipeStructure(parsed), []);
 });
 
 test('output schema carries a single recipe (no per-mode keys)', () => {

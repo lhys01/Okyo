@@ -54,6 +54,25 @@ test('server scan deadline uses the timeout copy', () => {
   );
 });
 
+test('recipe generation and validation failures have stable retry copy', () => {
+  assert.equal(
+    getUploadFailureReasonFromError(apiError(
+      'recipe_generation_failed',
+      'provider detail',
+      502,
+    )),
+    'Okyo could not build a safe recipe from this scan. Please try again.',
+  );
+  assert.equal(
+    getUploadFailureReasonFromError(apiError(
+      'recipe_validation_failed',
+      'validation detail',
+      502,
+    )),
+    'Okyo could not build a safe recipe from this scan. Please try again.',
+  );
+});
+
 function apiError(code: string, message: string, httpStatus: number) {
   return Object.assign(new Error(message), { name: 'ApiError', code, httpStatus });
 }

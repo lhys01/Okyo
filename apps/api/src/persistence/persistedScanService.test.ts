@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { AiScanSuccessResult } from '../services/aiService.js';
+import { RecipeValidationError } from '../services/recipeGenerationError.js';
 import type { Recipe } from '../types.js';
 import { runPersistedScan } from './persistedScanService.js';
 import {
@@ -70,6 +71,22 @@ test('AI failure records only a fixed sanitized category for the verified user',
   assert.equal(failure.userId, userId);
   assert.equal(failure.failureCategory, 'recipe_generation_failed');
   assert.equal(JSON.stringify(failure).includes(rawSecret), false);
+});
+
+test('typed recipe validation failure persists a stable non-generic category', async () => {
+  const calls: Array<{ operation: string; value: unknown }> = [];
+  const repository = recordingRepository(calls);
+  await assert.rejects(runPersistedScan({
+    userId,
+    repository,
+    idFactory: () => durableId,
+    generate: async () => {
+      throw new RecipeValidationError(['missing_safety_poultry']);
+    },
+  }), RecipeValidationError);
+
+  const failure = calls.at(-1)?.value as { failureCategory: string };
+  assert.equal(failure.failureCategory, 'recipe_validation_failed');
 });
 
 test('recipe persistence failure rejects the scan instead of claiming success', async () => {

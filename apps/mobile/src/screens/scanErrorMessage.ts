@@ -23,6 +23,9 @@ export function getUploadFailureReasonFromError(error: unknown) {
         return 'Too many scan requests. Please wait a moment before trying again.';
       case 'scan_timeout':
         return 'This scan took too long. Try again with a clear, well-lit food photo.';
+      case 'recipe_generation_failed':
+      case 'recipe_validation_failed':
+        return 'Okyo could not build a safe recipe from this scan. Please try again.';
       default:
         return 'Okyo had trouble scanning this photo. Try again in a second.';
     }

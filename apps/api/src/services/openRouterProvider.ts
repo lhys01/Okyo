@@ -5,13 +5,15 @@ import type { AiConfig } from '../config/aiConfig.js';
 import { isQuotaError, type ProviderQuota } from '../quota/providerQuota.js';
 import type { RecipeMode, RecipeStep, ScanImageMetadata } from '../types.js';
 import type { FoodImageAnalysis } from './aiService.js';
-import { isEpicureEnabled } from '../config/openRouter.js';
 import {
-  buildEpicurePromptSection,
-  enrichRecipeContext,
-  type EnrichedRecipeContext,
-} from './epicureService.js';
-import { ingredientsMatch } from './recipeIngredientValidation.js';
+  canonicalIngredientName,
+  findMatchingIngredientName,
+  ingredientsMatch,
+} from './recipeIngredientValidation.js';
+import {
+  RecipeGenerationError,
+  RecipeValidationError,
+} from './recipeGenerationError.js';
 import {
   getRemainingScanMs,
   ScanCancelledError,
@@ -265,8 +267,6 @@ export const compactRecipeOutputSchema = z.object({
   }).pipe(z.number().int().min(1).max(12)),
   difficulty: z.enum(['Easy', 'Medium', 'Hard']),
 });
-
-const compactRecipePatchSchema = compactRecipeOutputSchema.partial();
 
 export type OpenRouterVisionOutput = z.input<typeof openRouterVisionOutputSchema>;
 export type OpenRouterRecipeOutput = z.infer<typeof openRouterRecipeOutputSchema>;
@@ -612,7 +612,7 @@ function getRecipeCacheKey(
     i: [...analysis.visibleIngredients].sort().map((s) => s.trim().toLowerCase()),
     m: compactRecipeEnabled ? 'canonical' : mode,
     c: analysis.broadDishCategory.trim().toLowerCase(),
-    contract: compactRecipeEnabled ? 'compact-v1' : 'full-v1',
+    contract: compactRecipeEnabled ? 'compact-v1' : 'full-core-v2',
   });
   return createHash('sha1').update(data).digest('hex');
 }
@@ -671,13 +671,9 @@ export async function generateRecipeWithOpenRouter(input: {
   mode?: RecipeMode;
   quota: ProviderQuota;
 } & Partial<ScanExecutionContext>) {
-  // ── Epicure enrichment (additive) ───────────────────────────────────────────
-  // Runs BEFORE recipe generation. When the feature flag is off, no key is set,
-  // or the call fails, enrichRecipeContext returns null and the recipe prompt is
-  // built exactly as before — recipe generation never breaks or blocks on this.
   const mode: RecipeMode = input.mode ?? 'Restaurant Copy';
 
-  // Cache check — skips Epicure and recipe generation entirely on a hit.
+  // Cache check skips recipe generation entirely on a hit.
   const cacheKey = getRecipeCacheKey(input.analysis, mode, input.config.compactRecipeEnabled);
   const cached = recipeCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -690,70 +686,20 @@ export async function generateRecipeWithOpenRouter(input: {
     return generateCompactRecipeWithOpenRouter(input, cacheKey);
   }
 
-  let enrichment: EnrichedRecipeContext | null = null;
-  const visionEpicure = input.analysis.epicureSuggestions;
-  if (visionEpicure?.complementaryIngredients?.length) {
-    // Vision already returned Epicure data inline — no separate API call needed.
-    // Saves ~8-12s vs the previous sequential enrichRecipeContext() call.
-    enrichment = {
-      detectedIngredients: [...input.analysis.visibleIngredients, ...input.analysis.likelyIngredients].slice(0, 12),
-      complementaryIngredients: visionEpicure.complementaryIngredients,
-      healthySubstitutions: visionEpicure.healthySubstitutions ?? {},
-      budgetSubstitutions: visionEpicure.budgetSubstitutions ?? {},
-    };
-    logOpenRouterDebug('epicure_from_vision', {
-      complementaryCount: visionEpicure.complementaryIngredients.length,
-      healthySubCount: Object.keys(visionEpicure.healthySubstitutions ?? {}).length,
-      budgetSubCount: Object.keys(visionEpicure.budgetSubstitutions ?? {}).length,
-    });
-  } else {
-    try {
-      enrichment = await enrichRecipeContext({
-        dishName: input.analysis.dishName,
-        ingredients: [...input.analysis.visibleIngredients, ...input.analysis.likelyIngredients],
-        mode,
-      }, undefined, input.quota, {
-        requestId: input.requestId,
-        signal: input.signal,
-        deadlineAt: input.deadlineAt,
-      });
-    } catch (enrichError) {
-      if (isQuotaError(enrichError)) throw enrichError;
-      throwIfScanCancelled(input.signal, input.deadlineAt);
-      logOpenRouterDebug('epicure_enrichment_unexpected_error', {
-        reason: enrichError instanceof Error ? enrichError.message : 'unknown',
-      });
-      enrichment = null;
-    }
-  }
-
-  const recipePrompt = getRecipePrompt(input.analysis, enrichment, mode);
-  const epicureSectionChars = enrichment ? buildEpicurePromptSection(enrichment, mode).length : 0;
+  // Epicure and all optional enrichment are deferred until after the initial
+  // scan response. The blocking recipe call receives dish evidence only.
+  const recipePrompt = getRecipePrompt(input.analysis, mode);
   const fullPromptChars = recipePrompt.length;
-  const basePromptChars = fullPromptChars - (epicureSectionChars > 0 ? epicureSectionChars + 1 : 0);
-  console.log('[prompt_size_comparison]', {
+  console.log('[recipe_contract_size]', {
+    requestId: input.requestId,
     dish: input.analysis.dishName,
     mode,
-    basePromptChars,
-    epicureSectionChars,
-    fullPromptChars,
-    epicureAdded: epicureSectionChars > 0,
-    epicurePct: basePromptChars > 0
-      ? `+${((epicureSectionChars / basePromptChars) * 100).toFixed(1)}%`
-      : '0%',
-    estimatedBasePromptTokens: Math.ceil(basePromptChars / 4),
-    estimatedFullPromptTokens: Math.ceil(fullPromptChars / 4),
+    contract: 'full-core-v2',
+    promptChars: fullPromptChars,
+    estimatedPromptTokens: Math.ceil(fullPromptChars / 4),
+    maxOutputTokens: getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
   });
 
-  const retryReasons: OpenRouterFailureReason[] = [
-    'openrouter_empty_content',
-    'openrouter_http_error',
-    'openrouter_invalid_json',
-    'openrouter_invalid_schema',
-    'openrouter_network_error',
-    'openrouter_output_truncated',
-    'openrouter_unknown_error',
-  ];
   const isDrink = isDrinkAnalysisText([
     input.analysis.dishName,
     input.analysis.broadDishCategory,
@@ -761,88 +707,206 @@ export async function generateRecipeWithOpenRouter(input: {
     ...input.analysis.likelyIngredients,
   ].join(' '));
 
-  let firstOutput: OpenRouterRecipeOutput;
+  let firstOutput: OpenRouterRecipeOutput | undefined;
   try {
-    firstOutput = await callRecipeStage(input, recipePrompt, input.config.maxOutputTokens, 'recipe');
+    firstOutput = await callRecipeStage(
+      input,
+      recipePrompt,
+      getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
+      'recipe',
+    );
   } catch (firstError) {
-    const shouldRetry = firstError instanceof OpenRouterProviderError &&
-      retryReasons.includes(firstError.failure.reason);
-
-    if (!shouldRetry) {
-      throw firstError;
+    if (isQuotaError(firstError) || isScanControlError(firstError)) throw firstError;
+    if (!isRepairableRecipeOutputError(firstError)) {
+      throw new RecipeGenerationError(
+        firstError instanceof OpenRouterProviderError ? firstError.failure.reason : 'provider_failed',
+      );
     }
-
-    logOpenRouterDebug('openrouter_recipe_retry', {
-      firstReason: firstError.failure.reason,
-      model: input.config.openRouterTextModel,
-      retryPrompt: 'compact',
-      retryMaxTokens: 1024,
-    });
-
-    logRetryMetric(input, 'recipe_retry', firstError.failure.reason);
-    await waitForScanDelay(3500, input.signal, input.deadlineAt);
-    firstOutput = await callRecipeStage(input, getCompactRecipeRetryPrompt(input.analysis), 1024, 'recipe_retry');
+    const reason = firstError instanceof OpenRouterProviderError
+      ? firstError.failure.reason
+      : 'provider_output_unavailable';
+    logRetryMetric(input, 'recipe_repair', reason);
+    return repairFullRecipe(input, cacheKey, undefined, [reason], isDrink);
   }
 
-  // Structural gate (FAIL-CLOSED): the single recipe MUST have well-formed,
-  // sequential steps each carrying an instruction, title, ingredients, and
-  // tools. One targeted repair pass; if it still fails, throw rather than
-  // fabricate. aiService routes the throw to the honest scan-failure UX.
-  firstOutput = await enforceRecipeStructure(input, firstOutput);
-
-  // Strip fields the model generates despite prompt bans — deterministic, no
-  // prompt-compliance required.
-  if (!isPlatterAnalysis(input.analysis) && firstOutput.ingredientGroups?.length) {
-    firstOutput = { ...firstOutput, ingredientGroups: [] };
-  }
-  if (firstOutput.groceryItems?.length) {
-    firstOutput = {
-      ...firstOutput,
-      groceryItems: firstOutput.groceryItems.map(({ name, quantity, category }) => ({ name, quantity, category, sourceIngredient: '', shoppingNote: '' })),
-    };
-  }
-
-  // Quality gate: even structurally valid JSON can be too vague to cook from.
-  // One focused repair pass, then keep whichever output is cleaner (and still
-  // structurally valid). The deterministic sanitizer in aiService is the final
-  // safety net after this.
-  const issues = getRecipeQualityIssues(firstOutput, isDrink);
+  const normalized = normalizeFullRecipeOutput(firstOutput, input.analysis);
+  const issues = validateFullRecipeOutput(normalized, input.analysis, isDrink);
   if (issues.length === 0) {
-    return storeRecipeCache(cacheKey, firstOutput, input.analysis.dishName);
+    return storeRecipeCache(cacheKey, normalized, input.analysis.dishName, { addImagePrompts: false });
   }
 
-  logOpenRouterDebug('openrouter_recipe_quality_check', {
-    dishName: input.analysis.dishName,
-    issues,
-    willRepair: true,
+  logRetryMetric(input, 'recipe_repair', issues.join(','));
+  return repairFullRecipe(input, cacheKey, normalized, issues, isDrink);
+}
+
+async function repairFullRecipe(
+  input: {
+    analysis: FoodImageAnalysis;
+    config: AiConfig;
+    quota: ProviderQuota;
+  } & Partial<ScanExecutionContext>,
+  cacheKey: string,
+  previousOutput: OpenRouterRecipeOutput | undefined,
+  issues: string[],
+  isDrink: boolean,
+): Promise<OpenRouterRecipeOutput> {
+  throwIfScanCancelled(input.signal, input.deadlineAt);
+  let repaired: OpenRouterRecipeOutput;
+  try {
+    repaired = await callRecipeStage(
+      input,
+      getFullRecipeRepairPrompt(input.analysis, previousOutput, issues),
+      getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
+      'recipe_repair',
+    );
+  } catch (error) {
+    if (isQuotaError(error) || isScanControlError(error)) throw error;
+    throw new RecipeValidationError([
+      ...issues,
+      error instanceof OpenRouterProviderError ? error.failure.reason : 'repair_output_unavailable',
+    ]);
+  }
+
+  const normalized = normalizeFullRecipeOutput(repaired, input.analysis);
+  const remainingIssues = validateFullRecipeOutput(normalized, input.analysis, isDrink);
+  if (remainingIssues.length > 0) {
+    throw new RecipeValidationError(remainingIssues);
+  }
+  return storeRecipeCache(
+    cacheKey,
+    normalized,
+    input.analysis.dishName,
+    { addImagePrompts: false },
+  );
+}
+
+export function normalizeFullRecipeOutput(
+  output: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+): OpenRouterRecipeOutput {
+  const ingredientNames = output.ingredients
+    .map((ingredient) => typeof ingredient === 'string' ? ingredient.trim() : '')
+    .filter(Boolean);
+  const equipment = output.equipment
+    .map((tool) => typeof tool === 'string' ? tool.trim() : '')
+    .filter(Boolean);
+  let lastPhase = 1;
+  const steps = output.steps.map((rawStep, index) => {
+    const record: SafeRecord = typeof rawStep === 'object' && rawStep ? rawStep : {};
+    const instruction = getProviderStepText(rawStep).trim();
+    const existingIngredients = getProviderStepList(record, 'ingredients', 'ingredientsUsed');
+    const normalizedIngredients = existingIngredients.length > 0
+      ? existingIngredients.map((reference) =>
+          canonicalIngredientName(findMatchingIngredientName(reference, ingredientNames) ?? reference))
+      : ingredientNames
+          .filter((ingredient) => ingredientsMatch(ingredient, instruction))
+          .map(canonicalIngredientName);
+    const existingTools = getProviderStepList(record, 'tools', 'toolsUsed');
+    const normalizedTools = existingTools.length > 0
+      ? existingTools
+      : equipment.filter((tool) => instruction.toLowerCase().includes(tool.toLowerCase()));
+    const derivedPhase = deriveProviderStepPhase(instruction, index, output.steps.length);
+    const phase = Math.max(lastPhase, derivedPhase);
+    lastPhase = phase;
+
+    return {
+      ...record,
+      stepNumber: index + 1,
+      phase,
+      title: typeof record.title === 'string' && record.title.trim()
+        ? record.title.trim()
+        : deriveProviderStepTitle(instruction),
+      step: instruction,
+      ingredients: [...new Set(normalizedIngredients.filter(Boolean))],
+      tools: [...new Set(normalizedTools.filter(Boolean))],
+    };
   });
 
-  try {
-    logRetryMetric(input, 'recipe_quality_repair', issues.join(','));
-    await waitForScanDelay(250, input.signal, input.deadlineAt);
-    const repaired = await callRecipeStage(
-      input,
-      getRecipeRepairPrompt(input.analysis, firstOutput, issues),
-      input.config.maxOutputTokens,
-      'recipe_quality_repair',
-    );
-    const repairedIssues = getRecipeQualityIssues(repaired, isDrink);
-    const repairedStructure = validateRecipeStructure(repaired);
-    const usedRepair = repairedStructure.length === 0 && repairedIssues.length < issues.length;
-    logOpenRouterDebug('openrouter_recipe_quality_repair_result', {
-      beforeIssues: issues,
-      afterIssues: repairedIssues,
-      repairedStructureIssues: repairedStructure,
-      usedRepair,
-    });
-    return storeRecipeCache(cacheKey, usedRepair ? repaired : firstOutput, input.analysis.dishName);
-  } catch (repairError) {
-    if (isQuotaError(repairError)) throw repairError;
-    logOpenRouterDebug('openrouter_recipe_quality_repair_failed', {
-      reason: repairError instanceof OpenRouterProviderError ? repairError.failure.reason : 'unknown',
-    });
-    return storeRecipeCache(cacheKey, firstOutput, input.analysis.dishName);
+  return openRouterRecipeOutputSchema.parse({
+    ...output,
+    description: '',
+    avoidMistake: '',
+    mistakeWarning: '',
+    storageAndReheating: '',
+    storage: '',
+    ingredientGroups: isPlatterAnalysis(analysis) ? output.ingredientGroups : [],
+    groceryItems: [],
+    spicePairings: [],
+    substitutions: [],
+    cookingTerms: [],
+    steps,
+  });
+}
+
+function validateFullRecipeOutput(
+  output: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+  isDrink: boolean,
+): string[] {
+  const issues = [
+    ...validateRecipeStructure(output, analysis),
+    ...getRecipeQualityIssues(output, analysis, isDrink),
+  ];
+  const safetyRequirement = getRecipeSafetyRequirement(analysis, output.ingredients);
+  const safetyText = output.steps.map((step) => {
+    if (typeof step === 'string') return step;
+    return `${getProviderStepText(step)} ${step.safetyNote ?? ''}`;
+  }).join(' ');
+  if (safetyRequirement && !safetyRequirement.pattern.test(safetyText)) {
+    issues.push(`missing_safety_${safetyRequirement.code}`);
   }
+  if (isPlatterAnalysis(analysis)) {
+    const coverage = getRecipeComponentCoverage(
+      (analysis.detectedComponents ?? []).map((component) => component.name),
+      [
+        output.title,
+        ...output.ingredients.map(canonicalIngredientName),
+        ...output.steps.map(getProviderStepText),
+      ],
+    );
+    if (coverage.coveragePercent < 90) issues.push('platter_coverage_below_90');
+  }
+  return [...new Set(issues)];
+}
+
+function getProviderStepText(
+  value: OpenRouterRecipeVariant['steps'][number] | undefined,
+): string {
+  if (typeof value === 'string') return value;
+  return value?.step || value?.instruction || value?.text || '';
+}
+
+function getProviderStepList(
+  value: Record<string, unknown>,
+  primary: string,
+  fallback: string,
+): string[] {
+  const preferred = Array.isArray(value[primary]) ? value[primary] : [];
+  const alternate = preferred.length === 0 && Array.isArray(value[fallback]) ? value[fallback] : [];
+  return (preferred.length > 0 ? preferred : alternate)
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map((item) => item.trim());
+}
+
+function deriveProviderStepTitle(instruction: string): string {
+  const words = instruction
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 1)
+    .slice(0, 3);
+  return words.length > 0
+    ? words.map((word) => `${word[0].toUpperCase()}${word.slice(1)}`).join(' ')
+    : 'Cooking Step';
+}
+
+function deriveProviderStepPhase(instruction: string, index: number, total: number): number {
+  const normalized = instruction.toLowerCase();
+  if (index === total - 1 && /\b(serve|plate|pour|enjoy)\b/.test(normalized)) return 6;
+  if (/\b(garnish|finish|drizzle|sprinkle)\b/.test(normalized)) return 5;
+  if (/\b(assemble|layer|fill|wrap|fold|toss|combine)\b/.test(normalized)) return 4;
+  if (/\b(sear|fry|roast|bake|boil|grill|simmer|saute|sauté|steam|poach|braise|brown|reduce|cook)\b/.test(normalized)) return 3;
+  if (/\b(preheat|heat|bring .* to a boil)\b/.test(normalized)) return 2;
+  return index === 0 ? 1 : 3;
 }
 
 async function generateCompactRecipeWithOpenRouter(
@@ -855,19 +919,28 @@ async function generateCompactRecipeWithOpenRouter(
   cacheKey: string,
 ): Promise<OpenRouterRecipeOutput> {
   const prompt = getCompactRecipePrompt(input.analysis);
+  const maxOutputTokens = getCompactRecipeMaxTokens(
+    input.analysis,
+    input.config.maxOutputTokens,
+  );
   console.log('[recipe_contract_size]', {
     requestId: input.requestId,
     contract: 'compact-v1',
     promptChars: prompt.length,
     estimatedPromptTokens: Math.ceil(prompt.length / 4),
-    maxOutputTokens: Math.min(input.config.maxOutputTokens, 1024),
+    maxOutputTokens,
   });
 
   let firstJson: unknown;
   try {
-    firstJson = await callCompactRecipeJson(input, prompt, 'compact_recipe', 1024);
+    firstJson = await callCompactRecipeJson(input, prompt, 'compact_recipe', maxOutputTokens);
   } catch (error) {
-    if (!isCompactRepairableProviderError(error)) throw error;
+    if (isQuotaError(error) || isScanControlError(error)) throw error;
+    if (!isRepairableRecipeOutputError(error)) {
+      throw new RecipeGenerationError(
+        error instanceof OpenRouterProviderError ? error.failure.reason : 'provider_failed',
+      );
+    }
     logRetryMetric(
       input,
       'compact_recipe_repair',
@@ -907,45 +980,30 @@ async function repairCompactRecipe(
   issues: string[],
 ): Promise<OpenRouterRecipeOutput> {
   throwIfScanCancelled(input.signal, input.deadlineAt);
-  const repairJson = await callCompactRecipeJson(
-    input,
-    getCompactRecipeRepairPrompt(input.analysis, previousOutput, issues),
-    'compact_recipe_repair',
-    900,
-  );
-  const patch = compactRecipePatchSchema.safeParse(repairJson);
-  if (!patch.success) {
-    throw createOpenRouterError(
-      input.config,
-      input.config.openRouterTextModel,
-      'openrouter_invalid_schema',
-      { openRouterErrorMessage: getSchemaErrorMessage(patch.error) },
+  let repairJson: unknown;
+  try {
+    repairJson = await callCompactRecipeJson(
+      input,
+      getCompactRecipeRepairPrompt(input.analysis, previousOutput, issues),
+      'compact_recipe_repair',
+      getCompactRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
     );
+  } catch (error) {
+    if (isQuotaError(error) || isScanControlError(error)) throw error;
+    throw new RecipeValidationError([
+      ...issues,
+      error instanceof OpenRouterProviderError ? error.failure.reason : 'repair_output_unavailable',
+    ]);
+  }
+  const repaired = compactRecipeOutputSchema.safeParse(repairJson);
+  if (!repaired.success) {
+    throw new RecipeValidationError(getCompactSchemaIssues(repaired.error));
   }
 
-  const previousRecord = getRecord(previousOutput) ?? {};
-  const merged = compactRecipeOutputSchema.safeParse({ ...previousRecord, ...patch.data });
-  if (!merged.success) {
-    throw createOpenRouterError(
-      input.config,
-      input.config.openRouterTextModel,
-      'openrouter_invalid_schema',
-      { openRouterErrorMessage: getSchemaErrorMessage(merged.error) },
-    );
-  }
-
-  const normalized = normalizeCompactRecipeTimes(merged.data);
+  const normalized = normalizeCompactRecipeTimes(repaired.data);
   const remainingIssues = validateCompactRecipeOutput(normalized, input.analysis);
   if (remainingIssues.length > 0) {
-    throw createOpenRouterError(
-      input.config,
-      input.config.openRouterTextModel,
-      'openrouter_invalid_schema',
-      {
-        openRouterErrorMessage:
-          `Compact recipe remained unsafe or uncookable after one targeted repair: ${remainingIssues.join(', ')}`,
-      },
-    );
+    throw new RecipeValidationError(remainingIssues);
   }
 
   return storeRecipeCache(
@@ -1034,7 +1092,7 @@ export function getRecipePromptSizeComparison(analysis: FoodImageAnalysis): {
   estimatedFullPromptTokens: number;
   estimatedCompactPromptTokens: number;
 } {
-  const fullPromptChars = getRecipePrompt(analysis, null, 'Restaurant Copy').length;
+  const fullPromptChars = getRecipePrompt(analysis, 'Restaurant Copy').length;
   const compactPromptChars = getCompactRecipePrompt(analysis).length;
   return {
     fullPromptChars,
@@ -1049,15 +1107,15 @@ function getCompactRecipeRepairPrompt(
   previousOutput: unknown,
   issues: string[],
 ): string {
-  const hasPreviousOutput = getRecord(previousOutput) !== null;
+  const bounds = getRecipeStepBounds(analysis);
   return [
-    `Patch the previous compact recipe for "${analysis.dishName}".`,
+    `Correct the previous compact recipe for "${analysis.dishName}".`,
     `Critical defects: ${issues.join(', ')}.`,
-    hasPreviousOutput
-      ? 'Return ONLY a JSON object containing the defective top-level fields and their complete replacement values. Do not return unchanged fields.'
-      : 'The previous output was unavailable. Return one complete replacement compact recipe object.',
-    'Allowed keys: title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, difficulty.',
+    'Return ONLY the entire corrected compact recipe object. Never return a partial patch.',
+    'Required keys: title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, difficulty.',
     'The same compact rules still apply: exact ingredient quantities; cookable instructions with time or sensory completion; required safetyNote; complete platter coverage.',
+    `Return ${bounds.min}-${bounds.max} steps for this dish.`,
+    `Full canonical ingredient list from the previous object: ${JSON.stringify(getRecord(previousOutput)?.ingredients ?? [])}`,
     `Previous output: ${JSON.stringify(previousOutput ?? {})}`,
     `Dish evidence: ${JSON.stringify({
       dishName: analysis.dishName,
@@ -1102,6 +1160,33 @@ function compactRecipeToCanonicalOutput(output: CompactRecipeOutput): OpenRouter
   });
 }
 
+function getRecipeStepBounds(analysis: FoodImageAnalysis): { min: number; max: number } {
+  const text = `${analysis.dishName} ${analysis.broadDishCategory}`.toLowerCase();
+  if (isPlatterAnalysis(analysis)) return { min: 5, max: 14 };
+  if (isDrinkAnalysisText(text) || /\b(sushi|sashimi|ceviche|raw fish)\b/.test(text)) {
+    return { min: 3, max: 6 };
+  }
+  if (isGenuinelySimpleRecipe(analysis)) return { min: 2, max: 5 };
+  if (/\b(salad|sandwich|wrap|toast|snack|parfait|overnight oats)\b/.test(text)) {
+    return { min: 3, max: 6 };
+  }
+  return { min: 5, max: 8 };
+}
+
+function getFullRecipeMaxTokens(analysis: FoodImageAnalysis, configuredLimit: number): number {
+  return Math.min(configuredLimit, isPlatterAnalysis(analysis) ? 2000 : 1400);
+}
+
+function getCompactRecipeMaxTokens(analysis: FoodImageAnalysis, configuredLimit: number): number {
+  return Math.min(configuredLimit, isPlatterAnalysis(analysis) ? 1400 : 1024);
+}
+
+function isGenuinelySimpleRecipe(analysis: FoodImageAnalysis): boolean {
+  return /\b(plain|whole|sliced|fresh fruit|boiled egg|toast|fruit|watermelon|berries|grapes|banana|apple slices|orange wedges)\b/i.test(
+    `${analysis.dishName} ${analysis.broadDishCategory}`,
+  );
+}
+
 export function validateCompactRecipeOutput(
   output: CompactRecipeOutput,
   analysis: FoodImageAnalysis,
@@ -1109,28 +1194,23 @@ export function validateCompactRecipeOutput(
   const issues: string[] = [];
   const isPlatter = isPlatterAnalysis(analysis);
   const isDrink = isDrinkAnalysisText(`${analysis.dishName} ${analysis.broadDishCategory}`);
-  const isSimple = /\b(plain|whole|sliced|fresh|boiled egg|toast|fruit|watermelon|berries|grapes|banana)\b/i.test(
-    `${analysis.dishName} ${analysis.broadDishCategory}`,
-  );
-  const isRawFishDish = /\b(sushi|sashimi|ceviche|raw fish)\b/i.test(
-    `${analysis.dishName} ${analysis.broadDishCategory}`,
-  );
 
   if (!output.title.trim()) issues.push('missing_title');
   if (output.ingredients.length === 0) issues.push('missing_ingredients');
-  if (output.ingredients.some((ingredient) => !hasCompactIngredientAmount(ingredient))) {
+  if (output.ingredients.some((ingredient) => !hasUsableIngredientAmount(ingredient))) {
     issues.push('ingredient_missing_exact_quantity');
   }
   if (output.totalTime < 1) issues.push('invalid_total_time');
-  if (!isSimple && !isDrink && output.equipment.length === 0) issues.push('missing_equipment');
+  if (!isGenuinelySimpleRecipe(analysis) && !isDrink && output.equipment.length === 0) {
+    issues.push('missing_equipment');
+  }
 
-  const minSteps = isSimple ? 2 : isDrink || isRawFishDish ? 3 : 5;
-  const maxSteps = isPlatter ? 14 : isDrink || isRawFishDish ? 6 : 8;
-  if (output.steps.length < minSteps) issues.push('too_few_steps');
-  if (output.steps.length > maxSteps) issues.push('too_many_steps');
+  const bounds = getRecipeStepBounds(analysis);
+  if (output.steps.length < bounds.min) issues.push('too_few_steps');
+  if (output.steps.length > bounds.max) issues.push('too_many_steps');
 
   for (const step of output.steps) {
-    if (!hasCompactInstructionCompletion(step.instruction, step.doneWhen)) {
+    if (!hasInstructionCompletion(step.instruction, step.doneWhen)) {
       issues.push('step_missing_time_or_completion_cue');
     }
     if (hasVagueCompactInstruction(step.instruction)) {
@@ -1142,14 +1222,14 @@ export function validateCompactRecipeOutput(
     issues.push('step_uses_unlisted_ingredients');
   }
 
-  const safetyRequirement = getCompactSafetyRequirement(analysis, output.ingredients);
+  const safetyRequirement = getRecipeSafetyRequirement(analysis, output.ingredients);
   const safetyNotes = output.steps.map((step) => step.safetyNote).join(' ');
   if (safetyRequirement && !safetyRequirement.pattern.test(safetyNotes)) {
     issues.push(`missing_safety_${safetyRequirement.code}`);
   }
 
   if (isPlatter) {
-    const coverage = getCompactComponentCoverage(
+    const coverage = getRecipeComponentCoverage(
       (analysis.detectedComponents ?? []).map((component) => component.name),
       [
         output.title,
@@ -1168,9 +1248,9 @@ function getCompactSchemaIssues(error: z.ZodError): string[] {
     `invalid_${issue.path.length > 0 ? issue.path.join('_') : 'schema'}`))];
 }
 
-function hasCompactIngredientAmount(value: string): boolean {
+function hasUsableIngredientAmount(value: string): boolean {
   const text = value.trim().toLowerCase();
-  if (/^(?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|one|two|three|four|five|six|a|an|pinch|dash)\b/.test(text)) {
+  if (/^(?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|a|an|pinch|dash)\b/.test(text)) {
     return true;
   }
   if (/\bto taste$/.test(text)) {
@@ -1179,10 +1259,10 @@ function hasCompactIngredientAmount(value: string): boolean {
   return false;
 }
 
-function hasCompactInstructionCompletion(instruction: string, doneWhen: string): boolean {
+function hasInstructionCompletion(instruction: string, doneWhen = ''): boolean {
   const text = `${instruction} ${doneWhen}`;
   return /\b\d+(?:\s*[-–]\s*\d+)?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/i.test(text) ||
-    /\b(golden|browned|opaque|translucent|tender|crisp|crispy|fragrant|bubbling|simmering|thickened|coats?|set|firm|flaky|juices run clear|no pink|internal temperature|°f|°c|smooth|glossy|charred|softened|cold|chilled)\b/i.test(text);
+    /\b(golden|browned|opaque|translucent|tender|crisp|crispy|fragrant|bubbling|boiling|simmering|thickened|coats?|combined|melted|wilted|reduced|steaming|al dente|set|firm|flaky|juices run clear|no pink|cooked through|internal temperature|reaches? \d{2,3}|°f|°c|smooth|glossy|charred|softened|cold|chilled)\b/i.test(text);
 }
 
 function hasVagueCompactInstruction(instruction: string): boolean {
@@ -1201,14 +1281,20 @@ const compactIngredientWords = [
 ];
 
 function hasUnlistedCompactStepIngredients(output: CompactRecipeOutput): boolean {
-  const ingredientText = output.ingredients.join(' ').toLowerCase();
-  const stepText = output.steps.map((step) => step.instruction).join(' ').toLowerCase();
-  return compactIngredientWords.some((candidate) =>
-    new RegExp(`\\b${candidate.replace(' ', '\\s+')}\\b`, 'i').test(stepText) &&
-    !new RegExp(`\\b${candidate.replace(' ', '\\s+')}\\b`, 'i').test(ingredientText));
+  return hasUnlistedStepIngredientText(
+    output.steps.map((step) => step.instruction),
+    output.ingredients,
+  );
 }
 
-function getCompactSafetyRequirement(
+function hasUnlistedStepIngredientText(stepTexts: string[], ingredients: string[]): boolean {
+  const stepText = stepTexts.join(' ').toLowerCase();
+  return compactIngredientWords.some((candidate) =>
+    new RegExp(`\\b${candidate.replace(' ', '\\s+')}\\b`, 'i').test(stepText) &&
+    findMatchingIngredientName(candidate, ingredients) === undefined);
+}
+
+function getRecipeSafetyRequirement(
   analysis: FoodImageAnalysis,
   ingredients: string[],
 ): { code: string; pattern: RegExp } | null {
@@ -1228,7 +1314,7 @@ function getCompactSafetyRequirement(
   return null;
 }
 
-function getCompactComponentCoverage(
+function getRecipeComponentCoverage(
   detectedComponents: string[],
   generatedComponents: string[],
 ): { coveragePercent: number; missingComponents: string[] } {
@@ -1236,14 +1322,14 @@ function getCompactComponentCoverage(
     return { coveragePercent: 100, missingComponents: [] };
   }
   const missingComponents = detectedComponents.filter((detected) =>
-    !isCompactComponentCovered(detected, generatedComponents));
+    !isRecipeComponentCovered(detected, generatedComponents));
   return {
     coveragePercent: Math.round((1 - missingComponents.length / detectedComponents.length) * 100),
     missingComponents,
   };
 }
 
-function isCompactComponentCovered(detected: string, generated: string[]): boolean {
+function isRecipeComponentCovered(detected: string, generated: string[]): boolean {
   const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
   const detectedNormalized = normalize(detected);
   return generated.some((component) => {
@@ -1276,7 +1362,7 @@ function getCompactIngredientName(value: string): string {
     .trim();
 }
 
-function isCompactRepairableProviderError(error: unknown): boolean {
+function isRepairableRecipeOutputError(error: unknown): boolean {
   return error instanceof OpenRouterProviderError && [
     'openrouter_empty_content',
     'openrouter_invalid_json',
@@ -1285,60 +1371,25 @@ function isCompactRepairableProviderError(error: unknown): boolean {
   ].includes(error.failure.reason);
 }
 
-// Fail-closed structural enforcement. Returns a structurally valid recipe or
-// throws OpenRouterProviderError — never a fabricated/templated recipe.
-async function enforceRecipeStructure(
-  input: {
-    analysis: FoodImageAnalysis;
-    config: AiConfig;
-    quota: ProviderQuota;
-  } & Partial<ScanExecutionContext>,
-  output: OpenRouterRecipeOutput,
-): Promise<OpenRouterRecipeOutput> {
-  const issues = validateRecipeStructure(output);
-  if (issues.length === 0) {
-    return output;
-  }
-
-  logOpenRouterDebug('openrouter_recipe_structure_invalid', {
-    dishName: input.analysis.dishName,
-    issues,
-    willRepair: true,
-  });
-
-  logRetryMetric(input, 'recipe_structure_repair', issues.join(','));
-  await waitForScanDelay(250, input.signal, input.deadlineAt);
-  const repaired = await callRecipeStage(
-    input,
-    getRecipeStructureRepairPrompt(input.analysis, issues),
-    input.config.maxOutputTokens,
-    'recipe_structure_repair',
-  );
-  const repairedIssues = validateRecipeStructure(repaired);
-  if (repairedIssues.length > 0) {
-    throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
-      openRouterErrorMessage: `Recipe steps were structurally invalid after repair: ${repairedIssues.join(', ')}`,
-    });
-  }
-  return repaired;
+function isScanControlError(error: unknown): boolean {
+  return error instanceof ScanDeadlineExceededError || error instanceof ScanCancelledError;
 }
 
 // Strict structural validation of the single recipe. Returns issue codes (empty
-// = valid). Enforces the mandatory step contract: a non-empty array of
-// structured steps, each with an instruction, title, at least one ingredient and
-// one tool, and a sequential stepNumber starting at 1.
-export function validateRecipeStructure(output: OpenRouterRecipeOutput): string[] {
+// = valid). Derivable metadata is normalized locally before this runs, so only
+// user-visible recipe structure remains fail-closed.
+export function validateRecipeStructure(
+  output: OpenRouterRecipeOutput,
+  analysis?: FoodImageAnalysis,
+): string[] {
   const issues: string[] = [];
   const steps = Array.isArray(output.steps) ? output.steps : null;
   if (!steps) {
     return ['steps_not_array'];
   }
-  if (steps.length < 4) {
-    issues.push('too_few_steps');
-  }
-
-  const nonEmpty = (values: unknown): boolean =>
-    Array.isArray(values) && values.some((v) => typeof v === 'string' && v.trim().length > 0);
+  const bounds = analysis ? getRecipeStepBounds(analysis) : { min: 4, max: 14 };
+  if (steps.length < bounds.min) issues.push('too_few_steps');
+  if (steps.length > bounds.max) issues.push('too_many_steps');
 
   for (const step of steps) {
     if (typeof step === 'string' || !step || typeof step !== 'object') {
@@ -1348,20 +1399,6 @@ export function validateRecipeStructure(output: OpenRouterRecipeOutput): string[
     const instruction = (step.step || step.instruction || step.text || '').trim();
     if (!instruction) issues.push('step_missing_instruction');
     if (!(step.title || '').trim()) issues.push('step_missing_title');
-    if (!nonEmpty(step.ingredients) && !nonEmpty(step.ingredientsUsed)) {
-      issues.push('step_missing_ingredients');
-    }
-    if (!nonEmpty(step.tools) && !nonEmpty(step.toolsUsed)) {
-      issues.push('step_missing_tools');
-    }
-  }
-
-  const numbers = steps.map((step) =>
-    typeof step === 'object' && step && typeof step.stepNumber === 'number' ? step.stepNumber : undefined);
-  if (numbers.some((n) => n === undefined)) {
-    issues.push('stepNumber_missing');
-  } else if (!numbers.every((n, index) => n === index + 1)) {
-    issues.push('stepNumber_not_sequential');
   }
 
   return [...new Set(issues)];
@@ -1383,7 +1420,7 @@ async function callRecipeStage(
       messages: [
         {
           role: 'system',
-          content: 'You are a professional chef assistant and food reverse-engineering specialist generating ONE structured cooking recipe for a beginner cook. When the dish is a platter or multi-component meal (sushi board, bento, combo plate), your recipe MUST cover every distinct component — each roll type, protein, sauce, condiment, garnish, and side — as separate phases or step groups within the single recipe. You MUST return a single JSON object. Every step MUST include stepNumber, phase, title, step, ingredients, and tools. Do not return multiple recipes or modes. Return ONLY valid JSON. No markdown, no reasoning, no explanations.',
+          content: 'You are a professional chef assistant and food reverse-engineering specialist generating ONE safe, cookable home recipe for a beginner. For a platter or multi-component meal, cover every distinct detected component in the single recipe. Return one complete JSON object only. Do not return multiple recipes, modes, markdown, reasoning, or explanations.',
         },
         { role: 'user', content: userPrompt },
       ],
@@ -1408,7 +1445,11 @@ async function callRecipeStage(
 
 // Detects recipe output that is too vague to cook from. Returns a list of issue
 // codes (empty = good enough). Drives the one-shot repair retry above.
-function getRecipeQualityIssues(output: OpenRouterRecipeOutput, isDrink: boolean): string[] {
+function getRecipeQualityIssues(
+  output: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+  isDrink: boolean,
+): string[] {
   const issues: string[] = [];
   const ingredients = (Array.isArray(output.ingredients) ? output.ingredients : [])
     .map((value) => (typeof value === 'string' ? value : '').trim())
@@ -1421,30 +1462,36 @@ function getRecipeQualityIssues(output: OpenRouterRecipeOutput, isDrink: boolean
   if (/\bmain ingredient\b/.test(allText)) {
     issues.push('vague_main_ingredient');
   }
-  if (ingredients.length < 4) {
+  const minimumIngredientCount = isGenuinelySimpleRecipe(analysis) ? 1 : isDrink ? 2 : 4;
+  if (ingredients.length < minimumIngredientCount) {
     issues.push('too_few_ingredients');
   }
   const vagueStandalone = ingredients.filter((value) => standaloneVagueIngredient.test(value.toLowerCase().trim()));
   if (vagueStandalone.length > 0) {
     issues.push('vague_ingredient_name');
   }
-  const missingAmounts = ingredients.filter((value) => !hasIngredientAmount(value));
-  if (missingAmounts.length > Math.max(1, Math.floor(ingredients.length / 3))) {
+  const missingAmounts = ingredients.filter((value) => !hasUsableIngredientAmount(value));
+  if (missingAmounts.length > 0) {
     issues.push('ingredients_missing_amounts');
-  }
-  if (stepTexts.length < 5) {
-    issues.push('too_few_steps');
   }
   if (stepTexts.some((step) => vagueStepPattern.test(step.toLowerCase()))) {
     issues.push('vague_step');
+  }
+  const stepCompletionIssues = (Array.isArray(output.steps) ? output.steps : [])
+    .some((step) => {
+      if (typeof step === 'string') return !hasInstructionCompletion(step);
+      return !hasInstructionCompletion(getProviderStepText(step), step.doneWhen ?? '');
+    });
+  if (stepCompletionIssues) {
+    issues.push('step_missing_time_or_completion_cue');
   }
   if (isDrink && stepTexts.some((step) => /\b(oven|skillet|saut[eé]|bake|roast|sear|pan-fry|°f|°c|internal temp)\b/i.test(step))) {
     issues.push('drink_uses_cooking_language');
   }
 
   // Ingredient closure: every ingredient a step declares must resolve to the
-  // top-level ingredient list. Caught here so the existing one-shot repair pass
-  // can fix it; aiService deterministically strips whatever survives repair.
+  // top-level ingredient list. Caught here so the one-shot repair can fix it;
+  // the final post-transformation aiService gate remains fail-closed.
   const stepIngredientNames = (Array.isArray(output.steps) ? output.steps : [])
     .flatMap((value) => {
       if (typeof value !== 'object' || value === null) return [] as string[];
@@ -1463,35 +1510,55 @@ function getRecipeQualityIssues(output: OpenRouterRecipeOutput, isDrink: boolean
   if (unlistedStepIngredients.length > 0) {
     issues.push('step_uses_unlisted_ingredients');
   }
+  if (hasUnlistedStepIngredientText(stepTexts, ingredients)) {
+    issues.push('step_uses_unlisted_ingredients');
+  }
 
-  return issues;
+  return [...new Set(issues)];
 }
 
 const standaloneVagueIngredient = /^(the\s+)?(main ingredients?|protein|proteins|vegetables?|veggies|sauce|sauces|seasoning|seasonings|spice|spices|toppings?|ingredients|filling|stuff)$/;
 const vagueStepPattern = /\bcook until done\b|\bprepare the ingredients\b|\bmix everything\b|\bseason to taste\b|\b(cook|add|prepare|make) the (main ingredient|protein|vegetables|sauce)\b/;
 
-function hasIngredientAmount(value: string): boolean {
-  const text = value.toLowerCase();
-  if (/\d/.test(text)) {
-    return true;
-  }
-  return /\b(a|an|one|two|three|four|half|pinch|dash|handful|to taste|some)\b/.test(text);
-}
-
-function getRecipeRepairPrompt(
+function getFullRecipeRepairPrompt(
   analysis: FoodImageAnalysis,
-  badOutput: OpenRouterRecipeOutput,
+  previousOutput: OpenRouterRecipeOutput | undefined,
   issues: string[],
 ): string {
+  const bounds = getRecipeStepBounds(analysis);
+  const ingredients = previousOutput?.ingredients ?? [];
+  const previousRecipe = previousOutput
+    ? {
+        title: previousOutput.title,
+        ingredients: previousOutput.ingredients,
+        equipment: previousOutput.equipment,
+        steps: previousOutput.steps.map((step) => typeof step === 'string'
+          ? { title: '', step }
+          : {
+              title: step.title,
+              step: getProviderStepText(step),
+              ...(step.doneWhen ? { doneWhen: step.doneWhen } : {}),
+              ...(step.safetyNote ? { safetyNote: step.safetyNote } : {}),
+            }),
+        prepTime: previousOutput.prepTime,
+        cookTime: previousOutput.cookTime,
+        totalTime: previousOutput.totalTime,
+        servings: previousOutput.servings,
+        skillLevel: previousOutput.skillLevel || previousOutput.difficulty,
+      }
+    : {};
   return [
-    `Your previous recipe JSON for "${analysis.dishName}" had quality problems: ${issues.join(', ')}.`,
-    'Rewrite it so a beginner can cook it with zero guessing. Return ONLY valid minified JSON, same single-recipe shape as before.',
-    'Return exactly ONE recipe object: {"dishName":"...","title":"...", ...recipe fields..., "steps":[...]}. No modes, no variants, no "selectedMode".',
+    `Correct the previous recipe JSON for "${analysis.dishName}".`,
+    `Exact validation failures: ${issues.join(', ')}.`,
+    'Return ONLY the entire corrected recipe object. Never return a partial patch and never omit unchanged required fields.',
+    'Return exactly ONE recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, and skillLevel. No modes or variants.',
     'Fix every problem: NEVER write "the main ingredient" or "main ingredient" — name the actual food. Every ingredient must start with an exact amount and a real grocery name. Every step must name real ingredients with amounts, a time, and a visual cue. No "cook until done", "prepare the ingredients", "season to taste", or "mix everything".',
-    'PHASE ORDER IS MANDATORY: Every step object MUST include "phase" (integer 1-6). Steps must be in phase order — 1 Preparation, 2 Setup, 3 Cooking, 4 Assembly, 5 Finishing, 6 Serving. Phase numbers must never decrease. Phase 6 Serving MUST be the final step and can NEVER appear before phase 3 Cooking.',
-    'STEP CONTRACT IS MANDATORY: Every step object MUST include "stepNumber" (integer, starts at 1, strictly sequential, no gaps), "title" (2-4 word action phrase), "step" (one clear instruction sentence), "ingredients" (array of ingredient names used in this step — never empty), and "tools" (array of tool names used in this step — never empty, no duplicates).',
-    'INGREDIENT CLOSURE IS MANDATORY: every name in any step "ingredients" array must also appear in the top-level "ingredients" list with an exact amount. If a step needs an ingredient that is missing from the list, add it to the list with an amount — never reference an ingredient that is not listed.',
-    'Keep 6-12 ingredients and 8-14 steps (6-8 for drinks or salads).',
+    'Step shape: {"title":"short action","step":"cookable instruction with time or sensory completion","doneWhen":"optional useful cue","safetyNote":"required food-safety rule when applicable"}. Step numbers, phases, per-step ingredients, and per-step tools are derived locally and are not required.',
+    `Return ${bounds.min}-${bounds.max} steps for this dish.`,
+    'INGREDIENT CLOSURE IS MANDATORY: every ingredient named in an instruction must appear in the top-level ingredient list with an exact usable amount.',
+    'Safety is mandatory: poultry 165°F/74°C; ground meat 160°F/71°C; pork and cooked fish 145°F/63°C. Raw-fish dishes must specify sushi-grade or previously frozen fish kept cold.',
+    `Full canonical ingredient list from the previous recipe: ${JSON.stringify(ingredients)}`,
+    `Complete previous recipe object: ${JSON.stringify(previousRecipe)}`,
     `Food: ${JSON.stringify({
       dishName: analysis.dishName,
       cuisine: analysis.cuisine,
@@ -1732,6 +1799,7 @@ function isBackoffError(error: unknown): boolean {
 async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string[]): Promise<unknown> {
   let lastError: unknown = new Error('recipe_model_chain_empty');
   let failoverCount = 0;
+  const chainStartedAt = Date.now();
   for (let i = 0; i < models.length; i++) {
     const model = models[i];
     throwIfScanCancelled(base.signal, base.deadlineAt);
@@ -1742,10 +1810,12 @@ async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string
         logOpenRouterDebug('recipe_model_success', { model, attempt: i + 1, stage: base.stage });
       }
       console.log('[failover_summary]', {
+        requestId: base.requestId,
         stage: base.stage,
         succeededAt: model,
         attemptNumber: i + 1,
         failoverCount,
+        durationMs: Date.now() - chainStartedAt,
       });
       return result;
     } catch (error) {
@@ -1771,25 +1841,27 @@ async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string
       }
     }
   }
+  console.log('[failover_summary]', {
+    requestId: base.requestId,
+    stage: base.stage,
+    succeededAt: null,
+    attemptNumber: models.length,
+    failoverCount,
+    durationMs: Date.now() - chainStartedAt,
+    status: 'failure',
+  });
   throw lastError;
 }
 
 const visionJsonContract = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}';
 const compactVisionJsonContract = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "confidenceReason": string}';
 
-// Extends the base contract with inline Epicure fields. Used only in the primary vision
-// call when Epicure is enabled — saves one sequential AI call (~8-12s) vs the old flow.
-const visionJsonContractWithEpicure = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string, "epicureSuggestions": {"complementaryIngredients": string[], "healthySubstitutions": {"ingredient": "substitute"}, "budgetSubstitutions": {"ingredient": "substitute"}}}';
-
 function getVisionPrompt(
   image: ScanImageMetadata | undefined,
   mode: RecipeMode,
   compactRecipeEnabled = false,
 ) {
-  const epicureEnabled = !compactRecipeEnabled && isEpicureEnabled();
-  const contract = compactRecipeEnabled
-    ? compactVisionJsonContract
-    : epicureEnabled ? visionJsonContractWithEpicure : visionJsonContract;
+  const contract = compactRecipeEnabled ? compactVisionJsonContract : visionJsonContract;
   return [
     'Analyze this real-world restaurant, cafe, or takeout food or drink photo for a testing-only Okyo prototype.',
     'Return ONLY valid JSON in the assistant message content. Do not put JSON in reasoning. Do not return markdown. Do not explain.',
@@ -1830,9 +1902,6 @@ function getVisionPrompt(
     ]),
     'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
     'If no actual image is available, return a cautious low-confidence result based only on metadata.',
-    ...(epicureEnabled ? [
-      'epicureSuggestions: return up to 5 complementaryIngredients (common accompaniments for this dish), up to 3 healthySubstitutions (healthier swap for a key ingredient, as {"original":"swap"}), and up to 3 budgetSubstitutions (cheaper swap, same format). Only include swaps that make sense for this specific dish.',
-    ] : []),
     ...(!compactRecipeEnabled ? [`Requested recipe mode: ${mode}.`] : []),
     `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
   ].join('\n');
@@ -1900,7 +1969,6 @@ function isPlatterAnalysis(analysis: FoodImageAnalysis): boolean {
 
 function getRecipePrompt(
   analysis: FoodImageAnalysis,
-  enrichment: EnrichedRecipeContext | null = null,
   mode: RecipeMode = 'Restaurant Copy',
 ) {
   const isUncertainFood = analysis.scanState === 'food_present_uncertain_dish' || analysis.scanState === 'partial_food';
@@ -1914,52 +1982,38 @@ function getRecipePrompt(
     ...analysis.visibleIngredients,
     ...analysis.likelyIngredients,
   ].join(' '));
-
-  // Optional Epicure section. Empty string when enrichment is null → the base
-  // prompt is unchanged, preserving exact prior behavior.
-  const epicureSection = buildEpicurePromptSection(enrichment, mode);
-
-  // Explicit component list for platter prompts. Enumerating each detected component
-  // eliminates the component-coverage repair call in the common case.
+  const bounds = getRecipeStepBounds(analysis);
   const platterComponentNames = isPlatter
     ? (analysis.detectedComponents ?? []).map((c) => c.name).filter(Boolean).slice(0, 12)
     : [];
 
   return [
-    `Create a compact inspired-by homemade recipe JSON for "${analysis.dishName}".`,
+    `Create one safe, realistic inspired-by home recipe for "${analysis.dishName}".`,
     `The recipe MUST be a homemade version of "${analysis.dishName}" as scanned. Do not switch dishes or add alcohol.`,
-    'Return ONLY valid minified JSON. No markdown, no prose, no reasoning, no extra text.',
-    'Return exactly ONE recipe object starting with {. One recipe only — no modes, variants, or multiple recipes.',
-    `Recipe fields: dishName, title, description, ingredients, equipment, steps, avoidMistake, substitutions, storageAndReheating, spicePairings, prepTime, cookTime, totalTime, servings, skillLevel${isPlatter ? ', ingredientGroups' : ''}.`,
+    'Return ONLY one complete minified JSON object. No markdown, prose, reasoning, modes, variants, or optional enrichment.',
+    'Return exactly these top-level fields: title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, skillLevel.',
+    'ingredients must be plain strings, each beginning with a usable exact quantity and real grocery name, for example "2 large eggs" or "1 tbsp olive oil". Never use ingredient objects, "some", "as needed", or a bare name. "To taste" is allowed only for salt, pepper, acid, or hot sauce.',
+    'steps must be objects shaped like {"title":"short action","step":"concise cookable instruction","doneWhen":"optional useful sensory cue","safetyNote":"required only for food-safety hazards"}. Do not generate step numbers, phases, per-step ingredient arrays, or per-step tool arrays; Okyo derives those locally.',
+    `Use ${bounds.min}-${bounds.max} concise steps for this dish. Every instruction must contain a time, an observable completion cue, or both.`,
+    'Name actual ingredients and actions. Never say "main ingredient", "cook until done", "prepare ingredients", "mix everything", or "season to taste" without an amount.',
+    'Ingredient closure is mandatory: every ingredient used in any instruction must appear in the top-level ingredient list with a usable quantity.',
+    'Choose one coherent strategy: either shortcut ingredients or from-scratch ingredients, never both. Never list the finished dish as an ingredient.',
+    'If raw components need preparation, include those actions before cooking. Quantities used in steps must agree with the ingredient list.',
+    'Keep equipment compact and include only tools genuinely required.',
+    'Safety is mandatory: poultry 165°F/74°C; ground meat 160°F/71°C; pork and cooked fish 145°F/63°C. Raw-fish dishes must specify sushi-grade or previously frozen fish kept cold. Put the applicable rule in safetyNote on the relevant step.',
     isPlatter
-      ? platterComponentNames.length > 0
-        ? `REQUIRED COMPONENTS — generate exactly one ingredientGroup per item listed (2-6 ingredients each with exact amounts): ${platterComponentNames.map((c, i) => `${i + 1}. ${c}`).join(', ')}. ingredientGroups shape: [{"component":"<name>","items":["2 cups sushi rice",...]},...]  Steps: 1-3 per component grouped by component, phases 1-5.`
-        : 'ingredientGroups: [{component:"<name>",items:["exact amount ingredient",...]},...] — one per distinct visible component. Cover every component. 24 ingredients and 24 steps; group steps by component.'
-      : 'Do NOT include ingredientGroups — omit it entirely.',
-    'Limits: ingredient count MUST match complexity — plain/whole foods 1-4, simple snacks/assembly 3-7, full cooked dishes 8-16. Steps: 2-4 for plain whole foods (fruit, boiled egg, toast), 6-8 for assembly, 8-12 for full cooked dishes. Substitutions max 3, equipment max 5, spicePairings max 2. Drinks: 6-8 steps.',
-    'BANNED WORDING (never use, anywhere): "main ingredient", standalone "protein"/"vegetables"/"sauce"/"seasoning"/"toppings", "cook until done", "prepare the ingredients", "mix everything", "season to taste" with no amount. Always name the actual food.',
+      ? `Cover at least 90% of these detected components in the flat ingredient list and cooking steps: ${platterComponentNames.join(', ') || 'every distinct visible component'}.`
+      : '',
     'PROTEIN REALISM: Never use "shark" for a fish-shaped or ambiguous fried item — use "white fish fillets". Use common grocery-store proteins (cod, tilapia, chicken, ground pork). Do not infer exotic animals from novelty-shaped food.',
     'MUSUBI FORMAT: Spam musubi = rectangular rice block + Spam slice on top + nori strip wrapped around the outside. It is NOT rolled sushi. Never create roll-slicing, bamboo mat, or "slice rolls" steps for musubi. Name it "Spam Musubi". Steps must follow: cook rice → season rice → sear Spam → make glaze → cut nori strips → shape rice blocks → assemble → serve. Max 8 steps.',
     'MANGO STICKY RICE FORMAT: Ingredients MUST be exactly: sticky rice (glutinous), ripe mangoes, coconut milk (ONE can only — never both coconut milk AND coconut cream as separate items), sugar, salt. Optional: sesame seeds or toasted coconut flakes. MAX 7 ingredients total. Never list "coconut sauce" AND "coconut cream" as separate ingredients — they are the same thing. Never list "ripe mangoes" AND "diced mango" — pick one. Steps: soak/rinse rice → steam rice → warm coconut milk + sugar + salt → fold sauce into rice → slice mango → plate and drizzle. Max 7 steps.',
-    'COOKABLE NOT VISIBLE: Do not list only the visible toppings. Infer the hidden essentials needed to actually cook a believable home version — cooking oil/fat, salt, seasoning, sauce COMPONENTS (not just "sauce"), and aromatics. Every recipe must be cookable from the ingredient list alone. Dumplings/wontons need wrapper-or-frozen-base + filling-or-shortcut + aromatics + sauce. Pick ONE coherent strategy: either a from-scratch version (wrappers + filling) OR a shortcut version (e.g. frozen dumplings) — never mix both.',
-    'ONE STRATEGY (all dishes): Commit to ONE approach — shortcut (prepared/frozen/store-bought components, fewer steps, faster) OR from-scratch (raw components + every prep step). NEVER list the finished scanned dish as an ingredient ("fried wontons", "cooked fried rice", "assembled tacos") — list the components the chosen strategy actually uses. Never combine a prepared finished food with the raw ingredients used to make it. prepTime/cookTime/skillLevel must match the chosen strategy.',
-    'PREP COMPLETENESS: If ingredients include raw components, steps MUST include their prep before cooking. wrappers + ground meat → mix filling, fill wrappers, seal, THEN cook. raw chicken → a cooking step with safe temperature. dry rice → cook rice (or list "cooked rice" instead). Never jump from heating oil straight to frying items that still need to be assembled.',
-    'QUANTITY CONSISTENCY: Every amount in a step MUST equal the amount in the ingredient list — if steps deep-fry in 2 cups of oil, the ingredient list says "2 cups vegetable oil (for frying)", not "2 tbsp". Keep sauce portions sane: a dipping sauce is 1/4–1/2 cup per 12 pieces, never 3 cups. State each amount once and reuse it exactly.',
-    'NO DUPLICATE INGREDIENTS: Each ingredient concept appears exactly once. soy sauce appears once with the total quantity for the whole recipe. RICE SEASONING: use either "seasoned rice vinegar" (1 ingredient) OR separate rice vinegar + sugar + salt (3 ingredients) — never both strategies in the same recipe.',
-    'STEP HYGIENE: Never create standalone steps titled "Combine Ingredients", "Heat Mixture", "Cool and Store", or "Gather Ingredients" — fold these into the adjacent cooking step. Storage notes belong in storageAndReheating, not in steps.',
     'SIMPLE FOODS: Plain fruit (watermelon cubes, berries, grapes, banana, sliced melon) = the fruit itself only. Do NOT add feta, mint, honey, nuts, granola, yogurt, dressing, or any chef addition unless clearly visible in the scan or named in the title. Watermelon cubes → ["4 cups watermelon, cubed"], optionally ["1 lime", "1/4 tsp Tajín or salt"]. Never create a salad from a plain fruit scan. Same rule for plain boiled eggs and plain toast.',
-    'Ingredients: STRINGS ONLY — ["2 large eggs", "1 tbsp olive oil"]. Each element is a plain string starting with an exact amount. Never output ingredient objects.',
-    'COOKING PHASES: 1=Prep, 2=Setup, 3=Cook, 4=Assembly, 5=Finish, 6=Serve. Phases MUST NOT decrease. Phase 6 = ONLY the final serve/plate action — garnish, fresh herbs, and cheese are phase 5.',
-    'Steps: copy this EXACT shape — {"stepNumber":1,"phase":1,"title":"Mince Garlic","step":"Finely mince 4 garlic cloves on a cutting board until 1mm pieces, about 30 seconds.","ingredients":["garlic"],"tools":["chef knife","cutting board"]}',
-    'Every step requires all 6 keys: stepNumber (integer, starts 1, sequential +1 per step), phase (integer 1-6), title (2-4 word action phrase), step (≤25 words, real amount+time+visual cue), ingredients (names-used-this-step array, never empty), tools (never empty). No other keys.',
-    'Never write vague steps. Say exactly what to do, the time, and a visual/textural cue.',
     isDrink
-      ? 'DRINK: title must say smoothie/latte/shake/juice. Steps: measure, blend or brew, taste, adjust, pour, garnish. No oven, no meat temperatures.'
-      : 'Meat and seafood: include safe internal temperature (165°F/74°C chicken, 160°F/71°C ground meat, 145°F/63°C pork/fish).',
+      ? 'DRINK: title must identify the drink. Use measure, blend or brew, taste, adjust, pour, and garnish as appropriate. Do not use oven, skillet, or meat-temperature language.'
+      : '',
     ...(mode === 'Budget' && isBakeryOrDessert
       ? ['BUDGET SHORTCUT: Use store-bought or premade base (soft buns, Hawaiian rolls, bao buns, premade pastry shells). Focus on filling, cream, and simple assembly — not from-scratch dough, steaming, or professional shaping.']
       : []),
-    'Text limits: description 1-2 sentences (concise and direct — never say "inspired-by" or "estimate for a home kitchen"). avoidMistake 1 sentence. storageAndReheating 1 sentence.',
     isUncertainFood
       ? 'Scan uncertain — best-guess inspired-by version based on visible components.'
       : 'Scan is clear — wording must be honest and inspired-by.',
@@ -1972,36 +2026,6 @@ function getRecipePrompt(
       likelyIngredients: analysis.likelyIngredients.slice(0, 8),
       visibleComponents: analysis.visibleComponents,
     })}`,
-    // Appended only when Epicure produced suggestions; otherwise absent entirely.
-    ...(epicureSection ? [epicureSection] : []),
-  ].join('\n');
-}
-
-function getCompactRecipeRetryPrompt(analysis: FoodImageAnalysis) {
-  return [
-    'JSON only. No markdown. No explanations. Write real recipe text in every field; never output placeholder dots.',
-    'Return ONE recipe object: {"dishName","title","description","ingredients","steps","prepTime","cookTime","totalTime","servings","skillLevel","avoidMistake","substitutions","storageAndReheating","spicePairings"}.',
-    'ingredients: 6 strings, each an exact amount plus grocery name like "2 large eggs" or "1 cup all-purpose flour" — use real ingredients for this specific dish, not examples.',
-    'steps: 6-8 step OBJECTS. Exact shape: {"stepNumber":1,"phase":3,"title":"Sear Chicken","step":"instruction ≤22 words with time+visual cue","ingredients":["names used in this step"],"tools":["tools used"]}. stepNumber starts 1, sequential. phase 1-6. ingredients/tools never empty.',
-    'spicePairings: up to 2 strings.',
-    `Dish: ${analysis.dishName}. Visible: ${analysis.visibleIngredients.slice(0, 4).join(', ')}.`,
-  ].join('\n');
-}
-
-function getRecipeStructureRepairPrompt(analysis: FoodImageAnalysis, issues: string[]): string {
-  return [
-    `Your previous recipe JSON for "${analysis.dishName}" had structural problems: ${issues.join(', ')}.`,
-    'Return ONLY valid minified JSON — ONE recipe object, no modes or variants.',
-    'The "steps" field MUST be an array of 8-14 step OBJECTS (6-8 for drinks or salads). Copy this exact step shape: {"stepNumber":1,"phase":1,"title":"Prep Onion","step":"Finely dice 1 medium onion on a cutting board into 5mm pieces.","ingredients":["onion"],"tools":["chef knife","cutting board"]}',
-    'Every step object MUST include all 6 keys: "stepNumber" (integer — starts at 1, sequential, no gaps), "phase" (integer 1-6: 1=Prep,2=Setup,3=Cook,4=Assembly,5=Finish,6=Serve), "title" (2-4 word action phrase), "step" (one clear instruction with amount + time + visual cue), "ingredients" (non-empty array), "tools" (non-empty array).',
-    'Never output a step as a plain string. Never leave ingredients or tools empty. Keep ingredients specific and tools real.',
-    `Food: ${JSON.stringify({
-      dishName: analysis.dishName,
-      cuisine: analysis.cuisine,
-      broadDishCategory: analysis.broadDishCategory,
-      visibleIngredients: analysis.visibleIngredients.slice(0, 5),
-      likelyIngredients: analysis.likelyIngredients.slice(0, 5),
-    })}`,
   ].join('\n');
 }
 
@@ -2010,8 +2034,8 @@ async function parseResponseJson(response: Response, config: AiConfig, model: st
     return await response.json() as unknown;
   } catch (error) {
     // A request-timeout abort can fire mid-body-read and surface here. We keep the
-    // 'invalid_json' reason on purpose so the existing fast compact-retry still
-    // fires ('openrouter_timeout' is intentionally NOT retried — see retryReasons),
+    // 'invalid_json' reason on purpose so the one targeted recipe repair can
+    // run (provider timeouts remain non-repairable),
     // but we record the likely cause so telemetry isn't misleading: a too-slow
     // model reads as "body read aborted (likely timeout)", not "malformed JSON".
     const likelyTimeout = isAbortError(error);

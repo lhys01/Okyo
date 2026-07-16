@@ -42,6 +42,7 @@ import {
 } from './services/scanDeadline.js';
 import { logScanMetric } from './telemetry/scanTelemetry.js';
 import { validatePaidFallbackAtStartup } from './services/openRouterProvider.js';
+import { getRecipeFailureApiError } from './services/recipeGenerationError.js';
 import { buildRecipeAdaptationPlan } from './services/recipeAdaptationService.js';
 import { buildRecipeQualityReport } from './services/recipeCheckService.js';
 import {
@@ -483,6 +484,12 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
   const quotaError = getQuotaApiError(error);
   if (quotaError) {
     sendError(response.status(quotaError.status), quotaError.code, quotaError.message);
+    return;
+  }
+
+  const recipeError = getRecipeFailureApiError(error);
+  if (recipeError) {
+    sendError(response.status(recipeError.status), recipeError.code, recipeError.message);
     return;
   }
 
