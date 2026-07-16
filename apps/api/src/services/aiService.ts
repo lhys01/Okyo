@@ -60,12 +60,18 @@ type ScanCacheEntry =
 const scanCache = new Map<string, ScanCacheEntry>();
 const SCAN_CACHE_MAX_ENTRIES = 2000;
 
-function getScanCacheKey(cacheScope: string, dataUrl: string, mode: string): string {
+function getScanCacheKey(
+  cacheScope: string,
+  dataUrl: string,
+  mode: string,
+  compactRecipeEnabled: boolean,
+): string {
   return createHash('sha256')
     .update(cacheScope)
     .update('\0')
     .update(dataUrl)
-    .digest('hex') + ':' + mode + ':' + RECIPE_PIPELINE_VERSION;
+    .digest('hex') + ':' + mode + ':' + RECIPE_PIPELINE_VERSION +
+    ':' + (compactRecipeEnabled ? 'compact-v1' : 'full-v1');
 }
 
 // Lazily sweeps expired entries and, if still oversized, drops the oldest
@@ -367,7 +373,9 @@ export async function generateRecipeFromDish(
       deadlineAt: input.deadlineAt,
     });
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterTextModel, { stage: 'recipe' }));
-    const result = createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
+    const result = config.compactRecipeEnabled
+      ? createCompactRecipeFromOpenRouterOutput(output, input.analysis, input.mode)
+      : createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
 
     // Store recipe for deferred coaching — enriched on Guided Cooking tap, not on scan.
     if (result.recipe) {
@@ -387,8 +395,8 @@ export async function generateRecipeFromDish(
       generationMs: Date.now() - startedAt,
     });
 
-    // Component coverage repair: for platter-style meals, ensure every detected
-    // component appears in ingredientGroups.
+    // Component coverage gate: for platter-style meals, ensure every detected
+    // component appears in the generated recipe evidence.
     let finalResult = result;
     if (finalResult.recipe && isPlatterStyleMeal(input.analysis)) {
       finalResult = await ensureComponentCoverage(
@@ -409,23 +417,26 @@ export async function generateRecipeFromDish(
     if (finalResult.recipe) {
       const enforced = enforceStepIngredientClosure(finalResult.recipe);
       let closedRecipe = enforced.recipe;
-      if (enforced.report.missingGroceryItems.length > 0) {
+      const missingGroceryItems = closedRecipe.isCompactRecipe
+        ? []
+        : enforced.report.missingGroceryItems;
+      if (missingGroceryItems.length > 0) {
         closedRecipe = {
           ...closedRecipe,
           groceryItems: getGroceryItems(closedRecipe.ingredients, input.analysis),
         };
       }
-      if (enforced.changed || enforced.report.missingGroceryItems.length > 0) {
+      if (enforced.changed || missingGroceryItems.length > 0) {
         finalResult = { ...finalResult, recipe: closedRecipe };
       }
       if (
         enforced.report.unknownStepIngredients.length > 0 ||
-        enforced.report.missingGroceryItems.length > 0
+        missingGroceryItems.length > 0
       ) {
         console.warn('[recipe_consistency]', {
           recipeId: closedRecipe.id,
           unknownStepIngredients: enforced.report.unknownStepIngredients,
-          missingGroceryItems: enforced.report.missingGroceryItems,
+          missingGroceryItems,
           strippedStepIngredients: enforced.strippedStepIngredients,
           repaired: enforced.report.unknownStepIngredients.length === 0,
         });
@@ -600,7 +611,7 @@ export async function createAiScan(
   // without re-running vision or recipe generation. Only keyed when a real dataUrl
   // is present; placeholder / URI-only scans fall through to live generation.
   const scanCacheKey = input.image?.dataUrl
-    ? getScanCacheKey(input.cacheScope, input.image.dataUrl, input.mode)
+    ? getScanCacheKey(input.cacheScope, input.image.dataUrl, input.mode, config.compactRecipeEnabled)
     : null;
   if (scanCacheKey) {
     const cached = scanCache.get(scanCacheKey);
@@ -760,8 +771,8 @@ export async function createAiScan(
       shareCardId,
     };
 
-    const groceryList = getGroceryListForRecipe(recipe);
-    const shareCard: ShareCard = {
+    const groceryList = recipe.isCompactRecipe ? undefined : getGroceryListForRecipe(recipe);
+    const shareCard: ShareCard | undefined = recipe.isCompactRecipe ? undefined : {
       id: shareCardId,
       scanResultId: scanId,
       kind: 'scan-result',
@@ -802,7 +813,10 @@ export async function createAiScan(
         requestId: input.requestId,
         stage: 'ai_scan_total',
         durationMs: Date.now() - scanStartedAt,
-        details: { scanState: analysis.scanState },
+        details: {
+          scanState: analysis.scanState,
+          recipeContract: recipe.isCompactRecipe ? 'compact-v1' : 'full-v1',
+        },
       });
     }
 
@@ -851,6 +865,193 @@ function createRecipeFromOpenRouterOutput(
     recipeId: recipe.id,
     title: recipe.title,
   };
+}
+
+export function createCompactRecipeFromOpenRouterOutput(
+  output: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+  mode: RecipeMode,
+): GeneratedRecipeOutput {
+  const restaurantPrice = normalizeRestaurantPrice(analysis.restaurantPriceEstimate);
+  const homemadeCost = normalizeHomemadeCost(analysis.homemadeCostEstimate, restaurantPrice);
+  const title = getRecipeTitle(output.title, analysis.dishName, mode);
+  const ingredients = getRecipeIngredients(output.ingredients, analysis, mode);
+  const prepTimeMinutes = parseMinutes(output.prepTime, 10);
+  const cookTimeMinutes = parseMinutes(output.cookTime, 20);
+  const totalTimeMinutes = Math.max(
+    1,
+    parseMinutes(output.totalTime, prepTimeMinutes + cookTimeMinutes),
+  );
+  const servings = parseServings(output.servings, 2);
+  const difficulty = normalizeDifficulty(output.skillLevel || output.difficulty);
+  const structuredSteps = getCompactStructuredSteps(output, analysis, ingredients);
+  const steps = structuredSteps.map((step) =>
+    step.safetyNote && !step.text.includes(step.safetyNote)
+      ? `${step.text} ${step.safetyNote}`
+      : step.text);
+  const equipment = getSafeList(output.equipment, [], 6)
+    .map(cleanRecipeCopy)
+    .filter(Boolean);
+  const recipe = sanitizeRecipeVagueness({
+    id: `ai-${slugify(analysis.dishName)}-${slugify(mode)}`,
+    scanResultId: analysis.candidateScanId,
+    title,
+    mode,
+    description: ensureInspiredCopy(`${title} for a practical home kitchen.`),
+    prepTimeMinutes,
+    cookTimeMinutes,
+    totalTimeMinutes,
+    activeTimeMinutes: prepTimeMinutes + Math.min(cookTimeMinutes, 10),
+    servings,
+    skillLevel: difficulty,
+    difficulty,
+    estimatedHomemadeCost: homemadeCost,
+    estimatedSavings: Math.max(0, restaurantPrice - homemadeCost),
+    ingredients,
+    steps,
+    structuredSteps,
+    substitutions: [],
+    pantryNote: '',
+    confidenceNote:
+      `AI-assisted best guess. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
+    equipment,
+    isCompactRecipe: true,
+  }, analysis);
+
+  return {
+    aiSource: 'openrouter_ai',
+    confidence: Math.min(analysis.confidence, 0.82),
+    confidenceNote: recipe.confidenceNote,
+    mode,
+    recipe,
+    recipeId: recipe.id,
+    title: recipe.title,
+  };
+}
+
+function getCompactStructuredSteps(
+  output: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+  ingredients: RecipeIngredient[],
+): RecipeStep[] {
+  type LocalCompactStep = {
+    text: string;
+    doneWhen: string | undefined;
+    safetyNote: string | undefined;
+  };
+  const values = output.steps
+    .map((value) => {
+      const text = cleanRecipeCopy(getShortText(getStepText(value), '', 240));
+      if (!text) return null;
+      const record = typeof value === 'object' && value
+        ? value as Record<string, unknown>
+        : {};
+      return {
+        text,
+        doneWhen: getOptionalStepText(record.doneWhen, 180),
+        safetyNote: getOptionalStepText(record.safetyNote, 180),
+      } satisfies LocalCompactStep;
+    })
+    .filter((value): value is LocalCompactStep => value !== null);
+  const requiredSafety = getCompactRequiredSafetyNote(analysis, ingredients);
+  const safetyAlreadyPresent = requiredSafety
+    ? values.some((step) => requiredSafety.pattern.test(`${step.text} ${step.safetyNote ?? ''}`))
+    : true;
+  const safetyTargetIndex = requiredSafety
+    ? getCompactSafetyTargetIndex(values.map((step) => step.text), requiredSafety.subjects)
+    : -1;
+
+  return values.map((value, index) => {
+    const safetyNote = requiredSafety && !safetyAlreadyPresent && index === safetyTargetIndex
+      ? requiredSafety.note
+      : value.safetyNote;
+    return {
+      phase: deriveCompactPhase(value.text, index, values.length),
+      text: value.text,
+      doneWhen: value.doneWhen,
+      safetyNote,
+      ingredientsUsed: deriveCompactStepIngredients(value.text, ingredients),
+      toolsUsed: detectToolsFromStep(value.text),
+    };
+  });
+}
+
+function deriveCompactPhase(text: string, index: number, total: number): number {
+  const normalized = text.toLowerCase();
+  if (index === total - 1 && /\b(serve|plate|pour|enjoy)\b/.test(normalized)) return 6;
+  if (/\b(garnish|finish|drizzle|sprinkle)\b/.test(normalized)) return 5;
+  if (/\b(assemble|layer|fill|wrap|fold|toss|combine)\b/.test(normalized)) return 4;
+  if (PHASE_COOKING_VERBS_RE.test(normalized) || /\bcook\b/.test(normalized)) return 3;
+  if (/\b(preheat|heat the pan|bring .* to a boil)\b/.test(normalized)) return 2;
+  if (/\b(chop|slice|dice|mince|measure|rinse|pat dry|season|marinate|whisk)\b/.test(normalized)) return 1;
+  return index === 0 ? 1 : index === total - 1 ? 6 : 3;
+}
+
+function deriveCompactStepIngredients(
+  instruction: string,
+  ingredients: RecipeIngredient[],
+): string[] | undefined {
+  const text = instruction.toLowerCase();
+  const matches = ingredients
+    .filter((ingredient) => {
+      const name = ingredient.name.toLowerCase();
+      if (name.length > 2 && text.includes(name)) return true;
+      return name
+        .split(/[^a-z0-9]+/)
+        .filter((token) => token.length > 3 && !compactIngredientDescriptorWords.has(token))
+        .some((token) => new RegExp(`\\b${token}\\b`, 'i').test(text));
+    })
+    .map((ingredient) => ingredient.name);
+  return matches.length > 0 ? [...new Set(matches)] : undefined;
+}
+
+const compactIngredientDescriptorWords = new Set([
+  'fresh', 'large', 'medium', 'small', 'boneless', 'skinless', 'ground',
+  'minced', 'chopped', 'sliced', 'diced', 'grated', 'optional', 'divided',
+]);
+
+function getCompactRequiredSafetyNote(
+  analysis: FoodImageAnalysis,
+  ingredients: RecipeIngredient[],
+): { note: string; pattern: RegExp; subjects: RegExp } | null {
+  const text = `${getAnalysisText(analysis)} ${ingredients.map((ingredient) => ingredient.name).join(' ')}`.toLowerCase();
+  if (/\b(sushi|sashimi|ceviche|raw fish)\b/.test(text)) {
+    return {
+      note: 'Use sushi-grade or previously frozen fish and keep it refrigerated until serving.',
+      pattern: /\b(sushi[- ]grade|previously frozen|keep chilled|keep cold|refrigerated)\b/i,
+      subjects: /\b(fish|salmon|tuna|sushi|sashimi|ceviche)\b/i,
+    };
+  }
+  if (/\b(chicken|poultry|turkey|duck)\b/.test(text)) {
+    return {
+      note: 'Cook poultry to 165°F / 74°C at the thickest part.',
+      pattern: /\b165\s*°?\s*f\b|\b74\s*°?\s*c\b/i,
+      subjects: /\b(chicken|poultry|turkey|duck)\b/i,
+    };
+  }
+  if (/\b(ground|minced|burger|meatball|sausage)\b/.test(text) && /\b(beef|pork|lamb|meat)\b/.test(text)) {
+    return {
+      note: 'Cook ground meat to 160°F / 71°C inside.',
+      pattern: /\b160\s*°?\s*f\b|\b71\s*°?\s*c\b/i,
+      subjects: /\b(beef|pork|lamb|meat|burger|patty|meatball|sausage)\b/i,
+    };
+  }
+  if (/\b(pork|fish|salmon|cod|tilapia|tuna|trout)\b/.test(text)) {
+    return {
+      note: 'Cook pork or fish to 145°F / 63°C at the thickest part.',
+      pattern: /\b145\s*°?\s*f\b|\b63\s*°?\s*c\b/i,
+      subjects: /\b(pork|fish|salmon|cod|tilapia|tuna|trout)\b/i,
+    };
+  }
+  return null;
+}
+
+function getCompactSafetyTargetIndex(steps: string[], subjects: RegExp): number {
+  const subjectStep = steps.findIndex((step) =>
+    subjects.test(step) && (PHASE_COOKING_VERBS_RE.test(step) || /\bcook\b/i.test(step)));
+  if (subjectStep >= 0) return subjectStep;
+  const cookingStep = steps.findIndex((step) => PHASE_COOKING_VERBS_RE.test(step) || /\bcook\b/i.test(step));
+  return cookingStep >= 0 ? cookingStep : Math.max(0, steps.length - 1);
 }
 
 function createRecipeFromVariant(
@@ -4584,6 +4785,13 @@ function isPlatterStyleMeal(analysis: FoodImageAnalysis): boolean {
 }
 
 function extractGeneratedComponents(recipe: Recipe): string[] {
+  if (recipe.isCompactRecipe) {
+    return [
+      recipe.title,
+      ...recipe.ingredients.map((ingredient) => ingredient.name),
+      ...recipe.steps,
+    ];
+  }
   return (recipe.ingredientGroups ?? [])
     .map((g) => g.component)
     .filter((c): c is string => Boolean(c));
@@ -4681,6 +4889,14 @@ async function ensureComponentCoverage(
   let repairedRecipe = recipe;
 
   if (repairNeeded) {
+    if (recipe.isCompactRecipe) {
+      console.error('[component-coverage] compact recipe failed closed', {
+        dish: analysis.dishName,
+        coveragePercent,
+        missing: missingComponents,
+      });
+      throw new Error('RECIPE_GENERATION_FAILED: compact_platter_coverage_below_90');
+    }
     console.log('[component-coverage] repair triggered', {
       dish: analysis.dishName,
       coveragePercent,

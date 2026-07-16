@@ -22,7 +22,7 @@ const loadingSteps = [
   'Reading your plate',
   'Finding the best guess',
   'Building your recipe',
-  'Making your grocery list',
+  'Checking the details',
   'Almost ready',
 ];
 
