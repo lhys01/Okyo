@@ -41,6 +41,17 @@ export const colors = {
   scrim: 'rgba(28, 24, 19, 0.35)',
 };
 
+// Decorative-only pastels for ambient art. Keep these behind readable
+// surfaces and text; they are not semantic UI colors.
+export const ambientColors = {
+  pink: '#f5b7cf',
+  peach: '#f8c7a8',
+  yellow: '#f7e19d',
+  mint: '#bee2cf',
+  blue: '#bedcee',
+  lavender: '#d7c7ec',
+} as const;
+
 export const spacing = {
   xs: 8,
   sm: 12,

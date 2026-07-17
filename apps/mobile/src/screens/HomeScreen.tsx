@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AnimatedGradientBackground } from '../components/AnimatedGradientBackground';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { PressableScale, ProgressFill, RewardToast } from '../components/OkyoUI';
@@ -206,6 +207,7 @@ export function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <AnimatedGradientBackground />
       <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={styles.kicker}>{homeMoment.greeting}</Text>
