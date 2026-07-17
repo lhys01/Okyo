@@ -10,9 +10,22 @@ import {
 import {
   analyzeFoodImageWithOpenRouter,
   generateRecipeWithOpenRouter,
+  normalizeFullRecipeOutput,
+  openRouterRecipeOutputSchema,
 } from './openRouterProvider.js';
+import { RecipeValidationError } from './recipeGenerationError.js';
+import {
+  fullCoreRepairInitialFixture,
+  fullCoreRepairSuccessfulPatchFixture,
+  fullCoreRepairUnknownIngredientPatchFixture,
+} from './recipeRepairRegression.fixture.js';
 import { ScanDeadlineExceededError } from './scanDeadline.js';
-import { createScanAggregateTiming } from '../telemetry/scanTelemetry.js';
+import {
+  createScanAggregateTiming,
+  getScanAggregateTimingEvent,
+  recordLogicalProviderCall,
+  recordProviderAttempt,
+} from '../telemetry/scanTelemetry.js';
 
 const fullConfig: AiConfig = {
   enabled: true,
@@ -104,6 +117,20 @@ function fullRecipe(
   };
 }
 
+function fullRecipeRepairPatch(
+  recipe: Record<string, unknown> = fullRecipe(),
+): { ingredients: string[]; steps: Array<Record<string, unknown>> } {
+  return {
+    ingredients: [...(recipe.ingredients as string[])],
+    steps: (recipe.steps as Array<Record<string, unknown>>).map((step) => ({
+      title: String(step.title ?? ''),
+      step: String(step.step ?? step.instruction ?? ''),
+      ...(step.doneWhen ? { doneWhen: String(step.doneWhen) } : {}),
+      ...(step.safetyNote ? { safetyNote: String(step.safetyNote) } : {}),
+    })),
+  };
+}
+
 test('full recipe succeeds on the initial provider output with local step metadata', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
@@ -119,6 +146,9 @@ test('full recipe succeeds on the initial provider output with local step metada
   };
   try {
     const timing = createScanAggregateTiming({ requestId: 'full-initial-success' });
+    // A completed vision call precedes recipe generation in the real scan.
+    recordLogicalProviderCall(timing);
+    recordProviderAttempt(timing);
     const output = await generateRecipeWithOpenRouter({
       analysis: analysis({ dishName: 'Initial Full Tomato Garlic Pasta' }),
       config: fullConfig,
@@ -128,8 +158,8 @@ test('full recipe succeeds on the initial provider output with local step metada
       timing,
     });
     assert.equal(calls, 1);
-    assert.equal(timing.logicalProviderCalls, 1);
-    assert.equal(timing.providerAttempts, 1);
+    assert.equal(timing.logicalProviderCalls, 2);
+    assert.equal(timing.providerAttempts, 2);
     assert.deepEqual(timing.repairReasons, []);
     assert.equal(maxTokens, 1_400);
     const step = output.steps[2];
@@ -144,25 +174,20 @@ test('full recipe succeeds on the initial provider output with local step metada
   }
 });
 
-test('full recipe succeeds after one complete targeted repair', async () => {
+test('production-shaped full-core fixture captures every stage and succeeds after one targeted repair', async () => {
   const originalFetch = globalThis.fetch;
   const originalLog = console.log;
   const events: unknown[][] = [];
   let calls = 0;
   let repairPrompt = '';
   const maxTokenRequests: number[] = [];
-  const initialOutput = fullRecipe({
-    steps: [
-      ...((fullRecipe().steps as Array<Record<string, unknown>>).slice(0, 2)),
-      { title: 'Heat Oil', step: 'Heat the olive oil in a large skillet.' },
-      ...((fullRecipe().steps as Array<Record<string, unknown>>).slice(3)),
-    ],
-  });
-  const corrected = fullRecipe();
-  const repairedOutput = {
-    ingredients: corrected.ingredients,
-    steps: corrected.steps,
-  };
+  const initialOutput = structuredClone(fullCoreRepairInitialFixture);
+  const repairedOutput = structuredClone(fullCoreRepairSuccessfulPatchFixture);
+  const fixtureAnalysis = analysis({ dishName: 'Repair Full Tomato Garlic Pasta' });
+  const initialNormalized = normalizeFullRecipeOutput(
+    openRouterRecipeOutputSchema.parse(initialOutput),
+    fixtureAnalysis,
+  );
 
   globalThis.fetch = async (_url, init) => {
     calls += 1;
@@ -178,8 +203,10 @@ test('full recipe succeeds after one complete targeted repair', async () => {
   console.log = (...args: unknown[]) => { events.push(args); };
   try {
     const timing = createScanAggregateTiming({ requestId: 'full-repair-success' });
+    recordLogicalProviderCall(timing);
+    recordProviderAttempt(timing);
     const output = await generateRecipeWithOpenRouter({
-      analysis: analysis({ dishName: 'Repair Full Tomato Garlic Pasta' }),
+      analysis: fixtureAnalysis,
       config: { ...fullConfig, maxOutputTokens: 1_024 },
       mode: 'Restaurant Copy',
       quota,
@@ -188,12 +215,22 @@ test('full recipe succeeds after one complete targeted repair', async () => {
     });
     assert.equal(calls, 2);
     assert.deepEqual(maxTokenRequests, [1_024, 1_024]);
-    assert.equal(timing.logicalProviderCalls, 2);
-    assert.equal(timing.providerAttempts, 2);
+    assert.equal(timing.logicalProviderCalls, 3);
+    assert.equal(timing.providerAttempts, 3);
     assert.deepEqual(timing.repairReasons, ['step_missing_time_or_completion_cue']);
-    assert.equal(output.steps.length, 5);
+    assert.equal(output.steps.length, 7);
+    assert.deepEqual(
+      typeof initialNormalized.steps[1] === 'object' && initialNormalized.steps[1].ingredients,
+      ['olive oil'],
+    );
+    assert.equal(
+      typeof output.steps[1] === 'object' && output.steps[1].doneWhen,
+      'The olive oil looks glossy and moves easily across the skillet.',
+    );
     assert.match(repairPrompt, /step_missing_time_or_completion_cue/);
-    assert.match(repairPrompt, /ingredients-and-steps|"ingredients"/);
+    assert.match(repairPrompt, /exactly two keys/);
+    assert.match(repairPrompt, /Exact invalid active-cooking step indices \(zero-based\): \[1\]/);
+    assert.match(repairPrompt, /do not introduce, substitute, or remove any ingredient concept/i);
     assert.match(repairPrompt, /Full canonical ingredient list/);
     assert.match(repairPrompt, /Complete previous recipe object/);
     assert.match(repairPrompt, /8 oz spaghetti/);
@@ -203,26 +240,198 @@ test('full recipe succeeds after one complete targeted repair', async () => {
       '[scan_metric]',
       '[failover_summary]',
       '[recipe_validation_details]',
+      '[recipe_repair_validation]',
     ]);
     const telemetry = events.filter(([label]) => telemetryLabels.has(String(label)));
     assert.ok([...telemetryLabels].every((label) =>
       telemetry.some(([actual]) => actual === label)));
     assert.ok(telemetry.every(([, value]) =>
       (value as { requestId?: string }).requestId === 'full-repair-success'));
+    const repairValidation = events.find(([label]) => label === '[recipe_repair_validation]')?.[1] as {
+      initialInvalidStepIndices: number[];
+      repairedInvalidStepIndices: number[];
+      unknownIngredientsBeforeRepair: string[];
+      unknownIngredientsAfterRepair: string[];
+      presentationOnlyStepIndices: number[];
+      repairChangedFields: string[];
+    };
+    assert.deepEqual(repairValidation.initialInvalidStepIndices, [1]);
+    assert.deepEqual(repairValidation.repairedInvalidStepIndices, []);
+    assert.deepEqual(repairValidation.unknownIngredientsBeforeRepair, []);
+    assert.deepEqual(repairValidation.unknownIngredientsAfterRepair, []);
+    assert.deepEqual(repairValidation.presentationOnlyStepIndices, [5, 6]);
+    assert.deepEqual(repairValidation.repairChangedFields, ['steps.1.doneWhen']);
+    const aggregate = getScanAggregateTimingEvent(timing, 'success');
+    assert.equal(aggregate.logicalProviderCalls, 3);
+    assert.equal(aggregate.providerAttempts, 3);
+    assert.equal(aggregate.recipeMs, timing.recipeMs);
+    assert.equal(aggregate.repairMs, timing.repairMs);
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
   }
 });
 
-test('presentation-only final steps do not trigger a content repair', async () => {
+test('repair output cannot introduce an unlisted ingredient before merge', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(calls === 1
+      ? structuredClone(fullCoreRepairInitialFixture)
+      : structuredClone(fullCoreRepairUnknownIngredientPatchFixture));
+  };
+  console.log = (...args: unknown[]) => { events.push(args); };
+  try {
+    const timing = createScanAggregateTiming({ requestId: 'full-repair-unknown-ingredient' });
+    recordLogicalProviderCall(timing);
+    recordProviderAttempt(timing);
+    await assert.rejects(
+      generateRecipeWithOpenRouter({
+        analysis: analysis({ dishName: 'Unknown Ingredient Repair Pasta' }),
+        config: fullConfig,
+        mode: 'Restaurant Copy',
+        quota,
+        requestId: 'full-repair-unknown-ingredient',
+        timing,
+      }),
+      (error: unknown) => error instanceof RecipeValidationError &&
+        error.issues.includes('step_uses_unlisted_ingredients'),
+    );
+    assert.equal(calls, 2);
+    assert.equal(timing.logicalProviderCalls, 3);
+    assert.equal(timing.providerAttempts, 3);
+    const validation = events.find(([label]) => label === '[recipe_repair_validation]')?.[1] as {
+      initialInvalidStepIndices: number[];
+      repairedInvalidStepIndices: number[];
+      unknownIngredientsBeforeRepair: string[];
+      unknownIngredientsAfterRepair: string[];
+      presentationOnlyStepIndices: number[];
+      repairChangedFields: string[];
+    };
+    assert.deepEqual(validation.initialInvalidStepIndices, [1]);
+    assert.deepEqual(validation.repairedInvalidStepIndices, []);
+    assert.deepEqual(validation.unknownIngredientsBeforeRepair, []);
+    assert.deepEqual(validation.unknownIngredientsAfterRepair, ['butter']);
+    assert.deepEqual(validation.presentationOnlyStepIndices, [5, 6]);
+    assert.ok(validation.repairChangedFields.includes('steps.1.step'));
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('safe generic ingredient aliases remain valid in a repaired step', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const aliasPatch = structuredClone(fullCoreRepairSuccessfulPatchFixture);
+  aliasPatch.steps[1] = {
+    ...aliasPatch.steps[1],
+    step: 'Heat the oil in the large skillet for 1 minute until glossy.',
+  };
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(calls === 1
+      ? structuredClone(fullCoreRepairInitialFixture)
+      : aliasPatch);
+  };
+  try {
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: 'Alias Repair Pasta' }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: 'full-repair-safe-alias',
+    });
+    assert.equal(calls, 2);
+    assert.match(typeof output.steps[1] === 'object' ? output.steps[1].step : '', /\boil\b/i);
+    assert.deepEqual(
+      typeof output.steps[1] === 'object' && output.steps[1].ingredients,
+      ['olive oil'],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('an invalid full repair schema fails closed after one repair', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(calls === 1
+      ? structuredClone(fullCoreRepairInitialFixture)
+      : { ingredients: fullCoreRepairInitialFixture.ingredients, unexpected: true });
+  };
+  try {
+    await assert.rejects(
+      generateRecipeWithOpenRouter({
+        analysis: analysis({ dishName: 'Invalid Repair Schema Pasta' }),
+        config: fullConfig,
+        mode: 'Restaurant Copy',
+        quota,
+        requestId: 'full-repair-invalid-schema',
+      }),
+      (error: unknown) => error instanceof RecipeValidationError &&
+        error.issues.includes('repair_invalid_schema'),
+    );
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('vague completion language remains invalid after the one repair', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const vaguePatch = structuredClone(fullCoreRepairSuccessfulPatchFixture);
+  vaguePatch.steps[1] = {
+    ...vaguePatch.steps[1],
+    doneWhen: 'The oil is ready and cooked thoroughly.',
+  };
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(calls === 1
+      ? structuredClone(fullCoreRepairInitialFixture)
+      : vaguePatch);
+  };
+  try {
+    let caught: unknown;
+    try {
+      await generateRecipeWithOpenRouter({
+        analysis: analysis({ dishName: 'Vague Repair Pasta' }),
+        config: fullConfig,
+        mode: 'Restaurant Copy',
+        quota,
+        requestId: 'full-repair-vague-cue',
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof RecipeValidationError);
+    assert.ok(caught.issues.includes('step_missing_time_or_completion_cue'));
+    assert.ok(caught.issues.includes('vague_step'));
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('preparation and presentation-only steps do not trigger a content repair', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   const recipe = fullRecipe();
-  recipe.steps = (recipe.steps as Array<Record<string, unknown>>).map((step, index, steps) =>
-    index === steps.length - 1
-      ? { title: 'Serve', step: 'Plate the tomato garlic pasta and serve immediately.' }
-      : step);
+  recipe.steps = (recipe.steps as Array<Record<string, unknown>>).map((step, index, steps) => {
+    if (index === 0) {
+      return { title: 'Gather', step: 'Gather the spaghetti, water, olive oil, garlic, tomatoes, and salt.' };
+    }
+    if (index === steps.length - 1) {
+      return { title: 'Serve', step: 'Divide the tomato garlic pasta into bowls, garnish, and serve.' };
+    }
+    return step;
+  });
   globalThis.fetch = async () => {
     calls += 1;
     return providerResponse(recipe);
@@ -358,7 +567,7 @@ test('a truly unlisted full-recipe ingredient triggers the one repair', async ()
   });
   globalThis.fetch = async () => {
     calls += 1;
-    return providerResponse(calls === 1 ? unlistedButter : fullRecipe());
+    return providerResponse(calls === 1 ? unlistedButter : fullRecipeRepairPatch());
   };
   try {
     await generateRecipeWithOpenRouter({
