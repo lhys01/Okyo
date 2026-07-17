@@ -150,6 +150,7 @@ test('full recipe succeeds after one complete targeted repair', async () => {
   const events: unknown[][] = [];
   let calls = 0;
   let repairPrompt = '';
+  const maxTokenRequests: number[] = [];
   const initialOutput = fullRecipe({
     steps: [
       ...((fullRecipe().steps as Array<Record<string, unknown>>).slice(0, 2)),
@@ -157,14 +158,20 @@ test('full recipe succeeds after one complete targeted repair', async () => {
       ...((fullRecipe().steps as Array<Record<string, unknown>>).slice(3)),
     ],
   });
-  const repairedOutput = fullRecipe();
+  const corrected = fullRecipe();
+  const repairedOutput = {
+    ingredients: corrected.ingredients,
+    steps: corrected.steps,
+  };
 
   globalThis.fetch = async (_url, init) => {
     calls += 1;
-    if (calls === 1) return providerResponse(initialOutput);
     const body = JSON.parse(String(init?.body)) as {
+      max_tokens?: number;
       messages?: Array<{ role?: string; content?: string }>;
     };
+    maxTokenRequests.push(body.max_tokens ?? 0);
+    if (calls === 1) return providerResponse(initialOutput);
     repairPrompt = body.messages?.find((message) => message.role === 'user')?.content ?? '';
     return providerResponse(repairedOutput);
   };
@@ -173,18 +180,20 @@ test('full recipe succeeds after one complete targeted repair', async () => {
     const timing = createScanAggregateTiming({ requestId: 'full-repair-success' });
     const output = await generateRecipeWithOpenRouter({
       analysis: analysis({ dishName: 'Repair Full Tomato Garlic Pasta' }),
-      config: fullConfig,
+      config: { ...fullConfig, maxOutputTokens: 1_024 },
       mode: 'Restaurant Copy',
       quota,
       requestId: 'full-repair-success',
       timing,
     });
     assert.equal(calls, 2);
+    assert.deepEqual(maxTokenRequests, [1_024, 1_024]);
     assert.equal(timing.logicalProviderCalls, 2);
     assert.equal(timing.providerAttempts, 2);
     assert.deepEqual(timing.repairReasons, ['step_missing_time_or_completion_cue']);
     assert.equal(output.steps.length, 5);
     assert.match(repairPrompt, /step_missing_time_or_completion_cue/);
+    assert.match(repairPrompt, /ingredients-and-steps|"ingredients"/);
     assert.match(repairPrompt, /Full canonical ingredient list/);
     assert.match(repairPrompt, /Complete previous recipe object/);
     assert.match(repairPrompt, /8 oz spaghetti/);
@@ -193,6 +202,7 @@ test('full recipe succeeds after one complete targeted repair', async () => {
       '[token_usage]',
       '[scan_metric]',
       '[failover_summary]',
+      '[recipe_validation_details]',
     ]);
     const telemetry = events.filter(([label]) => telemetryLabels.has(String(label)));
     assert.ok([...telemetryLabels].every((label) =>
@@ -202,6 +212,86 @@ test('full recipe succeeds after one complete targeted repair', async () => {
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
+  }
+});
+
+test('presentation-only final steps do not trigger a content repair', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const recipe = fullRecipe();
+  recipe.steps = (recipe.steps as Array<Record<string, unknown>>).map((step, index, steps) =>
+    index === steps.length - 1
+      ? { title: 'Serve', step: 'Plate the tomato garlic pasta and serve immediately.' }
+      : step);
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(recipe);
+  };
+  try {
+    await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: 'Presentation Step Tomato Garlic Pasta' }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: 'full-presentation-step',
+    });
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('extra cookable steps do not trigger an expensive repair', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const recipe = fullRecipe();
+  const steps = recipe.steps as Array<Record<string, unknown>>;
+  recipe.steps = [...steps, ...steps.slice(0, 4)];
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(recipe);
+  };
+  try {
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: 'Detailed Tomato Garlic Pasta' }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: 'full-extra-steps',
+    });
+    assert.equal(output.steps.length, 9);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('four visible ingredients do not make an ordinary dish a platter', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(fullRecipe());
+  };
+  try {
+    await generateRecipeWithOpenRouter({
+      analysis: analysis({
+        dishName: 'Ordinary Tomato Garlic Pasta',
+        detectedComponents: [
+          { name: 'spaghetti', confidence: 0.9 },
+          { name: 'tomatoes', confidence: 0.9 },
+          { name: 'garlic', confidence: 0.9 },
+          { name: 'parsley', confidence: 0.9 },
+        ],
+      }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: 'full-not-false-platter',
+    });
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

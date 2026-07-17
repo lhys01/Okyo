@@ -44,6 +44,7 @@ import {
   RecipeGenerationError,
   RecipeValidationError,
 } from './recipeGenerationError.js';
+import { isGenuinePlatterMeal } from './recipePlatterValidation.js';
 import { logScanEvaluation } from './scanEvalLogger.js';
 import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
 import { throwIfScanCancelled, type ScanExecutionContext } from './scanDeadline.js';
@@ -4756,13 +4757,7 @@ function stripLeadingUnit(value: string): string {
 // Returns true when this scan looks like a multi-component platter meal where
 // every component should have its own ingredientGroup.
 function isPlatterStyleMeal(analysis: FoodImageAnalysis): boolean {
-  const text = `${analysis.dishName} ${analysis.broadDishCategory}`.toLowerCase();
-  const platterWords = ['platter', 'board', 'bento', 'sushi', 'dim sum', 'mezze', 'tapas', 'charcuterie', 'sampler', 'assortment', 'spread'];
-  return (
-    analysis.broadDishCategory === 'mixed platter' ||
-    platterWords.some((w) => text.includes(w)) ||
-    (analysis.detectedComponents?.length ?? 0) >= 4
-  );
+  return isGenuinePlatterMeal(analysis);
 }
 
 function extractGeneratedComponents(recipe: Recipe): string[] {

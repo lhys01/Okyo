@@ -14,6 +14,7 @@ import {
   RecipeGenerationError,
   RecipeValidationError,
 } from './recipeGenerationError.js';
+import { isGenuinePlatterMeal } from './recipePlatterValidation.js';
 import {
   getRemainingScanMs,
   ScanCancelledError,
@@ -755,6 +756,7 @@ export async function generateRecipeWithOpenRouter(input: {
     return storeRecipeCache(cacheKey, normalized, input.analysis.dishName, { addImagePrompts: false });
   }
 
+  logFullRecipeValidationDetails(input, normalized, issues);
   logRetryMetric(input, 'recipe_repair', issues.join(','));
   return repairFullRecipe(input, cacheKey, normalized, issues, isDrink);
 }
@@ -776,11 +778,12 @@ async function repairFullRecipe(
     repaired = await measureScanAggregateStage({
       timing: input.timing,
       stage: 'repair',
-      run: () => callRecipeStage(
+      run: () => callRecipeRepairStage(
         input,
         getFullRecipeRepairPrompt(input.analysis, previousOutput, issues),
         getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
         'recipe_repair',
+        previousOutput,
       ),
     });
   } catch (error) {
@@ -809,7 +812,11 @@ export function normalizeFullRecipeOutput(
   analysis: FoodImageAnalysis,
 ): OpenRouterRecipeOutput {
   const ingredientNames = output.ingredients
-    .map((ingredient) => typeof ingredient === 'string' ? ingredient.trim() : '')
+    .map((ingredient) => typeof ingredient === 'string'
+      ? ingredient.trim()
+          .replace(/^~\s*/i, '')
+          .replace(/^(?:about|approximately|approx\.?)\s+/i, '')
+      : '')
     .filter(Boolean);
   const equipment = output.equipment
     .map((tool) => typeof tool === 'string' ? tool.trim() : '')
@@ -853,12 +860,13 @@ export function normalizeFullRecipeOutput(
 
   return openRouterRecipeOutputSchema.parse({
     ...output,
+    ingredients: ingredientNames,
     description: '',
     avoidMistake: '',
     mistakeWarning: '',
     storageAndReheating: '',
     storage: '',
-    ingredientGroups: isPlatterAnalysis(analysis) ? output.ingredientGroups : [],
+    ingredientGroups: isGenuinePlatterMeal(analysis) ? output.ingredientGroups : [],
     groceryItems: [],
     spicePairings: [],
     substitutions: [],
@@ -884,7 +892,7 @@ function validateFullRecipeOutput(
   if (safetyRequirement && !safetyRequirement.pattern.test(safetyText)) {
     issues.push(`missing_safety_${safetyRequirement.code}`);
   }
-  if (isPlatterAnalysis(analysis)) {
+  if (isGenuinePlatterMeal(analysis)) {
     const coverage = getRecipeComponentCoverage(
       (analysis.detectedComponents ?? []).map((component) => component.name),
       [
@@ -1093,7 +1101,7 @@ async function callCompactRecipeJson(
 }
 
 export function getCompactRecipePrompt(analysis: FoodImageAnalysis): string {
-  const isPlatter = isPlatterAnalysis(analysis);
+  const isPlatter = isGenuinePlatterMeal(analysis);
   const isDrink = isDrinkAnalysisText([
     analysis.dishName,
     analysis.broadDishCategory,
@@ -1221,7 +1229,7 @@ function compactRecipeToCanonicalOutput(output: CompactRecipeOutput): OpenRouter
 
 function getRecipeStepBounds(analysis: FoodImageAnalysis): { min: number; max: number } {
   const text = `${analysis.dishName} ${analysis.broadDishCategory}`.toLowerCase();
-  if (isPlatterAnalysis(analysis)) return { min: 5, max: 14 };
+  if (isGenuinePlatterMeal(analysis)) return { min: 5, max: 14 };
   if (isDrinkAnalysisText(text) || /\b(sushi|sashimi|ceviche|raw fish)\b/.test(text)) {
     return { min: 3, max: 6 };
   }
@@ -1233,11 +1241,11 @@ function getRecipeStepBounds(analysis: FoodImageAnalysis): { min: number; max: n
 }
 
 function getFullRecipeMaxTokens(analysis: FoodImageAnalysis, configuredLimit: number): number {
-  return Math.min(configuredLimit, isPlatterAnalysis(analysis) ? 2000 : 1400);
+  return Math.min(configuredLimit, isGenuinePlatterMeal(analysis) ? 2000 : 1400);
 }
 
 function getCompactRecipeMaxTokens(analysis: FoodImageAnalysis, configuredLimit: number): number {
-  return Math.min(configuredLimit, isPlatterAnalysis(analysis) ? 1400 : 1024);
+  return Math.min(configuredLimit, isGenuinePlatterMeal(analysis) ? 1400 : 1024);
 }
 
 function isGenuinelySimpleRecipe(analysis: FoodImageAnalysis): boolean {
@@ -1251,7 +1259,7 @@ export function validateCompactRecipeOutput(
   analysis: FoodImageAnalysis,
 ): string[] {
   const issues: string[] = [];
-  const isPlatter = isPlatterAnalysis(analysis);
+  const isPlatter = isGenuinePlatterMeal(analysis);
   const isDrink = isDrinkAnalysisText(`${analysis.dishName} ${analysis.broadDishCategory}`);
 
   if (!output.title.trim()) issues.push('missing_title');
@@ -1266,7 +1274,6 @@ export function validateCompactRecipeOutput(
 
   const bounds = getRecipeStepBounds(analysis);
   if (output.steps.length < bounds.min) issues.push('too_few_steps');
-  if (output.steps.length > bounds.max) issues.push('too_many_steps');
 
   for (const step of output.steps) {
     if (!hasInstructionCompletion(step.instruction, step.doneWhen)) {
@@ -1320,8 +1327,15 @@ function hasUsableIngredientAmount(value: string): boolean {
 
 function hasInstructionCompletion(instruction: string, doneWhen = ''): boolean {
   const text = `${instruction} ${doneWhen}`;
-  return /\b\d+(?:\s*[-–]\s*\d+)?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/i.test(text) ||
-    /\b(golden|browned|opaque|translucent|tender|crisp|crispy|fragrant|bubbling|boiling|simmering|thickened|coats?|combined|melted|wilted|reduced|steaming|al dente|set|firm|flaky|juices run clear|no pink|cooked through|internal temperature|reaches? \d{2,3}|°f|°c|smooth|glossy|charred|softened|cold|chilled)\b/i.test(text);
+  if (/\b\d+(?:\s*[-–]\s*\d+)?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/i.test(text) ||
+    /\b(golden|browned|opaque|translucent|tender|crisp|crispy|fragrant|bubbling|boiling|simmering|thickened|coats?|combined|melted|wilted|reduced|steaming|al dente|set|firm|flaky|juices run clear|no pink|cooked through|internal temperature|reaches? \d{2,3}|°f|°c|smooth|glossy|charred|softened|cold|chilled)\b/i.test(text)) {
+    return true;
+  }
+
+  // Presentation-only final steps have no cooking completion state. A cooking
+  // action stays strict even if the same instruction also says "serve".
+  return /^(?:serve|plate|garnish|pour|divide|arrange|enjoy)\b/i.test(instruction.trim()) &&
+    !/\b(cook|bake|roast|sear|fry|boil|simmer|grill|steam|poach|braise|brown|heat|melt|reduce)\b/i.test(instruction);
 }
 
 function hasVagueCompactInstruction(instruction: string): boolean {
@@ -1448,7 +1462,6 @@ export function validateRecipeStructure(
   }
   const bounds = analysis ? getRecipeStepBounds(analysis) : { min: 4, max: 14 };
   if (steps.length < bounds.min) issues.push('too_few_steps');
-  if (steps.length > bounds.max) issues.push('too_many_steps');
 
   for (const step of steps) {
     if (typeof step === 'string' || !step || typeof step !== 'object') {
@@ -1501,6 +1514,67 @@ async function callRecipeStage(
     });
   }
   return output.data;
+}
+
+async function callRecipeRepairStage(
+  input: {
+    analysis: FoodImageAnalysis;
+    config: AiConfig;
+    quota: ProviderQuota;
+  } & Partial<ScanExecutionContext>,
+  userPrompt: string,
+  maxTokens: number,
+  stage: string,
+  previousOutput: OpenRouterRecipeOutput | undefined,
+): Promise<OpenRouterRecipeOutput> {
+  const json = await callOpenRouterJsonWithFailover(
+    {
+      config: input.config,
+      messages: [
+        {
+          role: 'system',
+          content: previousOutput
+            ? 'You repair one safe home recipe. Return only the requested minified ingredients-and-steps correction object. No markdown, reasoning, variants, or extra keys.'
+            : 'You repair one safe home recipe. Return one complete JSON recipe object only. No markdown, reasoning, modes, or variants.',
+        },
+        { role: 'user', content: userPrompt },
+      ],
+      maxTokens: Math.min(input.config.maxOutputTokens, maxTokens),
+      stage,
+      quota: input.quota,
+      requestId: input.requestId,
+      signal: input.signal,
+      deadlineAt: input.deadlineAt,
+      timing: input.timing,
+    },
+    getRecipeModelChain(input.config),
+  );
+
+  const candidate = previousOutput
+    ? mergeFullRecipeRepairPatch(previousOutput, json)
+    : json;
+  const output = openRouterRecipeOutputSchema.safeParse(candidate);
+  if (!output.success) {
+    throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
+      openRouterErrorMessage: getSchemaErrorMessage(output.error),
+    });
+  }
+  return output.data;
+}
+
+function mergeFullRecipeRepairPatch(
+  previousOutput: OpenRouterRecipeOutput,
+  patch: unknown,
+): unknown {
+  const record = getRecord(patch);
+  if (!record || !Array.isArray(record.ingredients) || !Array.isArray(record.steps)) {
+    return patch;
+  }
+  return {
+    ...previousOutput,
+    ingredients: record.ingredients,
+    steps: record.steps,
+  };
 }
 
 // Detects recipe output that is too vague to cook from. Returns a list of issue
@@ -1587,6 +1661,9 @@ function getFullRecipeRepairPrompt(
 ): string {
   const bounds = getRecipeStepBounds(analysis);
   const ingredients = previousOutput?.ingredients ?? [];
+  const diagnostics = previousOutput
+    ? getFullRecipeRepairDiagnostics(previousOutput, analysis)
+    : undefined;
   const previousRecipe = previousOutput
     ? {
         title: previousOutput.title,
@@ -1610,13 +1687,15 @@ function getFullRecipeRepairPrompt(
   return [
     `Correct the previous recipe JSON for "${analysis.dishName}".`,
     `Exact validation failures: ${issues.join(', ')}.`,
-    'Return ONLY the entire corrected recipe object. Never return a partial patch and never omit unchanged required fields.',
-    'Return exactly ONE recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, and skillLevel. No modes or variants.',
-    'Fix every problem: NEVER write "the main ingredient" or "main ingredient" — name the actual food. Every ingredient must start with an exact amount and a real grocery name. Every step must name real ingredients with amounts, a time, and a visual cue. No "cook until done", "prepare the ingredients", "season to taste", or "mix everything".',
+    previousOutput
+      ? 'Return ONLY a minified correction object with exactly two keys: {"ingredients":[...the entire corrected ingredient list...],"steps":[...the entire corrected step list...]}. Do not repeat title, equipment, times, servings, or difficulty.'
+      : 'Return ONLY the entire corrected recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, and skillLevel.',
+    'Fix every listed problem. Every ingredient must start with an exact amount and real grocery name. Every cooking instruction must contain a time, an observable completion cue, or both. Never use "main ingredient", "cook until done", "prepare the ingredients", "season to taste", or "mix everything".',
     'Step shape: {"title":"short action","step":"cookable instruction with time or sensory completion","doneWhen":"optional useful cue","safetyNote":"required food-safety rule when applicable"}. Step numbers, phases, per-step ingredients, and per-step tools are derived locally and are not required.',
-    `Return ${bounds.min}-${bounds.max} steps for this dish.`,
+    `Use at least ${bounds.min} steps and preferably no more than ${bounds.max}; keep each instruction under 30 words. A presentation-only final step may simply serve or plate the finished dish.`,
     'INGREDIENT CLOSURE IS MANDATORY: every ingredient named in an instruction must appear in the top-level ingredient list with an exact usable amount.',
     'Safety is mandatory: poultry 165°F/74°C; ground meat 160°F/71°C; pork and cooked fish 145°F/63°C. Raw-fish dishes must specify sushi-grade or previously frozen fish kept cold.',
+    `Validation diagnostics: ${JSON.stringify(diagnostics ?? {})}`,
     `Full canonical ingredient list from the previous recipe: ${JSON.stringify(ingredients)}`,
     `Complete previous recipe object: ${JSON.stringify(previousRecipe)}`,
     `Food: ${JSON.stringify({
@@ -1628,6 +1707,53 @@ function getFullRecipeRepairPrompt(
       visibleComponents: analysis.visibleComponents,
     })}`,
   ].join('\n');
+}
+
+function getFullRecipeRepairDiagnostics(
+  output: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+) {
+  const stepCompletionIndices = output.steps
+    .map((step, index) => ({
+      index,
+      instruction: getProviderStepText(step),
+      doneWhen: typeof step === 'object' && step ? step.doneWhen ?? '' : '',
+    }))
+    .filter((step) => !hasInstructionCompletion(step.instruction, step.doneWhen))
+    .map((step) => step.index);
+  const coverage = isGenuinePlatterMeal(analysis)
+    ? getRecipeComponentCoverage(
+        (analysis.detectedComponents ?? []).map((component) => component.name),
+        [
+          output.title,
+          ...output.ingredients.map(canonicalIngredientName),
+          ...output.steps.map(getProviderStepText),
+        ],
+      )
+    : { coveragePercent: 100, missingComponents: [] as string[] };
+
+  return {
+    stepCount: output.steps.length,
+    preferredStepBounds: getRecipeStepBounds(analysis),
+    ingredientsMissingAmounts: output.ingredients.filter(
+      (ingredient) => !hasUsableIngredientAmount(ingredient),
+    ),
+    stepsMissingCompletionCue: stepCompletionIndices,
+    platterCoveragePercent: coverage.coveragePercent,
+    missingPlatterComponents: coverage.missingComponents,
+  };
+}
+
+function logFullRecipeValidationDetails(
+  input: { analysis: FoodImageAnalysis } & Partial<ScanExecutionContext>,
+  output: OpenRouterRecipeOutput,
+  issues: string[],
+): void {
+  console.log('[recipe_validation_details]', {
+    requestId: input.requestId,
+    issues,
+    ...getFullRecipeRepairDiagnostics(output, input.analysis),
+  });
 }
 
 async function callOpenRouterJson(input: {
@@ -2021,21 +2147,12 @@ function getFocusedVisionRetryPrompt(
   ].join('\n');
 }
 
-const PLATTER_WORDS = ['platter', 'board', 'bento', 'sushi', 'dim sum', 'mezze', 'tapas', 'charcuterie', 'sampler', 'assortment', 'spread'];
-
-function isPlatterAnalysis(analysis: FoodImageAnalysis): boolean {
-  const text = `${analysis.dishName} ${analysis.broadDishCategory}`.toLowerCase();
-  return analysis.broadDishCategory === 'mixed platter' ||
-    PLATTER_WORDS.some((w) => text.includes(w)) ||
-    (analysis.detectedComponents?.length ?? 0) >= 4;
-}
-
 function getRecipePrompt(
   analysis: FoodImageAnalysis,
   mode: RecipeMode = 'Restaurant Copy',
 ) {
   const isUncertainFood = analysis.scanState === 'food_present_uncertain_dish' || analysis.scanState === 'partial_food';
-  const isPlatter = isPlatterAnalysis(analysis);
+  const isPlatter = isGenuinePlatterMeal(analysis);
   const isBakeryOrDessert = /\b(cream bun|custard|bao bun|milk bun|brioche|donut|doughnut|eclair|cream puff|choux|mochi|tart|cheesecake|pastry|dessert)\b/i.test(
     `${analysis.dishName} ${analysis.broadDishCategory}`,
   );
@@ -2057,7 +2174,7 @@ function getRecipePrompt(
     'Return exactly these top-level fields: title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, skillLevel.',
     'ingredients must be plain strings, each beginning with a usable exact quantity and real grocery name, for example "2 large eggs" or "1 tbsp olive oil". Never use ingredient objects, "some", "as needed", or a bare name. "To taste" is allowed only for salt, pepper, acid, or hot sauce.',
     'steps must be objects shaped like {"title":"short action","step":"concise cookable instruction","doneWhen":"optional useful sensory cue","safetyNote":"required only for food-safety hazards"}. Do not generate step numbers, phases, per-step ingredient arrays, or per-step tool arrays; Okyo derives those locally.',
-    `Use ${bounds.min}-${bounds.max} concise steps for this dish. Every instruction must contain a time, an observable completion cue, or both.`,
+    `Use ${bounds.min}-${bounds.max} concise steps for this dish and keep each instruction under 30 words. Every cooking instruction must contain a time, an observable completion cue, or both. A presentation-only final step may simply serve or plate the finished dish.`,
     'Name actual ingredients and actions. Never say "main ingredient", "cook until done", "prepare ingredients", "mix everything", or "season to taste" without an amount.',
     'Ingredient closure is mandatory: every ingredient used in any instruction must appear in the top-level ingredient list with a usable quantity.',
     'Choose one coherent strategy: either shortcut ingredients or from-scratch ingredients, never both. Never list the finished dish as an ingredient.',

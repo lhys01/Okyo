@@ -112,6 +112,15 @@ export function canonicalIngredientName(name: string): string {
 }
 
 const safeGenericIngredientAliases = new Set(['oil', 'salt', 'pepper']);
+const safeGenericIngredientCategoryAliases = new Map<string, Set<string>>([
+  ['pasta', new Set([
+    'spaghetti', 'linguine', 'fettuccine', 'tagliatelle', 'penne', 'rigatoni',
+    'farfalle', 'fusilli', 'macaroni', 'orecchiette', 'bucatini', 'vermicelli',
+  ])],
+  ['noodle', new Set([
+    'ramen', 'udon', 'soba', 'rice noodle', 'egg noodle', 'glass noodle',
+  ])],
+]);
 const distinctIngredientProductTokens = new Set([
   'broth', 'cheese', 'cream', 'flour', 'milk', 'oil', 'paste', 'powder',
   'sauce', 'starch', 'stock', 'syrup', 'vinegar',
@@ -127,6 +136,8 @@ export function ingredientsMatch(recipeIngredient: string, stepIngredient: strin
   if (a === b) return true;
   if (safeGenericIngredientAliases.has(a) && b.split(' ').includes(a)) return true;
   if (safeGenericIngredientAliases.has(b) && a.split(' ').includes(b)) return true;
+  if (safeGenericIngredientCategoryAliases.get(a)?.has(b)) return true;
+  if (safeGenericIngredientCategoryAliases.get(b)?.has(a)) return true;
 
   const aTokens = a.split(' ').filter(Boolean);
   const bTokens = b.split(' ').filter(Boolean);
