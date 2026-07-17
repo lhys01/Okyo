@@ -1,6 +1,6 @@
 # Textures
 
-Design-first assets (see CLAUDE.md → Design-First Asset Workflow).
+Small raster assets used directly by the mobile UI.
 
 ## linen-warm.png
 
