@@ -276,9 +276,8 @@ export const compactRecipeOutputSchema = z.object({
   difficulty: z.enum(['Easy', 'Medium', 'Hard']),
 });
 
-// The full repair pass is intentionally narrower than the initial recipe
-// contract. It may correct the canonical ingredient list and step content, but
-// cannot reintroduce enrichment or model-authored step metadata.
+// The legacy full-array repair remains available only for validation defects
+// that cannot be represented as indexed ingredient/step corrections.
 const fullRecipeRepairStepSchema = z.object({
   // stepIndex is the canonical zero-based identifier. stepNumber is accepted
   // only as a provider compatibility input and converted from one-based.
@@ -294,23 +293,32 @@ const fullRecipeRepairStepSchema = z.object({
   { message: 'A repaired step must include step or instruction text.' },
 );
 
-const fullRecipeCompletionCorrectionSchema = z.object({
-  // Completion repairs use zero-based indices exclusively. The exact sparse
+const fullRecipeIndexedStepCorrectionSchema = z.object({
+  // Indexed repairs use zero-based indices exclusively. The exact sparse
   // contract prevents a model-authored full array from replacing valid steps.
   stepIndex: z.number().int().nonnegative(),
-  title: z.string().optional().default(''),
-  step: z.string().optional().default(''),
-  instruction: z.string().optional().default(''),
-  doneWhen: z.string().optional().default(''),
-  safetyNote: z.string().optional().default(''),
+  title: z.string().optional(),
+  step: z.string().optional(),
+  instruction: z.string().optional(),
+  doneWhen: z.string().optional(),
+  safetyNote: z.string().optional(),
 }).strict().refine(
-  (step) => Boolean(step.step.trim() || step.instruction.trim()),
+  (step) => Boolean(step.step?.trim() || step.instruction?.trim()),
   { message: 'A corrected step must include step or instruction text.' },
 );
 
-const fullRecipeCompletionRepairPatchSchema = z.object({
-  stepCorrections: z.array(fullRecipeCompletionCorrectionSchema).min(1),
+const fullRecipeIngredientCorrectionSchema = z.object({
+  ingredientIndex: z.number().int().nonnegative(),
+  value: z.string().min(1),
 }).strict();
+
+const fullRecipeIndexedRepairPatchSchema = z.object({
+  ingredientCorrections: z.array(fullRecipeIngredientCorrectionSchema).optional().default([]),
+  stepCorrections: z.array(fullRecipeIndexedStepCorrectionSchema).optional().default([]),
+}).strict().refine(
+  (patch) => patch.ingredientCorrections.length + patch.stepCorrections.length > 0,
+  { message: 'At least one indexed correction is required.' },
+);
 
 const fullRecipeRepairPatchSchema = z.object({
   ingredients: z.array(z.string().min(1)).min(1),
@@ -844,6 +852,7 @@ async function repairFullRecipe(
             previousOutput,
             repairJson,
             issues,
+            isDrink,
             initialNormalizationDiagnostics,
           );
         }
@@ -890,6 +899,8 @@ async function repairFullRecipe(
 
 type FullRecipeNormalizationDiagnostics = {
   aliasMatchesApplied: string[];
+  suppressedNestedIngredientMentions: string[];
+  unresolvedIngredientMentions: string[];
   deterministicSafetyApplied: boolean;
 };
 
@@ -917,6 +928,12 @@ function normalizeFullRecipeOutputWithDiagnostics(
         : undefined,
     };
   });
+  // Resolve full ingredient phrases before deriving per-step metadata so a
+  // listed concept such as "sweet rice flour" shadows nested "rice"/"flour".
+  const mentionDiagnostics = getIngredientMentionDiagnostics(
+    preparedSteps.map((step) => step.step),
+    ingredientNames,
+  );
   const safety = applyDeterministicRawFishSafety(
     preparedSteps,
     analysis,
@@ -967,10 +984,7 @@ function normalizeFullRecipeOutputWithDiagnostics(
   return {
     output: normalized,
     diagnostics: {
-      aliasMatchesApplied: getIngredientAliasMatches(
-        normalized.steps.map(getProviderStepText),
-        normalized.ingredients,
-      ),
+      ...mentionDiagnostics,
       deterministicSafetyApplied: safety.applied,
     },
   };
@@ -1432,7 +1446,7 @@ function getCompactSchemaIssues(error: z.ZodError): string[] {
     `invalid_${issue.path.length > 0 ? issue.path.join('_') : 'schema'}`))];
 }
 
-function hasUsableIngredientAmount(value: string): boolean {
+export function hasUsableIngredientAmount(value: string): boolean {
   const text = value.trim().toLowerCase();
   if (/^(?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|a|an|pinch|dash)\b/.test(text)) {
     return true;
@@ -1529,6 +1543,87 @@ function containsIngredientMention(text: string, ingredient: string): boolean {
   return Boolean(pattern) && new RegExp(`\\b${pattern}\\b`, 'i').test(text);
 }
 
+type IngredientMentionDiagnostics = {
+  aliasMatchesApplied: string[];
+  suppressedNestedIngredientMentions: string[];
+  unresolvedIngredientMentions: string[];
+};
+
+type IngredientMentionOccurrence = {
+  candidate: string;
+  concept: string;
+  start: number;
+  end: number;
+  matchedIngredient?: string;
+};
+
+function getIngredientMentionOccurrences(
+  text: string,
+  candidates: string[],
+  ingredients: string[],
+): IngredientMentionOccurrence[] {
+  return candidates.flatMap((candidate) => {
+    const pattern = candidate
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\s+');
+    if (!pattern) return [];
+    const matches = text.matchAll(new RegExp(`\\b${pattern}\\b`, 'gi'));
+    return [...matches].map((match) => ({
+      candidate,
+      concept: canonicalIngredientName(candidate),
+      start: match.index,
+      end: match.index + match[0].length,
+      matchedIngredient: findMatchingIngredientName(candidate, ingredients),
+    }));
+  });
+}
+
+function getIngredientMentionDiagnostics(
+  stepTexts: string[],
+  ingredients: string[],
+): IngredientMentionDiagnostics {
+  const listedConcepts = ingredients.map(canonicalIngredientName).filter(Boolean);
+  const candidates = [...new Set([
+    ...recognizedIngredientMentions,
+    ...listedConcepts,
+  ])].sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length || b.length - a.length);
+  const aliasMatchesApplied = new Set<string>();
+  const suppressedNestedIngredientMentions = new Set<string>();
+  const unresolvedIngredientMentions = new Set<string>();
+
+  for (const stepText of stepTexts) {
+    const occurrences = getIngredientMentionOccurrences(stepText, candidates, ingredients);
+    for (const occurrence of occurrences) {
+      const shadowingMention = occurrences.find((other) =>
+        other !== occurrence &&
+        Boolean(other.matchedIngredient) &&
+        other.start <= occurrence.start &&
+        other.end >= occurrence.end &&
+        (other.end - other.start) > (occurrence.end - occurrence.start));
+      if (shadowingMention) {
+        suppressedNestedIngredientMentions.add(occurrence.concept);
+        continue;
+      }
+      if (!occurrence.matchedIngredient) {
+        if (occurrence.concept) unresolvedIngredientMentions.add(occurrence.concept);
+        continue;
+      }
+      const matchedConcept = canonicalIngredientName(occurrence.matchedIngredient);
+      if (occurrence.concept && occurrence.concept !== matchedConcept) {
+        aliasMatchesApplied.add(`${occurrence.concept}->${matchedConcept}`);
+      }
+    }
+  }
+
+  return {
+    aliasMatchesApplied: [...aliasMatchesApplied],
+    suppressedNestedIngredientMentions: [...suppressedNestedIngredientMentions],
+    unresolvedIngredientMentions: [...unresolvedIngredientMentions],
+  };
+}
+
 function instructionUsesIngredient(instruction: string, ingredient: string): boolean {
   const canonical = canonicalIngredientName(ingredient);
   if (canonical && containsIngredientMention(instruction, canonical)) return true;
@@ -1545,33 +1640,7 @@ function hasUnlistedCompactStepIngredients(output: CompactRecipeOutput): boolean
 }
 
 function getUnlistedStepIngredientText(stepTexts: string[], ingredients: string[]): string[] {
-  const stepText = stepTexts.join(' ').toLowerCase();
-  return [...new Set(recognizedIngredientMentions.filter((candidate) =>
-    containsIngredientMention(stepText, candidate) &&
-    findMatchingIngredientName(candidate, ingredients) === undefined)
-    .map(canonicalIngredientName)
-    .filter(Boolean))];
-}
-
-function getIngredientAliasMatches(stepTexts: string[], ingredients: string[]): string[] {
-  return [...new Set(stepTexts.flatMap((stepText) => {
-    const mentioned = recognizedIngredientMentions.filter((candidate) =>
-      containsIngredientMention(stepText, candidate));
-    return mentioned.flatMap((candidate) => {
-      const matched = findMatchingIngredientName(candidate, ingredients);
-      if (!matched) return [];
-      const candidateConcept = canonicalIngredientName(candidate);
-      const matchedConcept = canonicalIngredientName(matched);
-      if (!candidateConcept || candidateConcept === matchedConcept) return [];
-      const shadowedBySpecificMention = mentioned.some((other) =>
-        other !== candidate &&
-        other.split(' ').includes(candidateConcept) &&
-        canonicalIngredientName(other) === matchedConcept);
-      return shadowedBySpecificMention
-        ? []
-        : [`${candidateConcept}->${matchedConcept}`];
-    });
-  }))];
+  return getIngredientMentionDiagnostics(stepTexts, ingredients).unresolvedIngredientMentions;
 }
 
 const RAW_FISH_SAFETY_NOTE =
@@ -1824,7 +1893,8 @@ async function callRecipeRepairStage(
 }
 
 type FullRecipeRepairStep = z.infer<typeof fullRecipeRepairStepSchema>;
-type FullRecipeCompletionCorrection = z.infer<typeof fullRecipeCompletionCorrectionSchema>;
+type FullRecipeIndexedStepCorrection = z.infer<typeof fullRecipeIndexedStepCorrectionSchema>;
+type FullRecipeIngredientCorrection = z.infer<typeof fullRecipeIngredientCorrectionSchema>;
 
 type RepairReturnedStepNumber = {
   returnedPosition: number;
@@ -1854,6 +1924,14 @@ type CompletionRepairMerge = {
   unrequestedReturnedIndices: number[];
 };
 
+type IngredientRepairMerge = {
+  ingredients: string[];
+  returnedIngredientIndices: number[];
+  missingIngredientIndices: number[];
+  duplicateIngredientIndices: number[];
+  unrequestedIngredientIndices: number[];
+};
+
 function getRawRepairStepNumbers(repairJson: unknown): RepairReturnedStepNumber[] {
   const record = getRecord(repairJson);
   const steps = Array.isArray(record?.stepCorrections)
@@ -1874,7 +1952,7 @@ function getRawRepairStepNumbers(repairJson: unknown): RepairReturnedStepNumber[
 }
 
 function getParsedRepairStepNumbers(
-  steps: Array<FullRecipeRepairStep | FullRecipeCompletionCorrection>,
+  steps: Array<FullRecipeRepairStep | FullRecipeIndexedStepCorrection>,
 ): RepairReturnedStepNumber[] {
   return steps.map((step, returnedPosition) => ({
     returnedPosition,
@@ -1902,9 +1980,30 @@ function getIndexedStepHashes(steps: ProviderStepLike[]): RepairStepHash[] {
   }));
 }
 
-function mapCompletionRepairSteps(
+function mergeIndexedStepCorrection(
+  previousStep: ProviderStepLike,
+  correction: FullRecipeIndexedStepCorrection,
+): ProviderStepLike {
+  const previousRecord: SafeRecord = typeof previousStep === 'object' && previousStep
+    ? previousStep
+    : {};
+  const correctedInstruction = getProviderStepText(correction).trim();
+  return {
+    ...previousRecord,
+    title: correction.title?.trim() || String(previousRecord.title ?? '').trim(),
+    step: correctedInstruction,
+    doneWhen: correction.doneWhen !== undefined
+      ? correction.doneWhen.trim()
+      : String(previousRecord.doneWhen ?? '').trim(),
+    safetyNote: correction.safetyNote !== undefined
+      ? correction.safetyNote.trim()
+      : String(previousRecord.safetyNote ?? '').trim(),
+  };
+}
+
+function mapIndexedRepairSteps(
   previousSteps: ProviderStepLike[],
-  returnedSteps: FullRecipeCompletionCorrection[],
+  returnedSteps: FullRecipeIndexedStepCorrection[],
   requestedInvalidIndices: number[],
 ): CompletionRepairMerge {
   const requested = new Set(requestedInvalidIndices);
@@ -1954,7 +2053,10 @@ function mapCompletionRepairSteps(
     }
 
     accepted.add(targetIndex);
-    mergedSteps[targetIndex] = step;
+    mergedSteps[targetIndex] = mergeIndexedStepCorrection(
+      previousSteps[targetIndex],
+      step,
+    );
   });
 
   return {
@@ -1968,36 +2070,123 @@ function mapCompletionRepairSteps(
   };
 }
 
+function mapIndexedIngredientCorrections(
+  previousIngredients: string[],
+  returnedCorrections: FullRecipeIngredientCorrection[],
+  requestedIngredientIndices: number[],
+): IngredientRepairMerge {
+  const requested = new Set(requestedIngredientIndices);
+  const returnedIngredientIndices = returnedCorrections.map(
+    (correction) => correction.ingredientIndex,
+  );
+  const counts = new Map<number, number>();
+  returnedIngredientIndices.forEach((ingredientIndex) =>
+    counts.set(ingredientIndex, (counts.get(ingredientIndex) ?? 0) + 1));
+  const missingIngredientIndices = requestedIngredientIndices.filter(
+    (ingredientIndex) => !counts.has(ingredientIndex),
+  );
+  const duplicateIngredientIndices = [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([ingredientIndex]) => ingredientIndex)
+    .sort((a, b) => a - b);
+  const unrequestedIngredientIndices = [...new Set(returnedIngredientIndices.filter(
+    (ingredientIndex) => !requested.has(ingredientIndex),
+  ))].sort((a, b) => a - b);
+  const ingredients = [...previousIngredients];
+
+  for (const correction of returnedCorrections) {
+    const targetIndex = correction.ingredientIndex;
+    if (targetIndex < 0 || targetIndex >= previousIngredients.length) continue;
+    if (!requested.has(targetIndex)) continue;
+    if ((counts.get(targetIndex) ?? 0) > 1) continue;
+    ingredients[targetIndex] = correction.value.trim();
+  }
+
+  return {
+    ingredients,
+    returnedIngredientIndices,
+    missingIngredientIndices,
+    duplicateIngredientIndices,
+    unrequestedIngredientIndices,
+  };
+}
+
+const indexedFullRecipeRepairIssues = new Set([
+  'ingredients_missing_amounts',
+  'step_missing_time_or_completion_cue',
+  'step_uses_unlisted_ingredients',
+]);
+
+function shouldUseIndexedFullRecipeRepair(issues: string[]): boolean {
+  return issues.length > 0 && issues.every((issue) => indexedFullRecipeRepairIssues.has(issue));
+}
+
 function applyFullRecipeRepairPatch(
   input: { analysis: FoodImageAnalysis } & Partial<ScanExecutionContext>,
   previousOutput: OpenRouterRecipeOutput,
   repairJson: unknown,
   issues: string[],
+  isDrink: boolean,
   initialNormalizationDiagnostics?: FullRecipeNormalizationDiagnostics,
 ): OpenRouterRecipeOutput {
   const initialDiagnostics = getFullRecipeRepairDiagnostics(previousOutput, input.analysis);
-  const requestedInvalidIndices = initialDiagnostics.stepsMissingCompletionCue;
-  const completionOnlyRepair = issues.every(
-    (issue) => issue === 'step_missing_time_or_completion_cue',
-  );
+  if (!shouldUseIndexedFullRecipeRepair(issues)) {
+    return applyLegacyFullRecipeRepairPatch(
+      input,
+      previousOutput,
+      repairJson,
+      issues,
+      isDrink,
+      initialDiagnostics,
+      initialNormalizationDiagnostics,
+    );
+  }
+
+  const requestedIngredientIndices = issues.includes('ingredients_missing_amounts')
+    ? initialDiagnostics.ingredientIndicesMissingAmounts
+    : [];
+  const completionStepIndices = issues.includes('step_missing_time_or_completion_cue')
+    ? initialDiagnostics.stepsMissingCompletionCue
+    : [];
+  const closureStepIndices = issues.includes('step_uses_unlisted_ingredients')
+    ? initialDiagnostics.stepsUsingUnlistedIngredientIndices
+    : [];
+  const requestedStepIndices = [...new Set([
+    ...completionStepIndices,
+    ...closureStepIndices,
+  ])].sort((a, b) => a - b);
   const rawReturnedStepNumbers = getRawRepairStepNumbers(repairJson);
   const originalStepTextHashes = getIndexedStepHashes(previousOutput.steps);
-  const parsedPatch = completionOnlyRepair
-    ? fullRecipeCompletionRepairPatchSchema.safeParse(repairJson)
-    : fullRecipeRepairPatchSchema.safeParse(repairJson);
+  const parsedPatch = fullRecipeIndexedRepairPatchSchema.safeParse(repairJson);
   if (!parsedPatch.success) {
     logFullRecipeRepairTrace(input, {
-      requestedInvalidIndices,
-      requiredReturnedIndices: requestedInvalidIndices,
+      requestedIngredientIndices,
+      returnedIngredientIndices: [],
+      missingIngredientIndices: requestedIngredientIndices,
+      duplicateIngredientIndices: [],
+      unrequestedIngredientIndices: [],
+      changedIngredientIndices: [],
+      requestedStepIndices,
+      returnedStepIndices: [],
+      missingStepIndices: requestedStepIndices,
+      changedStepIndices: [],
+      originalStepCount: previousOutput.steps.length,
+      mergedStepCount: previousOutput.steps.length,
+      requestedInvalidIndices: requestedStepIndices,
+      requiredReturnedIndices: requestedStepIndices,
       returnedIndices: [],
-      missingReturnedIndices: requestedInvalidIndices,
+      missingReturnedIndices: requestedStepIndices,
       duplicateReturnedIndices: [],
       unrequestedReturnedIndices: [],
       changedRequestedIndices: [],
-      unchangedRequestedIndices: requestedInvalidIndices,
+      unchangedRequestedIndices: requestedStepIndices,
       resolvedRequestedIndices: [],
-      unresolvedRequestedIndices: requestedInvalidIndices,
+      unresolvedRequestedIndices: requestedStepIndices,
       aliasMatchesApplied: initialNormalizationDiagnostics?.aliasMatchesApplied ?? [],
+      suppressedNestedIngredientMentions:
+        initialNormalizationDiagnostics?.suppressedNestedIngredientMentions ?? [],
+      unresolvedIngredientMentions:
+        initialNormalizationDiagnostics?.unresolvedIngredientMentions ?? [],
       deterministicSafetyApplied:
         initialNormalizationDiagnostics?.deterministicSafetyApplied ?? false,
       finalFailureReasons: ['repair_invalid_schema'],
@@ -2014,7 +2203,7 @@ function applyFullRecipeRepairPatch(
       changedFields: [],
     });
     logFullRecipeRepairValidation(input, {
-      initialInvalidStepIndices: requestedInvalidIndices,
+      initialInvalidStepIndices: requestedStepIndices,
       repairedInvalidStepIndices: [],
       unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
       unknownIngredientsAfterRepair: [],
@@ -2025,163 +2214,23 @@ function applyFullRecipeRepairPatch(
   }
 
   const canonicalIngredients = normalizeProviderIngredientList(previousOutput.ingredients);
-  const patchSteps = completionOnlyRepair
-    ? (parsedPatch.data as z.infer<typeof fullRecipeCompletionRepairPatchSchema>).stepCorrections
-    : (parsedPatch.data as z.infer<typeof fullRecipeRepairPatchSchema>).steps;
+  const ingredientCorrections = parsedPatch.data.ingredientCorrections;
+  const patchSteps = parsedPatch.data.stepCorrections;
   const parsedReturnedStepNumbers = getParsedRepairStepNumbers(patchSteps);
-  const repairedIngredients = completionOnlyRepair
-    ? canonicalIngredients
-    : normalizeProviderIngredientList(
-        (parsedPatch.data as z.infer<typeof fullRecipeRepairPatchSchema>).ingredients,
-      );
-  const completionMerge = completionOnlyRepair
-    ? mapCompletionRepairSteps(
-        previousOutput.steps,
-        patchSteps as FullRecipeCompletionCorrection[],
-        requestedInvalidIndices,
-      )
-    : {
-        steps: patchSteps,
-        acceptedStepIndices: patchSteps.map((_step, index) => index),
-        rejectedStepIndices: [],
-        returnedIndices: patchSteps.map((_step, index) => index),
-        missingReturnedIndices: [],
-        duplicateReturnedIndices: [],
-        unrequestedReturnedIndices: [],
-      };
-  const repairedSteps = completionMerge.steps;
-  const unknownIngredientListEntries = repairedIngredients
-    .filter((ingredient) => !findMatchingIngredientName(ingredient, canonicalIngredients))
-    .map(canonicalIngredientName)
-    .filter(Boolean);
-  const removedCanonicalIngredients = canonicalIngredients
-    .filter((ingredient) => !findMatchingIngredientName(ingredient, repairedIngredients))
-    .map(canonicalIngredientName)
-    .filter(Boolean);
-  // Inspect the complete provider patch before merging any step. Unknown
-  // ingredients are rejected even if they appear in a step that the targeted
-  // merge would otherwise leave unchanged.
-  const repairedStepTexts = patchSteps.map(getProviderStepText);
-  const unknownStepIngredients = getUnlistedStepIngredientText(
-    repairedStepTexts,
+  const ingredientMerge = mapIndexedIngredientCorrections(
     canonicalIngredients,
+    ingredientCorrections,
+    requestedIngredientIndices,
   );
-  const unknownIngredientsAfterRepair = [...new Set([
-    ...unknownIngredientListEntries,
-    ...unknownStepIngredients,
-  ])];
-  const repairedInvalidStepIndices = getInvalidCompletionStepIndices(repairedSteps);
-  const repairChangedFields = getRepairChangedFields(
-    previousOutput,
-    repairedIngredients,
-    repairedSteps,
+  const stepMerge = mapIndexedRepairSteps(
+    previousOutput.steps,
+    patchSteps,
+    requestedStepIndices,
   );
-  const repairedStepTextHashes = patchSteps.map((step, returnedPosition) => ({
-    returnedPosition,
-    ...(completionMerge.returnedIndices[returnedPosition] !== undefined
-      ? { stepIndex: completionMerge.returnedIndices[returnedPosition] }
-      : {}),
-    hash: getRepairStepHash(step),
-  }));
-
-  const repairTelemetry = {
-    initialInvalidStepIndices: requestedInvalidIndices,
-    repairedInvalidStepIndices,
-    unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
-    unknownIngredientsAfterRepair,
-    presentationOnlyStepIndices: initialDiagnostics.presentationOnlyStepIndices,
-    repairChangedFields,
-  };
-  const logRepairTrace = (
-    mergedSteps: ProviderStepLike[],
-    changedFields: string[],
-    details: {
-      changedRequestedIndices?: number[];
-      unchangedRequestedIndices?: number[];
-      resolvedRequestedIndices?: number[];
-      unresolvedRequestedIndices?: number[];
-      aliasMatchesApplied?: string[];
-      deterministicSafetyApplied?: boolean;
-      finalFailureReasons?: string[];
-    } = {},
-  ) => logFullRecipeRepairTrace(input, {
-    requestedInvalidIndices,
-    requiredReturnedIndices: requestedInvalidIndices,
-    returnedIndices: completionMerge.returnedIndices,
-    missingReturnedIndices: completionMerge.missingReturnedIndices,
-    duplicateReturnedIndices: completionMerge.duplicateReturnedIndices,
-    unrequestedReturnedIndices: completionMerge.unrequestedReturnedIndices,
-    changedRequestedIndices: details.changedRequestedIndices ?? [],
-    unchangedRequestedIndices: details.unchangedRequestedIndices ?? requestedInvalidIndices,
-    resolvedRequestedIndices: details.resolvedRequestedIndices ?? [],
-    unresolvedRequestedIndices: details.unresolvedRequestedIndices ?? requestedInvalidIndices,
-    aliasMatchesApplied: details.aliasMatchesApplied ??
-      initialNormalizationDiagnostics?.aliasMatchesApplied ?? [],
-    deterministicSafetyApplied: details.deterministicSafetyApplied ??
-      initialNormalizationDiagnostics?.deterministicSafetyApplied ?? false,
-    finalFailureReasons: details.finalFailureReasons ?? [],
-    rawReturnedStepNumbers,
-    parsedReturnedStepNumbers,
-    acceptedStepIndices: completionMerge.acceptedStepIndices,
-    rejectedStepIndices: completionMerge.rejectedStepIndices,
-    originalStepTextHashes,
-    repairedStepTextHashes,
-    mergedStepTextHashes: getIndexedStepHashes(mergedSteps),
-    changedFields,
-  });
-
-  const invalidSparseContract = completionOnlyRepair && (
-    completionMerge.missingReturnedIndices.length > 0 ||
-    completionMerge.duplicateReturnedIndices.length > 0 ||
-    completionMerge.unrequestedReturnedIndices.length > 0
-  );
-  if (invalidSparseContract) {
-    const changedRequestedIndices = requestedInvalidIndices.filter((stepIndex) =>
-      repairChangedFields.some((field) =>
-        field === `steps.${stepIndex}.step` || field === `steps.${stepIndex}.doneWhen`),
-    );
-    const resolvedRequestedIndices = requestedInvalidIndices.filter((stepIndex) =>
-      changedRequestedIndices.includes(stepIndex) &&
-      !repairedInvalidStepIndices.includes(stepIndex),
-    );
-    logRepairTrace(repairedSteps, repairChangedFields, {
-      changedRequestedIndices,
-      unchangedRequestedIndices: requestedInvalidIndices.filter(
-        (stepIndex) => !changedRequestedIndices.includes(stepIndex),
-      ),
-      resolvedRequestedIndices,
-      unresolvedRequestedIndices: requestedInvalidIndices.filter(
-        (stepIndex) => !resolvedRequestedIndices.includes(stepIndex),
-      ),
-      finalFailureReasons: ['repair_partial_effect'],
-    });
-    logFullRecipeRepairValidation(input, repairTelemetry);
-    throw new RecipeValidationError(['repair_partial_effect']);
-  }
-
-  // Validate the patch against the previous canonical ingredient concepts
-  // before it can be merged. Aliases and plurals use the same matcher as final
-  // closure validation; genuinely new or removed ingredients fail closed.
-  if (unknownIngredientsAfterRepair.length > 0) {
-    logRepairTrace(repairedSteps, repairChangedFields, {
-      finalFailureReasons: ['step_uses_unlisted_ingredients'],
-    });
-    logFullRecipeRepairValidation(input, repairTelemetry);
-    throw new RecipeValidationError(['step_uses_unlisted_ingredients']);
-  }
-  if (removedCanonicalIngredients.length > 0) {
-    logRepairTrace(repairedSteps, repairChangedFields, {
-      finalFailureReasons: ['repair_changed_ingredient_set'],
-    });
-    logFullRecipeRepairValidation(input, repairTelemetry);
-    throw new RecipeValidationError(['repair_changed_ingredient_set']);
-  }
-
-  const mayCorrectAmounts = issues.includes('ingredients_missing_amounts');
   const merged = openRouterRecipeOutputSchema.parse({
     ...previousOutput,
-    ingredients: mayCorrectAmounts ? repairedIngredients : canonicalIngredients,
-    steps: repairedSteps,
+    ingredients: ingredientMerge.ingredients,
+    steps: stepMerge.steps,
   });
   const finalNormalization = normalizeFullRecipeOutputWithDiagnostics(merged, input.analysis);
   const normalized = finalNormalization.output;
@@ -2191,58 +2240,223 @@ function applyFullRecipeRepairPatch(
     normalized.ingredients,
     normalized.steps,
   );
-  const changedRequestedIndices = requestedInvalidIndices.filter((stepIndex) =>
-    finalChangedFields.some((field) =>
-      field === `steps.${stepIndex}.step` || field === `steps.${stepIndex}.doneWhen`),
+  const changedIngredientIndices = requestedIngredientIndices.filter((ingredientIndex) =>
+    finalChangedFields.includes(`ingredients.${ingredientIndex}`));
+  const changedStepIndices = requestedStepIndices.filter((stepIndex) =>
+    finalChangedFields.some((field) => field.startsWith(`steps.${stepIndex}.`)));
+  const resolvedIngredientIndices = requestedIngredientIndices.filter((ingredientIndex) =>
+    changedIngredientIndices.includes(ingredientIndex) &&
+    hasUsableIngredientAmount(normalized.ingredients[ingredientIndex] ?? '') &&
+    ingredientsMatch(
+      canonicalIngredients[ingredientIndex] ?? '',
+      normalized.ingredients[ingredientIndex] ?? '',
+    ));
+  const unresolvedIngredientIndices = requestedIngredientIndices.filter(
+    (ingredientIndex) => !resolvedIngredientIndices.includes(ingredientIndex),
   );
-  const unchangedRequestedIndices = requestedInvalidIndices.filter(
-    (stepIndex) => !changedRequestedIndices.includes(stepIndex),
-  );
-  const resolvedRequestedIndices = requestedInvalidIndices.filter((stepIndex) =>
-    changedRequestedIndices.includes(stepIndex) &&
-    !finalDiagnostics.stepsMissingCompletionCue.includes(stepIndex),
-  );
-  const unresolvedRequestedIndices = requestedInvalidIndices.filter(
+  const resolvedRequestedIndices = requestedStepIndices.filter((stepIndex) => {
+    if (!changedStepIndices.includes(stepIndex)) return false;
+    if (completionStepIndices.includes(stepIndex) &&
+      finalDiagnostics.stepsMissingCompletionCue.includes(stepIndex)) return false;
+    if (closureStepIndices.includes(stepIndex) &&
+      finalDiagnostics.stepsUsingUnlistedIngredientIndices.includes(stepIndex)) return false;
+    return true;
+  });
+  const unresolvedRequestedIndices = requestedStepIndices.filter(
     (stepIndex) => !resolvedRequestedIndices.includes(stepIndex),
   );
+  const coverageFailures = [
+    ...(ingredientMerge.missingIngredientIndices.length > 0 ||
+      stepMerge.missingReturnedIndices.length > 0
+      ? ['repair_missing_required_correction'] : []),
+    ...(ingredientMerge.duplicateIngredientIndices.length > 0 ||
+      stepMerge.duplicateReturnedIndices.length > 0
+      ? ['repair_duplicate_correction'] : []),
+    ...(ingredientMerge.unrequestedIngredientIndices.length > 0 ||
+      stepMerge.unrequestedReturnedIndices.length > 0
+      ? ['repair_unrequested_correction'] : []),
+  ];
+  const finalValidationFailures = validateFullRecipeOutput(normalized, input.analysis, isDrink);
+  const requestedCorrectionCount = requestedIngredientIndices.length + requestedStepIndices.length;
+  const changedCorrectionCount = changedIngredientIndices.length + changedStepIndices.length;
+  const noEffect = coverageFailures.length === 0 &&
+    requestedCorrectionCount > 0 && changedCorrectionCount === 0;
+  const partialEffect = coverageFailures.length === 0 && !noEffect && (
+    unresolvedIngredientIndices.length > 0 ||
+    unresolvedRequestedIndices.length > 0 ||
+    finalValidationFailures.length > 0
+  );
+  const finalFailureReasons = [...new Set([
+    ...coverageFailures,
+    ...(noEffect ? ['repair_no_effect'] : []),
+    ...(partialEffect ? ['repair_partial_effect'] : []),
+    ...finalValidationFailures,
+  ])];
+  const repairedStepTextHashes = patchSteps.map((step, returnedPosition) => ({
+    returnedPosition,
+    ...(stepMerge.returnedIndices[returnedPosition] !== undefined
+      ? { stepIndex: stepMerge.returnedIndices[returnedPosition] }
+      : {}),
+    hash: getRepairStepHash(step),
+  }));
   const aliasMatchesApplied = [...new Set([
     ...(initialNormalizationDiagnostics?.aliasMatchesApplied ?? []),
     ...finalNormalization.diagnostics.aliasMatchesApplied,
   ])];
-  const deterministicSafetyApplied =
-    (initialNormalizationDiagnostics?.deterministicSafetyApplied ?? false) ||
-    finalNormalization.diagnostics.deterministicSafetyApplied;
-  const partialEffect = completionOnlyRepair && unresolvedRequestedIndices.length > 0;
-  const finalFailureReasons = partialEffect
-    ? [
-        'repair_partial_effect',
-        ...(finalDiagnostics.stepsMissingCompletionCue.length > 0
-          ? ['step_missing_time_or_completion_cue']
-          : []),
-        ...(getRecipeQualityIssues(normalized, input.analysis, false).includes('vague_step')
-          ? ['vague_step']
-          : []),
-      ]
-    : [];
-  logRepairTrace(normalized.steps, finalChangedFields, {
-    changedRequestedIndices,
-    unchangedRequestedIndices,
+  const suppressedNestedIngredientMentions = [...new Set([
+    ...(initialNormalizationDiagnostics?.suppressedNestedIngredientMentions ?? []),
+    ...finalNormalization.diagnostics.suppressedNestedIngredientMentions,
+  ])];
+  logFullRecipeRepairTrace(input, {
+    requestedIngredientIndices,
+    returnedIngredientIndices: ingredientMerge.returnedIngredientIndices,
+    missingIngredientIndices: ingredientMerge.missingIngredientIndices,
+    duplicateIngredientIndices: ingredientMerge.duplicateIngredientIndices,
+    unrequestedIngredientIndices: ingredientMerge.unrequestedIngredientIndices,
+    changedIngredientIndices,
+    requestedStepIndices,
+    returnedStepIndices: stepMerge.returnedIndices,
+    missingStepIndices: stepMerge.missingReturnedIndices,
+    changedStepIndices,
+    originalStepCount: previousOutput.steps.length,
+    mergedStepCount: normalized.steps.length,
+    requestedInvalidIndices: requestedStepIndices,
+    requiredReturnedIndices: requestedStepIndices,
+    returnedIndices: stepMerge.returnedIndices,
+    missingReturnedIndices: stepMerge.missingReturnedIndices,
+    duplicateReturnedIndices: stepMerge.duplicateReturnedIndices,
+    unrequestedReturnedIndices: stepMerge.unrequestedReturnedIndices,
+    changedRequestedIndices: changedStepIndices,
+    unchangedRequestedIndices: requestedStepIndices.filter(
+      (stepIndex) => !changedStepIndices.includes(stepIndex),
+    ),
     resolvedRequestedIndices,
     unresolvedRequestedIndices,
     aliasMatchesApplied,
-    deterministicSafetyApplied,
+    suppressedNestedIngredientMentions,
+    unresolvedIngredientMentions: finalDiagnostics.unknownIngredients,
+    deterministicSafetyApplied:
+      (initialNormalizationDiagnostics?.deterministicSafetyApplied ?? false) ||
+      finalNormalization.diagnostics.deterministicSafetyApplied,
     finalFailureReasons,
+    rawReturnedStepNumbers,
+    parsedReturnedStepNumbers,
+    acceptedStepIndices: stepMerge.acceptedStepIndices,
+    rejectedStepIndices: stepMerge.rejectedStepIndices,
+    originalStepTextHashes,
+    repairedStepTextHashes,
+    mergedStepTextHashes: getIndexedStepHashes(normalized.steps),
+    changedFields: finalChangedFields,
   });
   logFullRecipeRepairValidation(input, {
-    ...repairTelemetry,
+    initialInvalidStepIndices: requestedStepIndices,
     repairedInvalidStepIndices: finalDiagnostics.stepsMissingCompletionCue,
+    unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
     unknownIngredientsAfterRepair: finalDiagnostics.unknownIngredients,
+    presentationOnlyStepIndices: finalDiagnostics.presentationOnlyStepIndices,
     repairChangedFields: finalChangedFields,
   });
-  if (completionOnlyRepair) {
-    if (partialEffect) {
-      throw new RecipeValidationError(finalFailureReasons);
-    }
+  if (finalFailureReasons.length > 0) {
+    throw new RecipeValidationError(finalFailureReasons);
+  }
+  return normalized;
+}
+
+function applyLegacyFullRecipeRepairPatch(
+  input: { analysis: FoodImageAnalysis } & Partial<ScanExecutionContext>,
+  previousOutput: OpenRouterRecipeOutput,
+  repairJson: unknown,
+  issues: string[],
+  isDrink: boolean,
+  initialDiagnostics: ReturnType<typeof getFullRecipeRepairDiagnostics>,
+  initialNormalizationDiagnostics?: FullRecipeNormalizationDiagnostics,
+): OpenRouterRecipeOutput {
+  const parsedPatch = fullRecipeRepairPatchSchema.safeParse(repairJson);
+  if (!parsedPatch.success) throw new RecipeValidationError(['repair_invalid_schema']);
+  const canonicalIngredients = normalizeProviderIngredientList(previousOutput.ingredients);
+  const repairedIngredients = normalizeProviderIngredientList(parsedPatch.data.ingredients);
+  const changedIngredientConcept = repairedIngredients.some(
+    (ingredient) => !findMatchingIngredientName(ingredient, canonicalIngredients),
+  ) || canonicalIngredients.some(
+    (ingredient) => !findMatchingIngredientName(ingredient, repairedIngredients),
+  );
+  if (changedIngredientConcept) {
+    throw new RecipeValidationError(['repair_changed_ingredient_set']);
+  }
+  const merged = openRouterRecipeOutputSchema.parse({
+    ...previousOutput,
+    ingredients: issues.includes('ingredients_missing_amounts')
+      ? repairedIngredients
+      : canonicalIngredients,
+    steps: parsedPatch.data.steps,
+  });
+  const finalNormalization = normalizeFullRecipeOutputWithDiagnostics(merged, input.analysis);
+  const normalized = finalNormalization.output;
+  const finalDiagnostics = getFullRecipeRepairDiagnostics(normalized, input.analysis);
+  const finalFailureReasons = validateFullRecipeOutput(normalized, input.analysis, isDrink);
+  const changedFields = getRepairChangedFields(
+    previousOutput,
+    normalized.ingredients,
+    normalized.steps,
+  );
+  logFullRecipeRepairTrace(input, {
+    requestedIngredientIndices: [],
+    returnedIngredientIndices: [],
+    missingIngredientIndices: [],
+    duplicateIngredientIndices: [],
+    unrequestedIngredientIndices: [],
+    changedIngredientIndices: [],
+    requestedStepIndices: [],
+    returnedStepIndices: [],
+    missingStepIndices: [],
+    changedStepIndices: [],
+    originalStepCount: previousOutput.steps.length,
+    mergedStepCount: normalized.steps.length,
+    requestedInvalidIndices: [],
+    requiredReturnedIndices: [],
+    returnedIndices: [],
+    missingReturnedIndices: [],
+    duplicateReturnedIndices: [],
+    unrequestedReturnedIndices: [],
+    changedRequestedIndices: [],
+    unchangedRequestedIndices: [],
+    resolvedRequestedIndices: [],
+    unresolvedRequestedIndices: [],
+    aliasMatchesApplied: [...new Set([
+      ...(initialNormalizationDiagnostics?.aliasMatchesApplied ?? []),
+      ...finalNormalization.diagnostics.aliasMatchesApplied,
+    ])],
+    suppressedNestedIngredientMentions: [...new Set([
+      ...(initialNormalizationDiagnostics?.suppressedNestedIngredientMentions ?? []),
+      ...finalNormalization.diagnostics.suppressedNestedIngredientMentions,
+    ])],
+    unresolvedIngredientMentions: finalDiagnostics.unknownIngredients,
+    deterministicSafetyApplied:
+      (initialNormalizationDiagnostics?.deterministicSafetyApplied ?? false) ||
+      finalNormalization.diagnostics.deterministicSafetyApplied,
+    finalFailureReasons,
+    rawReturnedStepNumbers: getRawRepairStepNumbers(repairJson),
+    parsedReturnedStepNumbers: getParsedRepairStepNumbers(parsedPatch.data.steps),
+    acceptedStepIndices: [],
+    rejectedStepIndices: [],
+    originalStepTextHashes: getIndexedStepHashes(previousOutput.steps),
+    repairedStepTextHashes: parsedPatch.data.steps.map((step, returnedPosition) => ({
+      returnedPosition,
+      hash: getRepairStepHash(step),
+    })),
+    mergedStepTextHashes: getIndexedStepHashes(normalized.steps),
+    changedFields,
+  });
+  logFullRecipeRepairValidation(input, {
+    initialInvalidStepIndices: initialDiagnostics.stepsMissingCompletionCue,
+    repairedInvalidStepIndices: finalDiagnostics.stepsMissingCompletionCue,
+    unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
+    unknownIngredientsAfterRepair: finalDiagnostics.unknownIngredients,
+    presentationOnlyStepIndices: finalDiagnostics.presentationOnlyStepIndices,
+    repairChangedFields: changedFields,
+  });
+  if (finalFailureReasons.length > 0) {
+    throw new RecipeValidationError(finalFailureReasons);
   }
   return normalized;
 }
@@ -2253,9 +2467,13 @@ function getRepairChangedFields(
   repairedSteps: ProviderStepLike[],
 ): string[] {
   const changed = new Set<string>();
-  if (JSON.stringify(normalizeProviderIngredientList(previousOutput.ingredients)) !==
-    JSON.stringify(normalizeProviderIngredientList(repairedIngredients))) {
-    changed.add('ingredients');
+  const previousIngredients = normalizeProviderIngredientList(previousOutput.ingredients);
+  const nextIngredients = normalizeProviderIngredientList(repairedIngredients);
+  const maxIngredients = Math.max(previousIngredients.length, nextIngredients.length);
+  for (let index = 0; index < maxIngredients; index += 1) {
+    if ((previousIngredients[index] ?? '') !== (nextIngredients[index] ?? '')) {
+      changed.add(`ingredients.${index}`);
+    }
   }
   if (previousOutput.steps.length !== repairedSteps.length) {
     changed.add('steps.length');
@@ -2302,6 +2520,18 @@ function logFullRecipeRepairValidation(
 function logFullRecipeRepairTrace(
   input: Partial<ScanExecutionContext>,
   details: {
+    requestedIngredientIndices: number[];
+    returnedIngredientIndices: number[];
+    missingIngredientIndices: number[];
+    duplicateIngredientIndices: number[];
+    unrequestedIngredientIndices: number[];
+    changedIngredientIndices: number[];
+    requestedStepIndices: number[];
+    returnedStepIndices: number[];
+    missingStepIndices: number[];
+    changedStepIndices: number[];
+    originalStepCount: number;
+    mergedStepCount: number;
     requestedInvalidIndices: number[];
     requiredReturnedIndices: number[];
     returnedIndices: number[];
@@ -2313,6 +2543,8 @@ function logFullRecipeRepairTrace(
     resolvedRequestedIndices: number[];
     unresolvedRequestedIndices: number[];
     aliasMatchesApplied: string[];
+    suppressedNestedIngredientMentions: string[];
+    unresolvedIngredientMentions: string[];
     deterministicSafetyApplied: boolean;
     finalFailureReasons: string[];
     rawReturnedStepNumbers: RepairReturnedStepNumber[];
@@ -2328,9 +2560,10 @@ function logFullRecipeRepairTrace(
   console.log('[recipe_repair_trace]', {
     requestId: input.requestId,
     indexSemantics: {
+      ingredientIndex: 'zero_based',
       stepIndex: 'zero_based',
-      completionRepairContract: 'exact_sparse_stepCorrections',
-      fullStepArrays: 'rejected_for_completion_only_repair',
+      targetedRepairContract: 'exact_indexed_corrections',
+      fullArrays: 'rejected_for_targeted_repair',
     },
     ...details,
   });
@@ -2424,6 +2657,16 @@ function getFullRecipeRepairPrompt(
   const diagnostics = previousOutput
     ? getFullRecipeRepairDiagnostics(previousOutput, analysis)
     : undefined;
+  const useIndexedRepair = Boolean(previousOutput) && shouldUseIndexedFullRecipeRepair(issues);
+  const requestedIngredientIndices = issues.includes('ingredients_missing_amounts')
+    ? diagnostics?.ingredientIndicesMissingAmounts ?? []
+    : [];
+  const requestedStepIndices = [...new Set([
+    ...(issues.includes('step_missing_time_or_completion_cue')
+      ? diagnostics?.stepsMissingCompletionCue ?? [] : []),
+    ...(issues.includes('step_uses_unlisted_ingredients')
+      ? diagnostics?.stepsUsingUnlistedIngredientIndices ?? [] : []),
+  ])].sort((a, b) => a - b);
   const previousRecipe = previousOutput
     ? {
         title: previousOutput.title,
@@ -2449,14 +2692,15 @@ function getFullRecipeRepairPrompt(
     `Correct the previous recipe JSON for "${analysis.dishName}".`,
     `Exact validation failures: ${issues.join(', ')}.`,
     previousOutput
-      ? issues.every((issue) => issue === 'step_missing_time_or_completion_cue')
-        ? 'Return ONLY a minified sparse correction object with exactly one key: {"stepCorrections":[{"stepIndex":4,"step":"...","doneWhen":"..."}]}. Return exactly one correction for every required zero-based index, with no duplicates, omissions, unrequested indices, ingredient list, or full step array.'
+      ? useIndexedRepair
+        ? 'Return ONLY a minified indexed correction object. Allowed keys are ingredientCorrections and stepCorrections. Example: {"ingredientCorrections":[{"ingredientIndex":3,"value":"2 tbsp cornstarch, for dusting"}],"stepCorrections":[{"stepIndex":2,"step":"...","doneWhen":"..."}]}. Include only needed correction arrays. Never return complete ingredients or steps arrays.'
         : 'Return ONLY a minified correction object with exactly two keys: {"ingredients":[...the entire corrected ingredient list...],"steps":[...the entire corrected step list...]}. Do not repeat title, equipment, times, servings, or difficulty.'
       : 'Return ONLY the entire corrected recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, and skillLevel.',
     'Fix every listed problem. Every active cooking instruction must contain a specific time, temperature, or concrete sensory cue such as golden, tender, bubbling, thickened, or aromatic.',
     'Never use vague completion language such as "until done", "until ready", or "cook thoroughly". Do not add a cue to non-cooking actions such as gathering ingredients, plating, garnishing, serving, or dividing into bowls unless that same step also cooks food.',
-    'INGREDIENT LOCK: do not introduce, substitute, or remove any ingredient concept. Copy the complete canonical ingredient list below. An amount may change only to fix ingredients_missing_amounts. Every ingredient word in every repaired step must resolve to that list.',
-    `Required returned step indices (zero-based): ${JSON.stringify(diagnostics?.stepsMissingCompletionCue ?? [])}. Return each of these indices exactly once and no other index. Every correction must materially change that step and resolve its completion defect.`,
+    'INGREDIENT LOCK: do not introduce, substitute, or remove any ingredient concept. Use the complete canonical ingredient list below as the only allowed vocabulary, but return only requested indexed corrections. An amount may change only to fix ingredients_missing_amounts. Every ingredient word in every repaired step must resolve to that list.',
+    `Required ingredient correction indices (zero-based): ${JSON.stringify(requestedIngredientIndices)}. Return each exactly once and no other ingredient index. Preserve the ingredient concept and add an explicit usable quantity; "for dusting", "for garnish", and "as needed" are not quantities.`,
+    `Required step correction indices (zero-based): ${JSON.stringify(requestedStepIndices)}. Return each exactly once and no other step index. Every correction must materially change that step and resolve all completion and ingredient-closure defects on it.`,
     'Correction shape: {"stepIndex":3,"title":"short action","step":"cookable instruction","doneWhen":"specific time, temperature, or sensory cue","safetyNote":"required food-safety rule when applicable"}. stepIndex is always zero-based. Do not use human one-based numbering. Phases, per-step ingredients, and per-step tools are derived locally.',
     `Use at least ${bounds.min} steps and preferably no more than ${bounds.max}; keep each instruction under 30 words. A presentation-only final step may simply serve or plate the finished dish.`,
     'INGREDIENT CLOSURE IS MANDATORY: every ingredient named in an instruction must appear in the locked top-level ingredient list with an exact usable amount.',
@@ -2480,6 +2724,16 @@ function getFullRecipeRepairDiagnostics(
   analysis: FoodImageAnalysis,
 ) {
   const stepCompletionIndices = getInvalidCompletionStepIndices(output.steps);
+  const ingredientMentionDiagnostics = getIngredientMentionDiagnostics(
+    output.steps.map(getProviderStepText),
+    output.ingredients,
+  );
+  const stepsUsingUnlistedIngredientIndices = output.steps
+    .map((step, stepIndex) => getUnlistedStepIngredientText(
+      [getProviderStepText(step)],
+      output.ingredients,
+    ).length > 0 ? stepIndex : -1)
+    .filter((stepIndex) => stepIndex >= 0);
   const coverage = isGenuinePlatterMeal(analysis)
     ? getRecipeComponentCoverage(
         (analysis.detectedComponents ?? []).map((component) => component.name),
@@ -2494,14 +2748,18 @@ function getFullRecipeRepairDiagnostics(
   return {
     stepCount: output.steps.length,
     preferredStepBounds: getRecipeStepBounds(analysis),
+    ingredientIndicesMissingAmounts: output.ingredients
+      .map((ingredient, ingredientIndex) =>
+        hasUsableIngredientAmount(ingredient) ? -1 : ingredientIndex)
+      .filter((ingredientIndex) => ingredientIndex >= 0),
     ingredientsMissingAmounts: output.ingredients.filter(
       (ingredient) => !hasUsableIngredientAmount(ingredient),
     ),
     stepsMissingCompletionCue: stepCompletionIndices,
-    unknownIngredients: getUnlistedStepIngredientText(
-      output.steps.map(getProviderStepText),
-      output.ingredients,
-    ),
+    stepsUsingUnlistedIngredientIndices,
+    unknownIngredients: ingredientMentionDiagnostics.unresolvedIngredientMentions,
+    suppressedNestedIngredientMentions:
+      ingredientMentionDiagnostics.suppressedNestedIngredientMentions,
     presentationOnlyStepIndices: getPresentationOnlyStepIndices(output.steps),
     platterCoveragePercent: coverage.coveragePercent,
     missingPlatterComponents: coverage.missingComponents,

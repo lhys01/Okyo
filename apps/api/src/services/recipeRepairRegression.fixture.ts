@@ -143,3 +143,68 @@ export const fullCoreRawTunaSuccessfulPatchFixture = {
     },
   ],
 };
+
+// Safe synthetic reproduction of the confirmed Mochi mixed-repair shape. The
+// provider text is intentionally invented; only the observed defect indices
+// and ingredient concepts are retained.
+export const fullCoreMochiMixedInitialFixture = {
+  title: 'Soft Mochi',
+  ingredients: [
+    '1 cup sweet rice flour',
+    '3/4 cup water',
+    '1/3 cup sugar',
+    'cornstarch for dusting',
+    '1 tsp vegetable oil',
+  ],
+  equipment: ['mixing bowl', 'microwave-safe bowl', 'rubber spatula'],
+  steps: [
+    {
+      title: 'Gather Ingredients',
+      step: 'Gather the sweet rice flour, water, sugar, cornstarch, and vegetable oil.',
+    },
+    {
+      title: 'Mix Batter',
+      step: 'Mix the sweet rice flour, water, and sugar into a smooth batter.',
+    },
+    {
+      title: 'Heat Batter',
+      step: 'Heat the batter in the microwave-safe bowl.',
+    },
+    {
+      title: 'Stir Dough',
+      step: 'Stir the dough for 1 minute until thickened and glossy.',
+    },
+    {
+      title: 'Cook Dough',
+      step: 'Cook the dough in the microwave-safe bowl.',
+    },
+    {
+      title: 'Serve',
+      step: 'Plate the mochi, dust with cornstarch, divide into pieces, and serve.',
+    },
+  ],
+  prepTime: 10,
+  cookTime: 4,
+  totalTime: 14,
+  servings: 4,
+  skillLevel: 'Easy',
+};
+
+export const fullCoreMochiMixedSuccessfulPatchFixture = {
+  ingredientCorrections: [{
+    ingredientIndex: 3,
+    value: '2 tbsp cornstarch, for dusting',
+  }],
+  stepCorrections: [
+    {
+      stepIndex: 2,
+      title: 'Heat Batter',
+      step: 'Heat the batter for 1 minute until it begins to thicken.',
+    },
+    {
+      stepIndex: 4,
+      title: 'Cook Dough',
+      step: 'Cook the dough for 1 minute until glossy and firm.',
+    },
+  ],
+};
