@@ -5,14 +5,18 @@ import test from 'node:test';
 
 import {
   getKikoRecipeArtFileNameForStep,
-  KIKO_RECIPE_ART_INVENTORY,
   KIKO_RECIPE_ART_IMAGE_INVENTORY,
   normalizeKikoRecipeStepText,
 } from './kikoRecipeArt';
 
-test('the inventory includes every file in kiko-recipe-art exactly once', () => {
-  const inventoryFiles = KIKO_RECIPE_ART_INVENTORY.map((entry) => entry.fileName).sort();
-  const actualFiles = readdirSync(resolve(process.cwd(), 'assets/kiko-recipe-art')).sort();
+test('the inventory includes every PNG in kiko-recipe-art exactly once', () => {
+  const inventoryFiles = KIKO_RECIPE_ART_IMAGE_INVENTORY.map((entry) => entry.fileName).sort();
+  const actualFiles = readdirSync(resolve(process.cwd(), 'assets/kiko-recipe-art'), {
+    withFileTypes: true,
+  })
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.png'))
+    .map((entry) => entry.name)
+    .sort();
 
   assert.equal(KIKO_RECIPE_ART_IMAGE_INVENTORY.length, 172);
   assert.equal(new Set(inventoryFiles).size, inventoryFiles.length);
