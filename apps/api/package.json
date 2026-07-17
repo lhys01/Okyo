@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/**/*.test.ts",
     "test:auth": "node --import tsx --test src/auth/*.test.ts src/middleware/supabaseAuth.test.ts",
-    "test:persistence": "node --import tsx --test src/database/*.test.ts src/persistence/*.test.ts src/routes/ownedRecipe.test.ts src/config/debugRoute.test.ts"
+    "test:persistence": "node --import tsx --test src/database/*.test.ts src/persistence/*.test.ts src/config/debugRoute.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",

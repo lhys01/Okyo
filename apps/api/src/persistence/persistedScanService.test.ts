@@ -143,7 +143,6 @@ function recordingRepository(
       if (options.failRecipe) throw new PersistenceUnavailableError();
     },
     async findOwnedRecipe() { return null; },
-    async listOwnedRecipes() { return []; },
   };
 }
 
@@ -184,8 +183,6 @@ function makeScanResult(): AiScanSuccessResult {
       difficulty: 'Easy',
       modes: ['Restaurant Copy'],
       recipeId: recipe.id,
-      groceryListId: 'temporary-grocery',
-      shareCardId: 'temporary-share',
     },
     recipe,
     note: 'Test result.',

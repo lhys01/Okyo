@@ -36,7 +36,6 @@ export type ScanRecipeDatabaseGateway = {
   updateOwnedScanSession(userId: string, scanId: string, patch: Partial<ScanSessionRow>): Promise<boolean>;
   insertGeneratedRecipe(row: GeneratedRecipeRow): Promise<void>;
   getOwnedGeneratedRecipe(userId: string, recipeId: string, nowIso: string): Promise<GeneratedRecipeRow | null>;
-  listOwnedGeneratedRecipes(userId: string, nowIso: string): Promise<GeneratedRecipeRow[]>;
 };
 
 let gateway: ScanRecipeDatabaseGateway | null = null;
@@ -92,16 +91,6 @@ export function createScanRecipeDatabaseGateway(client: SupabaseClient): ScanRec
       return data as GeneratedRecipeRow | null;
     },
 
-    async listOwnedGeneratedRecipes(userId, nowIso) {
-      const { data, error } = await client
-        .from('generated_recipes')
-        .select('id,user_id,recipe,created_at,expires_at')
-        .eq('user_id', userId)
-        .gt('expires_at', nowIso)
-        .order('created_at', { ascending: false });
-      throwIfDatabaseError(error);
-      return (data ?? []) as GeneratedRecipeRow[];
-    },
   };
 }
 

@@ -47,8 +47,6 @@ export type ScanResult = {
   difficulty: Difficulty;
   modes: RecipeMode[];
   recipeId: string;
-  groceryListId: string;
-  shareCardId: string;
 };
 
 export type RecipeIngredient = {
@@ -162,82 +160,6 @@ export type Recipe = {
   spicePairings?: string[];
   cookingTerms?: CookingTerm[];
   isCompactRecipe?: boolean;
-};
-
-export type GroceryList = {
-  id: string;
-  recipeId: string;
-  title: string;
-  items: GroceryListItem[];
-};
-
-export type ShareCard = {
-  id: string;
-  scanResultId?: string;
-  kind: 'scan-result' | 'ranking' | 'badge';
-  headline: string;
-  subheadline: string;
-  savedAmount?: number;
-  matchScore?: number;
-  footer: string;
-};
-
-export type RestaurantPackDish = {
-  id: string;
-  dishName: string;
-  restaurantPrice: number;
-  homemadeCost: number;
-  estimatedSavings: number;
-  difficulty: Difficulty;
-};
-
-export type RestaurantPack = {
-  id: string;
-  name: string;
-  dishes: RestaurantPackDish[];
-};
-
-export type XpEventDefinition = {
-  id: string;
-  label: string;
-  points: number;
-};
-
-export type Badge = {
-  id: string;
-  name: string;
-  description: string;
-  unlocked: boolean;
-};
-
-export type LeaderboardEntry = {
-  id: string;
-  rank: number;
-  displayName: string;
-  category: string;
-  value: string;
-  xp: number;
-};
-
-export type CompletedChallenge = {
-  id: string;
-  recipeId: string;
-  recipeTitle: string;
-  mode: RecipeMode;
-  rating: 'Nailed it' | 'Pretty close' | 'Needs work' | 'Not close';
-  completedAt: string;
-  matchScore: number;
-  moneySaved: number;
-  xpEarned: number;
-  badgeUnlocked?: string;
-};
-
-export type AwardedXpEvent = {
-  id: string;
-  eventType: string;
-  points: number;
-  awardedAt: string;
-  sourceId?: string;
 };
 
 export type ApiSuccess<T> = {

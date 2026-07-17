@@ -10,7 +10,6 @@ import type {
   Difficulty,
   GroceryCategory,
   GroceryListItem,
-  GroceryList,
   Recipe,
   CookingTerm,
   RecipeIngredient,
@@ -22,7 +21,6 @@ import type {
   ScanResult,
   ScanState,
   ScanSource,
-  ShareCard,
 } from '../types.js';
 import {
   analyzeFoodImageWithOpenRouter,
@@ -45,8 +43,6 @@ import {
   RecipeValidationError,
 } from './recipeGenerationError.js';
 import { isGenuinePlatterMeal } from './recipePlatterValidation.js';
-import { logScanEvaluation } from './scanEvalLogger.js';
-import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
 import { throwIfScanCancelled, type ScanExecutionContext } from './scanDeadline.js';
 import {
   logScanMetric,
@@ -264,8 +260,6 @@ export type AiScanSuccessResult = {
   status: 'success';
   scan: ScanResult;
   recipe?: Recipe;
-  groceryList?: GroceryList;
-  shareCard?: ShareCard;
   note: string;
   aiSource: AiSource;
   aiProvider: 'openrouter';
@@ -369,7 +363,6 @@ export async function generateRecipeFromDish(
   const config = getAiConfig({ fableActive: input.fableActive });
   throwIfScanCancelled(input.signal, input.deadlineAt);
 
-  const startedAt = Date.now();
   try {
     const output = await generateRecipeWithOpenRouter({
       analysis: input.analysis,
@@ -386,20 +379,6 @@ export async function generateRecipeFromDish(
       ? createCompactRecipeFromOpenRouterOutput(output, input.analysis, input.mode)
       : createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
 
-    const initialScore = result.recipe?.structuredSteps?.length
-      ? calculateRecipeCoachingScore(result.recipe.structuredSteps)
-      : 0;
-
-    recordRecipeQualityForResult({
-      config,
-      analysis: input.analysis,
-      result,
-      initialScore,
-      finalScore: initialScore,
-      repairDelivered: false,
-      generationMs: Date.now() - startedAt,
-    });
-
     // Component coverage gate: for platter-style meals, ensure every detected
     // component appears in the generated recipe evidence.
     let finalResult = result;
@@ -407,7 +386,6 @@ export async function generateRecipeFromDish(
       finalResult = await ensureComponentCoverage(
         finalResult,
         input.analysis,
-        config,
       );
     }
 
@@ -445,47 +423,6 @@ export async function generateRecipeFromDish(
     }
     throw error;
   }
-}
-
-// Records a recipe-quality analytics event for the delivered recipe. Re-runs the
-// pure warning detector on the FINAL (post-repair) steps so "common issues"
-// reflect what the user actually receives. Fire-and-forget — never awaited on the
-// request path, and recordRecipeQuality swallows its own errors.
-function recordRecipeQualityForResult(args: {
-  config: AiConfig;
-  analysis: FoodImageAnalysis;
-  result: GeneratedRecipeOutput;
-  initialScore: number;
-  finalScore: number;
-  repairDelivered: boolean;
-  generationMs: number;
-}): void {
-  const { config, analysis, result, initialScore, finalScore, repairDelivered, generationMs } = args;
-  const finalSteps = result.recipe?.structuredSteps ?? [];
-  const warnings = finalSteps.length > 0
-    ? collectCoachingWarnings(
-        finalSteps,
-        analysis,
-        analysis.dishName ?? '',
-        result.recipe?.ingredients.map((i) => i.name),
-        result.recipe?.ingredients.map((i) => ({ name: i.name, quantity: i.quantity })),
-      ).warnCounts
-    : {};
-
-  void recordRecipeQuality({
-    model: config.openRouterTextModel,
-    dish: analysis.dishName ?? 'unknown',
-    category: analysis.broadDishCategory ?? 'unknown',
-    score: finalScore,
-    initialScore,
-    repairUsed: repairDelivered,
-    repairImprovement: repairDelivered ? finalScore - initialScore : 0,
-    repairSuccess: repairDelivered && finalScore > initialScore,
-    compact: Boolean(result.recipe?.isCompactRecipe),
-    generationMs,
-    stepCount: finalSteps.length,
-    warnings,
-  });
 }
 
 // Generates coaching fields for a previously scanned recipe.
@@ -754,9 +691,6 @@ export async function createAiScan(
     const aiSource = 'openrouter_ai' as const;
 
     const scanId = `scan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const groceryListId = `grocery-${recipe.id}`;
-    const shareCardId = `share-${scanId}`;
-
     const scan: ScanResult = {
       id: scanId,
       dishName: analysis.dishName,
@@ -773,21 +707,12 @@ export async function createAiScan(
       restaurantStyle: analysis.restaurantStyle,
       scanState: analysis.scanState,
       recipeId: recipe.id,
-      groceryListId,
-      shareCardId,
     };
-
-    // Grocery presentation and share-card copy are derived when those screens
-    // are opened. They are not part of the blocking scan response.
-    const groceryList = undefined;
-    const shareCard = undefined;
 
     const result = {
       status: 'success' as const,
       scan,
       recipe,
-      groceryList,
-      shareCard,
       note: usedOpenRouterAnalysis
         ? 'AI provider output is for testing only. No image was stored; verify all food, cost, and recipe details.'
         : 'AI provider generated this result.',
@@ -796,8 +721,6 @@ export async function createAiScan(
       uploadedImage,
     };
 
-    // Fire-and-forget: analytics file I/O must not block the user's response.
-    void logScanEvaluationFromResult(result, config).catch(() => undefined);
     logFinalScanResult(result);
 
     console.log('[scan_timing]', {
@@ -1112,20 +1035,6 @@ function createRecipeFromVariant(
 }
 
 
-async function logScanEvaluationFromResult(result: AiScanSuccessResult, config: ReturnType<typeof getAiConfig>) {
-  await logScanEvaluation({
-    aiSource: result.aiSource,
-    config,
-    fallbackReason: result.fallbackReason,
-    scan: result.scan,
-    scanId: result.scan.id,
-    scanState: result.scanState,
-    status: 'success',
-    uploadedImage: result.uploadedImage,
-  });
-}
-
-
 // Returns a FoodRejectionError if the vision analysis indicates non-food or unclear food,
 // null if generation should proceed. Only gates real uploaded images — demo/mock mode passes through.
 function getFoodGateRejection(analysis: FoodImageAnalysis, uploadedImage: boolean): FoodRejectionError | null {
@@ -1197,19 +1106,6 @@ function getUnavailableAiReason(config: ReturnType<typeof getAiConfig>) {
   }
 
   return 'ai_unavailable';
-}
-
-function getGroceryListForRecipe(recipe: Recipe): GroceryList | undefined {
-  if (recipe.groceryItems && recipe.groceryItems.length > 0) {
-    return {
-      id: `grocery-${recipe.id}`,
-      items: recipe.groceryItems,
-      recipeId: recipe.id,
-      title: `${recipe.title} Grocery List`,
-    };
-  }
-
-  return undefined;
 }
 
 function getBlendedConfidence(...scores: number[]) {
@@ -4807,7 +4703,6 @@ function isComponentCovered(detectedName: string, generatedComponents: string[])
 async function ensureComponentCoverage(
   result: GeneratedRecipeOutput,
   analysis: FoodImageAnalysis,
-  config: AiConfig,
 ): Promise<GeneratedRecipeOutput> {
   const detected = analysis.detectedComponents ?? [];
   if (detected.length === 0) return result;
@@ -4816,21 +4711,6 @@ async function ensureComponentCoverage(
   const generated = extractGeneratedComponents(recipe);
   const { coveragePercent, missingComponents } = computeCoverage(detected, generated);
   const coverageFailed = coveragePercent < 90 && missingComponents.length > 0;
-
-  void recordPlatterCoverage({
-    dish: analysis.dishName,
-    model: config.openRouterTextModel,
-    broadDishCategory: analysis.broadDishCategory,
-    detectedComponentCount: detected.length,
-    generatedComponentCount: generated.length,
-    missingComponentCount: missingComponents.length,
-    missingComponentNames: missingComponents,
-    coveragePercent,
-    finalCoveragePercent: coveragePercent,
-    repairTriggered: false,
-    repairAddedComponents: 0,
-    repairSucceeded: false,
-  });
 
   if (coverageFailed) {
     console.error('[component-coverage] recipe failed closed after provider repair budget', {

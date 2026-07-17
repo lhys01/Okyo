@@ -98,24 +98,14 @@ test('invalid generated recipe data is rejected before insertion', async () => {
   assert.equal(database.insertedRecipes.length, 0);
 });
 
-test('owned recipe listing is scoped to the verified user', async () => {
-  const recipe = makeRecipe();
-  const database = fakeDatabase({ listRows: [row(userA, recipe)] });
-  const repository = createScanRecipeRepository(database.gateway);
-  assert.deepEqual(await repository.listOwnedRecipes(userA), [recipe]);
-  assert.deepEqual(database.recipeListScopes, [userA]);
-});
-
 function fakeDatabase(options: {
   getRecipe?: (userId: string, recipeId: string) => GeneratedRecipeRow | null;
   insertRecipeError?: Error;
-  listRows?: GeneratedRecipeRow[];
 } = {}) {
   const insertedScans: ScanSessionRow[] = [];
   const insertedRecipes: GeneratedRecipeRow[] = [];
   const updatedScanScopes: Array<{ userId: string; scanId: string }> = [];
   const recipeReadScopes: Array<{ userId: string; recipeId: string }> = [];
-  const recipeListScopes: string[] = [];
   const gateway: ScanRecipeDatabaseGateway = {
     async insertScanSession(value) { insertedScans.push(value); },
     async updateOwnedScanSession(userId, scanId) {
@@ -130,12 +120,8 @@ function fakeDatabase(options: {
       recipeReadScopes.push({ userId, recipeId: requestedId });
       return options.getRecipe?.(userId, requestedId) ?? null;
     },
-    async listOwnedGeneratedRecipes(userId) {
-      recipeListScopes.push(userId);
-      return options.listRows ?? [];
-    },
   };
-  return { gateway, insertedScans, insertedRecipes, updatedScanScopes, recipeReadScopes, recipeListScopes };
+  return { gateway, insertedScans, insertedRecipes, updatedScanScopes, recipeReadScopes };
 }
 
 function row(userId: string, recipe: Recipe): GeneratedRecipeRow {

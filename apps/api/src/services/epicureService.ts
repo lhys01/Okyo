@@ -24,7 +24,6 @@ import {
   isEpicureEnabled,
   type OpenRouterConfig,
 } from '../config/openRouter.js';
-import { logEpicureUsage } from './epicureAnalytics.js';
 import {
   getRemainingScanMs,
   throwIfScanCancelled,
@@ -121,24 +120,11 @@ export async function enrichRecipeContext(
 
   if (!isEpicureEnabled(config) || detectedIngredients.length === 0) {
     // Feature flag off / nothing to enrich → behave exactly as before.
-    logEpicureUsage({
-      epicureUsed: false,
-      ingredientCount: detectedIngredients.length,
-      suggestionCount: 0,
-      generationMode: input.mode,
-    });
     return null;
   }
 
   const suggestions = await getEpicureSuggestions(detectedIngredients, config, quota, execution);
   const suggestionCount = countSuggestions(suggestions);
-
-  logEpicureUsage({
-    epicureUsed: suggestionCount > 0,
-    ingredientCount: detectedIngredients.length,
-    suggestionCount,
-    generationMode: input.mode,
-  });
 
   if (suggestionCount === 0) {
     return null;

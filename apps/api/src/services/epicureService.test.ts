@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 // Keep tests hermetic: no analytics file writes during the run.
-process.env.EPICURE_ANALYTICS = 'off';
 
 import type { OpenRouterConfig } from '../config/openRouter.js';
 import {

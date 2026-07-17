@@ -141,15 +141,7 @@ function normalizePersistentIds(result: AiScanSuccessResult, id: string): AiScan
       ...result.scan,
       id,
       recipeId: id,
-      groceryListId: `grocery-${id}`,
-      shareCardId: `share-${id}`,
     },
-    groceryList: result.groceryList
-      ? { ...result.groceryList, id: `grocery-${id}`, recipeId: id }
-      : undefined,
-    shareCard: result.shareCard
-      ? { ...result.shareCard, id: `share-${id}`, scanResultId: id }
-      : undefined,
   };
 }
 

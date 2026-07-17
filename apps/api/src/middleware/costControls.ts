@@ -75,20 +75,6 @@ export function checkAndIncrementFableCap(requestId?: string): boolean {
   return true;
 }
 
-// ─── Image Generation Kill Switch (scaffold) ─────────────────────────────────
-//
-// IMAGE_GEN_ENABLED=false blocks all future image generation calls.
-// Add this check at the top of any image generation service before enabling.
-
-export function isImageGenAllowed(): boolean {
-  const config = getCostControlConfig();
-  if (!config.imageGenEnabled) {
-    logCostEvent('image_gen_blocked', { reason: 'IMAGE_GEN_ENABLED is false' });
-    return false;
-  }
-  return true;
-}
-
 // ─── Cost Event Logger ───────────────────────────────────────────────────────
 
 export function logCostEvent(event: string, details: Record<string, unknown>) {

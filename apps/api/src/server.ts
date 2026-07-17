@@ -23,17 +23,6 @@ import {
 } from './quota/providerQuota.js';
 import { requestContextMiddleware } from './middleware/requestContext.js';
 import { mountV1Authentication } from './middleware/supabaseAuth.js';
-import {
-  awardXp,
-  createChallenge,
-  getRecipe,
-  getRestaurantPack,
-  getRestaurantPacks,
-  getSavingsSummary,
-  getScan,
-  getWeeklyRankings,
-  getXpDefinitions,
-} from './store.js';
 import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
 import {
   getScanDeadlineMs,
@@ -50,11 +39,8 @@ import { validatePaidFallbackAtStartup } from './services/openRouterProvider.js'
 import { getRecipeFailureApiError } from './services/recipeGenerationError.js';
 import { buildRecipeAdaptationPlan } from './services/recipeAdaptationService.js';
 import { buildRecipeQualityReport } from './services/recipeCheckService.js';
-import {
-  createOwnedRecipeGetHandler,
-  findOwnedOrEditorialRecipe,
-  getAuthenticatedUserId,
-} from './routes/ownedRecipe.js';
+import { getAuthenticatedUserId } from './routes/ownedRecipe.js';
+import { recipeCheckRecipeSchema } from './routes/recipeInput.js';
 import { runPersistedScan } from './persistence/persistedScanService.js';
 import {
   createScanRecipeRepository,
@@ -100,30 +86,7 @@ const scanRequestSchema = z.object({
   mode: recipeModeSchema.optional().default('Restaurant Copy'),
   image: scanImageMetadataSchema.optional(),
 });
-const challengeRequestSchema = z.object({
-  recipeId: z.string().min(1).max(200),
-  mode: recipeModeSchema.optional().default('Restaurant Copy'),
-  rating: z.enum(['Nailed it', 'Pretty close', 'Needs work', 'Not close']),
-  matchScore: z.number().min(0).max(10).optional(),
-});
-const xpEventRequestSchema = z.object({
-  eventType: z.string().min(1).max(200),
-  sourceId: z.string().min(1).max(200).optional(),
-});
 const recipeCheckSourceSchema = z.enum(['scan', 'foodIdea', 'savedRecipe', 'manual']);
-const recipeCheckRecipeSchema = z.object({}).passthrough().superRefine((recipe, ctx) => {
-  const title = typeof recipe.title === 'string' && recipe.title.trim().length > 0;
-  const ingredients = Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0;
-  const steps = Array.isArray(recipe.steps) && recipe.steps.length > 0;
-  const structuredSteps = Array.isArray(recipe.structuredSteps) && recipe.structuredSteps.length > 0;
-
-  if (!title && !ingredients && !steps && !structuredSteps) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Recipe needs a title, ingredients, or steps.',
-    });
-  }
-});
 const recipeCheckRequestSchema = z.object({
   recipe: recipeCheckRecipeSchema,
   context: z.object({
@@ -190,9 +153,8 @@ app.get('/health', (_request, response) => {
   sendOk(response, {
     status: 'ok',
     service: 'okyo-api',
-    mode: 'mock',
-    realAiEnabled: aiConfig.aiEnabled,
-    databaseEnabled: false,
+    aiEnabled: aiConfig.aiEnabled,
+    databaseEnabled: true,
     timestamp: new Date().toISOString(),
   });
 });
@@ -313,17 +275,6 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
   }
 });
 
-app.get('/v1/scans/:scanId', (request, response) => {
-  const scan = getScan(request.params.scanId);
-
-  if (!scan) {
-    sendNotFound(response, 'scan_not_found', 'Scan was not found in mock data.');
-    return;
-  }
-
-  sendOk(response, { scan });
-});
-
 app.post('/v1/recipes/check', (request, response) => {
   const body = parseRequest(recipeCheckRequestSchema, request.body);
   const report = buildRecipeQualityReport(coerceRecipeForCheck(body.recipe), body.context);
@@ -338,70 +289,6 @@ app.post('/v1/recipes/adapt', (request, response) => {
   const payload: RecipeAdaptationResponse = { ok: true, adaptation };
 
   response.json(payload);
-});
-
-app.get('/v1/recipes/:recipeId', createOwnedRecipeGetHandler({
-  getRepository: getScanRecipeRepository,
-  getEditorialRecipe: getRecipe,
-}));
-
-app.post('/v1/recipes/:recipeId/save', async (request, response, next) => {
-  try {
-    const userId = getAuthenticatedUserId(request);
-    const recipe = await findOwnedOrEditorialRecipe({
-      userId,
-      recipeId: request.params.recipeId,
-      repository: getScanRecipeRepository(),
-      getEditorialRecipe: getRecipe,
-    });
-    if (!recipe) {
-      sendNotFound(response, 'recipe_not_found', 'Recipe was not found.');
-      return;
-    }
-    const library = await getScanRecipeRepository().listOwnedRecipes(userId);
-    sendOk(response, { saved: true, recipe, library });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.get('/v1/library', async (request, response, next) => {
-  try {
-    const recipes = await getScanRecipeRepository().listOwnedRecipes(getAuthenticatedUserId(request));
-    sendOk(response, { recipes });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.get('/v1/savings', (_request, response) => {
-  sendOk(response, getSavingsSummary());
-});
-
-app.post('/v1/challenges', (request, response) => {
-  const body = parseRequest(challengeRequestSchema, request.body);
-  const challenge = createChallenge(body);
-
-  if (!challenge) {
-    sendNotFound(response, 'recipe_not_found', 'Challenge recipe was not found in mock data.');
-    return;
-  }
-
-  sendOk(response.status(201), { challenge });
-});
-
-app.post('/v1/xp-events', (request, response) => {
-  const body = parseRequest(xpEventRequestSchema, request.body);
-  const event = awardXp(body.eventType, body.sourceId);
-
-  sendOk(response.status(201), {
-    event,
-    definitions: getXpDefinitions(),
-  });
-});
-
-app.get('/v1/rankings/weekly', (_request, response) => {
-  sendOk(response, getWeeklyRankings());
 });
 
 app.post('/v1/recipes/:recipeId/coaching', scanRateLimitMiddleware, async (request, response, next) => {
@@ -428,21 +315,6 @@ app.post('/v1/recipes/:recipeId/coaching', scanRateLimitMiddleware, async (reque
   } catch (error) {
     next(error);
   }
-});
-
-app.get('/v1/restaurant-packs', (_request, response) => {
-  sendOk(response, { packs: getRestaurantPacks() });
-});
-
-app.get('/v1/restaurant-packs/:packId', (request, response) => {
-  const pack = getRestaurantPack(request.params.packId);
-
-  if (!pack) {
-    sendNotFound(response, 'pack_not_found', 'Restaurant pack was not found in mock data.');
-    return;
-  }
-
-  sendOk(response, { pack });
 });
 
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {

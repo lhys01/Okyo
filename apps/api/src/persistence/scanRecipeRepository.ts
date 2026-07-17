@@ -63,7 +63,6 @@ export type ScanRecipeRepository = {
     expiresAt: string;
   }): Promise<void>;
   findOwnedRecipe(userId: string, recipeId: string): Promise<Recipe | null>;
-  listOwnedRecipes(userId: string): Promise<Recipe[]>;
 };
 
 export function createScanRecipeRepository(
@@ -138,13 +137,6 @@ export function createScanRecipeRepository(
       return row ? parseRecipe(row) : null;
     },
 
-    async listOwnedRecipes(userId) {
-      const rows = await runDatabaseOperation(() => database.listOwnedGeneratedRecipes(
-        userId,
-        now().toISOString(),
-      ));
-      return rows.map(parseRecipe);
-    },
   };
 }
 
