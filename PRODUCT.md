@@ -32,6 +32,17 @@ Cute, warm, confident. Kiko the fox mascot carries emotion. Copy is casual, hook
 4. **Kiko is the emotional layer.** Delight comes from the mascot, motion, and copy — not from noisy gamification.
 5. **Few patterns, repeated well.** One card language, one button hierarchy, one glass vocabulary across all screens.
 
+## Intentional Future Bets
+
+These ideas are not active production surfaces, but they are not rejected product concepts:
+
+- curated restaurant-inspired packs or discovery that helps users find a useful next dish without becoming a generic recipe database;
+- quiet completion rewards tied to real scans, saves, grocery exports, cooking, and sharing;
+- progressive personalization collected after the first value moment;
+- real post-value subscriptions backed by RevenueCat entitlements and server-enforced limits.
+
+Future work stays gated until it has a real data owner, honest empty/error states, measurement, and a validation plan. Do not restore mock leaderboards, fabricated savings, local premium toggles, or static purchase claims as shortcuts.
+
 ## Accessibility & Inclusion
 
 WCAG AA: body text ≥4.5:1, large text ≥3:1 (including text over glass/blur surfaces). Respect iOS Reduce Motion for all celebration/reward animation. Min touch targets 44pt. Font scaling not blocked except in the tab bar.
