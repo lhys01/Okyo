@@ -175,6 +175,85 @@ function fullRecipe(
   };
 }
 
+function mixedStructuralRepairInitialRecipe(): Record<string, unknown> {
+  return {
+    title: 'Chicken Ramen',
+    ingredients: [
+      '2 chicken breasts',
+      '2 cups chicken broth',
+      'salt for garnish',
+      '1 tbsp olive oil',
+      '2 ramen noodle cakes',
+    ],
+    equipment: ['large pot', 'large skillet'],
+    steps: [
+      {
+        title: 'Gather',
+        step: 'Gather the chicken, chicken broth, salt, olive oil, and ramen noodles.',
+      },
+      {
+        title: 'Heat Oil',
+        step: 'Heat the olive oil for 1 minute until shimmering.',
+      },
+      {
+        title: 'Cook Chicken',
+        step: 'Cook the chicken in butter in the large skillet.',
+      },
+      {
+        title: 'Simmer Noodles',
+        step: 'Simmer the chicken broth and ramen noodles for 5 minutes until bubbling.',
+      },
+      {
+        title: 'Serve',
+        step: 'Serve the chicken ramen with the salt garnish.',
+      },
+    ],
+    prepTime: 10,
+    cookTime: 15,
+    totalTime: 25,
+    servings: 2,
+    skillLevel: 'Easy',
+  };
+}
+
+function mixedStructuralFullRegenerationRepair(): {
+  ingredients: string[];
+  steps: Array<Record<string, unknown>>;
+} {
+  return {
+    ingredients: [
+      '2 chicken breasts',
+      '2 cups chicken broth',
+      '1/2 tsp salt, for garnish',
+      '1 tbsp olive oil',
+      '2 ramen noodle cakes',
+    ],
+    steps: [
+      {
+        title: 'Gather',
+        step: 'Gather the chicken, chicken broth, salt, olive oil, and ramen noodles.',
+      },
+      {
+        title: 'Heat Oil',
+        step: 'Heat the olive oil for 1 minute until shimmering.',
+      },
+      {
+        title: 'Cook Chicken',
+        step: 'Cook the chicken in olive oil for 6 minutes until the center reaches 165°F/74°C.',
+        safetyNote: 'Cook chicken to an internal temperature of 165°F/74°C.',
+      },
+      {
+        title: 'Simmer Noodles',
+        step: 'Simmer the chicken broth and ramen noodles for 5 minutes until bubbling.',
+      },
+      {
+        title: 'Serve',
+        step: 'Serve the chicken ramen with the salt garnish.',
+      },
+    ],
+  };
+}
+
 async function runIndexThreeRepairSuccess(
   dishName: string,
   repairOutput: unknown,
@@ -403,10 +482,11 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
       'The olive oil looks glossy and moves easily across the skillet.',
     );
     assert.match(repairPrompt, /step_missing_time_or_completion_cue/);
-    assert.match(repairPrompt, /indexed correction object/);
-    assert.match(repairPrompt, /"stepCorrections"/);
+    assert.match(repairPrompt, /Selected repair contract: indexed/);
+    assert.match(repairPrompt, /stepCorrections/);
     assert.match(repairPrompt, /Required step correction indices \(zero-based\): \[1\]/);
-    assert.match(repairPrompt, /do not introduce, substitute, or remove any ingredient concept/i);
+    assert.doesNotMatch(repairPrompt, /Selected repair contract: full regeneration/);
+    assert.doesNotMatch(repairPrompt, /complete corrected step list/);
     assert.match(repairPrompt, /Full canonical ingredient list/);
     assert.match(repairPrompt, /Complete previous recipe object/);
     assert.match(repairPrompt, /8 oz spaghetti/);
@@ -416,6 +496,7 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
       '[scan_metric]',
       '[failover_summary]',
       '[recipe_validation_details]',
+      '[recipe_repair_mode]',
       '[recipe_repair_validation]',
       '[recipe_repair_trace]',
     ]);
@@ -424,6 +505,12 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
       telemetry.some(([actual]) => actual === label)));
     assert.ok(telemetry.every(([, value]) =>
       (value as { requestId?: string }).requestId === 'full-repair-success'));
+    const repairMode = events.find(([label]) => label === '[recipe_repair_mode]')?.[1] as {
+      selectedRepairMode: string;
+      initialIssues: string[];
+    };
+    assert.equal(repairMode.selectedRepairMode, 'indexed');
+    assert.deepEqual(repairMode.initialIssues, ['step_missing_time_or_completion_cue']);
     const repairValidation = events.find(([label]) => label === '[recipe_repair_validation]')?.[1] as {
       initialInvalidStepIndices: number[];
       repairedInvalidStepIndices: number[];
@@ -448,6 +535,171 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
     assert.equal(aggregate.providerAttempts, 3);
     assert.equal(aggregate.recipeMs, timing.recipeMs);
     assert.equal(aggregate.repairMs, timing.repairMs);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('mixed target issues plus a safety issue select a consistent full-regeneration contract', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  let calls = 0;
+  let repairPrompt = '';
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    if (calls === 1) return providerResponse(mixedStructuralRepairInitialRecipe());
+    const body = JSON.parse(String(init?.body)) as {
+      messages?: Array<{ role?: string; content?: string }>;
+    };
+    repairPrompt = body.messages?.find((message) => message.role === 'user')?.content ?? '';
+    return providerResponse(mixedStructuralFullRegenerationRepair());
+  };
+  console.log = (...args: unknown[]) => { events.push(args); };
+  try {
+    const timing = createScanAggregateTiming({ requestId: 'full-regeneration-mixed-issues' });
+    recordLogicalProviderCall(timing);
+    recordProviderAttempt(timing);
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({
+        dishName: 'Chicken Ramen Full Regeneration',
+        broadDishCategory: 'ramen/noodles',
+        visibleIngredients: ['chicken', 'ramen noodles', 'broth'],
+        likelyIngredients: ['olive oil', 'salt'],
+      }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: 'full-regeneration-mixed-issues',
+      timing,
+    });
+    assert.equal(calls, 2);
+    assert.equal(output.steps.length, 5);
+    assert.equal(output.ingredients[2], '1/2 tsp salt, for garnish');
+    assert.match(
+      output.steps.map((step) => typeof step === 'object' ? step.safetyNote ?? '' : '').join(' '),
+      /165°F\/74°C/,
+    );
+    assert.match(repairPrompt, /Selected repair contract: full regeneration/);
+    assert.match(repairPrompt, /complete corrected ingredient list/);
+    assert.match(repairPrompt, /complete corrected step list in final recipe order/);
+    assert.match(repairPrompt, /complete ordered replacement, never a subset/);
+    assert.doesNotMatch(repairPrompt, /ingredientCorrections|stepCorrections/);
+    assert.doesNotMatch(repairPrompt, /Required (?:ingredient|step) correction indices/);
+    assert.doesNotMatch(repairPrompt, /stepIndex|ingredientIndex|zero-based/);
+
+    const mode = events.find(([label]) => label === '[recipe_repair_mode]')?.[1] as {
+      selectedRepairMode: string;
+      initialIssues: string[];
+    };
+    assert.equal(mode.selectedRepairMode, 'full_regeneration');
+    assert.deepEqual(mode.initialIssues, [
+      'ingredients_missing_amounts',
+      'step_missing_time_or_completion_cue',
+      'step_uses_unlisted_ingredients',
+      'missing_safety_poultry',
+    ]);
+    assert.equal(timing.logicalProviderCalls, 3);
+    assert.equal(timing.providerAttempts, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('full-regeneration mode rejects an indexed repair response', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => providerResponse(++calls === 1
+    ? mixedStructuralRepairInitialRecipe()
+    : {
+        ingredientCorrections: [{
+          ingredientIndex: 2,
+          value: '1/2 tsp salt, for garnish',
+        }],
+        stepCorrections: [{
+          stepIndex: 2,
+          title: 'Cook Chicken',
+          step: 'Cook the chicken in olive oil for 6 minutes until it reaches 165°F/74°C.',
+          safetyNote: 'Cook chicken to 165°F/74°C.',
+        }],
+      });
+  try {
+    await assert.rejects(
+      generateRecipeWithOpenRouter({
+        analysis: analysis({
+          dishName: 'Chicken Ramen Wrong Repair Schema',
+          broadDishCategory: 'ramen/noodles',
+        }),
+        config: fullConfig,
+        mode: 'Restaurant Copy',
+        quota,
+        requestId: 'full-regeneration-schema-mismatch',
+      }),
+      (error: unknown) => error instanceof RecipeValidationError &&
+        error.issues.includes('repair_invalid_schema'),
+    );
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('targeted defects plus too_few_steps select full regeneration with matching schema', async () => {
+  const initial = structuredClone(fullCoreMochiMixedInitialFixture);
+  initial.steps = initial.steps.slice(0, 4);
+  initial.steps[2] = {
+    ...initial.steps[2],
+    step: 'Heat the batter with butter in the microwave-safe bowl.',
+  };
+  const repair = {
+    ingredients: [
+      ...initial.ingredients.slice(0, 3),
+      '2 tbsp cornstarch, for dusting',
+      initial.ingredients[4],
+    ],
+    steps: [
+      initial.steps[0],
+      initial.steps[1],
+      {
+        title: 'Heat Batter',
+        step: 'Heat the batter for 1 minute until it begins to thicken.',
+      },
+      initial.steps[3],
+      {
+        title: 'Serve',
+        step: 'Plate the mochi, dust with cornstarch, divide into pieces, and serve.',
+      },
+    ],
+  };
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  let calls = 0;
+  globalThis.fetch = async () => providerResponse(++calls === 1 ? initial : repair);
+  console.log = (...args: unknown[]) => { events.push(args); };
+  try {
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: 'Short Mochi Full Regeneration', broadDishCategory: 'dessert' }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: 'full-regeneration-structural-issue',
+    });
+    assert.equal(calls, 2);
+    assert.equal(output.steps.length, 5);
+    const mode = events.find(([label]) => label === '[recipe_repair_mode]')?.[1] as {
+      selectedRepairMode: string;
+      initialIssues: string[];
+    };
+    assert.equal(mode.selectedRepairMode, 'full_regeneration');
+    assert.deepEqual(mode.initialIssues, [
+      'too_few_steps',
+      'ingredients_missing_amounts',
+      'step_missing_time_or_completion_cue',
+      'step_uses_unlisted_ingredients',
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;

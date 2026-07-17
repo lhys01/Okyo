@@ -834,6 +834,12 @@ async function repairFullRecipe(
   initialNormalizationDiagnostics?: FullRecipeNormalizationDiagnostics,
 ): Promise<OpenRouterRecipeOutput> {
   throwIfScanCancelled(input.signal, input.deadlineAt);
+  const selectedRepairMode = selectFullRecipeRepairMode(previousOutput, issues);
+  console.log('[recipe_repair_mode]', {
+    requestId: input.requestId,
+    selectedRepairMode,
+    initialIssues: issues,
+  });
   let normalized: OpenRouterRecipeOutput;
   try {
     normalized = await measureScanAggregateStage({
@@ -842,7 +848,12 @@ async function repairFullRecipe(
       run: async () => {
         const repairJson = await callRecipeRepairStage(
           input,
-          getFullRecipeRepairPrompt(input.analysis, previousOutput, issues),
+          getFullRecipeRepairPrompt(
+            input.analysis,
+            previousOutput,
+            issues,
+            selectedRepairMode,
+          ),
           getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
           'recipe_repair',
         );
@@ -853,6 +864,7 @@ async function repairFullRecipe(
             repairJson,
             issues,
             isDrink,
+            selectedRepairMode,
             initialNormalizationDiagnostics,
           );
         }
@@ -2121,16 +2133,27 @@ function shouldUseIndexedFullRecipeRepair(issues: string[]): boolean {
   return issues.length > 0 && issues.every((issue) => indexedFullRecipeRepairIssues.has(issue));
 }
 
+type FullRecipeRepairMode = 'indexed' | 'full_regeneration' | 'whole_recipe_regeneration';
+
+function selectFullRecipeRepairMode(
+  previousOutput: OpenRouterRecipeOutput | undefined,
+  issues: string[],
+): FullRecipeRepairMode {
+  if (!previousOutput) return 'whole_recipe_regeneration';
+  return shouldUseIndexedFullRecipeRepair(issues) ? 'indexed' : 'full_regeneration';
+}
+
 function applyFullRecipeRepairPatch(
   input: { analysis: FoodImageAnalysis } & Partial<ScanExecutionContext>,
   previousOutput: OpenRouterRecipeOutput,
   repairJson: unknown,
   issues: string[],
   isDrink: boolean,
+  selectedRepairMode: FullRecipeRepairMode,
   initialNormalizationDiagnostics?: FullRecipeNormalizationDiagnostics,
 ): OpenRouterRecipeOutput {
   const initialDiagnostics = getFullRecipeRepairDiagnostics(previousOutput, input.analysis);
-  if (!shouldUseIndexedFullRecipeRepair(issues)) {
+  if (selectedRepairMode === 'full_regeneration') {
     return applyLegacyFullRecipeRepairPatch(
       input,
       previousOutput,
@@ -2140,6 +2163,9 @@ function applyFullRecipeRepairPatch(
       initialDiagnostics,
       initialNormalizationDiagnostics,
     );
+  }
+  if (selectedRepairMode !== 'indexed') {
+    throw new RecipeValidationError(['repair_invalid_mode']);
   }
 
   const requestedIngredientIndices = issues.includes('ingredients_missing_amounts')
@@ -2651,13 +2677,13 @@ function getFullRecipeRepairPrompt(
   analysis: FoodImageAnalysis,
   previousOutput: OpenRouterRecipeOutput | undefined,
   issues: string[],
+  selectedRepairMode: FullRecipeRepairMode,
 ): string {
   const bounds = getRecipeStepBounds(analysis);
   const ingredients = previousOutput?.ingredients ?? [];
   const diagnostics = previousOutput
     ? getFullRecipeRepairDiagnostics(previousOutput, analysis)
     : undefined;
-  const useIndexedRepair = Boolean(previousOutput) && shouldUseIndexedFullRecipeRepair(issues);
   const requestedIngredientIndices = issues.includes('ingredients_missing_amounts')
     ? diagnostics?.ingredientIndicesMissingAmounts ?? []
     : [];
@@ -2667,20 +2693,36 @@ function getFullRecipeRepairPrompt(
     ...(issues.includes('step_uses_unlisted_ingredients')
       ? diagnostics?.stepsUsingUnlistedIngredientIndices ?? [] : []),
   ])].sort((a, b) => a - b);
+  const promptDiagnostics = selectedRepairMode === 'indexed'
+    ? diagnostics
+    : diagnostics
+      ? {
+          stepCount: diagnostics.stepCount,
+          preferredStepBounds: diagnostics.preferredStepBounds,
+          ingredientsMissingAmounts: diagnostics.ingredientsMissingAmounts,
+          unknownIngredients: diagnostics.unknownIngredients,
+          platterCoveragePercent: diagnostics.platterCoveragePercent,
+          missingPlatterComponents: diagnostics.missingPlatterComponents,
+        }
+      : undefined;
   const previousRecipe = previousOutput
     ? {
         title: previousOutput.title,
         ingredients: previousOutput.ingredients,
         equipment: previousOutput.equipment,
-        steps: previousOutput.steps.map((step, stepIndex) => typeof step === 'string'
-          ? { stepIndex, title: '', step }
-          : {
-              stepIndex,
-              title: step.title,
-              step: getProviderStepText(step),
-              ...(step.doneWhen ? { doneWhen: step.doneWhen } : {}),
-              ...(step.safetyNote ? { safetyNote: step.safetyNote } : {}),
-            }),
+        steps: previousOutput.steps.map((step, stepIndex) => {
+          const content = typeof step === 'string'
+            ? { title: '', step }
+            : {
+                title: step.title,
+                step: getProviderStepText(step),
+                ...(step.doneWhen ? { doneWhen: step.doneWhen } : {}),
+                ...(step.safetyNote ? { safetyNote: step.safetyNote } : {}),
+              };
+          return selectedRepairMode === 'indexed'
+            ? { stepIndex, ...content }
+            : content;
+        }),
         prepTime: previousOutput.prepTime,
         cookTime: previousOutput.cookTime,
         totalTime: previousOutput.totalTime,
@@ -2688,24 +2730,33 @@ function getFullRecipeRepairPrompt(
         skillLevel: previousOutput.skillLevel || previousOutput.difficulty,
       }
     : {};
+  const contractInstructions = selectedRepairMode === 'indexed'
+    ? [
+        'Selected repair contract: indexed. Return ONLY a minified object whose only allowed keys are ingredientCorrections and stepCorrections. Include only correction arrays that are required. Never return complete ingredients or steps arrays.',
+        `Required ingredient correction indices (zero-based): ${JSON.stringify(requestedIngredientIndices)}. Return each exactly once and no other ingredient index. Preserve the ingredient concept and add an explicit usable quantity; "for dusting", "for garnish", and "as needed" are not quantities.`,
+        `Required step correction indices (zero-based): ${JSON.stringify(requestedStepIndices)}. Return each exactly once and no other step index. Every correction must materially change that step and resolve all completion and ingredient-closure defects on it.`,
+        'Indexed shapes: {"ingredientIndex":3,"value":"2 tbsp cornstarch, for dusting"} and {"stepIndex":3,"title":"short action","step":"cookable instruction","doneWhen":"specific completion cue","safetyNote":"required food-safety rule when applicable"}. Indices are zero-based. Do not add, remove, or reorder recipe steps.',
+        'INGREDIENT LOCK: use the canonical list below as the only allowed vocabulary, but return only requested indexed corrections. Amounts may change only for requested quantity defects.',
+      ]
+    : selectedRepairMode === 'full_regeneration'
+      ? [
+          'Selected repair contract: full regeneration. Return ONLY a minified object with exactly two keys: {"ingredients":[...the complete corrected ingredient list...],"steps":[...the complete corrected step list in final recipe order...]}.',
+          'Return every ingredient and every step. The steps array is a complete ordered replacement, never a subset. Each step may contain only title, step, doneWhen, and safetyNote.',
+          'INGREDIENT LOCK: return the complete canonical ingredient list with the same ingredient concepts. Amounts may change only to fix ingredients_missing_amounts.',
+        ]
+      : [
+          'Selected repair contract: whole recipe regeneration. Return ONLY the entire corrected recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, and skillLevel.',
+        ];
   return [
     `Correct the previous recipe JSON for "${analysis.dishName}".`,
     `Exact validation failures: ${issues.join(', ')}.`,
-    previousOutput
-      ? useIndexedRepair
-        ? 'Return ONLY a minified indexed correction object. Allowed keys are ingredientCorrections and stepCorrections. Example: {"ingredientCorrections":[{"ingredientIndex":3,"value":"2 tbsp cornstarch, for dusting"}],"stepCorrections":[{"stepIndex":2,"step":"...","doneWhen":"..."}]}. Include only needed correction arrays. Never return complete ingredients or steps arrays.'
-        : 'Return ONLY a minified correction object with exactly two keys: {"ingredients":[...the entire corrected ingredient list...],"steps":[...the entire corrected step list...]}. Do not repeat title, equipment, times, servings, or difficulty.'
-      : 'Return ONLY the entire corrected recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, and skillLevel.',
+    ...contractInstructions,
     'Fix every listed problem. Every active cooking instruction must contain a specific time, temperature, or concrete sensory cue such as golden, tender, bubbling, thickened, or aromatic.',
     'Never use vague completion language such as "until done", "until ready", or "cook thoroughly". Do not add a cue to non-cooking actions such as gathering ingredients, plating, garnishing, serving, or dividing into bowls unless that same step also cooks food.',
-    'INGREDIENT LOCK: do not introduce, substitute, or remove any ingredient concept. Use the complete canonical ingredient list below as the only allowed vocabulary, but return only requested indexed corrections. An amount may change only to fix ingredients_missing_amounts. Every ingredient word in every repaired step must resolve to that list.',
-    `Required ingredient correction indices (zero-based): ${JSON.stringify(requestedIngredientIndices)}. Return each exactly once and no other ingredient index. Preserve the ingredient concept and add an explicit usable quantity; "for dusting", "for garnish", and "as needed" are not quantities.`,
-    `Required step correction indices (zero-based): ${JSON.stringify(requestedStepIndices)}. Return each exactly once and no other step index. Every correction must materially change that step and resolve all completion and ingredient-closure defects on it.`,
-    'Correction shape: {"stepIndex":3,"title":"short action","step":"cookable instruction","doneWhen":"specific time, temperature, or sensory cue","safetyNote":"required food-safety rule when applicable"}. stepIndex is always zero-based. Do not use human one-based numbering. Phases, per-step ingredients, and per-step tools are derived locally.',
     `Use at least ${bounds.min} steps and preferably no more than ${bounds.max}; keep each instruction under 30 words. A presentation-only final step may simply serve or plate the finished dish.`,
     'INGREDIENT CLOSURE IS MANDATORY: every ingredient named in an instruction must appear in the locked top-level ingredient list with an exact usable amount.',
     'Safety is mandatory: poultry 165°F/74°C; ground meat 160°F/71°C; pork and cooked fish 145°F/63°C. Raw-fish dishes must specify sushi-grade or previously frozen fish kept cold.',
-    `Validation diagnostics: ${JSON.stringify(diagnostics ?? {})}`,
+    `Validation diagnostics: ${JSON.stringify(promptDiagnostics ?? {})}`,
     `Full canonical ingredient list from the previous recipe: ${JSON.stringify(ingredients)}`,
     `Complete previous recipe object: ${JSON.stringify(previousRecipe)}`,
     `Food: ${JSON.stringify({
