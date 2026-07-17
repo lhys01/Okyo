@@ -44,16 +44,16 @@ Run locally with `npm run sim` or `npx expo start`. A physical phone needs `EXPO
 
 ## Core manual journey
 
-1. Fresh launch: Kiko-led hero reaches scan without fake plan-building or a paywall.
+1. Fresh launch: Home opens directly with exactly four tabs and scan actions before recommendations.
 2. Clear food photo: analysis → result → recipe.
 3. Uncertain and partial food: editable best guess and honest explanation.
 4. Non-food and unreadable image: friendly retry, no demo recipe.
 5. Provider timeout/offline: request exits loading and exposes no technical provider detail.
 6. Edit dish name; confirm recipe, grocery, saved, and share contexts stay coherent.
-7. Recipe Check and Make It Mine preserve the original recipe until the user accepts a change.
+7. Written idea generation, Recipe Check, and Make It Mine fail honestly and preserve the original recipe until a change is accepted.
 8. Save, restart, and reopen a recipe; confirm its local photo remains available.
-9. Export groceries, complete guided cooking, and share a scan result; confirm each XP event awards once.
-10. Clear local data and sign out; confirm app-owned photo copies and private local state are removed as intended.
+9. Add overlapping recipes to Grocery, verify safe consolidation/source labels, complete guided cooking, and share with and without a finished photo.
+10. Clear local data; confirm app-owned photo copies and private local state are removed as intended.
 
 ## Device and accessibility pass
 

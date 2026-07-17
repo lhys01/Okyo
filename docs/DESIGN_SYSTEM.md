@@ -19,13 +19,13 @@ Do not create a second token source or re-export theme tokens from `OkyoUI.tsx`.
 - Display type: Baloo 2. Body type: Nunito.
 - Kiko carries emotion at real moments—waiting, uncertainty, success, cooking, and empty states—not as wallpaper.
 
-The scan action should dominate the first session. A screen should have one emotional job and one primary action. Savings and cost values are estimates and remain subordinate to the food outcome.
+The scan action should dominate the first session. A screen should have one emotional job and one primary action. Recipe and nutrition uncertainty must be stated plainly.
 
 ## Accessibility and resilient text
 
 - Minimum touch target: 44 pt.
 - Body contrast: at least 4.5:1; large text: at least 3:1.
-- Respect Reduce Motion for mascot and reward animation.
+- Respect Reduce Motion for mascot and status animation.
 - Do not block font scaling except where the floating tab bar requires a fixed treatment.
 - Use `minHeight`, flexible rows, and `flexShrink` for text containers. Avoid fixed heights around user/model text.
 - Never apply `overflow: hidden` directly to text to solve layout problems.
@@ -33,11 +33,9 @@ The scan action should dominate the first session. A screen should have one emot
 
 These text rules preserve the useful conclusions from the prior rendering audits without retaining point-in-time reports that described deleted screens.
 
-## Onboarding
+## First launch
 
-Current onboarding is deliberately short: Kiko-led hero → real scan → honest loading → first result. The activation moment is the first successful result, not a questionnaire or simulated plan-building step.
-
-Future personalization should be requested after value is demonstrated or collected progressively. A real paywall must never precede the first result.
+The app opens directly to Home. The activation moment is the first successful result, not a questionnaire or simulated plan-building step.
 
 ## Assets
 

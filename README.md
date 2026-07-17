@@ -8,12 +8,11 @@ The intentionally small product scope is:
 - clear food / unclear food / non-food handling
 - inspired-by recipe generation through OpenRouter
 - Recipe Check and Make It Mine adaptations
-- saved recipes and food ideas
-- grocery lists and guided cooking
-- scan-result share cards
-- lightweight, pressure-free XP rewards
+- real saved recipes
+- consolidated grocery lists and guided cooking
+- original/finished-meal share cards
 
-Okyo is not a calorie tracker, generic recipe catalog, social network, restaurant-pack browser, leaderboard, or subscription product today. Costs, savings, food identification, and recipes are estimates. Real scan failures never fall back to demo food.
+Okyo is not a calorie tracker, generic recipe catalog, social network, restaurant-pack browser, gamified reward system, price-comparison product, or subscription product today. Food identification, recipes, and nutrition are estimates. Real scan failures never fall back to demo food.
 
 ## Repository
 
@@ -106,6 +105,7 @@ Public:
 Authenticated (`Authorization: Bearer <Supabase access token>`):
 
 - `POST /v1/scans`
+- `POST /v1/ideas/recipe`
 - `POST /v1/recipes/check`
 - `POST /v1/recipes/adapt`
 - `POST /v1/recipes/:recipeId/coaching`
@@ -124,9 +124,9 @@ OpenRouter is the normal provider path. Fable remains private and opt-in: both `
 
 ## Manual smoke path
 
-1. Launch a fresh install and confirm hero → scan is the first-session path.
+1. Launch a fresh install and confirm Home shows exactly Home, Grocery, Saved, and Settings, with scan actions first.
 2. Upload a clear food photo and confirm result → recipe → save → grocery → guided cooking → share.
 3. Upload a non-food and an unclear image; confirm both show honest retry states.
-4. Enter a restaurant price and confirm savings appears only after that input.
+4. Generate a written food idea and confirm provider failure never becomes a local draft recipe.
 5. Save and remove a recipe; confirm its local photo copy follows the recipe lifecycle.
 6. Disable the API or AI and confirm no seeded pasta result appears for a real photo.

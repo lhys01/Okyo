@@ -1,48 +1,23 @@
-# Product
+# Okyo V1 product contract
 
-## Register
+Okyo is a deliberately small AI cooking companion. A user starts from a food photo or written idea, gets an honest inspired-by recipe, saves it if useful, builds one grocery list, cooks with guidance, and shares the result.
 
-product
+## Primary product
 
-## Users
+The app has exactly four tabs, in order: Home, Grocery, Saved, Settings. Home begins with Take a photo, Upload a photo, and Write a food idea. Scan processing, recipe details, guided cooking, and sharing are internal steps—not additional product destinations.
 
-Home cooks and restaurant lovers (18–35, TikTok-native) who photograph restaurant meals and want to recreate them at home for less money. They use Okyo on their phone, one-handed, often right after eating out or when deciding what to cook. Frequency goal: daily opens, weekly scans.
+Recommendations use only real generated or saved recipes. Empty states are preferable to fabricated personalization. Saved contains only recipes the user intentionally saved. Grocery combines ingredients only when names and units are safely compatible.
 
-## Product Purpose
+## Brand and experience
 
-Okyo is an AI food companion: scan restaurant food → get a copycat-style ("inspired-by") recipe → see honest savings estimates → save, shop, cook. Success = fast first scan, repeated scans, saved recipes, daily return habit. It is NOT a calorie tracker, not a meal planner, not a searchable recipe database, no social feeds.
+Okyo is cute, warm, clear, food-focused, and confident without feeling corporate. Kiko carries emotion at useful moments. The app prioritizes a fast first recipe and readable one-handed cooking controls.
 
-## Brand Personality
+AI behavior stays honest: non-food, unclear photos, timeouts, malformed output, and provider failures remain failures with a retry path. Recipes are inspired-by, never represented as official restaurant recipes. Nutrition is explicitly estimated and may be unavailable for legacy recipes.
 
-Cute, warm, confident. Kiko the fox mascot carries emotion. Copy is casual, hook-first, celebratory ("Nailed it"), never clinical or corporate. Honest AI: estimates are estimates, failures are friendly and real — never faked.
+## Not part of V1
 
-## Anti-references
+No gamification, rewards, public profiles, social feed, discovery catalog, restaurant packs, meal planning, price comparison, savings claims, commerce, subscription UI, or placeholder settings. Future work must not appear until it has real data, a working destination, honest failure states, and validation.
 
-- Calorie/macro trackers (MyFitnessPal-style data grids)
-- Crypto/SaaS dashboards (hero-metric templates, gradient stat walls)
-- Casino-style gamification (spin wheels, coin rain, countdown pressure)
-- Generic AI apps (sparkle-gradient purple, "AI magic" clichés)
-- Hackathon UI: raw text dumps, developer labels, unstyled lists
+## Accessibility
 
-## Design Principles
-
-1. **Scan is the hero.** Every screen should make scanning again the obvious next act.
-2. **Warm premium, Apple-quality.** iOS-native materials (translucency, depth, soft light) used purposefully, never as decoration wallpaper.
-3. **Honest numbers, beautiful numbers.** Savings/costs are estimates — present them warmly and legibly, never as spreadsheet cells, never as false precision.
-4. **Kiko is the emotional layer.** Delight comes from the mascot, motion, and copy — not from noisy gamification.
-5. **Few patterns, repeated well.** One card language, one button hierarchy, one glass vocabulary across all screens.
-
-## Intentional Future Bets
-
-These ideas are not active production surfaces, but they are not rejected product concepts:
-
-- curated restaurant-inspired packs or discovery that helps users find a useful next dish without becoming a generic recipe database;
-- quiet completion rewards tied to real scans, saves, grocery exports, cooking, and sharing;
-- progressive personalization collected after the first value moment;
-- real post-value subscriptions backed by RevenueCat entitlements and server-enforced limits.
-
-Future work stays gated until it has a real data owner, honest empty/error states, measurement, and a validation plan. Do not restore mock leaderboards, fabricated savings, local premium toggles, or static purchase claims as shortcuts.
-
-## Accessibility & Inclusion
-
-WCAG AA: body text ≥4.5:1, large text ≥3:1 (including text over glass/blur surfaces). Respect iOS Reduce Motion for all celebration/reward animation. Min touch targets 44pt. Font scaling not blocked except in the tab bar.
+Use at least 44-point touch targets, resilient text layouts, meaningful accessibility roles/states, and system font scaling. Reduce Motion must suppress nonessential animation. Camera, photo-library, native-share, and large-text behavior require physical-device validation before release.
