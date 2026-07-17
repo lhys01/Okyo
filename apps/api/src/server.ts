@@ -23,7 +23,7 @@ import {
 } from './quota/providerQuota.js';
 import { requestContextMiddleware } from './middleware/requestContext.js';
 import { mountV1Authentication } from './middleware/supabaseAuth.js';
-import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
+import { createAiScan, createRecipeFromFoodIdea, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
 import {
   getScanDeadlineMs,
   ScanCancelledError,
@@ -86,6 +86,11 @@ const scanRequestSchema = z.object({
   mode: recipeModeSchema.optional().default('Restaurant Copy'),
   image: scanImageMetadataSchema.optional(),
 });
+const foodIdeaRequestSchema = z.object({
+  requestId: z.string().min(8).max(128).optional(),
+  idea: z.string().trim().min(8).max(6000),
+  mode: recipeModeSchema.optional().default('Restaurant Copy'),
+}).strict();
 const recipeCheckSourceSchema = z.enum(['scan', 'foodIdea', 'savedRecipe', 'manual']);
 const recipeCheckRequestSchema = z.object({
   recipe: recipeCheckRecipeSchema,
@@ -281,6 +286,37 @@ app.post('/v1/recipes/check', (request, response) => {
   const payload: RecipeCheckResponse = { ok: true, report };
 
   response.json(payload);
+});
+
+app.post('/v1/ideas/recipe', scanRateLimitMiddleware, async (request, response, next) => {
+  const requestId = request.scanContext?.requestId ?? 'missing-request-id';
+  const timing = createScanAggregateTiming({
+    requestId,
+    startedAt: request.scanContext?.ingressStartedAt,
+    recipeContract: getAiConfig().compactRecipeEnabled ? 'compact-v1' : 'full-core-v2',
+  });
+  const controller = new AbortController();
+  const deadlineAt = (request.scanContext?.ingressStartedAt ?? Date.now()) + getScanDeadlineMs();
+  const deadlineTimer = setTimeout(() => controller.abort(new ScanDeadlineExceededError()), Math.max(0, deadlineAt - Date.now()));
+
+  try {
+    const body = parseRequest(foodIdeaRequestSchema, request.body);
+    const userId = getAuthenticatedUserId(request);
+    const result = await createRecipeFromFoodIdea({
+      idea: body.idea,
+      mode: body.mode,
+      quota: createProviderQuota({ userId, requestId }),
+      requestId,
+      signal: controller.signal,
+      deadlineAt,
+      timing,
+    });
+    sendOk(response.status(201), result);
+  } catch (error) {
+    next(error);
+  } finally {
+    clearTimeout(deadlineTimer);
+  }
 });
 
 app.post('/v1/recipes/adapt', (request, response) => {

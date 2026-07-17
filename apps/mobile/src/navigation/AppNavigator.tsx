@@ -6,12 +6,10 @@ import { colors } from '../theme/okyoTheme';
 import { AnalysisLoadingScreen } from '../screens/AnalysisLoadingScreen';
 import { FoodIdeaScreen } from '../screens/FoodIdeaScreen';
 import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
+import { RecipeDetailScreen, RecipeStepsScreen } from '../screens/RecipeDetailScreen';
 import { ScanScreen } from '../screens/ScanScreen';
-import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
-import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { uiLog } from '../utils/uiDebug';
 import { defaultScanResult, getSafeRecipeForMode, getSafeRecipeMode } from '../mocks';
 import { MainTabs } from './MainTabs';
 import type { RootStackParamList } from './types';
@@ -24,7 +22,6 @@ const shouldOpenDevResultSummaryQa =
   process.env.EXPO_PUBLIC_OKYO_RESULT_SUMMARY_QA === '1';
 
 export function AppNavigator() {
-  const hasCompletedOnboarding = useOkyoStore((state) => state.hasCompletedOnboarding);
   const didTrackAppOpen = useRef(false);
   const didSeedDevResultSummaryQa = useRef(false);
 
@@ -42,25 +39,6 @@ export function AppNavigator() {
     track(analyticsEvents.APP_OPEN);
   }, []);
 
-  useEffect(() => {
-    uiLog('AppNavigator', 'onboarding_state', { hasCompletedOnboarding });
-  }, [hasCompletedOnboarding]);
-
-  if (!hasCompletedOnboarding) {
-    return (
-      <Stack.Navigator
-        key="onboarding"
-        screenOptions={{
-          contentStyle: { backgroundColor: colors.background },
-          headerShown: false,
-        }}
-      >
-        <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} />
-        <Stack.Screen name="MainTabs" component={MainTabs} />
-      </Stack.Navigator>
-    );
-  }
-
   return (
     <Stack.Navigator
       key="main"
@@ -74,7 +52,6 @@ export function AppNavigator() {
         headerTintColor: colors.charcoal,
       }}
     >
-      <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} options={{ title: 'Okyo' }} />
       <Stack.Screen name="FoodIdeaScreen" component={FoodIdeaScreen} options={{ headerShown: false, title: 'Food Idea' }} />
       <Stack.Screen name="ScanScreen" component={ScanScreen} options={{ headerShown: false, title: 'Scan' }} />
       <Stack.Screen
@@ -92,7 +69,8 @@ export function AppNavigator() {
         component={ShareCardPreviewScreen}
         options={{ headerShown: false, presentation: 'modal', title: 'Share Preview' }}
       />
-      <Stack.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
+      <Stack.Screen name="RecipeDetailScreen" component={RecipeDetailScreen} options={{ headerShown: false, title: 'Recipe' }} />
+      <Stack.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ headerShown: false, title: 'Cooking' }} />
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false, title: 'Okyo' }} />
     </Stack.Navigator>
   );

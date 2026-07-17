@@ -1,6 +1,12 @@
 import { OKYO_API_BASE_URL, OKYO_API_TIMEOUT_MS, OKYO_DEV_MODEL_OVERRIDE } from './config';
 import { authenticatedFetch } from './authenticatedClient';
-import type { ApiResponse, CreateScanRequest, CreateScanResult } from './types';
+import type {
+  ApiResponse,
+  CreateFoodIdeaRecipeRequest,
+  CreateFoodIdeaRecipeResult,
+  CreateScanRequest,
+  CreateScanResult,
+} from './types';
 import { logMobileScanMetric } from '../utils/scanTelemetry';
 
 // Thrown for any non-2xx or `{ ok: false }` API response. `code` is the
@@ -43,6 +49,10 @@ export class ScanConnectionError extends Error {
 
 export async function createScan(request: CreateScanRequest): Promise<CreateScanResult> {
   return postJson<CreateScanResult>('/v1/scans', request);
+}
+
+export async function createFoodIdeaRecipe(request: CreateFoodIdeaRecipeRequest): Promise<CreateFoodIdeaRecipeResult> {
+  return postJson<CreateFoodIdeaRecipeResult>('/v1/ideas/recipe', request);
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {

@@ -5,8 +5,6 @@ import type { RecipeMode } from '../mocks';
 
 export const analyticsEvents = {
   APP_OPEN: 'app_open',
-  ONBOARDING_START: 'onboarding_start',
-  ONBOARDING_COMPLETE: 'onboarding_complete',
   SCAN_STARTED: 'scan_started',
   PHOTO_UPLOADED: 'photo_uploaded',
   DISH_DETECTED: 'dish_detected',
@@ -20,9 +18,7 @@ export const analyticsEvents = {
   SHARE_CARD_GENERATED: 'share_card_generated',
   SHARE_TAPPED: 'share_tapped',
   SHARE_COMPLETED: 'share_completed',
-  XP_EVENT_RECORDED: 'xp_event_recorded',
   SETTINGS_VIEWED: 'settings_viewed',
-  ONBOARDING_RESET: 'onboarding_reset',
   LOCAL_DATA_CLEARED: 'local_data_cleared',
 } as const;
 
@@ -32,10 +28,8 @@ type BaseProperties = {
   dishName?: string;
   errorMessage?: string;
   mode?: RecipeMode | string;
-  savings?: number;
   screen?: string;
   source?: string;
-  xpAmount?: number;
 };
 
 export type AnalyticsEventProperties = BaseProperties & Record<string, string | number | boolean | null | undefined>;

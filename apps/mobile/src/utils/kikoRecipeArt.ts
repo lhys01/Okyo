@@ -181,18 +181,6 @@ export const KIKO_RECIPE_ART_IMAGE_INVENTORY = [
   { fileName: 'ff84f4ac-43ff-4929-a514-17f0185c21ee.png', action: 'folding a burrito or wrap around filling' },
 ] as const satisfies readonly KikoRecipeArtInventoryEntry[];
 
-export const KIKO_RECIPE_ART_NON_IMAGE_INVENTORY = [
-  {
-    fileName: '.DS_Store',
-    action: 'macOS Finder metadata; not renderable recipe artwork',
-  },
-] as const satisfies readonly KikoRecipeArtInventoryEntry[];
-
-export const KIKO_RECIPE_ART_INVENTORY = [
-  ...KIKO_RECIPE_ART_NON_IMAGE_INVENTORY,
-  ...KIKO_RECIPE_ART_IMAGE_INVENTORY,
-] as const;
-
 export type KikoRecipeArtFileName = typeof KIKO_RECIPE_ART_IMAGE_INVENTORY[number]['fileName'];
 
 type KikoRecipeArtMatchRule = {

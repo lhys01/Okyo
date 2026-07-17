@@ -1,6 +1,5 @@
 // Single source for how a recipe mode is shown as a categorical chip across
-// screens (Savings, Library, Grocery). The chip color is driven by the mode
-// itself, not decoration — same idea as right-aligning numbers by place value.
+// recipe surfaces. The color is driven by the mode itself, not decoration.
 import { colors } from '../theme/okyoTheme';
 import type { RecipeMode } from '../mocks';
 

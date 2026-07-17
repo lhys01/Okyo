@@ -120,11 +120,8 @@ function getMotionState(animated: boolean | KikoMascotMotion, pose: KikoMascotPo
   if (pose === 'scanning') {
     return 'thinking';
   }
-  if (pose === 'celebrating' || pose === 'success') {
+  if (pose === 'celebrating') {
     return 'celebrate';
-  }
-  if (pose === 'happy') {
-    return 'success';
   }
   return 'idle';
 }

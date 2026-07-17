@@ -18,8 +18,6 @@ const recipeSchema = z.object({
   cookTimeMinutes: z.number().nonnegative(),
   servings: z.number().positive(),
   difficulty: z.enum(['Easy', 'Medium', 'Hard']),
-  estimatedHomemadeCost: z.number().nonnegative(),
-  estimatedSavings: z.number(),
   ingredients: z.array(z.object({
     name: z.string().min(1),
     quantity: z.string(),

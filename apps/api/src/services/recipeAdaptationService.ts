@@ -14,7 +14,6 @@ type RecipeSnapshot = {
   equipment: string[];
   substitutions: string[];
   totalTimeMinutes: number | null;
-  estimatedHomemadeCost: number | null;
   difficulty: string;
 };
 
@@ -458,7 +457,6 @@ function getRecipeSnapshot(recipe: Recipe): RecipeSnapshot {
       readFiniteNumber((recipe as { prepTimeMinutes?: unknown }).prepTimeMinutes),
       readFiniteNumber((recipe as { cookTimeMinutes?: unknown }).cookTimeMinutes),
     );
-  const estimatedHomemadeCost = readFiniteNumber((recipe as { estimatedHomemadeCost?: unknown }).estimatedHomemadeCost);
   const difficulty = cleanText(readString((recipe as { difficulty?: unknown }).difficulty)) ||
     cleanText(readString((recipe as { skillLevel?: unknown }).skillLevel)) ||
     'Unknown';
@@ -480,7 +478,6 @@ function getRecipeSnapshot(recipe: Recipe): RecipeSnapshot {
     equipment,
     substitutions,
     totalTimeMinutes,
-    estimatedHomemadeCost,
     difficulty,
   };
 }
@@ -539,7 +536,7 @@ function getSpecialtySwap(snapshot: RecipeSnapshot) {
   if (snapshot.ingredientNames.some((ingredient) => ingredient.includes('parmesan'))) {
     return 'Use a smaller amount of parmesan or swap in another salty cheese you already have.';
   }
-  if (snapshot.estimatedHomemadeCost && snapshot.estimatedHomemadeCost > 8) {
+  if (snapshot.ingredientNames.length > 10) {
     return 'Choose one premium ingredient to keep and make the rest pantry-friendly.';
   }
   return undefined;

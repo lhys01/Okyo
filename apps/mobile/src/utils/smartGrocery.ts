@@ -31,7 +31,6 @@ export type SmartGrocerySummary = {
   probablyHave: SmartGroceryItem[];
   optional: SmartGroceryItem[];
   swaps: SmartGrocerySwap[];
-  savingsHint?: string;
 };
 
 type RawSmartItem = {
@@ -160,8 +159,6 @@ export function buildSmartGrocerySummary(
   });
 
   const swaps = buildSmartSwaps(recipe, mergedItems);
-  const savingsHint = swaps.find((swap) => swap.kind === 'cheaper')?.reason ??
-    (probablyHave.length > 0 ? 'Make this cheaper by checking pantry basics before buying duplicates.' : undefined);
 
   return {
     headline: 'Okyo sorted your list',
@@ -170,7 +167,6 @@ export function buildSmartGrocerySummary(
     probablyHave,
     optional,
     swaps,
-    savingsHint,
   };
 }
 

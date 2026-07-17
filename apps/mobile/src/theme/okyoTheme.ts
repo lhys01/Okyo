@@ -203,7 +203,7 @@ export const surfaces = {
     backgroundColor: colors.cream,
     borderRadius: radius.panel,
   },
-  // Layered translucent surface for chips/badges sitting on top of imagery or
+  // Layered translucent surface for chips sitting on top of imagery or
   // other cards — reads as soft glass without reaching for blur.
   glassChip: {
     backgroundColor: colors.glassFill,

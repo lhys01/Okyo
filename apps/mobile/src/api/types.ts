@@ -67,3 +67,18 @@ export type CreateScanResult = {
   uploadedImage?: boolean;
   source: ScanSource;
 } & Partial<AiDebugMetadata>;
+
+export type CreateFoodIdeaRecipeRequest = {
+  requestId: string;
+  idea: string;
+  mode?: RecipeMode;
+};
+
+export type CreateFoodIdeaRecipeResult = {
+  recipe?: Recipe;
+  recipeId: string;
+  title: string;
+  mode: RecipeMode;
+  confidence: number;
+  confidenceNote: string;
+};

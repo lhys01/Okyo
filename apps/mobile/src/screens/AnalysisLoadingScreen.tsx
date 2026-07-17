@@ -68,7 +68,6 @@ export function AnalysisLoadingScreen() {
         track(analyticsEvents.RECIPE_GENERATED, {
           dishName: latestScanResult.dishName,
           mode: latestScanRecipe.mode,
-          savings: latestScanRecipe.estimatedSavings,
           screen: 'AnalysisLoadingScreen',
         });
       }
@@ -118,7 +117,7 @@ export function AnalysisLoadingScreen() {
       reason: 'user_aborted_scan_from_loading',
       source: 'AnalysisLoadingScreen.goBackToScan',
     });
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('ScanScreen');
   };
 
   return (

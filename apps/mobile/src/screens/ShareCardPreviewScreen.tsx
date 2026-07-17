@@ -2,13 +2,14 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as ImagePicker from 'expo-image-picker';
 import * as Sharing from 'expo-sharing';
 import {
   ArrowRight,
   Camera,
   ClipboardCheck,
   Clock,
-  Crown,
   NavArrowLeft,
   ShareAndroid,
   Spark,
@@ -21,7 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { KikoMascot } from '../components/KikoMascot';
-import { RewardToast } from '../components/OkyoUI';
+import { StatusToast } from '../components/OkyoUI';
 import { colors, shadows } from '../theme/okyoTheme';
 import {
   defaultScanResult,
@@ -43,9 +44,6 @@ type ShareCardNavigation = NativeStackNavigationProp<RootStackParamList, 'ShareC
 type ShareCardData = {
   dishName: string;
   eyebrow: string;
-  restaurantPrice: number;
-  homemadeCost: number;
-  estimatedSavings: number;
   selectedMode: RecipeMode | string;
   recipe: Recipe;
   scanResult?: ScanResult | null;
@@ -54,8 +52,6 @@ type ShareCardData = {
   caption: string;
 };
 
-const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
-
 export function ShareCardPreviewScreen() {
   const navigation = useNavigation<ShareCardNavigation>();
   const route = useRoute<ShareCardRoute>();
@@ -63,9 +59,6 @@ export function ShareCardPreviewScreen() {
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
-  const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
-  const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
   const selectedMode = getSafeRecipeMode(route.params?.mode ?? storeMode);
   const scanContext = route.params?.scanContext;
   const shareImage = scanContext?.image ?? selectedScanImage;
@@ -80,43 +73,28 @@ export function ShareCardPreviewScreen() {
     isDemoScan,
   );
   const missingScanResult = !hasScanShareContext;
-
-  // Scan-result cards only claim savings from a price the user actually paid.
-  // Demo scans are the labeled example exception.
-  const hasUserPrice = isDemoScan || userRestaurantPrice !== null;
+  const [finishedImageUri, setFinishedImageUri] = useState(() => getHomemadeImageUri(cardRecipe));
 
   const cardData = useMemo<ShareCardData>(() => {
     const scanDishName = scanResult?.dishName ?? recipe?.title ?? cardRecipe.title;
-    const scanHomemadeCost = recipe?.estimatedHomemadeCost ?? scanResult?.homemadeCost ?? cardRecipe.estimatedHomemadeCost;
-    const scanRestaurantPrice = isDemoScan
-      ? scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe)
-      : userRestaurantPrice ?? 0;
-    const scanEstimatedSavings = isDemoScan
-      ? recipe?.estimatedSavings ?? scanResult?.estimatedSavings ?? cardRecipe.estimatedSavings
-      : Math.max(0, scanRestaurantPrice - scanHomemadeCost);
 
     const nextData: Omit<ShareCardData, 'caption'> = {
-      eyebrow: 'Restaurant-style swap',
+      eyebrow: 'Made with Okyo',
       dishName: scanDishName,
-      restaurantPrice: scanRestaurantPrice,
-      homemadeCost: scanHomemadeCost,
-      estimatedSavings: scanEstimatedSavings,
       selectedMode,
       recipe: cardRecipe,
       scanResult,
       imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
-      homemadeImageUri: getHomemadeImageUri(cardRecipe),
+      homemadeImageUri: finishedImageUri,
     };
 
     return {
       ...nextData,
-      caption: buildCaption(nextData, hasUserPrice),
+      caption: buildCaption(nextData),
     };
   }, [
     cardRecipe,
-    hasUserPrice,
-    isDemoScan,
-    userRestaurantPrice,
+    finishedImageUri,
     recipe,
     scanResult,
     selectedMode,
@@ -125,9 +103,11 @@ export function ShareCardPreviewScreen() {
   const shareStats = useMemo(() => getShareStats(cardData.recipe), [cardData.recipe]);
   const didTrackGenerated = useRef(false);
   const cardRef = useRef<View | null>(null);
-  const [shareRewardVisible, setShareRewardVisible] = useState(false);
-  const [shareRewardLabel, setShareRewardLabel] = useState('Share moment ready +20 XP');
-  const shareRewardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pickerInFlight = useRef(false);
+  const shareInFlight = useRef(false);
+  const [shareStatusVisible, setShareStatusVisible] = useState(false);
+  const [shareStatusLabel, setShareStatusLabel] = useState('Share moment ready');
+  const shareStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (didTrackGenerated.current) {
@@ -147,10 +127,9 @@ export function ShareCardPreviewScreen() {
     track(analyticsEvents.SHARE_CARD_GENERATED, {
       dishName: cardData.dishName,
       mode: cardData.selectedMode,
-      savings: cardData.estimatedSavings,
       screen: 'ShareCardPreviewScreen',
     });
-  }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, missingScanResult]);
+  }, [cardData.dishName, cardData.selectedMode, missingScanResult]);
 
   useEffect(() => {
     const imageUri = cardData.imageUri ?? null;
@@ -178,26 +157,23 @@ export function ShareCardPreviewScreen() {
       return;
     }
 
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('ScanScreen');
   };
 
   const shareCard = async () => {
+    if (shareInFlight.current) return;
+    shareInFlight.current = true;
     try {
       uiLog('ShareCardPreviewScreen', 'share_tapped', { cardType: 'scan_result', dishName: cardData.dishName });
       track(analyticsEvents.SHARE_TAPPED, {
         dishName: cardData.dishName,
-        savings: cardData.estimatedSavings,
         screen: 'ShareCardPreviewScreen',
       });
       const didShareImage = await shareImageCard();
       if (didShareImage) {
-        const shareEventId = `share-card-scan-result-${selectedMode}`;
-        const willAwardShareXp = !awardedXpEvents.includes(shareEventId);
-        awardXPOnce(shareEventId, 20);
-        showShareReward(willAwardShareXp ? 'Share moment ready +20 XP' : 'Share moment ready');
+        showShareStatus('Share moment ready');
         track(analyticsEvents.SHARE_COMPLETED, {
           dishName: cardData.dishName,
-          savings: cardData.estimatedSavings,
           screen: 'ShareCardPreviewScreen',
           source: 'image',
         });
@@ -209,34 +185,33 @@ export function ShareCardPreviewScreen() {
         return;
       }
 
-      const shareEventId = `share-card-scan-result-${selectedMode}`;
-      const willAwardShareXp = !awardedXpEvents.includes(shareEventId);
-      awardXPOnce(shareEventId, 20);
-      showShareReward(willAwardShareXp ? 'Share moment ready +20 XP' : 'Share moment ready');
+      showShareStatus('Share moment ready');
       track(analyticsEvents.SHARE_COMPLETED, {
         dishName: cardData.dishName,
-        savings: cardData.estimatedSavings,
         screen: 'ShareCardPreviewScreen',
         source: 'caption',
       });
     } catch {
       Alert.alert('Share unavailable', 'This device could not open the native share sheet.');
+    } finally {
+      shareInFlight.current = false;
     }
   };
 
   const shareImageCard = async () => {
+    let temporaryUri: string | null = null;
     try {
       if (!cardRef.current || !(await Sharing.isAvailableAsync())) {
         return false;
       }
 
-      const uri = await captureRef(cardRef, {
+      temporaryUri = await captureRef(cardRef, {
         format: 'png',
         quality: 1,
         result: 'tmpfile',
       });
 
-      await Sharing.shareAsync(uri, {
+      await Sharing.shareAsync(temporaryUri, {
         dialogTitle: 'Share Okyo card',
         mimeType: 'image/png',
         UTI: 'public.png',
@@ -248,6 +223,41 @@ export function ShareCardPreviewScreen() {
         errorMessage: error instanceof Error ? error.message : 'Image share unavailable.',
       });
       return false;
+    } finally {
+      if (temporaryUri) {
+        await FileSystem.deleteAsync(temporaryUri, { idempotent: true }).catch(() => undefined);
+      }
+    }
+  };
+
+  const chooseFinishedPhoto = () => {
+    if (pickerInFlight.current) return;
+    Alert.alert('Add your finished meal', 'Choose a new photo or one you already took.', [
+      { text: 'Skip', style: 'cancel' },
+      { text: 'Photo library', onPress: () => void pickFinishedPhoto('library') },
+      { text: 'Take photo', onPress: () => void pickFinishedPhoto('camera') },
+    ]);
+  };
+
+  const pickFinishedPhoto = async (source: 'camera' | 'library') => {
+    if (pickerInFlight.current) return;
+    pickerInFlight.current = true;
+    try {
+      const permission = source === 'camera'
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Photo permission needed', 'Allow photo access in device Settings, or share without a finished photo.');
+        return;
+      }
+      const result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync({ allowsEditing: false, mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.9 })
+        : await ImagePicker.launchImageLibraryAsync({ allowsEditing: false, mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.9 });
+      if (!result.canceled && result.assets[0]?.uri) setFinishedImageUri(result.assets[0].uri);
+    } catch {
+      Alert.alert('Photo unavailable', 'Okyo could not open that photo. You can still share without it.');
+    } finally {
+      pickerInFlight.current = false;
     }
   };
 
@@ -255,24 +265,24 @@ export function ShareCardPreviewScreen() {
     try {
       uiLog('ShareCardPreviewScreen', 'copy_caption', { cardType: 'scan_result' });
       await Clipboard.setStringAsync(cardData.caption);
-      showShareReward('Caption copied');
+      showShareStatus('Caption copied');
     } catch {
       Alert.alert('Copy unavailable', 'The caption could not be copied on this device.');
     }
   };
 
-  const showShareReward = (label: string) => {
-    if (shareRewardTimer.current) {
-      clearTimeout(shareRewardTimer.current);
+  const showShareStatus = (label: string) => {
+    if (shareStatusTimer.current) {
+      clearTimeout(shareStatusTimer.current);
     }
-    setShareRewardLabel(label);
-    setShareRewardVisible(true);
-    shareRewardTimer.current = setTimeout(() => setShareRewardVisible(false), 1600);
+    setShareStatusLabel(label);
+    setShareStatusVisible(true);
+    shareStatusTimer.current = setTimeout(() => setShareStatusVisible(false), 1600);
   };
 
   useEffect(() => () => {
-    if (shareRewardTimer.current) {
-      clearTimeout(shareRewardTimer.current);
+    if (shareStatusTimer.current) {
+      clearTimeout(shareStatusTimer.current);
     }
   }, []);
 
@@ -286,7 +296,7 @@ export function ShareCardPreviewScreen() {
           <Text style={styles.emptyBody}>
             Okyo needs a completed food scan and recipe before it can build a share card.
           </Text>
-          <PrimaryAction icon={<Camera color={colors.onCoral} height={20} strokeWidth={2.2} width={20} />} label="Start a scan" onPress={() => navigation.navigate('MainTabs', { screen: 'ScanScreen' })} />
+          <PrimaryAction icon={<Camera color={colors.onCoral} height={20} strokeWidth={2.2} width={20} />} label="Start a scan" onPress={() => navigation.navigate('ScanScreen')} />
         </View>
       </ShareFrame>
     );
@@ -309,9 +319,7 @@ export function ShareCardPreviewScreen() {
           </Text>
           <View style={styles.remadeRow}>
             <View style={styles.remadeLine} />
-            <Text style={styles.remadeText}>
-              {!hasUserPrice ? 'from photo to home recipe' : 'remade at home'}
-            </Text>
+            <Text style={styles.remadeText}>from inspiration to home recipe</Text>
             <View style={styles.remadeLine} />
           </View>
 
@@ -335,49 +343,32 @@ export function ShareCardPreviewScreen() {
 
           <View style={styles.cardFooter}>
             <Text style={styles.cardFooterText}>Made with <Text style={styles.okyoText}>Okyo</Text></Text>
-            <View style={styles.footerBadge}>
+            <View style={styles.footerMark}>
               <Spark color={colors.coral} height={20} strokeWidth={2} width={20} />
             </View>
           </View>
         </View>
       </View>
 
-      {!hasUserPrice ? (
-        <View style={styles.priceSummary}>
-          <View style={styles.priceColumn}>
-            <Text style={styles.priceLabel}>Home estimate</Text>
-            <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
-          </View>
-          <View style={styles.priceColumn}>
-            <Text style={styles.priceLabel}>Ready in</Text>
-            <Text style={styles.priceValue}>
-              {getTotalTime(cardData.recipe) > 0 ? formatDuration(getTotalTime(cardData.recipe)) : 'Flexible'}
-            </Text>
-          </View>
+      <View style={styles.priceSummary}>
+        <View style={styles.priceColumn}>
+          <Text style={styles.priceLabel}>Made from what I had with Okyo.</Text>
+          <Text style={styles.priceValue}>
+            {getTotalTime(cardData.recipe) > 0 ? formatDuration(getTotalTime(cardData.recipe)) : 'Ready to cook'}
+          </Text>
         </View>
-      ) : (
-        <View style={styles.priceSummary}>
-          <View style={styles.priceColumn}>
-            <Text style={styles.priceLabel}>{isDemoScan ? 'Restaurant (example)' : 'Restaurant'}</Text>
-            <Text style={styles.priceValue}>{formatCurrency(cardData.restaurantPrice)}</Text>
-          </View>
-          <ArrowRight color={colors.green} height={22} strokeWidth={2.4} width={22} />
-          <View style={styles.priceColumn}>
-            <Text style={styles.priceLabel}>Home</Text>
-            <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
-          </View>
-          <View style={styles.savingsPill}>
-            <Text style={styles.savingsPillLabel}>Saved</Text>
-            <Text style={styles.savingsPillValue}>{formatCurrency(cardData.estimatedSavings)}</Text>
-          </View>
-        </View>
-      )}
+      </View>
 
       <View style={styles.actions}>
+        <SecondaryAction
+          icon={<Camera color={colors.coral} height={20} strokeWidth={2.2} width={20} />}
+          label={finishedImageUri ? 'Change Finished Photo' : 'Add Finished Photo'}
+          onPress={chooseFinishedPhoto}
+        />
         <PrimaryAction icon={<ShareAndroid color={colors.onCoral} height={21} strokeWidth={2.2} width={21} />} label="Share Image" onPress={shareCard} />
         <SecondaryAction icon={<ClipboardCheck color={colors.coral} height={20} strokeWidth={2.2} width={20} />} label="Copy Caption" onPress={copyCaption} />
       </View>
-      <RewardToast label={shareRewardLabel} tone={shareRewardLabel.includes('XP') ? 'xp' : 'save'} visible={shareRewardVisible} />
+      <StatusToast label={shareStatusLabel} visible={shareStatusVisible} />
     </ShareFrame>
   );
 }
@@ -485,16 +476,11 @@ function SecondaryAction({ icon, label, onPress }: { icon: ReactNode; label: str
   );
 }
 
-function buildCaption(data: Omit<ShareCardData, 'caption'>, hasUserPrice: boolean) {
+function buildCaption(data: Omit<ShareCardData, 'caption'>) {
   const dishName = cleanDisplayText(data.dishName);
-
-  if (!hasUserPrice) {
-    const totalTime = getTotalTime(data.recipe);
-    const timePart = totalTime > 0 ? `, ready in ${totalTime} min` : '';
-    return `I turned a food photo into a home recipe with Okyo: ${dishName}. Home estimate ${formatCurrency(data.homemadeCost)}${timePart}. Made with Okyo.`;
-  }
-
-  return `I remade ${dishName} at home with Okyo. Restaurant ${formatCurrency(data.restaurantPrice)} -> home ${formatCurrency(data.homemadeCost)}. Saved about ${formatCurrency(data.estimatedSavings)}. Made with Okyo.`;
+  const totalTime = getTotalTime(data.recipe);
+  const timePart = totalTime > 0 ? ` Ready in about ${totalTime} min.` : '';
+  return `Made from what I had with Okyo: ${dishName}.${timePart}`;
 }
 
 function getShareRecipe(
@@ -521,8 +507,7 @@ type ShareStatData = {
   icon: ReactNode;
 };
 
-// Honest stats only — no invented rarity/streak scores or decorative strength
-// bars. Time, steps, and difficulty come straight from the recipe.
+// Time, steps, and difficulty come straight from the recipe.
 function getShareStats(recipe: Recipe): ShareStatData[] {
   const totalTime = getTotalTime(recipe);
   const stepsCount = getStepCount(recipe);
@@ -542,13 +527,9 @@ function getShareStats(recipe: Recipe): ShareStatData[] {
     {
       label: 'Difficulty',
       value: difficultyLabel,
-      icon: <Crown color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
+      icon: <Spark color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
   ];
-}
-
-function getEstimatedRestaurantPrice(recipe: Recipe | null) {
-  return recipe ? getFiniteNumber(recipe.estimatedHomemadeCost) + getFiniteNumber(recipe.estimatedSavings) : 0;
 }
 
 function getTotalTime(recipe: Recipe) {
@@ -849,7 +830,7 @@ const styles = StyleSheet.create({
     color: colors.coral,
     fontWeight: '800',
   },
-  footerBadge: {
+  footerMark: {
     alignItems: 'center',
     backgroundColor: '#fff1df',
     borderRadius: 999,
@@ -881,23 +862,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     marginTop: 3,
-  },
-  savingsPill: {
-    backgroundColor: colors.greenSoft,
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  savingsPillLabel: {
-    color: colors.green,
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  savingsPillValue: {
-    color: colors.green,
-    fontSize: 16,
-    fontWeight: '700',
   },
   actions: {
     gap: 10,

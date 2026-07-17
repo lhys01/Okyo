@@ -25,9 +25,6 @@ export type ScanResult = {
   possibleDishNames?: string[];
   scanState?: ScanState;
   restaurantStyle: string;
-  restaurantPrice: number;
-  homemadeCost: number;
-  estimatedSavings: number;
   confidence: number;
   matchScore: number;
   difficulty: Difficulty;
@@ -103,6 +100,13 @@ export type GroceryListItem = {
   shoppingNote?: string;
 };
 
+export type NutritionEstimate = {
+  calories?: number;
+  proteinGrams?: number;
+  carbohydratesGrams?: number;
+  fatGrams?: number;
+};
+
 export type Recipe = {
   id: string;
   scanResultId: string;
@@ -113,6 +117,7 @@ export type Recipe = {
   // Snapshot of the user's real scan photo, attached when the recipe is saved so
   // the library card can show the actual meal. Only ever a real uploaded image.
   imageUri?: string;
+  savedAt?: string;
   title: string;
   mode: RecipeMode;
   description: string;
@@ -123,8 +128,6 @@ export type Recipe = {
   servings: number;
   skillLevel?: Difficulty;
   difficulty: Difficulty;
-  estimatedHomemadeCost: number;
-  estimatedSavings: number;
   ingredients: RecipeIngredient[];
   ingredientGroups?: RecipeIngredientGroup[];
   steps: string[];
@@ -142,16 +145,9 @@ export type Recipe = {
   groceryItems?: GroceryListItem[];
   spicePairings?: string[];
   cookingTerms?: CookingTerm[];
+  nutritionEstimate?: NutritionEstimate;
   isCompactRecipe?: boolean;
 };
-
-export type FoodIdeaSourceType =
-  | 'link'
-  | 'text'
-  | 'photo'
-  | 'screenshot'
-  | 'cookbook_photo'
-  | 'manual_note';
 
 export type RecipeCookabilityStatus = 'cookable' | 'needs_quick_fix' | 'too_vague_to_trust';
 
@@ -171,15 +167,4 @@ export type RecipeQualityReport = {
   whatCouldGoWrong: string[];
   fixesApplied: string[];
   userFacingSummary: string;
-};
-
-export type SavedFoodIdea = {
-  id: string;
-  sourceType: FoodIdeaSourceType;
-  title: string;
-  rawText: string;
-  sourceUrl?: string;
-  createdAt: string;
-  extractedRecipe?: Recipe;
-  qualityReport?: RecipeQualityReport;
 };

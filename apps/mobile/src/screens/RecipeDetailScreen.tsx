@@ -1,7 +1,5 @@
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
-import type { CompositeNavigationProp } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Bookmark,
@@ -9,7 +7,6 @@ import {
   Check,
   Clock,
   Leaf,
-  MoneySquare,
   NavArrowLeft,
   ShareAndroid,
   Spark,
@@ -17,6 +14,7 @@ import {
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppState,
   Image,
   Pressable,
   ScrollView,
@@ -32,7 +30,7 @@ import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { KikoRecipeStepArt } from '../components/KikoRecipeStepArt';
-import { PressableScale, ProgressFill, RewardToast } from '../components/OkyoUI';
+import { PressableScale, ProgressFill, StatusToast } from '../components/OkyoUI';
 import { RecipeQualityCard } from '../components/RecipeQualityCard';
 import { colors, fontFamilies, ingredientAvatar, layout, radius, shadows, surfaces } from '../theme/okyoTheme';
 import {
@@ -45,7 +43,7 @@ import {
   type RecipeMode,
   type RecipeStep,
 } from '../mocks';
-import type { MainTabParamList, RootStackParamList } from '../navigation/types';
+import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
 import { getModeLabel } from '../utils/modeDisplay';
@@ -72,17 +70,10 @@ import type { RecipeAdaptationPlan } from '../api/recipeAdaptationClient';
 import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
-const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
-type RecipeDetailNavigation = CompositeNavigationProp<
-  BottomTabNavigationProp<MainTabParamList, 'RecipeDetailScreen'>,
-  NativeStackNavigationProp<RootStackParamList>
->;
-type RecipeDetailRoute = RouteProp<MainTabParamList, 'RecipeDetailScreen'>;
-type RecipeStepsNavigation = CompositeNavigationProp<
-  BottomTabNavigationProp<MainTabParamList, 'RecipeStepsScreen'>,
-  NativeStackNavigationProp<RootStackParamList>
->;
-type RecipeStepsRoute = RouteProp<MainTabParamList, 'RecipeStepsScreen'>;
+type RecipeDetailNavigation = NativeStackNavigationProp<RootStackParamList, 'RecipeDetailScreen'>;
+type RecipeDetailRoute = RouteProp<RootStackParamList, 'RecipeDetailScreen'>;
+type RecipeStepsNavigation = NativeStackNavigationProp<RootStackParamList, 'RecipeStepsScreen'>;
+type RecipeStepsRoute = RouteProp<RootStackParamList, 'RecipeStepsScreen'>;
 type DisplayRecipeStep = {
   phase?: number;
   title?: string;
@@ -128,14 +119,11 @@ export function RecipeDetailScreen() {
   const setStoreSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
+  const addRecipeToGrocery = useOkyoStore((state) => state.addRecipeToGrocery);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const savedFoodIdeas = useOkyoStore((state) => state.savedFoodIdeas);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
-  const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
-  const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
   const [selectedMode, setSelectedMode] = useState<RecipeMode>(
     getSafeRecipeMode(initialMode ?? storeSelectedMode),
   );
@@ -143,18 +131,6 @@ export function RecipeDetailScreen() {
   const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
   const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
-  // Savings need a price the user actually paid. Demo scans are the labeled
-  // exception — they show example numbers from mock data.
-  const homemadeCost = recipe?.estimatedHomemadeCost ?? 0;
-  const restaurantPrice = isDemoScan
-    ? scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe)
-    : userRestaurantPrice ?? 0;
-  const displaySavings = isDemoScan
-    ? recipe?.estimatedSavings ?? 0
-    : Math.max(0, restaurantPrice - homemadeCost);
-  const canShowSavings = isDemoScan
-    ? restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0
-    : userRestaurantPrice !== null;
   const spicePairings = getSafeTextList(recipe?.spicePairings);
   const ingredientGroups = getSafeIngredientGroups(recipe);
   const equipment = getSafeTextList(recipe?.equipment);
@@ -176,24 +152,24 @@ export function RecipeDetailScreen() {
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
   const qualityReport = useRecipeQualityReport(recipe, {
-    source: savedFoodIdeas.some((idea) => idea.extractedRecipe?.id === recipe?.id) ? 'foodIdea' : 'savedRecipe',
+    source: 'savedRecipe',
     skillLevel: recipe?.difficulty,
   });
   const adaptationOptions = useMemo(
     () => (recipe
       ? deriveAdaptationOptions(recipe, {
         qualityReport,
-        savedFoodIdeaCount: Array.isArray(savedFoodIdeas) ? savedFoodIdeas.length : 0,
+        savedFoodIdeaCount: 0,
         savedRecipeCount: Array.isArray(savedRecipes) ? savedRecipes.length : 0,
       })
       : []),
-    [qualityReport, recipe, savedFoodIdeas, savedRecipes],
+    [qualityReport, recipe, savedRecipes],
   );
   const [selectedAdaptationId, setSelectedAdaptationId] = useState<RecipeAdaptationGoal | null>(null);
   const adaptationContext = useMemo(() => ({
-    source: savedFoodIdeas.some((idea) => idea.extractedRecipe?.id === recipe?.id) ? 'foodIdea' as const : 'savedRecipe' as const,
+    source: 'savedRecipe' as const,
     skillLevel: recipe?.difficulty,
-  }), [recipe?.difficulty, recipe?.id, savedFoodIdeas]);
+  }), [recipe?.difficulty]);
   const [saveToastVisible, setSaveToastVisible] = useState(false);
   const [saveToastLabel, setSaveToastLabel] = useState('Saved to your library');
   const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -213,6 +189,7 @@ export function RecipeDetailScreen() {
     [backendAdaptationPlan, selectedAdaptation],
   );
   const [coachingLoading, setCoachingLoading] = useState(false);
+  const [showCookCheckpoint, setShowCookCheckpoint] = useState(Boolean(route.params?.startCooking));
 
   useFocusEffect(
     useCallback(() => {
@@ -269,7 +246,7 @@ export function RecipeDetailScreen() {
       return;
     }
 
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('ScanScreen');
   };
 
   const saveSelectedRecipe = () => {
@@ -277,21 +254,14 @@ export function RecipeDetailScreen() {
       return;
     }
 
-    const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
-    const saveEventId = `save-recipe-${recipe.id}`;
-    const willAwardSaveXp = !alreadySaved && !awardedXpEvents.includes(saveEventId);
     uiLog('RecipeDetailScreen', 'save_recipe', { recipeId: recipe.id });
     saveRecipe(attachRealScanImage(recipe, selectedScanImage));
-    if (!alreadySaved) {
-      awardXPOnce(saveEventId, 5);
-    }
     track(analyticsEvents.RECIPE_SAVED, {
       dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
       mode: recipe.mode,
-      savings: canShowSavings ? displaySavings : 0,
       screen: 'RecipeDetailScreen',
     });
-    setSaveToastLabel(willAwardSaveXp ? 'Saved to your library +5 XP' : 'Saved to your library');
+    setSaveToastLabel('Saved to your library');
     setSaveToastVisible(true);
     if (saveToastTimer.current) {
       clearTimeout(saveToastTimer.current);
@@ -317,7 +287,11 @@ export function RecipeDetailScreen() {
   };
 
   const openGroceryList = () => {
-    navigation.navigate('GroceryListScreen', { mode: selectedMode });
+    if (recipe) {
+      saveRecipe(attachRealScanImage(recipe, selectedScanImage));
+      addRecipeToGrocery(recipe.id);
+    }
+    navigation.navigate('MainTabs', { screen: 'GroceryListScreen' });
   };
 
   const openCookingSteps = () => {
@@ -361,7 +335,7 @@ export function RecipeDetailScreen() {
             Okyo needs a completed recipe before it can show cooking steps or groceries for this scan.
           </Text>
           <View style={styles.issueActions}>
-            <PrimaryAction label="Try another photo" onPress={() => navigation.navigate('MainTabs', { screen: 'ScanScreen' })} />
+            <PrimaryAction label="Try another photo" onPress={() => navigation.navigate('ScanScreen')} />
             <SecondaryAction label="Back" onPress={goBack} />
           </View>
         </View>
@@ -406,22 +380,25 @@ export function RecipeDetailScreen() {
             >
               {displayTitle}
             </Text>
-            <View style={styles.savingsMiniPill}>
-              <Leaf color={colors.green} height={15} strokeWidth={2.2} width={15} />
-              <Text style={styles.savingsMiniText}>
-                {canShowSavings
-                  ? `You save ${formatCurrency(displaySavings)}`
-                  : `Home est. ${formatCurrency(recipe.estimatedHomemadeCost)}`}
-              </Text>
-            </View>
-
             <Text style={styles.metaLine}>
               {totalTime} min · {recipe.skillLevel ?? recipe.difficulty} · Serves {recipe.servings}
             </Text>
 
             <Text style={styles.description}>{displayDescription}</Text>
 
-            <PrimaryAction label={coachingLoading ? 'Preparing...' : 'Start Cooking'} onPress={openCookingSteps} />
+            <PrimaryAction label="Begin cooking" onPress={() => setShowCookCheckpoint(true)} />
+            {showCookCheckpoint ? (
+              <View style={styles.cookCheckpoint}>
+                <Text style={styles.cookCheckpointTitle}>Before you start</Text>
+                <Text style={styles.cookCheckpointText}>
+                  Ingredients: {displayIngredientGroups.flatMap((group) => group.items).slice(0, 6).map((item) => cleanDisplayText(item.name)).join(', ') || 'Review the ingredient list below'}.
+                </Text>
+                <Text style={styles.cookCheckpointText}>
+                  Equipment: {equipment.slice(0, 5).map(cleanDisplayText).join(', ') || 'Basic kitchen tools'}.
+                </Text>
+                <PrimaryAction label={coachingLoading ? 'Preparing guidance…' : "I'm ready"} onPress={openCookingSteps} />
+              </View>
+            ) : null}
             <View style={styles.secondaryActionsRow}>
               <SecondaryIconAction icon={<Bookmark color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Save" onPress={saveSelectedRecipe} />
               <SecondaryIconAction icon={<Cart color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Grocery List" onPress={openGroceryList} />
@@ -515,6 +492,16 @@ export function RecipeDetailScreen() {
               </InfoCard>
             ) : null}
 
+            <NutritionEstimateCard recipe={recipe} />
+
+            {getPossibleAllergens(recipe).length > 0 ? (
+              <InfoCard title="Possible allergen warning">
+                <Text style={styles.warningText}>
+                  This recipe may contain {getPossibleAllergens(recipe).join(', ')} based on its ingredient names. Check every package and adapt for your needs.
+                </Text>
+              </InfoCard>
+            ) : null}
+
             {substitutions.length > 0 ? (
               <InfoCard title="Easy swaps">
                 <Text style={styles.swapsHelper}>Use these if you want a lighter or easier version.</Text>
@@ -527,33 +514,10 @@ export function RecipeDetailScreen() {
               </InfoCard>
             ) : null}
 
-            <View style={styles.savingsCard}>
-              <View style={styles.savingsCopy}>
-                <Text style={styles.savingsLabel}>{canShowSavings ? (isDemoScan ? 'Example savings' : 'Your savings') : 'Estimated home cost'}</Text>
-                <Text style={styles.savingsSubLabel}>{canShowSavings ? 'You save' : 'To make at home'}</Text>
-                <Text
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.75}
-                  numberOfLines={1}
-                  style={styles.savingsValue}
-                >
-                  {formatCurrency(canShowSavings ? displaySavings : recipe.estimatedHomemadeCost)}
-                </Text>
-                <Text style={styles.savingsNote}>
-                  {canShowSavings
-                    ? `vs. restaurant ${formatCurrency(restaurantPrice)}`
-                    : 'Add what you paid from the result screen to see savings.'}
-                </Text>
-              </View>
-              <View style={styles.savingsIconBubble}>
-                <MoneySquare color={colors.green} height={42} strokeWidth={1.9} width={42} />
-              </View>
-            </View>
-
           </View>
         </View>
       </ScrollView>
-      <RewardToast label={saveToastLabel} tone="save" visible={saveToastVisible} />
+      <StatusToast label={saveToastLabel} visible={saveToastVisible} />
     </SafeAreaView>
   );
 }
@@ -569,40 +533,28 @@ export function RecipeStepsScreen() {
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
-  const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
-  const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
+  const cookingProgress = useOkyoStore((state) => state.cookingProgress);
+  const setCookingProgress = useOkyoStore((state) => state.setCookingProgress);
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
   const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
-  // Same honesty rule as RecipeDetailScreen: real savings need a user price.
-  const restaurantPrice = isDemoScan
-    ? scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe)
-    : userRestaurantPrice ?? 0;
-  const canShowSavings = Boolean(recipe) &&
-    (isDemoScan
-      ? restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0
-      : userRestaurantPrice !== null);
-  const displaySavings = !recipe
-    ? 0
-    : isDemoScan
-      ? recipe.estimatedSavings
-      : Math.max(0, restaurantPrice - recipe.estimatedHomemadeCost);
   const guidedSteps = useMemo(() => getGuidedCookingSteps(recipe), [recipe]);
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
-  const [activeStepIndex, setActiveStepIndex] = useState(0);
+  const [activeStepIndex, setActiveStepIndex] = useState(
+    cookingProgress?.recipeId === recipe?.id && !cookingProgress.completed ? cookingProgress.stepIndex : 0,
+  );
   const [showCompletion, setShowCompletion] = useState(false);
   const [stepToastVisible, setStepToastVisible] = useState(false);
   const [saveToastVisible, setSaveToastVisible] = useState(false);
   const [saveToastLabel, setSaveToastLabel] = useState('Saved to your library');
-  const [cookingRewardVisible, setCookingRewardVisible] = useState(false);
-  const [cookingRewardLabel, setCookingRewardLabel] = useState('Cooked with Okyo');
+  const [cookingStatusVisible, setCookingStatusVisible] = useState(false);
+  const [cookingStatusLabel, setCookingStatusLabel] = useState('Cooked with Okyo');
   const stepToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cookingRewardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cookingStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeStep = guidedSteps[Math.min(activeStepIndex, Math.max(guidedSteps.length - 1, 0))];
   const progress = guidedSteps.length > 0 ? ((activeStepIndex + 1) / guidedSteps.length) * 100 : 0;
   const coachHelp = useMemo(
@@ -613,6 +565,7 @@ export function RecipeStepsScreen() {
   const [activeTimerId, setActiveTimerId] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [timerStatus, setTimerStatus] = useState<StepTimerStatus>('idle');
+  const timerDeadline = useRef<number | null>(null);
   const activeTimer = coachHelp.timers.find((timer) => timer.id === activeTimerId) ?? coachHelp.timers[0] ?? null;
 
   useEffect(() => {
@@ -665,17 +618,25 @@ export function RecipeStepsScreen() {
       return undefined;
     }
 
-    const interval = setInterval(() => {
-      setRemainingSeconds((currentSeconds) => {
-        if (currentSeconds <= 1) {
-          setTimerStatus('finished');
-          return 0;
-        }
-        return currentSeconds - 1;
-      });
-    }, 1000);
+    const updateRemainingTime = () => {
+      if (!timerDeadline.current) return;
+      const nextSeconds = Math.max(0, Math.ceil((timerDeadline.current - Date.now()) / 1000));
+      setRemainingSeconds(nextSeconds);
+      if (nextSeconds === 0) {
+        timerDeadline.current = null;
+        setTimerStatus('finished');
+      }
+    };
+    updateRemainingTime();
+    const interval = setInterval(updateRemainingTime, 1000);
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') updateRemainingTime();
+    });
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      appStateSubscription.remove();
+    };
   }, [timerStatus]);
 
   useEffect(() => () => {
@@ -685,8 +646,8 @@ export function RecipeStepsScreen() {
     if (saveToastTimer.current) {
       clearTimeout(saveToastTimer.current);
     }
-    if (cookingRewardTimer.current) {
-      clearTimeout(cookingRewardTimer.current);
+    if (cookingStatusTimer.current) {
+      clearTimeout(cookingStatusTimer.current);
     }
   }, []);
 
@@ -704,21 +665,14 @@ export function RecipeStepsScreen() {
       return;
     }
 
-    const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
-    const saveEventId = `save-recipe-${recipe.id}`;
-    const willAwardSaveXp = !alreadySaved && !awardedXpEvents.includes(saveEventId);
     uiLog('RecipeStepsScreen', 'save_recipe', { recipeId: recipe.id });
     saveRecipe(attachRealScanImage(recipe, selectedScanImage));
-    if (!alreadySaved) {
-      awardXPOnce(saveEventId, 5);
-    }
     track(analyticsEvents.RECIPE_SAVED, {
       dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
       mode: recipe.mode,
-      savings: canShowSavings ? displaySavings : 0,
       screen: 'RecipeStepsScreen',
     });
-    setSaveToastLabel(willAwardSaveXp ? 'Saved to your library +5 XP' : 'Saved to your library');
+    setSaveToastLabel('Saved to your library');
     setSaveToastVisible(true);
     if (saveToastTimer.current) {
       clearTimeout(saveToastTimer.current);
@@ -745,6 +699,7 @@ export function RecipeStepsScreen() {
     const clampedIndex = Math.max(0, Math.min(guidedSteps.length - 1, nextIndex));
     setShowCompletion(false);
     setActiveStepIndex(clampedIndex);
+    if (recipe) setCookingProgress({ completed: false, recipeId: recipe.id, stepIndex: clampedIndex });
   };
 
   const goPreviousStep = () => {
@@ -753,19 +708,13 @@ export function RecipeStepsScreen() {
 
   const goNextStep = () => {
     if (activeStepIndex >= guidedSteps.length - 1) {
-      if (recipe) {
-        const cookingEventId = `cook-recipe-${recipe.id}`;
-        const willAwardCookingXp = !awardedXpEvents.includes(cookingEventId);
-        setCookingRewardLabel(willAwardCookingXp ? 'Cooked with Okyo +10 XP' : 'Cooked with Okyo');
-        awardXPOnce(cookingEventId, 10);
-      } else {
-        setCookingRewardLabel('Cooked with Okyo');
+      setCookingStatusLabel('Recipe complete');
+      if (recipe) setCookingProgress({ completed: true, recipeId: recipe.id, stepIndex: activeStepIndex });
+      setCookingStatusVisible(true);
+      if (cookingStatusTimer.current) {
+        clearTimeout(cookingStatusTimer.current);
       }
-      setCookingRewardVisible(true);
-      if (cookingRewardTimer.current) {
-        clearTimeout(cookingRewardTimer.current);
-      }
-      cookingRewardTimer.current = setTimeout(() => setCookingRewardVisible(false), 1800);
+      cookingStatusTimer.current = setTimeout(() => setCookingStatusVisible(false), 1800);
       setShowCompletion(true);
       return;
     }
@@ -785,20 +734,27 @@ export function RecipeStepsScreen() {
   const startTimer = (timer: CookCoachTimer) => {
     setActiveTimerId(timer.id);
     setRemainingSeconds(timer.seconds);
+    timerDeadline.current = Date.now() + timer.seconds * 1000;
     setTimerStatus('running');
   };
 
   const pauseTimer = () => {
+    if (timerDeadline.current) {
+      setRemainingSeconds(Math.max(0, Math.ceil((timerDeadline.current - Date.now()) / 1000)));
+    }
+    timerDeadline.current = null;
     setTimerStatus('paused');
   };
 
   const resumeTimer = () => {
     if (remainingSeconds > 0) {
+      timerDeadline.current = Date.now() + remainingSeconds * 1000;
       setTimerStatus('running');
     }
   };
 
   const resetTimer = () => {
+    timerDeadline.current = null;
     setRemainingSeconds(activeTimer?.seconds ?? 0);
     setTimerStatus('idle');
   };
@@ -858,8 +814,8 @@ export function RecipeStepsScreen() {
               <SecondaryAction label="Save" onPress={saveSelectedRecipe} />
             </View>
           </ScrollView>
-          <RewardToast label={cookingRewardLabel} tone={cookingRewardLabel.includes('XP') ? 'xp' : 'save'} visible={cookingRewardVisible} />
-          <RewardToast label={saveToastLabel} tone={saveToastLabel.includes('XP') ? 'xp' : 'save'} visible={saveToastVisible} />
+          <StatusToast label={cookingStatusLabel} visible={cookingStatusVisible} />
+          <StatusToast label={saveToastLabel} visible={saveToastVisible} />
         </View>
       </SafeAreaView>
     );
@@ -890,8 +846,8 @@ export function RecipeStepsScreen() {
                 {activeStep?.phase ? `${activeStep.phase} · ` : ''}Step {activeStepIndex + 1} of {guidedSteps.length}
               </Text>
               {recipe?.isCompactRecipe ? (
-                <View style={styles.compactBadge}>
-                  <Text style={styles.compactBadgeText}>Quick Recipe</Text>
+                <View style={styles.compactLabel}>
+                  <Text style={styles.compactLabelText}>Quick Recipe</Text>
                 </View>
               ) : null}
             </View>
@@ -1022,7 +978,7 @@ export function RecipeStepsScreen() {
           </View>
         </View>
       </View>
-      <RewardToast label="Step complete" tone="save" visible={stepToastVisible} />
+      <StatusToast label="Step complete" visible={stepToastVisible} />
     </SafeAreaView>
   );
 }
@@ -1240,6 +1196,57 @@ function InfoCard({ children, title }: InfoCardProps) {
       {children}
     </View>
   );
+}
+
+function NutritionEstimateCard({ recipe }: { recipe: Recipe }) {
+  const estimate = recipe.nutritionEstimate;
+  const facts = [
+    { label: 'Calories', value: formatNutritionValue(estimate?.calories, 'cal') },
+    { label: 'Protein', value: formatNutritionValue(estimate?.proteinGrams, 'g') },
+    { label: 'Carbs', value: formatNutritionValue(estimate?.carbohydratesGrams, 'g') },
+    { label: 'Fat', value: formatNutritionValue(estimate?.fatGrams, 'g') },
+  ];
+  const hasEstimate = facts.some((fact) => fact.value !== '—');
+
+  return (
+    <InfoCard title="Estimated nutrition per serving">
+      {hasEstimate ? (
+        <View style={styles.nutritionGrid}>
+          {facts.map((fact) => (
+            <View key={fact.label} style={styles.nutritionFact}>
+              <Text style={styles.nutritionValue}>{fact.value}</Text>
+              <Text style={styles.nutritionLabel}>{fact.label}</Text>
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.warningText}>No reliable nutrition estimate is available for this recipe yet.</Text>
+      )}
+      <Text style={styles.estimateNote}>Estimate only. Ingredients, brands, and portions can change these values.</Text>
+    </InfoCard>
+  );
+}
+
+function formatNutritionValue(value: number | undefined, suffix: string) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? `${Math.round(value)} ${suffix}`
+    : '—';
+}
+
+function getPossibleAllergens(recipe: Recipe) {
+  const ingredientText = (recipe.ingredients ?? []).map((item) => item.name.toLowerCase()).join(' ');
+  const rules: Array<[string, RegExp]> = [
+    ['dairy', /\b(milk|butter|cheese|cream|yogurt|whey)\b/],
+    ['egg', /\beggs?\b/],
+    ['wheat or gluten', /\b(wheat|flour|bread|pasta|noodles?|tortillas?)\b/],
+    ['peanut', /\bpeanuts?|peanut butter\b/],
+    ['tree nuts', /\b(almonds?|cashews?|walnuts?|pecans?|pistachios?|hazelnuts?|pine nuts?)\b/],
+    ['soy', /\b(soy|tofu|tempeh|miso|edamame)\b/],
+    ['fish', /\b(salmon|tuna|cod|fish|anchov(?:y|ies)|sardines?)\b/],
+    ['shellfish', /\b(shrimp|prawn|crab|lobster|clam|mussel|oyster|scallop)s?\b/],
+    ['sesame', /\b(sesame|tahini)\b/],
+  ];
+  return rules.filter(([, pattern]) => pattern.test(ingredientText)).map(([label]) => label);
 }
 
 type MakeItMineSectionProps = {
@@ -1531,6 +1538,25 @@ const styles = StyleSheet.create({
     marginTop: 20,
     paddingTop: 16,
   },
+  cookCheckpoint: {
+    backgroundColor: colors.cream,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    gap: 8,
+    marginTop: 12,
+    padding: 14,
+  },
+  cookCheckpointTitle: {
+    color: colors.charcoal,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  cookCheckpointText: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+  },
   recipeTitle: {
     color: colors.charcoal,
     fontFamily: fontFamilies.display,
@@ -1539,23 +1565,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     lineHeight: 40,
     minWidth: 0,
-  },
-  savingsMiniPill: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: colors.greenSoft,
-    borderRadius: 999,
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  savingsMiniText: {
-    color: colors.green,
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
   },
   metaLine: {
     color: colors.muted,
@@ -1707,6 +1716,40 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 23,
     marginBottom: 12,
+  },
+  nutritionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  nutritionFact: {
+    backgroundColor: colors.cream,
+    borderRadius: 14,
+    minWidth: '46%',
+    padding: 12,
+  },
+  nutritionValue: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  nutritionLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 3,
+  },
+  estimateNote: {
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 10,
+  },
+  warningText: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
   },
   makeItMineSection: {
     marginTop: 20,
@@ -1871,54 +1914,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginBottom: 10,
   },
-  savingsCard: {
-    alignItems: 'center',
-    backgroundColor: colors.greenSoft,
-    borderRadius: 20,
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 18,
-    padding: 18,
-  },
-  savingsCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  savingsLabel: {
-    color: colors.green,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 17,
-    fontWeight: '800',
-    lineHeight: 22,
-  },
-  savingsSubLabel: {
-    color: colors.green,
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 10,
-  },
-  savingsValue: {
-    color: colors.green,
-    fontFamily: fontFamilies.display,
-    fontSize: 34,
-    fontWeight: '800',
-    lineHeight: 43,
-    marginTop: 2,
-  },
-  savingsNote: {
-    color: colors.green,
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 4,
-  },
-  savingsIconBubble: {
-    alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: 999,
-    height: 76,
-    justifyContent: 'center',
-    width: 76,
-  },
   primaryAction: {
     alignItems: 'center',
     backgroundColor: colors.coral,
@@ -2002,13 +1997,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  compactBadge: {
+  compactLabel: {
     backgroundColor: colors.infoSoft,
     borderRadius: 99,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
-  compactBadgeText: {
+  compactLabelText: {
     color: colors.info,
     fontFamily: fontFamilies.bold,
     fontSize: 11,
@@ -2546,10 +2541,6 @@ function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode, fallbackRec
     null;
 }
 
-function getEstimatedRestaurantPrice(recipe: Recipe | null) {
-  return recipe ? recipe.estimatedHomemadeCost + recipe.estimatedSavings : 0;
-}
-
 function getSafeTextList(values: string[] | undefined) {
   return (Array.isArray(values) ? values : [])
     .map((value) => cleanDisplayText(value))
@@ -2681,8 +2672,7 @@ function getFlavorNotes(recipe: Recipe | null, pairings: string[]) {
 
 // Only honest, human-readable bullets survive. The raw ingredient-parser
 // sentence ("Built around corn on the cob, hot cheetos, crushed...") and
-// AI-estimated savings claims are intentionally excluded, and generic filler
-// like "home cooking" is filtered out rather than shown.
+// Generic filler like "home cooking" is filtered out rather than shown.
 const GENERIC_FILLER_PATTERN = /\bhome cooking\b/i;
 
 function getWhyBullets(recipe: Recipe | null, totalTime: number) {

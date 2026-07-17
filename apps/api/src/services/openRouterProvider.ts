@@ -98,8 +98,6 @@ export const openRouterVisionOutputSchema = z.object({
     toppingsGarnish: z.string().optional().default(''),
     cookingMethod: z.string().optional().default(''),
   }).optional().default({}),
-  restaurantPriceEstimate: z.union([z.number(), z.string()]).optional(),
-  homemadeCostEstimate: z.union([z.number(), z.string()]).optional(),
   confidenceReason: z.string().optional(),
   // Inline Epicure fields — returned by vision when Epicure is enabled, eliminating a
   // separate sequential AI call. .catch(undefined): any malformed model output degrades
@@ -165,6 +163,13 @@ const flexibleText = z.union([z.string(), z.array(z.string())])
   .optional()
   .default('')
   .transform((value) => (Array.isArray(value) ? value.filter(Boolean).join(', ') : value));
+
+const nutritionEstimateSchema = z.object({
+  calories: z.number().nonnegative().max(5000).optional(),
+  proteinGrams: z.number().nonnegative().max(500).optional(),
+  carbohydratesGrams: z.number().nonnegative().max(1000).optional(),
+  fatGrams: z.number().nonnegative().max(500).optional(),
+}).optional();
 
 const recipeVariantSchema = z.object({
   title: flexibleText,
@@ -241,6 +246,7 @@ const recipeVariantSchema = z.object({
   servings: z.union([z.number(), z.string()]).optional(),
   skillLevel: z.string().optional().default(''),
   difficulty: z.string().optional().default(''),
+  nutritionEstimate: nutritionEstimateSchema,
 });
 
 // One scan -> one canonical recipe. The AI returns a single recipe object
@@ -274,6 +280,7 @@ export const compactRecipeOutputSchema = z.object({
     return Number.isFinite(parsed) ? Math.round(parsed) : Number.NaN;
   }).pipe(z.number().int().min(1).max(12)),
   difficulty: z.enum(['Easy', 'Medium', 'Hard']),
+  nutritionEstimate: nutritionEstimateSchema,
 });
 
 // The legacy full-array repair remains available only for validation defects
@@ -1253,9 +1260,11 @@ export function getCompactRecipePrompt(analysis: FoodImageAnalysis): string {
   return [
     `Create one realistic inspired-by home recipe for "${analysis.dishName}".`,
     'Return ONLY one minified JSON object with exactly these keys:',
-    '{"title":"...","ingredients":["exact quantity ingredient"],"equipment":["..."],"steps":[{"instruction":"...","doneWhen":"optional sensory completion cue","safetyNote":"required only for food-safety hazards"}],"prepTime":10,"cookTime":20,"totalTime":30,"servings":2,"difficulty":"Easy|Medium|Hard"}',
-    'Do not add description, substitutions, tips, explanations, questions, decision branches, cooking terms, spice pairings, flavor boosts, grocery items, image prompts, prices, savings, storage, sharing copy, modes, or variants.',
+    '{"title":"...","ingredients":["exact quantity ingredient"],"equipment":["..."],"steps":[{"instruction":"...","doneWhen":"optional sensory completion cue","safetyNote":"required only for food-safety hazards"}],"prepTime":10,"cookTime":20,"totalTime":30,"servings":2,"difficulty":"Easy|Medium|Hard","nutritionEstimate":{"calories":500,"proteinGrams":25,"carbohydratesGrams":55,"fatGrams":20}}',
+    'Nutrition must be a cautious per-serving estimate derived from the listed quantities, using rounded numbers rather than a verified claim.',
+    'Do not add description, substitutions, tips, explanations, questions, decision branches, cooking terms, spice pairings, flavor boosts, grocery items, image prompts, prices, storage, sharing copy, modes, or variants.',
     'Every ingredient must begin with a usable exact quantity. "Some", "as needed", or a bare ingredient name is invalid. "To taste" is allowed only for salt, pepper, acid, or hot sauce.',
+    'Every ingredient named in a step must appear in the ingredient list. Unmeasured tap water used only to boil, rinse, wash, or make an ice bath may be omitted; measured water used in the food must be listed.',
     'Choose one coherent strategy: either shortcut ingredients or from-scratch ingredients, never both. Never list the finished dish as an ingredient.',
     isDrink
       ? 'Use 3-6 concise drink steps.'
@@ -1276,6 +1285,7 @@ export function getCompactRecipePrompt(analysis: FoodImageAnalysis): string {
       visibleIngredients: analysis.visibleIngredients,
       likelyIngredients: analysis.likelyIngredients.slice(0, 8),
       visibleComponents: analysis.visibleComponents,
+      writtenFoodIdea: analysis.foodIdea,
     })}`,
   ].join('\n');
 }
@@ -1306,7 +1316,7 @@ function getCompactRecipeRepairPrompt(
     `Correct the previous compact recipe for "${analysis.dishName}".`,
     `Critical defects: ${issues.join(', ')}.`,
     'Return ONLY the entire corrected compact recipe object. Never return a partial patch.',
-    'Required keys: title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, difficulty.',
+    'Required keys: title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, difficulty, nutritionEstimate.',
     'The same compact rules still apply: exact ingredient quantities; cookable instructions with time or sensory completion; required safetyNote; complete platter coverage.',
     `Return ${bounds.min}-${bounds.max} steps for this dish.`,
     `Full canonical ingredient list from the previous object: ${JSON.stringify(getRecord(previousOutput)?.ingredients ?? [])}`,
@@ -1367,6 +1377,7 @@ function compactRecipeToCanonicalOutput(output: CompactRecipeOutput): OpenRouter
     servings: output.servings,
     difficulty: output.difficulty,
     skillLevel: output.difficulty,
+    nutritionEstimate: output.nutritionEstimate,
   });
 }
 
@@ -1569,6 +1580,21 @@ type IngredientMentionOccurrence = {
   matchedIngredient?: string;
 };
 
+function isUnmeasuredUtilityWater(
+  occurrence: IngredientMentionOccurrence,
+  stepText: string,
+): boolean {
+  if (occurrence.concept !== 'water' || occurrence.matchedIngredient) return false;
+  const nearbyText = stepText.slice(Math.max(0, occurrence.start - 36), occurrence.end + 48);
+  const hasMeasuredWater = /(?:\d+(?:\.\d+)?|\d+\/\d+|[¼½¾⅓⅔⅛⅜⅝⅞]|one|two|three|four|five|six|seven|eight)\s*(?:cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|milliliters?|ml|liters?|l)?\s+water\b/i.test(
+    nearbyText,
+  );
+  if (hasMeasuredWater) return false;
+  return /\b(?:pot|saucepan|kettle|sink|ice bath)\b[^.]{0,80}\bwater\b|\bwater\b[^.]{0,80}\b(?:boil|rinse|wash|drain|cover)\b|\b(?:boiling|ice|cold|running|tap|salted)\s+water\b/i.test(
+    stepText,
+  );
+}
+
 function getIngredientMentionOccurrences(
   text: string,
   candidates: string[],
@@ -1615,6 +1641,10 @@ function getIngredientMentionDiagnostics(
         other.end >= occurrence.end &&
         (other.end - other.start) > (occurrence.end - occurrence.start));
       if (shadowingMention) {
+        suppressedNestedIngredientMentions.add(occurrence.concept);
+        continue;
+      }
+      if (isUnmeasuredUtilityWater(occurrence, stepText)) {
         suppressedNestedIngredientMentions.add(occurrence.concept);
         continue;
       }
@@ -2728,6 +2758,7 @@ function getFullRecipeRepairPrompt(
         totalTime: previousOutput.totalTime,
         servings: previousOutput.servings,
         skillLevel: previousOutput.skillLevel || previousOutput.difficulty,
+        nutritionEstimate: previousOutput.nutritionEstimate,
       }
     : {};
   const contractInstructions = selectedRepairMode === 'indexed'
@@ -2745,7 +2776,7 @@ function getFullRecipeRepairPrompt(
           'INGREDIENT LOCK: return the complete canonical ingredient list with the same ingredient concepts. Amounts may change only to fix ingredients_missing_amounts.',
         ]
       : [
-          'Selected repair contract: whole recipe regeneration. Return ONLY the entire corrected recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, and skillLevel.',
+          'Selected repair contract: whole recipe regeneration. Return ONLY the entire corrected recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, skillLevel, and nutritionEstimate.',
         ];
   return [
     `Correct the previous recipe JSON for "${analysis.dishName}".`,
@@ -3115,8 +3146,8 @@ async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string
   throw lastError;
 }
 
-const visionJsonContract = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}';
 const compactVisionJsonContract = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "confidenceReason": string}';
+const visionJsonContract = compactVisionJsonContract;
 
 function getVisionPrompt(
   image: ScanImageMetadata | undefined,
@@ -3155,13 +3186,7 @@ function getVisionPrompt(
     'If the image is too blurry/dark/blocked to know whether food is visible, set scanState too_unclear, isFoodImage false, confidence below 40, and rejectionReason to ask for a clearer food photo.',
     'If food is visible but uncertain, do NOT say "could not recognize" or "failed"; provide a broad best guess with lower confidence instead of failure.',
     'confidence may be 0-100. Use lower confidence when the image is unclear, partial, or screenshot-like.',
-    ...(!compactRecipeEnabled ? [
-      'Do not invent exact restaurant menu prices from a photo. Set restaurantPriceEstimate to 0 unless a menu, receipt, visible price, or user-provided price is available in metadata.',
-      'homemadeCostEstimate may be a cautious grocery-cost estimate for making a similar recipe at home.',
-      'Use cautious estimates. Never present food identification, cost, or ingredients as exact.',
-    ] : [
-      'Never present food identification or ingredients as exact.',
-    ]),
+    'Never present food identification or ingredients as exact.',
     'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
     'If no actual image is available, return a cautious low-confidence result based only on metadata.',
     ...(!compactRecipeEnabled ? [`Requested recipe mode: ${mode}.`] : []),
@@ -3183,9 +3208,6 @@ function getCompactVisionRetryPrompt(
     'If any food or drink is visible, do not hard reject. Give the most specific honest dish or drink name supported by the image, with lower confidence if uncertain.',
     'Drinks must be named as drinks, such as smoothie, latte, shake, juice, boba, coffee, or matcha. Never call a drink a plate or bowl.',
     'Avoid generic names like Food Plate, Restaurant Plate, Meal, Dish, Bowl, Drink, or Unknown Dish when a more specific visible guess is possible.',
-    ...(!compactRecipeEnabled
-      ? ['Set restaurantPriceEstimate to 0 unless a visible menu, receipt, or price is in the image.']
-      : []),
     ...(!compactRecipeEnabled ? [`Requested recipe mode: ${mode}.`] : []),
     `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
   ].join('\n');
@@ -3212,9 +3234,7 @@ function getFocusedVisionRetryPrompt(
     'If the image shows a drink in a cup or glass (smoothie, milkshake, latte, iced coffee, juice, boba), the dishName MUST say so. Never call a drink a plate, bowl, or meal.',
     'Generic names like "Mixed Restaurant Plate", "Food Plate", "Meal", "Dish", "Plate", or "Bowl" are wrong when any specific food or drink is identifiable. Prefer a specific guess with lower confidence.',
     'Include 2-4 possibleDishNames that are specific alternates of the same visible food or drink.',
-    compactRecipeEnabled
-      ? 'Stay honest: keep scanState accurate, lower confidence instead of inventing details, and use not_food only when no food or drink is visible at all.'
-      : 'Stay honest: keep scanState accurate, lower confidence instead of inventing details, set restaurantPriceEstimate to 0 unless a menu or receipt is visible, and use not_food only when no food or drink is visible at all.',
+    'Stay honest: keep scanState accurate, lower confidence instead of inventing details, and use not_food only when no food or drink is visible at all.',
     ...(!compactRecipeEnabled ? [`Requested recipe mode: ${mode}.`] : []),
     `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
   ].join('\n');
@@ -3244,12 +3264,14 @@ function getRecipePrompt(
     `Create one safe, realistic inspired-by home recipe for "${analysis.dishName}".`,
     `The recipe MUST be a homemade version of "${analysis.dishName}" as scanned. Do not switch dishes or add alcohol.`,
     'Return ONLY one complete minified JSON object. No markdown, prose, reasoning, modes, variants, or optional enrichment.',
-    'Return exactly these top-level fields: title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, skillLevel.',
+    'Return exactly these top-level fields: title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, skillLevel, nutritionEstimate.',
+    'nutritionEstimate must be a cautious rounded per-serving estimate shaped like {"calories":500,"proteinGrams":25,"carbohydratesGrams":55,"fatGrams":20}. Do not imply laboratory accuracy.',
     'ingredients must be plain strings, each beginning with a usable exact quantity and real grocery name, for example "2 large eggs" or "1 tbsp olive oil". Never use ingredient objects, "some", "as needed", or a bare name. "To taste" is allowed only for salt, pepper, acid, or hot sauce.',
     'steps must be objects shaped like {"title":"short action","step":"concise cookable instruction","doneWhen":"optional useful sensory cue","safetyNote":"required only for food-safety hazards"}. Do not generate step numbers, phases, per-step ingredient arrays, or per-step tool arrays; Okyo derives those locally.',
     `Use ${bounds.min}-${bounds.max} concise steps for this dish and keep each instruction under 30 words. Every cooking instruction must contain a time, an observable completion cue, or both. A presentation-only final step may simply serve or plate the finished dish.`,
     'Name actual ingredients and actions. Never say "main ingredient", "cook until done", "prepare ingredients", "mix everything", or "season to taste" without an amount.',
     'Ingredient closure is mandatory: every ingredient used in any instruction must appear in the top-level ingredient list with a usable quantity.',
+    'Unmeasured tap water used only to boil, rinse, wash, or make an ice bath may be omitted from ingredients. Any measured water incorporated into the food must be listed with its quantity.',
     'Choose one coherent strategy: either shortcut ingredients or from-scratch ingredients, never both. Never list the finished dish as an ingredient.',
     'If raw components need preparation, include those actions before cooking. Quantities used in steps must agree with the ingredient list.',
     'Keep equipment compact and include only tools genuinely required.',

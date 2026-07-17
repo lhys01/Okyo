@@ -22,8 +22,6 @@ test('normalizes dim cluttered restaurant food into an uncertain food result', (
       toppingsGarnish: 'green garnish',
       vegetables: '',
     },
-    restaurantPriceEstimate: 18,
-    homemadeCostEstimate: 6,
     confidenceReason: 'Dim lighting and table clutter make the exact dish uncertain.',
   });
 
@@ -33,7 +31,7 @@ test('normalizes dim cluttered restaurant food into an uncertain food result', (
   assert.ok(analysis.confidence >= 0.4 && analysis.confidence <= 0.85);
 });
 
-test('does not invent restaurant price when a photo has no visible price', () => {
+test('vision normalization returns food evidence without consumer price fields', () => {
   const analysis = normalizeVisionOutput({
     dishName: 'saucy rice bowl',
     scanState: 'food_present_uncertain_dish',
@@ -52,13 +50,12 @@ test('does not invent restaurant price when a photo has no visible price', () =>
       toppingsGarnish: 'green garnish',
       vegetables: '',
     },
-    homemadeCostEstimate: 8,
-    confidenceReason: 'Food is visible, but no menu or receipt price appears in the photo.',
+    confidenceReason: 'Food is visible, but the exact sauce is uncertain.',
   });
 
   assert.equal(analysis.isFoodImage, true);
-  assert.equal(analysis.restaurantPriceEstimate, 0);
-  assert.equal(analysis.homemadeCostEstimate, 8);
+  assert.equal('restaurantPriceEstimate' in analysis, false);
+  assert.equal('homemadeCostEstimate' in analysis, false);
 });
 
 test('keeps relevant possible dish names and drops generic alternatives for uncertain food', () => {
@@ -81,8 +78,6 @@ test('keeps relevant possible dish names and drops generic alternatives for unce
       toppingsGarnish: 'green garnish',
       vegetables: '',
     },
-    restaurantPriceEstimate: 0,
-    homemadeCostEstimate: 9,
     confidenceReason: 'The exact dish is unclear, but food is visible.',
   });
 
@@ -112,8 +107,6 @@ test('keeps multiple-plate scans focused on the central edible dish', () => {
       toppingsGarnish: '',
       vegetables: 'cucumber',
     },
-    restaurantPriceEstimate: 17,
-    homemadeCostEstimate: 7,
     confidenceReason: 'The central bowl is the largest visible dish.',
   });
 
@@ -141,8 +134,6 @@ test('treats screenshots of food posts as food when food is visible', () => {
       toppingsGarnish: 'melted cheese',
       vegetables: '',
     },
-    restaurantPriceEstimate: 5,
-    homemadeCostEstimate: 2,
     confidenceReason: 'Screenshot UI is present, but the food is visible.',
   });
 
@@ -170,8 +161,6 @@ test('rescues contradictory partial-food output when visible components show foo
       toppingsGarnish: '',
       vegetables: '',
     },
-    restaurantPriceEstimate: 16,
-    homemadeCostEstimate: 6,
     confidenceReason: 'Only part of the saucy food is visible.',
   });
 
@@ -200,8 +189,6 @@ test('downgrades too-unclear to partial food when ingredients and components sho
       toppingsGarnish: '',
       vegetables: '',
     },
-    restaurantPriceEstimate: 19,
-    homemadeCostEstimate: 7,
     confidenceReason: 'The photo is dim, but food is visible.',
   });
 
@@ -231,8 +218,6 @@ test('downgrades low-confidence too-unclear when response still contains food wo
       toppingsGarnish: '',
       vegetables: '',
     },
-    restaurantPriceEstimate: 18,
-    homemadeCostEstimate: 7,
     confidenceReason: 'The photo is dim, but it appears to contain a grilled or charred plate.',
   });
 
@@ -261,8 +246,6 @@ test('rescues not-food output when dish name and components show food evidence',
       toppingsGarnish: 'greens',
       vegetables: 'greens',
     },
-    restaurantPriceEstimate: 22,
-    homemadeCostEstimate: 9,
     confidenceReason: 'The model contradicted itself, but visible food components are present.',
   });
 
@@ -291,8 +274,6 @@ test('uses broad best guess for complicated food with no exact dish name', () =>
       toppingsGarnish: 'green garnish',
       vegetables: 'vegetables',
     },
-    restaurantPriceEstimate: 20,
-    homemadeCostEstimate: 8,
     confidenceReason: 'Busy restaurant table and dim lighting make exact dish uncertain.',
   });
 
@@ -322,8 +303,6 @@ test('keeps simple clear food successful', () => {
       toppingsGarnish: 'basil',
       vegetables: '',
     },
-    restaurantPriceEstimate: 16,
-    homemadeCostEstimate: 6,
     confidenceReason: 'The pizza is centered and clearly visible.',
   });
 
@@ -352,8 +331,6 @@ test('keeps clear non-food rejected with no recipe direction', () => {
       toppingsGarnish: '',
       vegetables: '',
     },
-    restaurantPriceEstimate: 0,
-    homemadeCostEstimate: 0,
     confidenceReason: 'The image appears to show a receipt, not food.',
   });
 
@@ -383,8 +360,6 @@ test('keeps truly blurry or blocked images too unclear when no food evidence exi
       toppingsGarnish: '',
       vegetables: '',
     },
-    restaurantPriceEstimate: 0,
-    homemadeCostEstimate: 0,
     confidenceReason: 'The image is too blurry and blocked to identify food.',
   });
 

@@ -11,6 +11,7 @@ import {
 import {
   compactRecipeOutputSchema,
   generateRecipeWithOpenRouter,
+  getCompactRecipePrompt,
   getRecipePromptSizeComparison,
   openRouterRecipeOutputSchema,
   validateCompactRecipeOutput,
@@ -64,8 +65,6 @@ function analysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAnalysis
       toppingsGarnish: 'lemon',
       cookingMethod: 'seared',
     },
-    restaurantPriceEstimate: 0,
-    homemadeCostEstimate: 0,
     matchScore: 8.5,
     difficulty: 'Easy',
     modes: ['Restaurant Copy', 'Budget', 'Healthy'],
@@ -295,6 +294,35 @@ test('missing quantities and unlisted step ingredients are critical defects', ()
       : step),
   });
   assert.ok(validateCompactRecipeOutput(unlistedButter, analysis()).includes(
+    'step_uses_unlisted_ingredients',
+  ));
+});
+
+test('allows unmeasured utility water but still requires measured recipe water', () => {
+  const utilityWater = chickenRecipe({
+    steps: chickenRecipe().steps.map((step, index) => index === 0
+      ? {
+          instruction: 'Bring a large pot of salted water to a boil for 8 minutes.',
+          doneWhen: '',
+          safetyNote: '',
+        }
+      : step),
+  });
+  assert.equal(
+    validateCompactRecipeOutput(utilityWater, analysis()).includes('step_uses_unlisted_ingredients'),
+    false,
+  );
+
+  const measuredWater = chickenRecipe({
+    steps: chickenRecipe().steps.map((step, index) => index === 0
+      ? {
+          instruction: 'Whisk 1 cup water into the chicken for 2 minutes until combined.',
+          doneWhen: '',
+          safetyNote: '',
+        }
+      : step),
+  });
+  assert.ok(validateCompactRecipeOutput(measuredWater, analysis()).includes(
     'step_uses_unlisted_ingredients',
   ));
 });
@@ -535,6 +563,21 @@ test('compact prompt is materially smaller than the current full prompt', () => 
   }));
   assert.ok(comparison.compactPromptChars < comparison.fullPromptChars * 0.65);
   assert.ok(comparison.estimatedCompactPromptTokens < comparison.estimatedFullPromptTokens);
+});
+
+test('written food ideas and estimated nutrition stay in the provider contract', () => {
+  const prompt = getCompactRecipePrompt(analysis({
+    dishName: 'Crispy chicken rice bowl',
+    foodIdea: 'Crispy chicken rice bowl with cucumber and spicy mayo, easy weeknight dinner',
+  }));
+  assert.match(prompt, /writtenFoodIdea/);
+  assert.match(prompt, /spicy mayo/);
+  assert.match(prompt, /nutritionEstimate/);
+
+  const parsed = compactRecipeOutputSchema.parse(chickenRecipe({
+    nutritionEstimate: { calories: 520, proteinGrams: 35, carbohydratesGrams: 48, fatGrams: 20 },
+  }));
+  assert.equal(parsed.nutritionEstimate?.proteinGrams, 35);
 });
 
 function providerResponse(content: unknown, finishReason = 'stop'): Response {

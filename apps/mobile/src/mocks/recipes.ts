@@ -17,8 +17,6 @@ export const mockRecipes: Recipe[] = [
     servings: 2,
     skillLevel: 'Easy',
     difficulty: 'Easy',
-    estimatedHomemadeCost: 6.4,
-    estimatedSavings: 31.6,
     mainIngredientsSummary: 'rigatoni, tomato paste, cream, parmesan, red pepper flakes',
     equipment: ['large pot', 'skillet', 'tongs or spoon', 'measuring cup'],
     bestFor: 'a cozy restaurant-style pasta night',
@@ -87,8 +85,6 @@ export const mockRecipes: Recipe[] = [
     cookTimeMinutes: 18,
     servings: 2,
     difficulty: 'Easy',
-    estimatedHomemadeCost: 4.9,
-    estimatedSavings: 33.1,
     ingredients: [
       { name: 'rigatoni', quantity: '8 oz' },
       { name: 'tomato paste', quantity: '2 tbsp' },
@@ -108,7 +104,7 @@ export const mockRecipes: Recipe[] = [
       'Use evaporated milk for a creamier sauce without buying heavy cream.',
     ],
     pantryNote: 'Assumes butter, salt, pepper, and chili flakes may already be on hand.',
-    confidenceNote: 'Budget mode is a mock estimate and may trade some restaurant richness for cost savings.',
+    confidenceNote: 'Budget mode is a mock recipe variation for development QA only.',
   },
   {
     id: 'recipe-spicy-vodka-rigatoni-healthy',
@@ -122,8 +118,6 @@ export const mockRecipes: Recipe[] = [
     cookTimeMinutes: 20,
     servings: 2,
     difficulty: 'Medium',
-    estimatedHomemadeCost: 7.15,
-    estimatedSavings: 30.85,
     ingredients: [
       { name: 'whole wheat rigatoni', quantity: '8 oz' },
       { name: 'tomato paste', quantity: '2 tbsp' },
@@ -157,8 +151,6 @@ export const mockRecipes: Recipe[] = [
     cookTimeMinutes: 15,
     servings: 6,
     difficulty: 'Easy',
-    estimatedHomemadeCost: 2.5,
-    estimatedSavings: 9.5,
     ingredients: [
       { name: 'biscuit mix', quantity: '2 cups' },
       { name: 'shredded cheddar', quantity: '1 cup' },
@@ -187,8 +179,6 @@ export const mockRecipes: Recipe[] = [
     cookTimeMinutes: 10,
     servings: 2,
     difficulty: 'Easy',
-    estimatedHomemadeCost: 5.8,
-    estimatedSavings: 11.2,
     ingredients: [
       { name: 'cooked grains', quantity: '2 cups' },
       { name: 'chicken or falafel', quantity: '8 oz' },

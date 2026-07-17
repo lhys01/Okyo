@@ -10,7 +10,6 @@ export {
 } from './safeData';
 export type {
   Difficulty,
-  FoodIdeaSourceType,
   GroceryCategory,
   GroceryListItem,
   Recipe,
@@ -20,7 +19,6 @@ export type {
   RecipeMode,
   RecipeQualityReport,
   RecipeStep,
-  SavedFoodIdea,
   ScanResult,
   ScanState,
 } from './types';

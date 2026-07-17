@@ -15,8 +15,6 @@ function createRecipe(overrides: Partial<Recipe> = {}): Recipe {
     cookTimeMinutes: 10,
     servings: 2,
     difficulty: 'Easy',
-    estimatedHomemadeCost: 5,
-    estimatedSavings: 0,
     ingredients: [{ name: 'rice', quantity: '1 cup' }],
     steps: ['Cook the rice.'],
     substitutions: [],

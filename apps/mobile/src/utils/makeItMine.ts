@@ -77,8 +77,8 @@ export function deriveAdaptationOptions(recipe: Recipe, context: MakeItMineConte
         'Stretch the main protein with rice, noodles, beans, or extra veg.',
       ],
       tradeoff: 'The plate may taste a little more homey than restaurant-style.',
-      confidence: recipe.estimatedHomemadeCost > 6 ? 'High' : 'Medium',
-      score: recipe.estimatedHomemadeCost * 4,
+      confidence: recipe.ingredients.length >= 6 ? 'High' : 'Medium',
+      score: recipe.ingredients.length * 3,
     },
     {
       id: 'beginner',

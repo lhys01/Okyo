@@ -3,12 +3,10 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
-import { analyticsEvents, track } from '../analytics/track';
 import type { AiDebugMetadata, ScanImageMetadata, ScanRejectionType, ScanSource, ScanStatus } from '../api/types';
 import {
   type Recipe,
   type RecipeMode,
-  type SavedFoodIdea,
   type ScanResult,
 } from '../mocks';
 import { copyToDocuments } from '../utils/scanImageStorage';
@@ -47,8 +45,9 @@ type SavedRecipeContextWrite = {
   source: string;
 };
 
+export type CookingProgress = { recipeId: string; stepIndex: number; completed: boolean };
+
 type OkyoState = {
-  hasCompletedOnboarding: boolean;
   scanSessionId: string | null;
   latestScanSession: LatestScanSession | null;
   latestScanResult: ScanResult | null;
@@ -58,16 +57,12 @@ type OkyoState = {
   selectedScanImage: ScanImageMetadata | null;
   latestAiDebugMetadata: AiDebugMetadata | null;
   selectedMode: RecipeMode;
-  // Restaurant price the user actually paid, entered on the result screen.
-  // Savings display requires this — AI estimates alone must not show savings.
-  userRestaurantPrice: number | null;
   savedRecipes: Recipe[];
-  savedFoodIdeas: SavedFoodIdea[];
-  xp: number;
-  lastDailyCheckInDate: string | null;
-  awardedXpEvents: string[];
-  completeOnboarding: () => void;
-  resetOnboarding: () => void;
+  recentScanRecipes: Recipe[];
+  groceryRecipeIds: string[];
+  groceryCheckedItemIds: string[];
+  groceryClearedItemIds: string[];
+  cookingProgress: CookingProgress | null;
   beginLatestScanSession: (scanSession: LatestScanSessionWrite) => void;
   writeLatestScanSession: (scanSession: LatestScanSessionWrite) => void;
   clearLatestScan: (clear: LatestScanClear) => void;
@@ -79,19 +74,19 @@ type OkyoState = {
   setSelectedScanImage: (image: ScanImageMetadata | null) => void;
   setLatestAiDebugMetadata: (metadata: AiDebugMetadata | null) => void;
   setSelectedMode: (mode: RecipeMode) => void;
-  setUserRestaurantPrice: (price: number | null) => void;
   saveRecipe: (recipe: Recipe) => void;
-  saveFoodIdea: (idea: SavedFoodIdea) => void;
   removeSavedRecipe: (recipeId: string) => void;
-  awardXPOnce: (eventId: string, points: number) => void;
-  claimDailyCheckIn: (dateKey: string) => void;
+  addRecipeToGrocery: (recipeId: string) => void;
+  removeRecipeFromGrocery: (recipeId: string) => void;
+  toggleGroceryItem: (itemId: string) => void;
+  clearCompletedGroceryItems: () => void;
+  setCookingProgress: (progress: CookingProgress | null) => void;
   clearSavedData: () => void;
 };
 
 export const useOkyoStore = create<OkyoState>()(
   persist(
     (set, get) => ({
-      hasCompletedOnboarding: false,
       scanSessionId: null,
       latestScanSession: null,
       latestScanResult: null,
@@ -101,17 +96,12 @@ export const useOkyoStore = create<OkyoState>()(
       selectedScanImage: null,
       latestAiDebugMetadata: null,
       selectedMode: 'Restaurant Copy',
-      userRestaurantPrice: null,
       savedRecipes: [],
-      savedFoodIdeas: [],
-      xp: 0,
-      lastDailyCheckInDate: null,
-      awardedXpEvents: [],
-      completeOnboarding: () => set({ hasCompletedOnboarding: true }),
-      resetOnboarding: () =>
-        set({
-          hasCompletedOnboarding: false,
-        }),
+      recentScanRecipes: [],
+      groceryRecipeIds: [],
+      groceryCheckedItemIds: [],
+      groceryClearedItemIds: [],
+      cookingProgress: null,
       beginLatestScanSession: (scanSession) => {
         let outgoingScanImageUri: string | undefined;
         set((state) => {
@@ -128,10 +118,7 @@ export const useOkyoStore = create<OkyoState>()(
           const latestScanSession = createLatestScanSession(scanSession);
           logScanStateWrite({ ...getLatestScanSessionSummary(latestScanSession), reason: scanSession.reason });
 
-          return {
-            ...getLatestScanSessionState(latestScanSession),
-            userRestaurantPrice: null,
-          };
+          return getLatestScanSessionState(latestScanSession);
         });
         if (outgoingScanImageUri) {
           deleteUnusedScanImage(outgoingScanImageUri, useOkyoStore.getState().savedRecipes);
@@ -170,6 +157,7 @@ export const useOkyoStore = create<OkyoState>()(
 
           return {
             ...getLatestScanSessionState(latestScanSession),
+            recentScanRecipes: addRecentScanRecipe(state.recentScanRecipes, latestScanSession.latestScanRecipe),
           };
         }),
       clearLatestScan: (clear) => {
@@ -208,7 +196,6 @@ export const useOkyoStore = create<OkyoState>()(
             latestScanStatus: null,
             latestScanSession: null,
             selectedScanImage: null,
-            userRestaurantPrice: null,
           };
         }),
       setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
@@ -218,12 +205,11 @@ export const useOkyoStore = create<OkyoState>()(
       setSelectedScanImage: (image) => set({ selectedScanImage: image }),
       setLatestAiDebugMetadata: (metadata) => set({ latestAiDebugMetadata: metadata }),
       setSelectedMode: (mode) => set({ selectedMode: mode }),
-      setUserRestaurantPrice: (price) => set({ userRestaurantPrice: price }),
       saveRecipe: (recipe) => {
         set((state) => {
           const existingRecipe = state.savedRecipes.find((savedRecipe) => savedRecipe.id === recipe.id);
           if (!existingRecipe) {
-            return { savedRecipes: [...state.savedRecipes, recipe] };
+            return { savedRecipes: [...state.savedRecipes, { ...recipe, savedAt: new Date().toISOString() }] };
           }
 
           const realRecipeImageUri = getRecipeRealImageUri(recipe);
@@ -258,20 +244,15 @@ export const useOkyoStore = create<OkyoState>()(
             }));
           });
       },
-      saveFoodIdea: (idea) =>
-        set((state) => {
-          const savedFoodIdeas = Array.isArray(state.savedFoodIdeas) ? state.savedFoodIdeas : [];
-          const withoutDuplicate = savedFoodIdeas.filter((savedIdea) => savedIdea.id !== idea.id);
-          return {
-            savedFoodIdeas: [idea, ...withoutDuplicate].slice(0, 50),
-          };
-        }),
       removeSavedRecipe: (recipeId) => {
         let imageUri: string | undefined;
         set((state) => {
           const recipe = state.savedRecipes.find((r) => r.id === recipeId);
           imageUri = recipe?.imageUri;
-          return { savedRecipes: state.savedRecipes.filter((r) => r.id !== recipeId) };
+          return {
+            groceryRecipeIds: state.groceryRecipeIds.filter((id) => id !== recipeId),
+            savedRecipes: state.savedRecipes.filter((r) => r.id !== recipeId),
+          };
         });
         if (imageUri?.includes('/okyo-scan-images/')) {
           FileSystem.deleteAsync(imageUri, { idempotent: true }).catch((error: unknown) => {
@@ -279,40 +260,24 @@ export const useOkyoStore = create<OkyoState>()(
           });
         }
       },
-      awardXPOnce: (eventId, points) =>
-        set((state) => {
-          if (state.awardedXpEvents.includes(eventId)) {
-            return state;
-          }
-
-          track(analyticsEvents.XP_EVENT_RECORDED, { eventId, xpAmount: points });
-
-          const newEvents = [...state.awardedXpEvents, eventId];
-          return {
-            awardedXpEvents: newEvents.length > 5000 ? newEvents.slice(-5000) : newEvents,
-            xp: state.xp + points,
-          };
-        }),
-      claimDailyCheckIn: (dateKey) =>
-        set((state) => {
-          if (state.lastDailyCheckInDate === dateKey) {
-            return state;
-          }
-
-          const eventId = `daily-check-in-${dateKey}`;
-          const newEvents = state.awardedXpEvents.includes(eventId)
-            ? state.awardedXpEvents
-            : [...state.awardedXpEvents, eventId];
-          if (!state.awardedXpEvents.includes(eventId)) {
-            track(analyticsEvents.XP_EVENT_RECORDED, { eventId, xpAmount: 5 });
-          }
-
-          return {
-            awardedXpEvents: newEvents.length > 5000 ? newEvents.slice(-5000) : newEvents,
-            lastDailyCheckInDate: dateKey,
-            xp: state.awardedXpEvents.includes(eventId) ? state.xp : state.xp + 5,
-          };
-        }),
+      addRecipeToGrocery: (recipeId) => set((state) => ({
+        groceryRecipeIds: state.groceryRecipeIds.includes(recipeId)
+          ? state.groceryRecipeIds
+          : [...state.groceryRecipeIds, recipeId],
+      })),
+      removeRecipeFromGrocery: (recipeId) => set((state) => ({
+        groceryRecipeIds: state.groceryRecipeIds.filter((id) => id !== recipeId),
+      })),
+      toggleGroceryItem: (itemId) => set((state) => ({
+        groceryCheckedItemIds: state.groceryCheckedItemIds.includes(itemId)
+          ? state.groceryCheckedItemIds.filter((id) => id !== itemId)
+          : [...state.groceryCheckedItemIds, itemId],
+      })),
+      clearCompletedGroceryItems: () => set((state) => ({
+        groceryCheckedItemIds: [],
+        groceryClearedItemIds: [...new Set([...state.groceryClearedItemIds, ...state.groceryCheckedItemIds])].slice(-1000),
+      })),
+      setCookingProgress: (cookingProgress) => set({ cookingProgress }),
       clearSavedData: () => {
         set((state) => {
           logScanStateClear({
@@ -324,10 +289,11 @@ export const useOkyoStore = create<OkyoState>()(
 
           return {
             savedRecipes: [],
-            savedFoodIdeas: [],
-            xp: 0,
-            lastDailyCheckInDate: null,
-            awardedXpEvents: [],
+            recentScanRecipes: [],
+            groceryRecipeIds: [],
+            groceryCheckedItemIds: [],
+            groceryClearedItemIds: [],
+            cookingProgress: null,
             ...getClearedLatestScanState(),
           };
         });
@@ -339,7 +305,7 @@ export const useOkyoStore = create<OkyoState>()(
     }),
     {
       name: 'okyo-local-state',
-      version: 2,
+      version: 3,
       // Defensive: if AsyncStorage returns a corrupted/unexpected shape (bad
       // JSON survived parsing as e.g. a string or array), fall back to
       // defaults rather than crashing app startup. Version 2 also removes
@@ -347,7 +313,6 @@ export const useOkyoStore = create<OkyoState>()(
       migrate: migrateOkyoPersistedState,
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
-        hasCompletedOnboarding: state.hasCompletedOnboarding,
         scanSessionId: state.scanSessionId,
         latestScanSession: state.latestScanSession,
         latestScanResult: state.latestScanResult,
@@ -357,16 +322,22 @@ export const useOkyoStore = create<OkyoState>()(
         selectedScanImage: state.selectedScanImage,
         latestAiDebugMetadata: state.latestAiDebugMetadata,
         selectedMode: state.selectedMode,
-        userRestaurantPrice: state.userRestaurantPrice,
         savedRecipes: state.savedRecipes,
-        savedFoodIdeas: Array.isArray(state.savedFoodIdeas) ? state.savedFoodIdeas : [],
-        xp: state.xp,
-        lastDailyCheckInDate: state.lastDailyCheckInDate,
-        awardedXpEvents: state.awardedXpEvents,
+        recentScanRecipes: state.recentScanRecipes,
+        groceryRecipeIds: state.groceryRecipeIds,
+        groceryCheckedItemIds: state.groceryCheckedItemIds,
+        groceryClearedItemIds: state.groceryClearedItemIds,
+        cookingProgress: state.cookingProgress,
       }),
     },
   ),
 );
+
+function addRecentScanRecipe(current: Recipe[], recipe: Recipe | null): Recipe[] {
+  if (!recipe?.id || !recipe.title?.trim()) return Array.isArray(current) ? current : [];
+  const existing = Array.isArray(current) ? current : [];
+  return [{ ...recipe }, ...existing.filter((item) => item?.id !== recipe.id)].slice(0, 12);
+}
 
 function createLatestScanSession(scanSession: LatestScanSessionWrite): LatestScanSession {
   const realScanImageUri = getRealScanImageUri(scanSession.selectedScanImage);
@@ -431,7 +402,6 @@ function getClearedLatestScanState() {
     latestScanRecipe: null,
     selectedScanImage: null,
     latestAiDebugMetadata: null,
-    userRestaurantPrice: null,
   };
 }
 

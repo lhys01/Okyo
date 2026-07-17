@@ -9,22 +9,19 @@ export type ShareScanContext = {
 };
 
 export type RootStackParamList = {
-  WelcomeScreen: undefined;
   FoodIdeaScreen: undefined;
-  ScanScreen: undefined;
+  ScanScreen: { intent?: 'camera' | 'photos' } | undefined;
   AnalysisLoadingScreen: { scanSessionId?: string } | undefined;
   ResultSummaryScreen: { scanSessionId?: string } | undefined;
   ShareCardPreviewScreen: { mode?: RecipeMode; scanContext?: ShareScanContext } | undefined;
-  SettingsScreen: undefined;
+  RecipeDetailScreen: { mode?: RecipeMode; startCooking?: boolean } | undefined;
+  RecipeStepsScreen: { mode?: RecipeMode } | undefined;
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
 };
 
 export type MainTabParamList = {
   HomeScreen: undefined;
-  ScanScreen: undefined;
+  GroceryListScreen: undefined;
   LibraryScreen: undefined;
-  ProfileScreen: undefined;
-  RecipeDetailScreen: { mode?: RecipeMode } | undefined;
-  RecipeStepsScreen: { mode?: RecipeMode } | undefined;
-  GroceryListScreen: { mode?: RecipeMode } | undefined;
+  SettingsScreen: undefined;
 };

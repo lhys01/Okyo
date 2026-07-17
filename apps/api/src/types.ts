@@ -39,9 +39,6 @@ export type ScanResult = {
   possibleDishNames?: string[];
   scanState?: ScanState;
   restaurantStyle: string;
-  restaurantPrice: number;
-  homemadeCost: number;
-  estimatedSavings: number;
   confidence: number;
   matchScore: number;
   difficulty: Difficulty;
@@ -127,6 +124,13 @@ export type GroceryListItem = {
   shoppingNote?: string;
 };
 
+export type NutritionEstimate = {
+  calories?: number;
+  proteinGrams?: number;
+  carbohydratesGrams?: number;
+  fatGrams?: number;
+};
+
 export type Recipe = {
   id: string;
   scanResultId: string;
@@ -140,8 +144,6 @@ export type Recipe = {
   servings: number;
   skillLevel?: Difficulty;
   difficulty: Difficulty;
-  estimatedHomemadeCost: number;
-  estimatedSavings: number;
   ingredients: RecipeIngredient[];
   ingredientGroups?: RecipeIngredientGroup[];
   steps: string[];
@@ -159,6 +161,7 @@ export type Recipe = {
   groceryItems?: GroceryListItem[];
   spicePairings?: string[];
   cookingTerms?: CookingTerm[];
+  nutritionEstimate?: NutritionEstimate;
   isCompactRecipe?: boolean;
 };
 

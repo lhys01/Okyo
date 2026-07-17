@@ -1,4 +1,4 @@
-// Category-level fallback images (used by OnboardingUI, ScanScreen, etc.)
+// Tiny color-card fallbacks used only by the explicit development scan QA path.
 export const foodAssets = {
   bowl: require('./sample-bowl.png'),
   breakfast: require('./sample-breakfast.png'),

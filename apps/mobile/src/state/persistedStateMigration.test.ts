@@ -5,11 +5,10 @@ import { migrateOkyoPersistedState } from './persistedStateMigration';
 
 test('preserves durable user and scan data while dropping retired fields', () => {
   const migrated = migrateOkyoPersistedState({
-    hasCompletedOnboarding: true,
     latestScanStatus: 'success',
     latestScanRecipe: { id: 'recipe-1', title: 'Noodles' },
     savedRecipes: [{ id: 'recipe-1', title: 'Noodles' }],
-    savedFoodIdeas: [{ id: 'idea-1', title: 'Soup' }],
+    savedFoodIdeas: [{ id: 'idea-1', title: 'Soup', extractedRecipe: { id: 'recipe-2', title: 'Soup' } }],
     xp: 42,
     awardedXpEvents: ['scan-1', 'scan-1', 'save-1'],
     isPremium: true,
@@ -18,12 +17,15 @@ test('preserves durable user and scan data while dropping retired fields', () =>
     weeklyGoal: '7_meals',
   });
 
-  assert.deepEqual(migrated.savedRecipes, [{ id: 'recipe-1', title: 'Noodles' }]);
-  assert.deepEqual(migrated.savedFoodIdeas, [{ id: 'idea-1', title: 'Soup' }]);
-  assert.deepEqual(migrated.awardedXpEvents, ['scan-1', 'save-1']);
-  assert.equal(migrated.hasCompletedOnboarding, true);
+  assert.deepEqual(migrated.savedRecipes, [
+    { id: 'recipe-1', title: 'Noodles' },
+    { id: 'recipe-2', title: 'Soup' },
+  ]);
+  assert.equal('savedFoodIdeas' in migrated, false);
+  assert.deepEqual(migrated.recentScanRecipes, [{ id: 'recipe-1', title: 'Noodles' }]);
   assert.equal(migrated.latestScanStatus, 'success');
-  assert.equal(migrated.xp, 42);
+  assert.equal('xp' in migrated, false);
+  assert.equal('awardedXpEvents' in migrated, false);
   assert.equal('isPremium' in migrated, false);
   assert.equal('leaderboardEntries' in migrated, false);
   assert.equal('completedChallenges' in migrated, false);
@@ -43,16 +45,45 @@ test('returns safe defaults for corrupt persisted values', () => {
   });
 
   assert.deepEqual(migrated.savedRecipes, []);
-  assert.deepEqual(migrated.savedFoodIdeas, [{ id: 'idea-1' }]);
-  assert.equal(migrated.xp, 0);
+  assert.equal('savedFoodIdeas' in migrated, false);
+  assert.equal('xp' in migrated, false);
   assert.equal('selectedMode' in migrated, false);
   assert.equal('latestScanStatus' in migrated, false);
 });
 
-test('caps migrated XP event history at the current store limit', () => {
-  const awardedXpEvents = Array.from({ length: 5_010 }, (_, index) => `event-${index}`);
-  const migrated = migrateOkyoPersistedState({ awardedXpEvents });
+test('preserves valid grocery selections and caps checked item history', () => {
+  const groceryCheckedItemIds = Array.from({ length: 1_010 }, (_, index) => `item-${index}`);
+  const migrated = migrateOkyoPersistedState({
+    savedRecipes: [{ id: 'recipe-1' }, { id: 'recipe-2' }],
+    groceryRecipeIds: ['recipe-1', 'missing', 'recipe-1'],
+    groceryCheckedItemIds,
+  });
 
-  assert.equal((migrated.awardedXpEvents as string[]).length, 5_000);
-  assert.equal((migrated.awardedXpEvents as string[])[0], 'event-10');
+  assert.deepEqual(migrated.groceryRecipeIds, ['recipe-1']);
+  assert.equal((migrated.groceryCheckedItemIds as string[]).length, 1_000);
+  assert.equal((migrated.groceryCheckedItemIds as string[])[0], 'item-10');
+});
+
+test('safely migrates every known persisted store version', () => {
+  for (const persistedVersion of [0, 1, 2]) {
+    const migrated = migrateOkyoPersistedState({
+      savedRecipes: [{ id: `recipe-${persistedVersion}` }],
+      cookingProgress: {
+        recipeId: `recipe-${persistedVersion}`,
+        stepIndex: 2.8,
+        completed: persistedVersion === 2,
+      },
+      hasCompletedOnboarding: true,
+      userRestaurantPrice: 19.99,
+    }, persistedVersion);
+
+    assert.deepEqual(migrated.savedRecipes, [{ id: `recipe-${persistedVersion}` }]);
+    assert.deepEqual(migrated.cookingProgress, {
+      recipeId: `recipe-${persistedVersion}`,
+      stepIndex: 2,
+      completed: persistedVersion === 2,
+    });
+    assert.equal('hasCompletedOnboarding' in migrated, false);
+    assert.equal('userRestaurantPrice' in migrated, false);
+  }
 });

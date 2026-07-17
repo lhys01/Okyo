@@ -117,8 +117,6 @@ const visibleComponentsSchema = z.object({
   cookingMethod: z.string().optional().default(''),
 });
 const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
-const defaultRestaurantPrice = 18;
-const defaultHomemadeCost = 6.5;
 const uploadedImageConfidenceThreshold = 0.4;
 const notFoodConfidenceThreshold = 0.78;
 const foodEvidenceKeywords = [
@@ -188,8 +186,6 @@ export const foodImageAnalysisSchema = z.object({
   likelyIngredients: z.array(z.string()).default([]),
   possibleDishNames: z.array(z.string()).default([]),
   visibleComponents: visibleComponentsSchema,
-  restaurantPriceEstimate: z.number().nonnegative(),
-  homemadeCostEstimate: z.number().nonnegative(),
   matchScore: matchScoreSchema,
   difficulty: difficultySchema,
   fallbackReason: z.string().optional(),
@@ -200,6 +196,7 @@ export const foodImageAnalysisSchema = z.object({
     confidence: z.number().min(0).max(1),
     estimatedQuantity: z.number().optional(),
   })).default([]),
+  foodIdea: z.string().min(1).max(6000).optional(),
   // Inline Epicure suggestions returned by the vision model. When present,
   // recipe generation uses these directly without a separate Epicure API call.
   epicureSuggestions: z.object({
@@ -219,19 +216,10 @@ export const generatedRecipeOutputSchema = z.object({
   fallbackReason: z.string().optional(),
 });
 
-export const ingredientCostEstimateSchema = z.object({
-  restaurantPrice: z.number().nonnegative(),
-  homemadeCost: z.number().nonnegative(),
-  estimatedSavings: z.number(),
-  confidence: confidenceSchema,
-  assumptions: z.array(z.string()).default([]),
-});
-
 export type FoodImageAnalysis = z.infer<typeof foodImageAnalysisSchema>;
 export type GeneratedRecipeOutput = z.infer<typeof generatedRecipeOutputSchema> & {
   recipe?: Recipe;
 };
-export type IngredientCostEstimate = z.infer<typeof ingredientCostEstimateSchema>;
 
 export type AnalyzeFoodImageInput = Partial<ScanExecutionContext> & {
   image?: ScanImageMetadata;
@@ -251,10 +239,6 @@ export type GenerateRecipeFromDishInput = Partial<ScanExecutionContext> & {
   quota: ProviderQuota;
 };
 
-export type EstimateIngredientCostsInput = {
-  analysis: FoodImageAnalysis;
-  recipe: Recipe;
-};
 
 export type AiScanSuccessResult = {
   status: 'success';
@@ -339,16 +323,14 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
     difficulty: getDifficultyFromConfidence(normalized.confidence),
     dishName: normalized.dishName,
     epicureSuggestions: normalized.epicureSuggestions,
-    homemadeCostEstimate: normalized.homemadeCostEstimate,
     isFoodImage: normalized.isFoodImage,
     isRestaurantMeal: normalized.isRestaurantMeal,
     likelyIngredients: normalized.likelyIngredients,
     matchScore: getMatchScoreFromConfidence(normalized.confidence),
     modes: recipeModes,
-    notes: ['OpenRouter test output; verify before using.'],
+    notes: ['AI provider output; verify before using.'],
     possibleDishNames: normalized.possibleDishNames,
     rejectionReason: normalized.rejectionReason,
-    restaurantPriceEstimate: normalized.restaurantPriceEstimate,
     restaurantStyle: normalized.cuisine,
     scanState: normalized.scanState,
     visibleComponents: normalized.visibleComponents,
@@ -425,6 +407,54 @@ export async function generateRecipeFromDish(
   }
 }
 
+export async function createRecipeFromFoodIdea(input: {
+  idea: string;
+  mode: RecipeMode;
+  quota: ProviderQuota;
+  requestId: string;
+  signal?: AbortSignal;
+  deadlineAt?: number;
+  timing?: ScanExecutionContext['timing'];
+}): Promise<GeneratedRecipeOutput> {
+  const idea = input.idea.trim();
+  const dishName = idea.split(/[.!?\n]/)[0]?.trim().slice(0, 120) || 'Written food idea';
+  const analysis = foodImageAnalysisSchema.parse({
+    candidateScanId: `idea-${input.requestId}`,
+    aiSource: 'openrouter_ai',
+    dishName,
+    cuisine: 'Home cooking',
+    restaurantStyle: 'Home cooking',
+    scanState: 'clear_food',
+    broadDishCategory: 'written food idea',
+    confidence: 0.75,
+    confidenceReason: 'Recipe generated from the user’s written description.',
+    isFoodImage: true,
+    isRestaurantMeal: false,
+    visibleIngredients: [],
+    likelyIngredients: [],
+    possibleDishNames: [],
+    visibleComponents: {
+      protein: '', sauce: '', baseStarch: '', vegetables: '', toppingsGarnish: '', cookingMethod: '',
+    },
+    matchScore: 7.5,
+    difficulty: 'Medium',
+    modes: recipeModes,
+    notes: ['Generated from a written food idea.'],
+    detectedComponents: [],
+    foodIdea: idea,
+  });
+
+  return generateRecipeFromDish({
+    analysis,
+    mode: input.mode,
+    quota: input.quota,
+    requestId: input.requestId,
+    signal: input.signal,
+    deadlineAt: input.deadlineAt,
+    timing: input.timing,
+  });
+}
+
 // Generates coaching fields for a previously scanned recipe.
 // Called when the user taps Guided Cooking — not during the scan itself.
 // Returns null if the recipe has expired from the store (>1 day old).
@@ -466,27 +496,6 @@ export async function enrichRecipeCoaching(
     // Fail gracefully — return uncoached steps so Guided Cooking still opens.
     return { structuredSteps: steps };
   }
-}
-
-export function estimateIngredientCosts(input: EstimateIngredientCostsInput): IngredientCostEstimate {
-  const restaurantPrice = normalizeRestaurantPrice(input.analysis.restaurantPriceEstimate);
-  const homemadeCost = normalizeHomemadeCost(input.recipe.estimatedHomemadeCost, restaurantPrice);
-  const estimate = ingredientCostEstimateSchema.safeParse({
-    restaurantPrice,
-    homemadeCost,
-    estimatedSavings: Math.max(0, restaurantPrice - homemadeCost),
-    confidence: Math.min(input.analysis.confidence, 0.82),
-    assumptions: [
-      'Uses AI-shaped restaurant estimate when available.',
-      'Uses AI-shaped homemade ingredient estimate when available.',
-    ],
-  });
-
-  if (estimate.success) {
-    return estimate.data;
-  }
-
-  throw new Error('Cost estimate validation failed');
 }
 
 export async function createAiScan(
@@ -685,8 +694,7 @@ export async function createAiScan(
       throw new Error('RECIPE_MISSING: Recipe object was not generated');
     }
 
-    const costEstimate = estimateIngredientCosts({ analysis, recipe });
-    const usedOpenRouterAnalysis = analysis.notes.includes('OpenRouter test output; verify before using.');
+    const usedOpenRouterAnalysis = analysis.notes.includes('AI provider output; verify before using.');
     const fallbackReason = recipeFallbackReason;
     const aiSource = 'openrouter_ai' as const;
 
@@ -697,13 +705,10 @@ export async function createAiScan(
       bestGuessDishName: analysis.dishName,
       bestGuessNote: getBestGuessNote(analysis),
       possibleDishNames: analysis.possibleDishNames,
-      confidence: getBlendedConfidence(analysis.confidence, generatedRecipe.confidence, costEstimate.confidence),
+      confidence: getBlendedConfidence(analysis.confidence, generatedRecipe.confidence),
       difficulty: analysis.difficulty,
-      estimatedSavings: costEstimate.estimatedSavings,
-      homemadeCost: costEstimate.homemadeCost,
       matchScore: analysis.matchScore,
       modes: analysis.modes,
-      restaurantPrice: costEstimate.restaurantPrice,
       restaurantStyle: analysis.restaurantStyle,
       scanState: analysis.scanState,
       recipeId: recipe.id,
@@ -714,7 +719,7 @@ export async function createAiScan(
       scan,
       recipe,
       note: usedOpenRouterAnalysis
-        ? 'AI provider output is for testing only. No image was stored; verify all food, cost, and recipe details.'
+        ? 'AI-generated result. No image was stored; verify food details, allergens, and doneness before cooking.'
         : 'AI provider generated this result.',
       ...createAiDebugMetadata(config, aiSource, scan.confidence, fallbackReason),
       scanState: analysis.scanState,
@@ -783,7 +788,7 @@ function createRecipeFromOpenRouterOutput(
   return {
     aiSource: 'openrouter_ai',
     confidence: Math.min(analysis.confidence, 0.82),
-    confidenceNote: `AI-assisted testing output. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
+    confidenceNote: `AI-assisted estimate. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
     mode,
     recipe,
     recipeId: recipe.id,
@@ -796,8 +801,6 @@ export function createCompactRecipeFromOpenRouterOutput(
   analysis: FoodImageAnalysis,
   mode: RecipeMode,
 ): GeneratedRecipeOutput {
-  const restaurantPrice = normalizeRestaurantPrice(analysis.restaurantPriceEstimate);
-  const homemadeCost = normalizeHomemadeCost(analysis.homemadeCostEstimate, restaurantPrice);
   const title = getRecipeTitle(output.title, analysis.dishName, mode);
   const ingredients = getRecipeIngredients(output.ingredients, analysis, mode);
   const prepTimeMinutes = parseMinutes(output.prepTime, 10);
@@ -829,8 +832,6 @@ export function createCompactRecipeFromOpenRouterOutput(
     servings,
     skillLevel: difficulty,
     difficulty,
-    estimatedHomemadeCost: homemadeCost,
-    estimatedSavings: Math.max(0, restaurantPrice - homemadeCost),
     ingredients,
     steps,
     structuredSteps,
@@ -839,6 +840,7 @@ export function createCompactRecipeFromOpenRouterOutput(
     confidenceNote:
       `AI-assisted best guess. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
     equipment,
+    nutritionEstimate: output.nutritionEstimate,
     isCompactRecipe: true,
   }, analysis);
 
@@ -987,10 +989,6 @@ function createRecipeFromVariant(
     idPrefix?: string;
   } = {},
 ): Recipe {
-  const restaurantPrice = normalizeRestaurantPrice(analysis.restaurantPriceEstimate);
-  // Single canonical recipe: homemade cost is the AI estimate, normalized. No
-  // per-mode cost multipliers — Budget/Healthy are view projections, not data.
-  const homemadeCost = normalizeHomemadeCost(analysis.homemadeCostEstimate, restaurantPrice);
   const title = getRecipeTitle(variant.title, analysis.dishName, mode);
   const ingredients = getRecipeIngredients(variant.ingredients, analysis, mode);
   const prepTimeMinutes = parseMinutes(variant.prepTime, 15);
@@ -1017,19 +1015,18 @@ function createRecipeFromVariant(
     servings,
     skillLevel,
     difficulty: skillLevel,
-    estimatedHomemadeCost: homemadeCost,
-    estimatedSavings: Math.max(0, restaurantPrice - homemadeCost),
     ingredients,
     ingredientGroups,
     steps,
     structuredSteps,
     substitutions: [],
     pantryNote: '',
-    confidenceNote: `${options.confidenceNotePrefix ?? 'AI-assisted testing output.'} Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
+    confidenceNote: `${options.confidenceNotePrefix ?? 'AI-assisted estimate.'} Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
     mainIngredientsSummary: getDefaultMainIngredientsSummary(ingredients),
     equipment: getSafeList(variant.equipment, getDefaultEquipment(analysis), 5).map(cleanRecipeCopy),
     spicePairings: [],
     cookingTerms: [],
+    nutritionEstimate: variant.nutritionEstimate,
     isCompactRecipe: isCompactRecipe || undefined,
   }, analysis);
 }
@@ -1135,10 +1132,6 @@ function getBestGuessNote(analysis: FoodImageAnalysis) {
 
 export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const confidence = normalizeConfidence(output.confidence);
-  // A restaurant price guessed from a food photo is not real data. Savings must come
-  // from a user-entered price, so photo-derived price estimates are always dropped.
-  const restaurantPriceEstimate = 0;
-  const homemadeCostEstimate = normalizeHomemadeCost(output.homemadeCostEstimate, restaurantPriceEstimate);
   const explicitScanState = normalizeScanState(output.scanState);
   const foodDetected = normalizeBoolean(output.foodDetected, false);
   const isFoodImage = normalizeBoolean(
@@ -1212,13 +1205,11 @@ export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
     cuisine,
     dishName,
     epicureSuggestions: output.epicureSuggestions,
-    homemadeCostEstimate,
     isFoodImage: normalizedIsFoodImage,
     isRestaurantMeal: normalizedIsFoodImage ? isRestaurantMeal : false,
     likelyIngredients,
     possibleDishNames,
     rejectionReason: getOptionalShortText(output.rejectionReason, 160),
-    restaurantPriceEstimate,
     scanState,
     visibleComponents,
     visibleIngredients,
@@ -1472,29 +1463,6 @@ function getDefaultConfidenceReason(scanState: ScanState) {
     case 'too_unclear':
       return 'The image is too unclear to identify visible food safely.';
   }
-}
-
-function normalizeRestaurantPrice(value: unknown) {
-  const parsed = getFiniteNumber(value);
-  if (parsed === undefined || parsed <= 0) {
-    return 0;
-  }
-
-  return roundMoney(clampNumber(parsed, 0, 120));
-}
-
-function normalizeHomemadeCost(value: unknown, restaurantPrice: number) {
-  const parsed = getFiniteNumber(value);
-  if (restaurantPrice <= 0) {
-    const rawCost = parsed === undefined || parsed < 1 ? defaultHomemadeCost : parsed;
-    return roundMoney(clampNumber(rawCost, 1, 80));
-  }
-
-  const defaultCost = Math.min(defaultHomemadeCost, Math.max(2, restaurantPrice * 0.45));
-  const rawCost = parsed === undefined || parsed < 1 ? defaultCost : parsed;
-  const cappedCost = rawCost >= restaurantPrice ? Math.max(1, restaurantPrice * 0.45) : rawCost;
-
-  return roundMoney(clampNumber(cappedCost, 1, Math.max(1, restaurantPrice - 0.5)));
 }
 
 function normalizeDishName(value: unknown, cuisine: string, broadDishCategory: string, ingredients: string[]) {
@@ -4068,10 +4036,6 @@ function getFiniteNumber(value: unknown) {
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
-}
-
-function roundMoney(value: number) {
-  return Math.round(value * 100) / 100;
 }
 
 function titleCase(value: string) {

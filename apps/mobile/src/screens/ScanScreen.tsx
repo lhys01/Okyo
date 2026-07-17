@@ -1,17 +1,17 @@
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import {
   CameraSolid,
   Cart,
-  Dollar,
   NavArrowRight,
   OpenBook,
   PasteClipboard,
   Upload,
 } from 'iconoir-react-native';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -19,7 +19,6 @@ import { analyticsEvents, track } from '../analytics/track';
 import { createScan } from '../api/client';
 import { OKYO_MAX_SCAN_IMAGE_DATA_URL_BYTES } from '../api/config';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
-import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { PressableScale } from '../components/OkyoUI';
 import { sampleFoodImageUrls } from '../data/sampleFoodImages';
@@ -27,28 +26,32 @@ import { colors, radius, shadows, surfaces } from '../theme/okyoTheme';
 import { getSafeRecipeMode, type Recipe, type RecipeMode } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore, type LatestScanFailure } from '../state/useOkyoStore';
-import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { hasFoodEvidence, isFoodScanState, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
 import { markMobileScanStarted, measureMobileScanStage } from '../utils/scanTelemetry';
 import { uiLog } from '../utils/uiDebug';
 import { getUploadFailureReasonFromError } from './scanErrorMessage';
 
 type ScanNavigation = NativeStackNavigationProp<RootStackParamList, 'ScanScreen'>;
+type ScanRoute = RouteProp<RootStackParamList, 'ScanScreen'>;
 
 const maxProcessedImageWidth = 1400;
 const tabBarSafePadding = 260;
 
 export function ScanScreen() {
   const navigation = useNavigation<ScanNavigation>();
+  const route = useRoute<ScanRoute>();
   const insets = useSafeAreaInsets();
+  const handledIntent = useRef<'camera' | 'photos' | null>(null);
+  const pickerInFlight = useRef(false);
+  const scanInFlight = useRef(false);
   const selectedMode = useOkyoStore((state) => state.selectedMode);
   const beginLatestScanSession = useOkyoStore((state) => state.beginLatestScanSession);
   const writeLatestScanSession = useOkyoStore((state) => state.writeLatestScanSession);
-  const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
 
   const startScan = (source: ScanSource, requestId: string, image?: ScanImageMetadata) => {
+    if (scanInFlight.current) return;
+    scanInFlight.current = true;
     const uploadedImage = isRealUploadedImage(source, image);
     const scanSessionId = requestId;
     const previewImage = getPreviewImageMetadata(image);
@@ -217,10 +220,15 @@ export function ScanScreen() {
           rejectionType: 'ai_failed',
           status: 'failed',
         }, 'api_error_path');
+      })
+      .finally(() => {
+        scanInFlight.current = false;
       });
   };
 
   const takePhoto = async () => {
+    if (pickerInFlight.current || scanInFlight.current) return;
+    pickerInFlight.current = true;
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
@@ -263,10 +271,14 @@ export function ScanScreen() {
         'Camera unavailable',
         'Camera isn’t available in this simulator. Use Upload From Photos instead.',
       );
+    } finally {
+      pickerInFlight.current = false;
     }
   };
 
   const uploadFromPhotos = async () => {
+    if (pickerInFlight.current || scanInFlight.current) return;
+    pickerInFlight.current = true;
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: false,
@@ -299,30 +311,21 @@ export function ScanScreen() {
         'Photo upload unavailable',
         'Okyo could not open your photo library. Try again.',
       );
+    } finally {
+      pickerInFlight.current = false;
     }
   };
 
-  const recentRecipe = savedRecipes.length > 0 ? savedRecipes[0] : null;
-
-  const openRecentRecipe = () => {
-    if (!recentRecipe?.id) {
-      return;
+  useEffect(() => {
+    const intent = route.params?.intent;
+    if (!intent || handledIntent.current === intent) return;
+    handledIntent.current = intent;
+    if (intent === 'camera') {
+      void takePhoto();
+    } else {
+      void uploadFromPhotos();
     }
-
-    const mode = getSafeRecipeMode(recentRecipe.mode);
-    uiLog('ScanScreen', 'open_recent_recipe', { recipeId: recentRecipe.id });
-    writeSavedRecipeContext({
-      recipe: recentRecipe,
-      reason: 'open_recent_recipe',
-      source: 'ScanScreen.openRecentRecipe',
-    });
-    setSelectedMode(mode);
-    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
-  };
-
-  const openLibrary = () => {
-    navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
-  };
+  }, [route.params?.intent]);
 
   const openFoodIdea = () => {
     uiLog('ScanScreen', 'open_food_idea');
@@ -345,7 +348,7 @@ export function ScanScreen() {
             What are we remaking today?
           </Text>
           <Text style={styles.subtitle}>
-            Snap a restaurant meal and Okyo turns it into a homemade recipe, savings estimate, and grocery list.
+            Take or upload a food photo and Okyo turns it into an inspired-by recipe and grocery list.
           </Text>
         </View>
 
@@ -401,46 +404,6 @@ export function ScanScreen() {
           </View>
         </View>
 
-        {recentRecipe ? (
-          <View style={styles.recentSection}>
-            <View style={styles.recentHeader}>
-              <Text style={styles.recentTitle}>Recent</Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={openLibrary}
-                style={({ pressed }) => [styles.seeAllButton, pressed ? styles.pressed : null]}
-              >
-                <Text style={styles.seeAllText}>See all</Text>
-                <NavArrowRight color={colors.coral} height={20} strokeWidth={2.35} width={20} />
-              </Pressable>
-            </View>
-
-            <Pressable
-              accessibilityRole="button"
-              onPress={openRecentRecipe}
-              style={({ pressed }) => [styles.recentCard, pressed ? styles.pressed : null]}
-            >
-              <FoodImage
-                imageStatus={getRecipeImageStatus(recentRecipe)}
-                imageUrl={getRecipeImageUrl(recentRecipe)}
-                style={styles.recentImage}
-              />
-              <View style={styles.recentCopy}>
-                <Text numberOfLines={1} style={styles.recentRecipeTitle}>
-                  {cleanPublicText(recentRecipe.title)}
-                </Text>
-                <Text style={styles.recentMeta}>Saved recipe</Text>
-                <View style={styles.savedPill}>
-                  <Dollar color={colors.green} height={17} strokeWidth={2.2} width={17} />
-                  <Text style={styles.savedPillText}>
-                    Home est. {formatOptionalCurrency(recentRecipe.estimatedHomemadeCost)}
-                  </Text>
-                </View>
-              </View>
-              <NavArrowRight color={colors.body} height={26} strokeWidth={2.2} width={26} />
-            </Pressable>
-          </View>
-        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -973,10 +936,6 @@ function getScanFailureReason(result: CreateScanResult) {
   return 'Okyo had trouble scanning this photo. Try again in a second.';
 }
 
-function formatOptionalCurrency(value: number | null | undefined) {
-  return typeof value === 'number' && Number.isFinite(value) ? `$${value.toFixed(2)}` : '—';
-}
-
 function cleanPublicText(value: string) {
   const commonTypo = `Amer${'cian'}`;
   const lowercaseTypo = `amer${'cian'}`;
@@ -1142,80 +1101,6 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     marginTop: 2,
     textAlign: 'center',
-  },
-  recentSection: {
-    marginTop: 26,
-  },
-  recentHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  recentTitle: {
-    color: colors.charcoal,
-    fontSize: 20,
-    fontWeight: '600',
-  },
-  seeAllButton: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 2,
-    minHeight: 36,
-    paddingLeft: 12,
-  },
-  seeAllText: {
-    color: colors.coral,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  recentCard: {
-    ...surfaces.card,
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-    minHeight: 106,
-    minWidth: 0,
-    padding: 14,
-  },
-  recentImage: {
-    backgroundColor: colors.cream,
-    borderRadius: 18,
-    height: 72,
-    width: 72,
-  },
-  recentCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  recentRecipeTitle: {
-    color: colors.charcoal,
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  recentMeta: {
-    color: colors.body,
-    fontSize: 14,
-    fontWeight: '500',
-    marginTop: 4,
-  },
-  savedPill: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: colors.greenSoft,
-    borderRadius: 999,
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 10,
-    maxWidth: '100%',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  savedPillText: {
-    color: colors.green,
-    flexShrink: 1,
-    fontSize: 14,
-    fontWeight: '700',
   },
   pressed: {
     opacity: 0.78,
