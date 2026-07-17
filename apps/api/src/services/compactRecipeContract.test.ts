@@ -314,6 +314,16 @@ test('missing time or completion cues remain a critical compact defect', () => {
   ));
 });
 
+test('extra cookable compact steps are accepted without repair-only failure', () => {
+  const recipe = chickenRecipe({
+    steps: [
+      ...chickenRecipe().steps,
+      ...chickenRecipe().steps.slice(0, 4),
+    ],
+  });
+  assert.ok(!validateCompactRecipeOutput(recipe, analysis()).includes('too_many_steps'));
+});
+
 test('an invalid compact repair fails closed after the one repair budget', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;

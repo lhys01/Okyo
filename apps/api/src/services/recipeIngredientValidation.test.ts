@@ -10,6 +10,8 @@ test('matches safe generic and specific ingredient aliases', () => {
   assert.equal(ingredientsMatch('2 tbsp extra-virgin olive oil', 'oil'), true);
   assert.equal(ingredientsMatch('1 tbsp olive oil', 'olive oil'), true);
   assert.equal(ingredientsMatch('1 tbsp olive oil', 'coconut oil'), false);
+  assert.equal(ingredientsMatch('8 oz spaghetti', 'pasta'), true);
+  assert.equal(ingredientsMatch('8 oz spaghetti', 'penne'), false);
 });
 
 test('matches plurals, punctuation, quantities, and preparation words', () => {

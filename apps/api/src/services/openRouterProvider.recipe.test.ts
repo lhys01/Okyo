@@ -91,6 +91,23 @@ test('normalization derives missing step numbers, phases, ingredient arrays, and
   assert.deepEqual(validateRecipeStructure(normalized), []);
 });
 
+test('normalization removes approximate quantity qualifiers without inventing amounts', () => {
+  const recipe = buildValidRecipe();
+  recipe.ingredients = ['about 2 cups tomatoes', '~1 tbsp olive oil'];
+  const normalized = normalizeFullRecipeOutput(
+    openRouterRecipeOutputSchema.parse(recipe),
+    {
+      dishName: 'Tomato Pasta',
+      broadDishCategory: 'pasta/noodles',
+      detectedComponents: [],
+    } as unknown as FoodImageAnalysis,
+  );
+  assert.deepEqual(normalized.ingredients.slice(0, 2), [
+    '2 cups tomatoes',
+    '1 tbsp olive oil',
+  ]);
+});
+
 test('flags a step missing its instruction text', () => {
   const recipe = buildValidRecipe();
   recipe.steps[0] = buildStep(1, { step: '' });
