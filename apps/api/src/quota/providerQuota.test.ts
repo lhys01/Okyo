@@ -150,6 +150,33 @@ test('spend finalization failure is telemetry-only and cannot request a duplicat
   assert.equal(reservations, 1);
 });
 
+test('quota telemetry always includes the scan request ID', async () => {
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  console.log = (...args: unknown[]) => { events.push(args); };
+  try {
+    const quota = createProviderQuota({
+      userId: trustedUserId,
+      requestId,
+      repository: makeRepository({ complete: async () => { throw new Error('write failed'); } }),
+    });
+    const reservation = await quota.reserveAttempt({
+      provider: 'openrouter',
+      model: 'model',
+      operation: 'recipe',
+    });
+    await quota.completeAttempt(reservation, { outcome: 'success' });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const telemetry = events.filter(([label]) =>
+    label === '[scan_metric]' || String(label).startsWith('[cost]'));
+  assert.ok(telemetry.length >= 3);
+  assert.ok(telemetry.every(([, value]) =>
+    (value as { requestId?: string }).requestId === requestId));
+});
+
 test('quota errors map to stable sanitized API responses', () => {
   assert.deepEqual(getQuotaApiError(new QuotaDeniedError()), {
     status: 429,

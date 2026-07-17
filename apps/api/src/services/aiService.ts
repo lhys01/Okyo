@@ -47,7 +47,11 @@ import {
 import { logScanEvaluation } from './scanEvalLogger.js';
 import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
 import { throwIfScanCancelled, type ScanExecutionContext } from './scanDeadline.js';
-import { logScanMetric, measureScanStage } from '../telemetry/scanTelemetry.js';
+import {
+  logScanMetric,
+  measureScanAggregateStage,
+  measureScanStage,
+} from '../telemetry/scanTelemetry.js';
 
 // Bump when the vision/recipe prompt or post-processing pipeline changes substantially.
 // Any cached scan result with a different version is automatically stale.
@@ -310,6 +314,7 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
     requestId: input.requestId,
     signal: input.signal,
     deadlineAt: input.deadlineAt,
+    timing: input.timing,
   });
   logAi('openrouter_ai', getAiLogDetails(config, config.openRouterVisionModel, { stage: 'vision' }));
   const normalized = normalizeVisionOutput(output);
@@ -373,6 +378,7 @@ export async function generateRecipeFromDish(
       requestId: input.requestId,
       signal: input.signal,
       deadlineAt: input.deadlineAt,
+      timing: input.timing,
     });
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterTextModel, { stage: 'recipe' }));
     const result = config.compactRecipeEnabled
@@ -411,6 +417,7 @@ export async function generateRecipeFromDish(
       const closure = validateIngredientClosure(finalResult.recipe);
       if (closure.unknownStepIngredients.length > 0) {
         console.error('[recipe_consistency] ingredient closure failed closed', {
+          requestId: input.requestId,
           recipeId: finalResult.recipe.id,
           unknownStepIngredients: closure.unknownStepIngredients,
         });
@@ -486,6 +493,7 @@ function recordRecipeQualityForResult(args: {
 export async function enrichRecipeCoaching(
   recipe: Recipe,
   quota: ProviderQuota,
+  execution: Pick<ScanExecutionContext, 'requestId'> & Partial<ScanExecutionContext>,
 ): Promise<{ structuredSteps: RecipeStep[] } | null> {
   if (!recipe?.structuredSteps?.length) {
     return null;
@@ -505,6 +513,10 @@ export async function enrichRecipeCoaching(
       dishName: recipe.title,
       config,
       quota,
+      requestId: execution.requestId,
+      signal: execution.signal,
+      deadlineAt: execution.deadlineAt,
+      timing: execution.timing,
     });
     const repairedSteps = applyCoachingPatches(steps, patches, weaknesses);
     const repairedScore = calculateRecipeCoachingScore(repairedSteps);
@@ -601,7 +613,7 @@ export async function createAiScan(
   if (scanCacheKey) {
     const cached = scanCache.get(scanCacheKey);
     if (cached && cached.expiresAt > Date.now()) {
-      console.log('[scan_cache]', { hit: true, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8), ttl: 'valid' });
+      console.log('[scan_cache]', { requestId: input.requestId, hit: true, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8), ttl: 'valid' });
       if (input.requestId) {
         logScanMetric({
           requestId: input.requestId,
@@ -613,7 +625,7 @@ export async function createAiScan(
       if (cached.kind === 'success') return cached.result;
       throw cached.error;
     }
-    console.log('[scan_cache]', { hit: false, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8) });
+    console.log('[scan_cache]', { requestId: input.requestId, hit: false, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8) });
     if (input.requestId) {
       logScanMetric({
         requestId: input.requestId,
@@ -631,13 +643,18 @@ export async function createAiScan(
   try {
     throwIfScanCancelled(input.signal, input.deadlineAt);
     const visionStartedAt = Date.now();
+    const runVision = () => measureScanAggregateStage({
+      timing: input.timing,
+      stage: 'vision',
+      run: () => analyzeFoodImage(input),
+    });
     const analysis = input.requestId
       ? await measureScanStage({
           requestId: input.requestId,
           stage: 'vision_call',
-          run: () => analyzeFoodImage(input),
+          run: runVision,
         })
-      : await analyzeFoodImage(input);
+      : await runVision();
     const visionMs = Date.now() - visionStartedAt;
     const foodDrinkVisible = Boolean(analysis.isFoodImage || isFoodScanState(analysis.scanState));
     logScanDebug('api_scan_vision_result', {
@@ -657,6 +674,7 @@ export async function createAiScan(
     const rejection = getFoodGateRejection(analysis, uploadedImage);
     const foodGatePassed = rejection === null;
     console.log('[food_gate]', {
+      requestId: input.requestId,
       passed: foodGatePassed,
       scanState: analysis.scanState,
       confidence: analysis.confidence,
@@ -667,6 +685,7 @@ export async function createAiScan(
     });
     if (rejection) {
       console.log('[scan_timing]', {
+        requestId: input.requestId,
         dish: analysis.dishName,
         scanState: analysis.scanState,
         visionMs,
@@ -695,6 +714,7 @@ export async function createAiScan(
       requestId: input.requestId,
       signal: input.signal,
       deadlineAt: input.deadlineAt,
+      timing: input.timing,
     };
     const generatedRecipe = input.requestId
       ? await measureScanStage({
@@ -756,17 +776,10 @@ export async function createAiScan(
       shareCardId,
     };
 
-    const groceryList = recipe.isCompactRecipe ? undefined : getGroceryListForRecipe(recipe);
-    const shareCard: ShareCard | undefined = recipe.isCompactRecipe ? undefined : {
-      id: shareCardId,
-      scanResultId: scanId,
-      kind: 'scan-result',
-      headline: `${analysis.dishName} for $${costEstimate.homemadeCost.toFixed(2)}`,
-      subheadline: `Save ~$${costEstimate.estimatedSavings.toFixed(2)} vs restaurant`,
-      savedAmount: costEstimate.estimatedSavings,
-      matchScore: scan.matchScore,
-      footer: 'Made with Okyo',
-    };
+    // Grocery presentation and share-card copy are derived when those screens
+    // are opened. They are not part of the blocking scan response.
+    const groceryList = undefined;
+    const shareCard = undefined;
 
     const result = {
       status: 'success' as const,
@@ -787,6 +800,7 @@ export async function createAiScan(
     logFinalScanResult(result);
 
     console.log('[scan_timing]', {
+      requestId: input.requestId,
       dish: analysis.dishName,
       scanState: analysis.scanState,
       visionMs,
@@ -814,6 +828,7 @@ export async function createAiScan(
     // Fail-closed: throw on any provider error. Never return rejected scans.
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('api_scan_provider_failure', {
+      requestId: input.requestId,
       model: config.openRouterVisionModel,
       errorMessage,
     });

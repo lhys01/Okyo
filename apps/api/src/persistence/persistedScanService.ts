@@ -5,12 +5,17 @@ import {
   ScanCancelledError,
   ScanDeadlineExceededError,
   throwIfScanCancelled,
+  type ScanAggregateTiming,
 } from '../services/scanDeadline.js';
 import {
   RecipeGenerationError,
   RecipeValidationError,
 } from '../services/recipeGenerationError.js';
-import { logScanMetric, measureScanStage } from '../telemetry/scanTelemetry.js';
+import {
+  logScanMetric,
+  measureScanAggregateStage,
+  measureScanStage,
+} from '../telemetry/scanTelemetry.js';
 import type { Recipe } from '../types.js';
 import {
   PersistenceUnavailableError,
@@ -26,6 +31,7 @@ export async function runPersistedScan(options: {
   requestId?: string;
   signal?: AbortSignal;
   deadlineAt?: number;
+  timing?: ScanAggregateTiming;
   idFactory?: () => string;
   now?: () => number;
 }): Promise<AiScanSuccessResult> {
@@ -34,25 +40,29 @@ export async function runPersistedScan(options: {
   const startedAt = now();
   const requestId = options.requestId ?? id;
   let sessionCreated = false;
+  const measurePersistence = <T>(stage: string, run: () => Promise<T>) =>
+    measureScanAggregateStage({
+      timing: options.timing,
+      stage: 'persistence',
+      run: () => measureScanStage({ requestId, stage, run }),
+    });
 
   try {
     throwIfScanCancelled(options.signal, options.deadlineAt);
-    await measureScanStage({
-      requestId,
-      stage: 'scan_persistence_create',
-      run: () => options.repository.createScanSession({ id, userId: options.userId }),
-    });
+    await measurePersistence(
+      'scan_persistence_create',
+      () => options.repository.createScanSession({ id, userId: options.userId }),
+    );
     sessionCreated = true;
     throwIfScanCancelled(options.signal, options.deadlineAt);
-    await measureScanStage({
-      requestId,
-      stage: 'scan_persistence_processing',
-      run: () => options.repository.updateScanSession({
+    await measurePersistence(
+      'scan_persistence_processing',
+      () => options.repository.updateScanSession({
         id,
         userId: options.userId,
         status: 'processing',
       }),
-    });
+    );
 
     throwIfScanCancelled(options.signal, options.deadlineAt);
     const generated = normalizePersistentIds(await measureScanStage({
@@ -66,21 +76,19 @@ export async function runPersistedScan(options: {
     const recipe = generated.recipe;
 
     throwIfScanCancelled(options.signal, options.deadlineAt);
-    await measureScanStage({
-      requestId,
-      stage: 'final_persistence_recipe',
-      run: () => options.repository.createGeneratedRecipe({
+    await measurePersistence(
+      'final_persistence_recipe',
+      () => options.repository.createGeneratedRecipe({
         id,
         userId: options.userId,
         recipe,
         expiresAt: new Date(startedAt + generatedRecipeTtlMs).toISOString(),
       }),
-    });
+    );
     throwIfScanCancelled(options.signal, options.deadlineAt);
-    await measureScanStage({
-      requestId,
-      stage: 'final_persistence_status',
-      run: () => options.repository.updateScanSession({
+    await measurePersistence(
+      'final_persistence_status',
+      () => options.repository.updateScanSession({
         id,
         userId: options.userId,
         status: 'succeeded',
@@ -89,17 +97,16 @@ export async function runPersistedScan(options: {
         latencyMs: Math.max(0, now() - startedAt),
         completedAt: new Date(now()).toISOString(),
       }),
-    });
+    );
     logScanMetric({ requestId, stage: 'persisted_scan_total', durationMs: now() - startedAt });
     return generated;
   } catch (error) {
     if (sessionCreated) {
       const failure = sanitizeScanFailure(error);
       try {
-        await measureScanStage({
-          requestId,
-          stage: 'final_persistence_failure',
-          run: () => options.repository.updateScanSession({
+        await measurePersistence(
+          'final_persistence_failure',
+          () => options.repository.updateScanSession({
             id,
             userId: options.userId,
             status: failure.status,
@@ -107,7 +114,7 @@ export async function runPersistedScan(options: {
             latencyMs: Math.max(0, now() - startedAt),
             completedAt: new Date(now()).toISOString(),
           }),
-        });
+        );
       } catch {
         // Preserve the original failure; never include database/provider details.
       }
