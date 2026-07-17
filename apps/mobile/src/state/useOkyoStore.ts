@@ -6,44 +6,13 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import { analyticsEvents, track } from '../analytics/track';
 import type { AiDebugMetadata, ScanImageMetadata, ScanRejectionType, ScanSource, ScanStatus } from '../api/types';
 import {
-  mockLeaderboardEntries,
-  type LeaderboardEntry,
   type Recipe,
   type RecipeMode,
   type SavedFoodIdea,
   type ScanResult,
 } from '../mocks';
 import { copyToDocuments } from '../utils/scanImageStorage';
-
-export type OnboardingGoal =
-  | 'Save money'
-  | 'Eat healthier'
-  | 'Recreate restaurant meals'
-  | 'Learn to cook'
-  | 'Make food content';
-
-export type OnboardingWeeklyGoal = '1_meal' | '3_meals' | '5_meals' | '7_meals';
-export type OnboardingMealRoutinePreference =
-  | 'quick_easy'
-  | 'high_protein'
-  | 'budget_meals'
-  | 'restaurant_style';
-export type OnboardingNotificationChoice = 'remind_me' | 'not_now';
-
-export type CompletedChallenge = {
-  id: string;
-  recipeId: string;
-  recipeTitle: string;
-  mode: RecipeMode;
-  rating: ChallengeRating;
-  completedAt: string;
-  matchScore: number;
-  moneySaved: number;
-  xpEarned: number;
-  badgeUnlocked?: string;
-};
-
-export type ChallengeRating = 'Nailed it' | 'Pretty close' | 'Needs work' | 'Not close';
+import { migrateOkyoPersistedState } from './persistedStateMigration';
 
 export type LatestScanFailure = {
   status: Exclude<ScanStatus, 'success' | 'partial'>;
@@ -80,14 +49,6 @@ type SavedRecipeContextWrite = {
 
 type OkyoState = {
   hasCompletedOnboarding: boolean;
-  hasSeenOnboarding: boolean;
-  onboardingGoal: OnboardingGoal | null;
-  weeklyGoal: OnboardingWeeklyGoal | null;
-  mealRoutinePreference: OnboardingMealRoutinePreference | null;
-  notificationChoice: OnboardingNotificationChoice | null;
-  firstOnboardingScanCompleted: boolean;
-  firstOnboardingResultSeen: boolean;
-  paywallShown: boolean;
   scanSessionId: string | null;
   latestScanSession: LatestScanSession | null;
   latestScanResult: ScanResult | null;
@@ -102,25 +63,11 @@ type OkyoState = {
   userRestaurantPrice: number | null;
   savedRecipes: Recipe[];
   savedFoodIdeas: SavedFoodIdea[];
-  completedChallenges: CompletedChallenge[];
-  totalMoneySaved: number;
-  weeklyScanCount: number;
-  isPremium: boolean;
   xp: number;
   lastDailyCheckInDate: string | null;
-  unlockedBadges: string[];
-  recentBadgeUnlock: string | null;
   awardedXpEvents: string[];
-  leaderboardEntries: LeaderboardEntry[];
   completeOnboarding: () => void;
   resetOnboarding: () => void;
-  setGoal: (goal: OnboardingGoal) => void;
-  setWeeklyGoal: (goal: OnboardingWeeklyGoal) => void;
-  setMealRoutinePreference: (preference: OnboardingMealRoutinePreference) => void;
-  setNotificationChoice: (choice: OnboardingNotificationChoice) => void;
-  markFirstOnboardingScanCompleted: () => void;
-  markFirstOnboardingResultSeen: () => void;
-  markPaywallShown: () => void;
   beginLatestScanSession: (scanSession: LatestScanSessionWrite) => void;
   writeLatestScanSession: (scanSession: LatestScanSessionWrite) => void;
   clearLatestScan: (clear: LatestScanClear) => void;
@@ -136,15 +83,8 @@ type OkyoState = {
   saveRecipe: (recipe: Recipe) => void;
   saveFoodIdea: (idea: SavedFoodIdea) => void;
   removeSavedRecipe: (recipeId: string) => void;
-  completeChallenge: (challenge: CompletedChallenge) => void;
-  incrementMoneySaved: (amount: number) => void;
-  incrementWeeklyScanCount: () => void;
-  addXP: (points: number) => void;
   awardXPOnce: (eventId: string, points: number) => void;
   claimDailyCheckIn: (dateKey: string) => void;
-  unlockBadge: (badgeId: string) => void;
-  clearRecentBadgeUnlock: () => void;
-  setPremium: (isPremium: boolean) => void;
   clearSavedData: () => void;
 };
 
@@ -152,14 +92,6 @@ export const useOkyoStore = create<OkyoState>()(
   persist(
     (set, get) => ({
       hasCompletedOnboarding: false,
-      hasSeenOnboarding: false,
-      onboardingGoal: null,
-      weeklyGoal: null,
-      mealRoutinePreference: null,
-      notificationChoice: null,
-      firstOnboardingScanCompleted: false,
-      firstOnboardingResultSeen: false,
-      paywallShown: false,
       scanSessionId: null,
       latestScanSession: null,
       latestScanResult: null,
@@ -172,35 +104,14 @@ export const useOkyoStore = create<OkyoState>()(
       userRestaurantPrice: null,
       savedRecipes: [],
       savedFoodIdeas: [],
-      completedChallenges: [],
-      totalMoneySaved: 0,
-      weeklyScanCount: 0,
-      isPremium: false,
       xp: 0,
       lastDailyCheckInDate: null,
-      unlockedBadges: [],
-      recentBadgeUnlock: null,
       awardedXpEvents: [],
-      leaderboardEntries: mockLeaderboardEntries,
-      completeOnboarding: () => set({ hasCompletedOnboarding: true, hasSeenOnboarding: true }),
+      completeOnboarding: () => set({ hasCompletedOnboarding: true }),
       resetOnboarding: () =>
         set({
           hasCompletedOnboarding: false,
-          hasSeenOnboarding: false,
-          weeklyGoal: null,
-          mealRoutinePreference: null,
-          notificationChoice: null,
-          firstOnboardingScanCompleted: false,
-          firstOnboardingResultSeen: false,
-          paywallShown: false,
         }),
-      setGoal: (goal) => set({ onboardingGoal: goal }),
-      setWeeklyGoal: (goal) => set({ weeklyGoal: goal, hasSeenOnboarding: true }),
-      setMealRoutinePreference: (preference) => set({ mealRoutinePreference: preference }),
-      setNotificationChoice: (choice) => set({ notificationChoice: choice }),
-      markFirstOnboardingScanCompleted: () => set({ firstOnboardingScanCompleted: true }),
-      markFirstOnboardingResultSeen: () => set({ firstOnboardingResultSeen: true }),
-      markPaywallShown: () => set({ paywallShown: true }),
       beginLatestScanSession: (scanSession) => {
         let outgoingScanImageUri: string | undefined;
         set((state) => {
@@ -368,30 +279,6 @@ export const useOkyoStore = create<OkyoState>()(
           });
         }
       },
-      completeChallenge: (challenge) =>
-        set((state) => ({
-          completedChallenges: state.completedChallenges.some(
-            (completedChallenge) => completedChallenge.id === challenge.id,
-          )
-            ? state.completedChallenges
-            : [...state.completedChallenges, challenge],
-        })),
-      incrementMoneySaved: (amount) =>
-        set((state) => ({
-          totalMoneySaved: state.totalMoneySaved + amount,
-        })),
-      incrementWeeklyScanCount: () =>
-        set((state) => ({
-          weeklyScanCount: state.weeklyScanCount + 1,
-        })),
-      addXP: (points) =>
-        set((state) => {
-          track(analyticsEvents.XP_EVENT_RECORDED, { xpAmount: points });
-
-          return {
-            xp: state.xp + points,
-          };
-        }),
       awardXPOnce: (eventId, points) =>
         set((state) => {
           if (state.awardedXpEvents.includes(eventId)) {
@@ -426,21 +313,6 @@ export const useOkyoStore = create<OkyoState>()(
             xp: state.awardedXpEvents.includes(eventId) ? state.xp : state.xp + 5,
           };
         }),
-      unlockBadge: (badgeId) =>
-        set((state) => {
-          if (state.unlockedBadges.includes(badgeId)) {
-            return state;
-          }
-
-          track(analyticsEvents.BADGE_UNLOCKED, { badgeName: badgeId });
-
-          return {
-            recentBadgeUnlock: badgeId,
-            unlockedBadges: [...state.unlockedBadges, badgeId],
-          };
-        }),
-      clearRecentBadgeUnlock: () => set({ recentBadgeUnlock: null }),
-      setPremium: (isPremium) => set({ isPremium }),
       clearSavedData: () => {
         set((state) => {
           logScanStateClear({
@@ -453,12 +325,8 @@ export const useOkyoStore = create<OkyoState>()(
           return {
             savedRecipes: [],
             savedFoodIdeas: [],
-            completedChallenges: [],
-            totalMoneySaved: 0,
             xp: 0,
             lastDailyCheckInDate: null,
-            unlockedBadges: [],
-            recentBadgeUnlock: null,
             awardedXpEvents: [],
             ...getClearedLatestScanState(),
           };
@@ -471,28 +339,15 @@ export const useOkyoStore = create<OkyoState>()(
     }),
     {
       name: 'okyo-local-state',
-      version: 1,
+      version: 2,
       // Defensive: if AsyncStorage returns a corrupted/unexpected shape (bad
       // JSON survived parsing as e.g. a string or array), fall back to
-      // defaults rather than crashing app startup. Future version bumps add
-      // real migration steps here.
-      migrate: (persistedState) => {
-        if (!persistedState || typeof persistedState !== 'object' || Array.isArray(persistedState)) {
-          return {};
-        }
-        return persistedState;
-      },
+      // defaults rather than crashing app startup. Version 2 also removes
+      // persisted fields that belonged to retired mock product surfaces.
+      migrate: migrateOkyoPersistedState,
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         hasCompletedOnboarding: state.hasCompletedOnboarding,
-        hasSeenOnboarding: state.hasSeenOnboarding,
-        onboardingGoal: state.onboardingGoal,
-        weeklyGoal: state.weeklyGoal,
-        mealRoutinePreference: state.mealRoutinePreference,
-        notificationChoice: state.notificationChoice,
-        firstOnboardingScanCompleted: state.firstOnboardingScanCompleted,
-        firstOnboardingResultSeen: state.firstOnboardingResultSeen,
-        paywallShown: state.paywallShown,
         scanSessionId: state.scanSessionId,
         latestScanSession: state.latestScanSession,
         latestScanResult: state.latestScanResult,
@@ -505,15 +360,9 @@ export const useOkyoStore = create<OkyoState>()(
         userRestaurantPrice: state.userRestaurantPrice,
         savedRecipes: state.savedRecipes,
         savedFoodIdeas: Array.isArray(state.savedFoodIdeas) ? state.savedFoodIdeas : [],
-        completedChallenges: state.completedChallenges,
-        totalMoneySaved: state.totalMoneySaved,
-        weeklyScanCount: state.weeklyScanCount,
-        isPremium: state.isPremium,
         xp: state.xp,
         lastDailyCheckInDate: state.lastDailyCheckInDate,
-        unlockedBadges: state.unlockedBadges,
         awardedXpEvents: state.awardedXpEvents,
-        leaderboardEntries: state.leaderboardEntries,
       }),
     },
   ),

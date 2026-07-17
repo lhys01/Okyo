@@ -24,7 +24,14 @@
     },
     "plugins": [
       "expo-sharing",
-      "expo-notifications"
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Okyo to access a food photo you choose for recipe inspiration.",
+          "cameraPermission": "Allow Okyo to use your camera when you choose to scan a meal.",
+          "microphonePermission": false
+        }
+      ]
     ]
   }
 }

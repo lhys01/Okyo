@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import appConfig from '../../app.json';
 import { analyticsEvents, track } from '../analytics/track';
@@ -25,10 +25,6 @@ export function SettingsScreen() {
     didTrackView.current = true;
     track(analyticsEvents.SETTINGS_VIEWED, { screen: 'SettingsScreen' });
   }, []);
-
-  const showUnavailable = (label: string) => {
-    Alert.alert(label, 'This setting is not enabled in this preview build.');
-  };
 
   const openLegalDestination = async (label: string, url: string | undefined) => {
     if (!url) {
@@ -60,8 +56,8 @@ export function SettingsScreen() {
 
   const confirmClearData = () => {
     Alert.alert(
-      'Clear saved recipes and challenges?',
-      'This removes all locally saved recipes, challenge progress, and XP from this device.',
+      'Clear saved Okyo data?',
+      'This removes locally saved recipes, food ideas, scan results, photo copies, and XP from this device.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -84,27 +80,9 @@ export function SettingsScreen() {
       <Text style={styles.description}>Version {appVersion}</Text>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Preferences</Text>
-        <View style={styles.row}>
-          <View style={styles.rowText}>
-            <Text style={styles.rowTitle}>Notifications</Text>
-            <Text style={styles.rowBody}>Okyo is not requesting push notifications in this build.</Text>
-          </View>
-          <Switch value={false} onValueChange={() => showUnavailable('Notifications')} />
-        </View>
-        <View style={styles.row}>
-          <View style={styles.rowText}>
-            <Text style={styles.rowTitle}>Dark theme</Text>
-            <Text style={styles.rowBody}>The editorial light theme is active for this preview.</Text>
-          </View>
-          <Switch value={false} onValueChange={() => showUnavailable('Theme')} />
-        </View>
-      </View>
-
-      <View style={styles.section}>
         <Text style={styles.sectionTitle}>Help and legal</Text>
         <Text style={styles.privacySummary}>
-          Food photos are sent to OpenRouter and downstream AI providers for analysis. The backend processes the upload without retaining the image. Saved recipes and photo copies stay on this device until you remove the recipe or clear local data. During the cohort, backend operational logs may include dish labels, status, timing, model and token usage, but not raw photo contents. Mobile analytics and crash reporting are not enabled in this build.
+          Food photos are sent to OpenRouter and downstream AI providers for analysis. The backend processes the upload without retaining the raw image, while user-scoped scan metadata and generated recipes are stored in Okyo's backend with expiry. Saving a recipe also keeps a local recipe and photo copy on this device until you remove it or clear local data. During the cohort, backend operational logs may include dish labels, status, timing, model and token usage, but not raw photo contents. Mobile analytics and crash reporting are not enabled in this build.
         </Text>
         <Pressable style={styles.linkRow} onPress={() => openLegalDestination('Privacy Policy', legalUrls.privacy)}>
           <Text style={styles.linkText}>Privacy Policy</Text>
@@ -169,29 +147,6 @@ const styles = StyleSheet.create({
     color: colors.body,
     lineHeight: 19,
     marginBottom: 12,
-  },
-  row: {
-    alignItems: 'center',
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    gap: 14,
-    minHeight: 74,
-    paddingVertical: 12,
-  },
-  rowText: {
-    flex: 1,
-  },
-  rowTitle: {
-    color: colors.charcoal,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  rowBody: {
-    color: colors.body,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 4,
   },
   linkRow: {
     borderTopColor: colors.border,
