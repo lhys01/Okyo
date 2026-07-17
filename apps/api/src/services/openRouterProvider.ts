@@ -276,6 +276,25 @@ export const compactRecipeOutputSchema = z.object({
   difficulty: z.enum(['Easy', 'Medium', 'Hard']),
 });
 
+// The full repair pass is intentionally narrower than the initial recipe
+// contract. It may correct the canonical ingredient list and step content, but
+// cannot reintroduce enrichment or model-authored step metadata.
+const fullRecipeRepairStepSchema = z.object({
+  title: z.string().optional().default(''),
+  step: z.string().optional().default(''),
+  instruction: z.string().optional().default(''),
+  doneWhen: z.string().optional().default(''),
+  safetyNote: z.string().optional().default(''),
+}).strict().refine(
+  (step) => Boolean(step.step.trim() || step.instruction.trim()),
+  { message: 'A repaired step must include step or instruction text.' },
+);
+
+const fullRecipeRepairPatchSchema = z.object({
+  ingredients: z.array(z.string().min(1)).min(1),
+  steps: z.array(fullRecipeRepairStepSchema).min(1),
+}).strict();
+
 export type OpenRouterVisionOutput = z.input<typeof openRouterVisionOutputSchema>;
 export type OpenRouterRecipeOutput = z.infer<typeof openRouterRecipeOutputSchema>;
 export type OpenRouterRecipeVariant = z.infer<typeof recipeVariantSchema>;
@@ -773,28 +792,55 @@ async function repairFullRecipe(
   isDrink: boolean,
 ): Promise<OpenRouterRecipeOutput> {
   throwIfScanCancelled(input.signal, input.deadlineAt);
-  let repaired: OpenRouterRecipeOutput;
+  let normalized: OpenRouterRecipeOutput;
   try {
-    repaired = await measureScanAggregateStage({
+    normalized = await measureScanAggregateStage({
       timing: input.timing,
       stage: 'repair',
-      run: () => callRecipeRepairStage(
-        input,
-        getFullRecipeRepairPrompt(input.analysis, previousOutput, issues),
-        getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
-        'recipe_repair',
-        previousOutput,
-      ),
+      run: async () => {
+        const repairJson = await callRecipeRepairStage(
+          input,
+          getFullRecipeRepairPrompt(input.analysis, previousOutput, issues),
+          getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
+          'recipe_repair',
+        );
+        if (previousOutput) {
+          return applyFullRecipeRepairPatch(
+            input,
+            previousOutput,
+            repairJson,
+            issues,
+          );
+        }
+        const repaired = openRouterRecipeOutputSchema.safeParse(repairJson);
+        if (!repaired.success) {
+          throw new RecipeValidationError(['repair_invalid_schema']);
+        }
+        const normalizedRepair = normalizeFullRecipeOutput(repaired.data, input.analysis);
+        const repairDiagnostics = getFullRecipeRepairDiagnostics(
+          normalizedRepair,
+          input.analysis,
+        );
+        logFullRecipeRepairValidation(input, {
+          initialInvalidStepIndices: [],
+          repairedInvalidStepIndices: repairDiagnostics.stepsMissingCompletionCue,
+          unknownIngredientsBeforeRepair: [],
+          unknownIngredientsAfterRepair: repairDiagnostics.unknownIngredients,
+          presentationOnlyStepIndices: repairDiagnostics.presentationOnlyStepIndices,
+          repairChangedFields: ['entire_recipe'],
+        });
+        return normalizedRepair;
+      },
     });
   } catch (error) {
     if (isQuotaError(error) || isScanControlError(error)) throw error;
+    if (error instanceof RecipeValidationError) throw error;
     throw new RecipeValidationError([
       ...issues,
       error instanceof OpenRouterProviderError ? error.failure.reason : 'repair_output_unavailable',
     ]);
   }
 
-  const normalized = normalizeFullRecipeOutput(repaired, input.analysis);
   const remainingIssues = validateFullRecipeOutput(normalized, input.analysis, isDrink);
   if (remainingIssues.length > 0) {
     throw new RecipeValidationError(remainingIssues);
@@ -811,13 +857,7 @@ export function normalizeFullRecipeOutput(
   output: OpenRouterRecipeOutput,
   analysis: FoodImageAnalysis,
 ): OpenRouterRecipeOutput {
-  const ingredientNames = output.ingredients
-    .map((ingredient) => typeof ingredient === 'string'
-      ? ingredient.trim()
-          .replace(/^~\s*/i, '')
-          .replace(/^(?:about|approximately|approx\.?)\s+/i, '')
-      : '')
-    .filter(Boolean);
+  const ingredientNames = normalizeProviderIngredientList(output.ingredients);
   const equipment = output.equipment
     .map((tool) => typeof tool === 'string' ? tool.trim() : '')
     .filter(Boolean);
@@ -825,17 +865,14 @@ export function normalizeFullRecipeOutput(
   const steps = output.steps.map((rawStep, index) => {
     const record: SafeRecord = typeof rawStep === 'object' && rawStep ? rawStep : {};
     const instruction = getProviderStepText(rawStep).trim();
-    const existingIngredients = getProviderStepList(record, 'ingredients', 'ingredientsUsed');
-    const normalizedIngredients = existingIngredients.length > 0
-      ? existingIngredients.map((reference) =>
-          canonicalIngredientName(findMatchingIngredientName(reference, ingredientNames) ?? reference))
-      : ingredientNames
-          .filter((ingredient) => ingredientsMatch(ingredient, instruction))
-          .map(canonicalIngredientName);
-    const existingTools = getProviderStepList(record, 'tools', 'toolsUsed');
-    const normalizedTools = existingTools.length > 0
-      ? existingTools
-      : equipment.filter((tool) => instruction.toLowerCase().includes(tool.toLowerCase()));
+    // Per-step references are always derived from the final canonical lists.
+    // Provider arrays are optional metadata and must never create a closure
+    // failure or survive a targeted repair unchanged.
+    const normalizedIngredients = ingredientNames
+      .filter((ingredient) => instructionUsesIngredient(instruction, ingredient))
+      .map(canonicalIngredientName);
+    const normalizedTools = equipment.filter((tool) =>
+      instruction.toLowerCase().includes(tool.toLowerCase()));
     const derivedPhase = deriveProviderStepPhase(instruction, index, output.steps.length);
     const phase = Math.max(lastPhase, derivedPhase);
     lastPhase = phase;
@@ -875,6 +912,16 @@ export function normalizeFullRecipeOutput(
   });
 }
 
+function normalizeProviderIngredientList(ingredients: string[]): string[] {
+  return ingredients
+    .map((ingredient) => typeof ingredient === 'string'
+      ? ingredient.trim()
+          .replace(/^~\s*/i, '')
+          .replace(/^(?:about|approximately|approx\.?)\s+/i, '')
+      : '')
+    .filter(Boolean);
+}
+
 function validateFullRecipeOutput(
   output: OpenRouterRecipeOutput,
   analysis: FoodImageAnalysis,
@@ -906,23 +953,18 @@ function validateFullRecipeOutput(
   return [...new Set(issues)];
 }
 
-function getProviderStepText(
-  value: OpenRouterRecipeVariant['steps'][number] | undefined,
-): string {
+type ProviderStepLike = string | {
+  step?: string;
+  instruction?: string;
+  text?: string;
+  doneWhen?: string;
+  title?: string;
+  safetyNote?: string;
+};
+
+function getProviderStepText(value: ProviderStepLike | undefined): string {
   if (typeof value === 'string') return value;
   return value?.step || value?.instruction || value?.text || '';
-}
-
-function getProviderStepList(
-  value: Record<string, unknown>,
-  primary: string,
-  fallback: string,
-): string[] {
-  const preferred = Array.isArray(value[primary]) ? value[primary] : [];
-  const alternate = preferred.length === 0 && Array.isArray(value[fallback]) ? value[fallback] : [];
-  return (preferred.length > 0 ? preferred : alternate)
-    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    .map((item) => item.trim());
 }
 
 function deriveProviderStepTitle(instruction: string): string {
@@ -1276,7 +1318,8 @@ export function validateCompactRecipeOutput(
   if (output.steps.length < bounds.min) issues.push('too_few_steps');
 
   for (const step of output.steps) {
-    if (!hasInstructionCompletion(step.instruction, step.doneWhen)) {
+    if (requiresCompletionCue(step.instruction) &&
+      !hasInstructionCompletion(step.instruction, step.doneWhen)) {
       issues.push('step_missing_time_or_completion_cue');
     }
     if (hasVagueCompactInstruction(step.instruction)) {
@@ -1325,46 +1368,113 @@ function hasUsableIngredientAmount(value: string): boolean {
   return false;
 }
 
+const activeCookingActionPattern = /\b(?:bak(?:e|es|ed|ing)|blanch(?:es|ed|ing)?|boil(?:s|ed|ing)?|brais(?:e|es|ed|ing)|broil(?:s|ed|ing)?|cook(?:s|ed|ing)?|deep[- ]?(?:fry|fries|fried|frying)|(?:fry|fries|fried|frying)|grill(?:s|ed|ing)?|heat(?:s|ed|ing)?|melt(?:s|ed|ing)?|microwav(?:e|es|ed|ing)|pan[- ]?(?:fry|fries|fried|frying)|poach(?:es|ed|ing)?|preheat(?:s|ed|ing)?|reduc(?:e|es|ed|ing)|roast(?:s|ed|ing)?|saut[eé](?:s|ed|ing)?|sear(?:s|ed|ing)?|simmer(?:s|ed|ing)?|steam(?:s|ed|ing)?|stew(?:s|ed|ing)?|toast(?:s|ed|ing)?)\b/i;
+const preparationOnlyActionPattern = /^\s*(?:gather|measure|wash|rinse|pat|peel|trim|chop|slice|dice|mince|grate|combine|mix|whisk|toss|assemble|add|season|sprinkle|crack|open|drain|reserve|set aside|pour|transfer)\b/i;
+const presentationOnlyActionPattern = /^\s*(?:plate|garnish|serve|divide|arrange|portion|ladle|spoon|enjoy)\b/i;
+
+function isPresentationOnlyStep(instruction: string): boolean {
+  return presentationOnlyActionPattern.test(instruction) &&
+    !activeCookingActionPattern.test(instruction);
+}
+
+function requiresCompletionCue(instruction: string): boolean {
+  if (activeCookingActionPattern.test(instruction)) return true;
+  if (isPresentationOnlyStep(instruction)) return false;
+  if (preparationOnlyActionPattern.test(instruction)) return false;
+  // Unknown actions remain strict. Only explicitly recognized preparation and
+  // presentation work is exempted from cookability evidence.
+  return true;
+}
+
+function getInvalidCompletionStepIndices(
+  steps: ProviderStepLike[],
+): number[] {
+  return steps
+    .map((step, index) => {
+      const instruction = getProviderStepText(step);
+      const doneWhen = typeof step === 'object' && step ? step.doneWhen ?? '' : '';
+      return requiresCompletionCue(instruction) &&
+        !hasInstructionCompletion(instruction, doneWhen)
+        ? index
+        : -1;
+    })
+    .filter((index) => index >= 0);
+}
+
+function getPresentationOnlyStepIndices(
+  steps: ProviderStepLike[],
+): number[] {
+  return steps
+    .map((step, index) => isPresentationOnlyStep(getProviderStepText(step)) ? index : -1)
+    .filter((index) => index >= 0);
+}
+
 function hasInstructionCompletion(instruction: string, doneWhen = ''): boolean {
+  if (!requiresCompletionCue(instruction)) return true;
   const text = `${instruction} ${doneWhen}`;
   if (/\b\d+(?:\s*[-–]\s*\d+)?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/i.test(text) ||
-    /\b(golden|browned|opaque|translucent|tender|crisp|crispy|fragrant|bubbling|boiling|simmering|thickened|coats?|combined|melted|wilted|reduced|steaming|al dente|set|firm|flaky|juices run clear|no pink|cooked through|internal temperature|reaches? \d{2,3}|°f|°c|smooth|glossy|charred|softened|cold|chilled)\b/i.test(text)) {
+    /\b(golden|browned|opaque|translucent|tender|crisp|crispy|fragrant|aromatic|bubbling|boiling|simmering|thickened|coats?|combined|melted|wilted|reduced|steaming|al dente|set|firm|flaky|juices run clear|no pink|internal temperature|reaches? \d{2,3}|°f|°c|smooth|glossy|charred|softened|cold|chilled)\b/i.test(text)) {
     return true;
   }
-
-  // Presentation-only final steps have no cooking completion state. A cooking
-  // action stays strict even if the same instruction also says "serve".
-  return /^(?:serve|plate|garnish|pour|divide|arrange|enjoy)\b/i.test(instruction.trim()) &&
-    !/\b(cook|bake|roast|sear|fry|boil|simmer|grill|steam|poach|braise|brown|heat|melt|reduce)\b/i.test(instruction);
+  return false;
 }
 
 function hasVagueCompactInstruction(instruction: string): boolean {
-  return /\bcook until done\b|\bprepare (?:the )?ingredients\b|\bmix everything\b|\bmain ingredient\b/i.test(
+  return /\bcook until done\b|\buntil ready\b|\bcook(?:ed|ing)? thoroughly\b|\bprepare (?:the )?ingredients\b|\bmix everything\b|\bmain ingredient\b/i.test(
     instruction,
   );
 }
 
-const compactIngredientWords = [
+const recognizedIngredientMentions = [
   'butter', 'oil', 'salt', 'pepper', 'garlic', 'onion', 'ginger', 'sugar',
   'flour', 'egg', 'eggs', 'milk', 'cream', 'cheese', 'rice', 'pasta',
   'noodles', 'chicken', 'beef', 'pork', 'lamb', 'turkey', 'fish', 'salmon',
   'cod', 'shrimp', 'prawn', 'tofu', 'tomato', 'potato', 'carrot', 'broccoli',
   'soy sauce', 'vinegar', 'lemon', 'lime', 'cilantro', 'parsley', 'basil',
   'paprika', 'cumin', 'chili', 'stock', 'broth', 'water', 'mayonnaise', 'mustard',
+  'parmesan', 'mozzarella', 'cheddar', 'yogurt', 'sour cream', 'coconut milk',
+  'sesame oil', 'olive oil', 'avocado oil', 'canola oil', 'vegetable oil',
+  'honey', 'maple syrup', 'cornstarch', 'breadcrumbs', 'bread', 'tortilla',
+  'spinach', 'kale', 'cabbage', 'lettuce', 'cucumber', 'avocado', 'mushroom',
+  'peas', 'corn', 'beans', 'chickpeas', 'lentils', 'celery', 'scallion',
+  'green onion', 'shallot', 'rosemary', 'thyme', 'oregano', 'dill', 'mint',
+  'nutmeg', 'cinnamon', 'turmeric', 'cayenne', 'hot sauce', 'worcestershire sauce',
+  'oyster sauce', 'fish sauce', 'tomato paste', 'wine',
+  'bacon', 'sausage', 'tuna', 'tilapia', 'trout', 'crab', 'lobster', 'squid',
+  'steak', 'ground beef', 'ground pork', 'ground turkey',
 ];
 
-function hasUnlistedCompactStepIngredients(output: CompactRecipeOutput): boolean {
-  return hasUnlistedStepIngredientText(
-    output.steps.map((step) => step.instruction),
-    output.ingredients,
-  );
+function containsIngredientMention(text: string, ingredient: string): boolean {
+  const pattern = ingredient
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\s+');
+  return Boolean(pattern) && new RegExp(`\\b${pattern}\\b`, 'i').test(text);
 }
 
-function hasUnlistedStepIngredientText(stepTexts: string[], ingredients: string[]): boolean {
+function instructionUsesIngredient(instruction: string, ingredient: string): boolean {
+  const canonical = canonicalIngredientName(ingredient);
+  if (canonical && containsIngredientMention(instruction, canonical)) return true;
+  return recognizedIngredientMentions.some((candidate) =>
+    containsIngredientMention(instruction, candidate) &&
+    ingredientsMatch(ingredient, candidate));
+}
+
+function hasUnlistedCompactStepIngredients(output: CompactRecipeOutput): boolean {
+  return getUnlistedStepIngredientText(
+    output.steps.map((step) => step.instruction),
+    output.ingredients,
+  ).length > 0;
+}
+
+function getUnlistedStepIngredientText(stepTexts: string[], ingredients: string[]): string[] {
   const stepText = stepTexts.join(' ').toLowerCase();
-  return compactIngredientWords.some((candidate) =>
-    new RegExp(`\\b${candidate.replace(' ', '\\s+')}\\b`, 'i').test(stepText) &&
-    findMatchingIngredientName(candidate, ingredients) === undefined);
+  return [...new Set(recognizedIngredientMentions.filter((candidate) =>
+    containsIngredientMention(stepText, candidate) &&
+    findMatchingIngredientName(candidate, ingredients) === undefined)
+    .map(canonicalIngredientName)
+    .filter(Boolean))];
 }
 
 function getRecipeSafetyRequirement(
@@ -1525,17 +1635,14 @@ async function callRecipeRepairStage(
   userPrompt: string,
   maxTokens: number,
   stage: string,
-  previousOutput: OpenRouterRecipeOutput | undefined,
-): Promise<OpenRouterRecipeOutput> {
-  const json = await callOpenRouterJsonWithFailover(
+): Promise<unknown> {
+  return callOpenRouterJsonWithFailover(
     {
       config: input.config,
       messages: [
         {
           role: 'system',
-          content: previousOutput
-            ? 'You repair one safe home recipe. Return only the requested minified ingredients-and-steps correction object. No markdown, reasoning, variants, or extra keys.'
-            : 'You repair one safe home recipe. Return one complete JSON recipe object only. No markdown, reasoning, modes, or variants.',
+          content: 'You repair one safe home recipe. Return only the requested minified JSON. No markdown, reasoning, modes, variants, or extra keys.',
         },
         { role: 'user', content: userPrompt },
       ],
@@ -1549,32 +1656,169 @@ async function callRecipeRepairStage(
     },
     getRecipeModelChain(input.config),
   );
-
-  const candidate = previousOutput
-    ? mergeFullRecipeRepairPatch(previousOutput, json)
-    : json;
-  const output = openRouterRecipeOutputSchema.safeParse(candidate);
-  if (!output.success) {
-    throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
-      openRouterErrorMessage: getSchemaErrorMessage(output.error),
-    });
-  }
-  return output.data;
 }
 
-function mergeFullRecipeRepairPatch(
+function applyFullRecipeRepairPatch(
+  input: { analysis: FoodImageAnalysis } & Partial<ScanExecutionContext>,
   previousOutput: OpenRouterRecipeOutput,
-  patch: unknown,
-): unknown {
-  const record = getRecord(patch);
-  if (!record || !Array.isArray(record.ingredients) || !Array.isArray(record.steps)) {
-    return patch;
+  repairJson: unknown,
+  issues: string[],
+): OpenRouterRecipeOutput {
+  const initialDiagnostics = getFullRecipeRepairDiagnostics(previousOutput, input.analysis);
+  const parsedPatch = fullRecipeRepairPatchSchema.safeParse(repairJson);
+  if (!parsedPatch.success) {
+    logFullRecipeRepairValidation(input, {
+      initialInvalidStepIndices: initialDiagnostics.stepsMissingCompletionCue,
+      repairedInvalidStepIndices: [],
+      unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
+      unknownIngredientsAfterRepair: [],
+      presentationOnlyStepIndices: initialDiagnostics.presentationOnlyStepIndices,
+      repairChangedFields: [],
+    });
+    throw new RecipeValidationError(['repair_invalid_schema']);
   }
-  return {
-    ...previousOutput,
-    ingredients: record.ingredients,
-    steps: record.steps,
+
+  const patch = parsedPatch.data;
+  const canonicalIngredients = normalizeProviderIngredientList(previousOutput.ingredients);
+  const repairedIngredients = normalizeProviderIngredientList(patch.ingredients);
+  const completionOnlyRepair = issues.every(
+    (issue) => issue === 'step_missing_time_or_completion_cue',
+  );
+  if (completionOnlyRepair && patch.steps.length !== previousOutput.steps.length) {
+    logFullRecipeRepairValidation(input, {
+      initialInvalidStepIndices: initialDiagnostics.stepsMissingCompletionCue,
+      repairedInvalidStepIndices: [],
+      unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
+      unknownIngredientsAfterRepair: [],
+      presentationOnlyStepIndices: initialDiagnostics.presentationOnlyStepIndices,
+      repairChangedFields: ['steps.length'],
+    });
+    throw new RecipeValidationError(['repair_changed_step_count']);
+  }
+  const invalidCompletionIndices = new Set(initialDiagnostics.stepsMissingCompletionCue);
+  const repairedSteps = completionOnlyRepair
+    ? previousOutput.steps.map((step, index) =>
+        invalidCompletionIndices.has(index) ? patch.steps[index] : step)
+    : patch.steps;
+  const unknownIngredientListEntries = repairedIngredients
+    .filter((ingredient) => !findMatchingIngredientName(ingredient, canonicalIngredients))
+    .map(canonicalIngredientName)
+    .filter(Boolean);
+  const removedCanonicalIngredients = canonicalIngredients
+    .filter((ingredient) => !findMatchingIngredientName(ingredient, repairedIngredients))
+    .map(canonicalIngredientName)
+    .filter(Boolean);
+  // Inspect the complete provider patch before merging any step. Unknown
+  // ingredients are rejected even if they appear in a step that the targeted
+  // merge would otherwise leave unchanged.
+  const repairedStepTexts = patch.steps.map(getProviderStepText);
+  const unknownStepIngredients = getUnlistedStepIngredientText(
+    repairedStepTexts,
+    canonicalIngredients,
+  );
+  const unknownIngredientsAfterRepair = [...new Set([
+    ...unknownIngredientListEntries,
+    ...unknownStepIngredients,
+  ])];
+  const repairedInvalidStepIndices = getInvalidCompletionStepIndices(repairedSteps);
+  const repairChangedFields = getRepairChangedFields(previousOutput, {
+    ingredients: repairedIngredients,
+    steps: repairedSteps.map((step) => typeof step === 'string'
+      ? { title: '', step, instruction: '', doneWhen: '', safetyNote: '' }
+      : {
+          title: step.title ?? '',
+          step: step.step ?? '',
+          instruction: step.instruction ?? '',
+          doneWhen: step.doneWhen ?? '',
+          safetyNote: step.safetyNote ?? '',
+        }),
+  });
+
+  const repairTelemetry = {
+    initialInvalidStepIndices: initialDiagnostics.stepsMissingCompletionCue,
+    repairedInvalidStepIndices,
+    unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
+    unknownIngredientsAfterRepair,
+    presentationOnlyStepIndices: initialDiagnostics.presentationOnlyStepIndices,
+    repairChangedFields,
   };
+
+  // Validate the patch against the previous canonical ingredient concepts
+  // before it can be merged. Aliases and plurals use the same matcher as final
+  // closure validation; genuinely new or removed ingredients fail closed.
+  if (unknownIngredientsAfterRepair.length > 0) {
+    logFullRecipeRepairValidation(input, repairTelemetry);
+    throw new RecipeValidationError(['step_uses_unlisted_ingredients']);
+  }
+  if (removedCanonicalIngredients.length > 0) {
+    logFullRecipeRepairValidation(input, repairTelemetry);
+    throw new RecipeValidationError(['repair_changed_ingredient_set']);
+  }
+
+  const mayCorrectAmounts = issues.includes('ingredients_missing_amounts');
+  const merged = openRouterRecipeOutputSchema.parse({
+    ...previousOutput,
+    ingredients: mayCorrectAmounts ? repairedIngredients : canonicalIngredients,
+    steps: repairedSteps,
+  });
+  const normalized = normalizeFullRecipeOutput(merged, input.analysis);
+  const finalDiagnostics = getFullRecipeRepairDiagnostics(normalized, input.analysis);
+  logFullRecipeRepairValidation(input, {
+    ...repairTelemetry,
+    repairedInvalidStepIndices: finalDiagnostics.stepsMissingCompletionCue,
+    unknownIngredientsAfterRepair: finalDiagnostics.unknownIngredients,
+  });
+  return normalized;
+}
+
+function getRepairChangedFields(
+  previousOutput: OpenRouterRecipeOutput,
+  patch: z.infer<typeof fullRecipeRepairPatchSchema>,
+): string[] {
+  const changed = new Set<string>();
+  if (JSON.stringify(normalizeProviderIngredientList(previousOutput.ingredients)) !==
+    JSON.stringify(normalizeProviderIngredientList(patch.ingredients))) {
+    changed.add('ingredients');
+  }
+  if (previousOutput.steps.length !== patch.steps.length) {
+    changed.add('steps.length');
+  }
+  const maxSteps = Math.max(previousOutput.steps.length, patch.steps.length);
+  for (let index = 0; index < maxSteps; index += 1) {
+    const before = previousOutput.steps[index];
+    const after = patch.steps[index];
+    if (!before || !after) continue;
+    const beforeRecord: SafeRecord = typeof before === 'object' && before ? before : {};
+    const fields = {
+      title: [beforeRecord.title ?? '', after.title],
+      step: [getProviderStepText(before), getProviderStepText(after)],
+      doneWhen: [beforeRecord.doneWhen ?? '', after.doneWhen],
+      safetyNote: [beforeRecord.safetyNote ?? '', after.safetyNote],
+    };
+    for (const [field, [beforeValue, afterValue]] of Object.entries(fields)) {
+      if (String(beforeValue).trim() !== String(afterValue).trim()) {
+        changed.add(`steps.${index}.${field}`);
+      }
+    }
+  }
+  return [...changed];
+}
+
+function logFullRecipeRepairValidation(
+  input: Partial<ScanExecutionContext>,
+  details: {
+    initialInvalidStepIndices: number[];
+    repairedInvalidStepIndices: number[];
+    unknownIngredientsBeforeRepair: string[];
+    unknownIngredientsAfterRepair: string[];
+    presentationOnlyStepIndices: number[];
+    repairChangedFields: string[];
+  },
+): void {
+  console.log('[recipe_repair_validation]', {
+    requestId: input.requestId,
+    ...details,
+  });
 }
 
 // Detects recipe output that is too vague to cook from. Returns a list of issue
@@ -1590,6 +1834,11 @@ function getRecipeQualityIssues(
     .filter(Boolean);
   const stepTexts = (Array.isArray(output.steps) ? output.steps : [])
     .map((value) => (typeof value === 'string' ? value : (value?.step || value?.instruction || value?.text || '')).trim())
+    .filter(Boolean);
+  const stepValidationTexts = (Array.isArray(output.steps) ? output.steps : [])
+    .map((value) => typeof value === 'string'
+      ? value
+      : `${getProviderStepText(value)} ${value?.doneWhen ?? ''}`.trim())
     .filter(Boolean);
   const allText = `${output.title ?? ''} ${output.description ?? ''} ${ingredients.join(' ')} ${stepTexts.join(' ')}`.toLowerCase();
 
@@ -1608,14 +1857,10 @@ function getRecipeQualityIssues(
   if (missingAmounts.length > 0) {
     issues.push('ingredients_missing_amounts');
   }
-  if (stepTexts.some((step) => vagueStepPattern.test(step.toLowerCase()))) {
+  if (stepValidationTexts.some((step) => vagueStepPattern.test(step.toLowerCase()))) {
     issues.push('vague_step');
   }
-  const stepCompletionIssues = (Array.isArray(output.steps) ? output.steps : [])
-    .some((step) => {
-      if (typeof step === 'string') return !hasInstructionCompletion(step);
-      return !hasInstructionCompletion(getProviderStepText(step), step.doneWhen ?? '');
-    });
+  const stepCompletionIssues = getInvalidCompletionStepIndices(output.steps).length > 0;
   if (stepCompletionIssues) {
     issues.push('step_missing_time_or_completion_cue');
   }
@@ -1644,7 +1889,7 @@ function getRecipeQualityIssues(
   if (unlistedStepIngredients.length > 0) {
     issues.push('step_uses_unlisted_ingredients');
   }
-  if (hasUnlistedStepIngredientText(stepTexts, ingredients)) {
+  if (getUnlistedStepIngredientText(stepTexts, ingredients).length > 0) {
     issues.push('step_uses_unlisted_ingredients');
   }
 
@@ -1652,7 +1897,7 @@ function getRecipeQualityIssues(
 }
 
 const standaloneVagueIngredient = /^(the\s+)?(main ingredients?|protein|proteins|vegetables?|veggies|sauce|sauces|seasoning|seasonings|spice|spices|toppings?|ingredients|filling|stuff)$/;
-const vagueStepPattern = /\bcook until done\b|\bprepare the ingredients\b|\bmix everything\b|\bseason to taste\b|\b(cook|add|prepare|make) the (main ingredient|protein|vegetables|sauce)\b/;
+const vagueStepPattern = /\bcook until done\b|\buntil ready\b|\bcook(?:ed|ing)? thoroughly\b|\bprepare the ingredients\b|\bmix everything\b|\bseason to taste\b|\b(cook|add|prepare|make) the (main ingredient|protein|vegetables|sauce)\b/;
 
 function getFullRecipeRepairPrompt(
   analysis: FoodImageAnalysis,
@@ -1690,10 +1935,13 @@ function getFullRecipeRepairPrompt(
     previousOutput
       ? 'Return ONLY a minified correction object with exactly two keys: {"ingredients":[...the entire corrected ingredient list...],"steps":[...the entire corrected step list...]}. Do not repeat title, equipment, times, servings, or difficulty.'
       : 'Return ONLY the entire corrected recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, and skillLevel.',
-    'Fix every listed problem. Every ingredient must start with an exact amount and real grocery name. Every cooking instruction must contain a time, an observable completion cue, or both. Never use "main ingredient", "cook until done", "prepare the ingredients", "season to taste", or "mix everything".',
+    'Fix every listed problem. Every active cooking instruction must contain a specific time, temperature, or concrete sensory cue such as golden, tender, bubbling, thickened, or aromatic.',
+    'Never use vague completion language such as "until done", "until ready", or "cook thoroughly". Do not add a cue to non-cooking actions such as gathering ingredients, plating, garnishing, serving, or dividing into bowls unless that same step also cooks food.',
+    'INGREDIENT LOCK: do not introduce, substitute, or remove any ingredient concept. Copy the complete canonical ingredient list below. An amount may change only to fix ingredients_missing_amounts. Every ingredient word in every repaired step must resolve to that list.',
+    `Exact invalid active-cooking step indices (zero-based): ${JSON.stringify(diagnostics?.stepsMissingCompletionCue ?? [])}. Correct those steps without rewriting already-valid steps.`,
     'Step shape: {"title":"short action","step":"cookable instruction with time or sensory completion","doneWhen":"optional useful cue","safetyNote":"required food-safety rule when applicable"}. Step numbers, phases, per-step ingredients, and per-step tools are derived locally and are not required.',
     `Use at least ${bounds.min} steps and preferably no more than ${bounds.max}; keep each instruction under 30 words. A presentation-only final step may simply serve or plate the finished dish.`,
-    'INGREDIENT CLOSURE IS MANDATORY: every ingredient named in an instruction must appear in the top-level ingredient list with an exact usable amount.',
+    'INGREDIENT CLOSURE IS MANDATORY: every ingredient named in an instruction must appear in the locked top-level ingredient list with an exact usable amount.',
     'Safety is mandatory: poultry 165°F/74°C; ground meat 160°F/71°C; pork and cooked fish 145°F/63°C. Raw-fish dishes must specify sushi-grade or previously frozen fish kept cold.',
     `Validation diagnostics: ${JSON.stringify(diagnostics ?? {})}`,
     `Full canonical ingredient list from the previous recipe: ${JSON.stringify(ingredients)}`,
@@ -1713,14 +1961,7 @@ function getFullRecipeRepairDiagnostics(
   output: OpenRouterRecipeOutput,
   analysis: FoodImageAnalysis,
 ) {
-  const stepCompletionIndices = output.steps
-    .map((step, index) => ({
-      index,
-      instruction: getProviderStepText(step),
-      doneWhen: typeof step === 'object' && step ? step.doneWhen ?? '' : '',
-    }))
-    .filter((step) => !hasInstructionCompletion(step.instruction, step.doneWhen))
-    .map((step) => step.index);
+  const stepCompletionIndices = getInvalidCompletionStepIndices(output.steps);
   const coverage = isGenuinePlatterMeal(analysis)
     ? getRecipeComponentCoverage(
         (analysis.detectedComponents ?? []).map((component) => component.name),
@@ -1739,6 +1980,11 @@ function getFullRecipeRepairDiagnostics(
       (ingredient) => !hasUsableIngredientAmount(ingredient),
     ),
     stepsMissingCompletionCue: stepCompletionIndices,
+    unknownIngredients: getUnlistedStepIngredientText(
+      output.steps.map(getProviderStepText),
+      output.ingredients,
+    ),
+    presentationOnlyStepIndices: getPresentationOnlyStepIndices(output.steps),
     platterCoveragePercent: coverage.coveragePercent,
     missingPlatterComponents: coverage.missingComponents,
   };

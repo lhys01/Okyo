@@ -31,8 +31,8 @@ const quantityPrefixPattern = new RegExp(
     '|\\d+\\/\\d+',
     '|\\d+(?:\\.\\d+)?',
     '|[¼½¾⅓⅔⅛⅜⅝⅞]',
-    '|one|two|three|four|five|six|seven|eight|nine|ten',
-    '|a|an|half|quarter|pinch|dash|handful',
+    '|(?:one|two|three|four|five|six|seven|eight|nine|ten',
+    '|a|an|half|quarter|pinch|dash|handful)\\b',
     ')',
     '\\s*',
   ].join(''),
@@ -53,10 +53,10 @@ const measurementPrefixPattern = new RegExp(
 const preparationWords = new Set([
   'about', 'approximately', 'boneless', 'chilled', 'chopped', 'coarsely', 'cold',
   'cooked', 'crushed', 'cubed', 'deseeded', 'diced', 'divided', 'drained', 'dried',
-  'extra', 'finely', 'fresh', 'freshly', 'frozen', 'grated', 'halved', 'julienned', 'large', 'lightly',
+  'extra', 'fillet', 'fillets', 'finely', 'fresh', 'freshly', 'frozen', 'grade', 'grated', 'halved', 'julienned', 'large', 'lightly',
   'medium', 'melted', 'minced', 'optional', 'peeled', 'prepared', 'quartered',
   'rinsed', 'roughly', 'seeded', 'shredded', 'skinless', 'sliced', 'small', 'softened',
-  'thinly', 'toasted', 'trimmed', 'virgin', 'warm',
+  'sushi', 'thinly', 'toasted', 'trimmed', 'virgin', 'warm',
 ]);
 
 function normalizeIngredientText(name: string): string {
@@ -119,6 +119,10 @@ const safeGenericIngredientCategoryAliases = new Map<string, Set<string>>([
   ])],
   ['noodle', new Set([
     'ramen', 'udon', 'soba', 'rice noodle', 'egg noodle', 'glass noodle',
+  ])],
+  ['fish', new Set([
+    'salmon', 'cod', 'tuna', 'tilapia', 'trout', 'halibut', 'haddock',
+    'snapper', 'mahi mahi', 'swordfish', 'sea bass',
   ])],
 ]);
 const distinctIngredientProductTokens = new Set([

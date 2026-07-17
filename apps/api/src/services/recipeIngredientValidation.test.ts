@@ -12,12 +12,15 @@ test('matches safe generic and specific ingredient aliases', () => {
   assert.equal(ingredientsMatch('1 tbsp olive oil', 'coconut oil'), false);
   assert.equal(ingredientsMatch('8 oz spaghetti', 'pasta'), true);
   assert.equal(ingredientsMatch('8 oz spaghetti', 'penne'), false);
+  assert.equal(ingredientsMatch('8 oz sushi-grade salmon', 'fish'), true);
+  assert.equal(ingredientsMatch('8 oz chicken breast', 'fish'), false);
 });
 
 test('matches plurals, punctuation, quantities, and preparation words', () => {
   assert.equal(ingredientsMatch('2 large chicken breasts, finely sliced', 'chicken breast'), true);
   assert.equal(ingredientsMatch('3 tomatoes, roughly chopped', 'chopped tomato'), true);
   assert.equal(ingredientsMatch('1/2 cup green onions (thinly sliced)', 'scallion'), true);
+  assert.equal(ingredientsMatch('1 avocado', 'avocado'), true);
   assert.equal(canonicalIngredientName('2 cloves garlic, minced'), 'garlic');
 });
 
