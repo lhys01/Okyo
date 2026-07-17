@@ -2,7 +2,8 @@
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-cd /Users/rober/Documents/Okyo-1/apps/mobile
+REPO_ROOT="${0:A:h}"
+cd "$REPO_ROOT/apps/mobile" || exit 1
 
 if lsof -nP -iTCP:8082 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "Okyo server is already running on port 8082."
@@ -17,10 +18,10 @@ echo "Waiting for Expo to start..."
 sleep 10
 
 echo "Opening iPhone Simulator..."
-DEVICE_ID=$(xcrun simctl list devices | grep "iPhone 17 Pro" | head -1 | sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')
+DEVICE_ID=$(xcrun simctl list devices available | grep "iPhone" | head -1 | sed -E 's/.*\(([A-F0-9-]+)\).*/\1/')
 
 if [ -z "$DEVICE_ID" ]; then
-  echo "Could not find iPhone 17 Pro simulator."
+  echo "Could not find an available iPhone simulator."
   echo "Available devices:"
   xcrun simctl list devices | grep iPhone
   exit 1
