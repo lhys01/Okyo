@@ -19,6 +19,8 @@ import {
   fullCoreIndexThreeSensoryPatchFixture,
   fullCoreIndexThreeTimePatchFixture,
   fullCoreRepairInitialFixture,
+  fullCoreRawTunaInitialFixture,
+  fullCoreRawTunaSuccessfulPatchFixture,
   fullCoreRepairSuccessfulPatchFixture,
   fullCoreRepairUnknownIngredientPatchFixture,
 } from './recipeRepairRegression.fixture.js';
@@ -53,6 +55,18 @@ const quota: ProviderQuota = {
 
 type RepairTraceEvent = {
   requestedInvalidIndices: number[];
+  requiredReturnedIndices: number[];
+  returnedIndices: number[];
+  missingReturnedIndices: number[];
+  duplicateReturnedIndices: number[];
+  unrequestedReturnedIndices: number[];
+  changedRequestedIndices: number[];
+  unchangedRequestedIndices: number[];
+  resolvedRequestedIndices: number[];
+  unresolvedRequestedIndices: number[];
+  aliasMatchesApplied: string[];
+  deterministicSafetyApplied: boolean;
+  finalFailureReasons: string[];
   rawReturnedStepNumbers: Array<{
     returnedPosition: number;
     stepIndex?: number;
@@ -192,6 +206,51 @@ async function runIndexThreeRepairSuccess(
   }
 }
 
+let rawTunaRepairRun = 0;
+
+async function runRawTunaRepair(repairOutput: unknown) {
+  rawTunaRepairRun += 1;
+  const runId = `raw-tuna-repair-${rawTunaRepairRun}`;
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  let calls = 0;
+  let output: Awaited<ReturnType<typeof generateRecipeWithOpenRouter>> | undefined;
+  let caught: unknown;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(calls === 1
+      ? structuredClone(fullCoreRawTunaInitialFixture)
+      : structuredClone(repairOutput));
+  };
+  console.log = (...args: unknown[]) => { events.push(args); };
+  const timing = createScanAggregateTiming({ requestId: runId });
+  recordLogicalProviderCall(timing);
+  recordProviderAttempt(timing);
+  try {
+    output = await generateRecipeWithOpenRouter({
+      analysis: analysis({
+        dishName: `Ahi Tuna Poke Bowl ${rawTunaRepairRun}`,
+        broadDishCategory: 'poke / raw fish',
+        cuisine: 'Hawaiian',
+        visibleIngredients: ['ahi tuna', 'rice', 'cucumber', 'avocado'],
+        likelyIngredients: ['olive oil', 'soy sauce', 'sesame seeds'],
+      }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: runId,
+      timing,
+    });
+  } catch (error) {
+    caught = error;
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+  return { calls, caught, events, output, timing };
+}
+
 test('full recipe succeeds on the initial provider output with local step metadata', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
@@ -289,9 +348,9 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
       'The olive oil looks glossy and moves easily across the skillet.',
     );
     assert.match(repairPrompt, /step_missing_time_or_completion_cue/);
-    assert.match(repairPrompt, /exactly two keys/);
-    assert.match(repairPrompt, /Exact invalid active-cooking step indices \(zero-based\): \[1\]/);
-    assert.match(repairPrompt, /MUST include stepIndex/);
+    assert.match(repairPrompt, /exactly one key/);
+    assert.match(repairPrompt, /"stepCorrections"/);
+    assert.match(repairPrompt, /Required returned step indices \(zero-based\): \[1\]/);
     assert.match(repairPrompt, /do not introduce, substitute, or remove any ingredient concept/i);
     assert.match(repairPrompt, /Full canonical ingredient list/);
     assert.match(repairPrompt, /Complete previous recipe object/);
@@ -324,6 +383,11 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
     assert.deepEqual(repairValidation.unknownIngredientsAfterRepair, []);
     assert.deepEqual(repairValidation.presentationOnlyStepIndices, [5, 6]);
     assert.deepEqual(repairValidation.repairChangedFields, ['steps.1.doneWhen']);
+    const repairTrace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+    assert.deepEqual(repairTrace.requiredReturnedIndices, [1]);
+    assert.deepEqual(repairTrace.returnedIndices, [1]);
+    assert.deepEqual(repairTrace.resolvedRequestedIndices, [1]);
+    assert.deepEqual(repairTrace.unresolvedRequestedIndices, []);
     const aggregate = getScanAggregateTimingEvent(timing, 'success');
     assert.equal(aggregate.logicalProviderCalls, 3);
     assert.equal(aggregate.providerAttempts, 3);
@@ -376,7 +440,7 @@ test('zero-based sparse repair updates exactly invalid step index 3 and survives
   assert.ok(validation.repairChangedFields.includes('steps.3.step'));
 });
 
-test('one-based provider stepNumber 4 converts to zero-based index 3', async () => {
+test('a sparse sensory-cue correction resolves zero-based index 3', async () => {
   const { calls, events, output, timing } = await runIndexThreeRepairSuccess(
     'One Based Chicken Sandwich',
     fullCoreIndexThreeSensoryPatchFixture,
@@ -388,13 +452,146 @@ test('one-based provider stepNumber 4 converts to zero-based index 3', async () 
     'The center reaches 165°F/74°C and the juices run clear.',
   );
   const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
-  assert.deepEqual(trace.rawReturnedStepNumbers, [{ returnedPosition: 0, stepNumber: 4 }]);
-  assert.deepEqual(trace.parsedReturnedStepNumbers, [{ returnedPosition: 0, stepNumber: 4 }]);
+  assert.deepEqual(trace.rawReturnedStepNumbers, [{ returnedPosition: 0, stepIndex: 3 }]);
+  assert.deepEqual(trace.parsedReturnedStepNumbers, [{ returnedPosition: 0, stepIndex: 3 }]);
   assert.deepEqual(trace.acceptedStepIndices, [3]);
   assert.ok(trace.changedFields.includes('steps.3.doneWhen'));
 });
 
-test('a full returned steps array applies only requested index 3', async () => {
+test('production-shaped raw tuna repair resolves both steps, aliases, and safety locally', async () => {
+  const { calls, caught, events, output, timing } = await runRawTunaRepair(
+    fullCoreRawTunaSuccessfulPatchFixture,
+  );
+  assert.equal(caught, undefined);
+  assert.ok(output);
+  assert.equal(calls, 2);
+  assert.equal(timing.logicalProviderCalls, 3);
+  assert.equal(timing.providerAttempts, 3);
+  assert.deepEqual(timing.repairReasons, ['step_missing_time_or_completion_cue']);
+  assert.match(typeof output.steps[4] === 'object' ? output.steps[4].step : '', /5 minutes/);
+  assert.match(typeof output.steps[6] === 'object' ? output.steps[6].step : '', /10 minutes/);
+  assert.deepEqual(
+    typeof output.steps[4] === 'object' && output.steps[4].ingredients,
+    ['ahi tuna', 'olive oil', 'soy sauce'],
+  );
+  assert.match(
+    output.steps.map((step) => typeof step === 'object' ? step.safetyNote ?? '' : '').join(' '),
+    /sushi-grade or previously frozen fish.*refrigerated until serving/i,
+  );
+
+  const initial = events.find(([label]) => label === '[recipe_validation_details]')?.[1] as {
+    issues: string[];
+    stepsMissingCompletionCue: number[];
+    unknownIngredients: string[];
+  };
+  assert.deepEqual(initial.issues, ['step_missing_time_or_completion_cue']);
+  assert.deepEqual(initial.stepsMissingCompletionCue, [4, 6]);
+  assert.deepEqual(initial.unknownIngredients, []);
+
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.requestedInvalidIndices, [4, 6]);
+  assert.deepEqual(trace.requiredReturnedIndices, [4, 6]);
+  assert.deepEqual(trace.returnedIndices, [4, 6]);
+  assert.deepEqual(trace.missingReturnedIndices, []);
+  assert.deepEqual(trace.duplicateReturnedIndices, []);
+  assert.deepEqual(trace.unrequestedReturnedIndices, []);
+  assert.deepEqual(trace.changedRequestedIndices, [4, 6]);
+  assert.deepEqual(trace.unchangedRequestedIndices, []);
+  assert.deepEqual(trace.resolvedRequestedIndices, [4, 6]);
+  assert.deepEqual(trace.unresolvedRequestedIndices, []);
+  assert.deepEqual(trace.aliasMatchesApplied.sort(), [
+    'oil->olive oil',
+    'tuna->ahi tuna',
+  ]);
+  assert.equal(trace.deterministicSafetyApplied, true);
+  assert.deepEqual(trace.finalFailureReasons, []);
+  assert.deepEqual(trace.changedFields.sort(), ['steps.4.step', 'steps.6.step']);
+});
+
+test('cooked tuna does not receive raw-fish handling instructions', () => {
+  const cookedTuna = structuredClone(fullCoreRawTunaInitialFixture);
+  cookedTuna.title = 'Seared Ahi Tuna Rice Bowl';
+  cookedTuna.steps[3] = {
+    title: 'Sear Tuna',
+    step: 'Sear the ahi tuna for 2 minutes per side until the center reaches 145°F/63°C.',
+  };
+  const normalized = normalizeFullRecipeOutput(
+    openRouterRecipeOutputSchema.parse(cookedTuna),
+    analysis({
+      dishName: 'Seared Ahi Tuna Rice Bowl',
+      broadDishCategory: 'cooked seafood rice bowl',
+      visibleIngredients: ['seared ahi tuna', 'rice'],
+    }),
+  );
+  const safetyText = normalized.steps.map((step) =>
+    typeof step === 'object' ? step.safetyNote ?? '' : '').join(' ');
+  assert.doesNotMatch(safetyText, /sushi-grade|previously frozen|refrigerated until serving/i);
+});
+
+test('repair omitting one requested index fails as repair_partial_effect', async () => {
+  const partialPatch = {
+    stepCorrections: [fullCoreRawTunaSuccessfulPatchFixture.stepCorrections[0]],
+  };
+  const { calls, caught, events, timing } = await runRawTunaRepair(partialPatch);
+  assert.ok(caught instanceof RecipeValidationError);
+  assert.ok(caught.issues.includes('repair_partial_effect'));
+  assert.equal(calls, 2);
+  assert.equal(timing.logicalProviderCalls, 3);
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.missingReturnedIndices, [6]);
+  assert.deepEqual(trace.resolvedRequestedIndices, [4]);
+  assert.deepEqual(trace.unresolvedRequestedIndices, [6]);
+  assert.ok(trace.finalFailureReasons.includes('repair_partial_effect'));
+});
+
+test('repair returning an unchanged requested step fails as repair_partial_effect', async () => {
+  const unchangedPatch = structuredClone(fullCoreRawTunaSuccessfulPatchFixture);
+  unchangedPatch.stepCorrections[1] = {
+    stepIndex: 6,
+    ...fullCoreRawTunaInitialFixture.steps[6],
+  };
+  const { caught, events } = await runRawTunaRepair(unchangedPatch);
+  assert.ok(caught instanceof RecipeValidationError);
+  assert.ok(caught.issues.includes('repair_partial_effect'));
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.changedRequestedIndices, [4]);
+  assert.deepEqual(trace.unchangedRequestedIndices, [6]);
+  assert.deepEqual(trace.resolvedRequestedIndices, [4]);
+  assert.deepEqual(trace.unresolvedRequestedIndices, [6]);
+});
+
+test('repair returning an unrequested index is rejected', async () => {
+  const unrequestedPatch = structuredClone(fullCoreRawTunaSuccessfulPatchFixture);
+  unrequestedPatch.stepCorrections.push({
+    stepIndex: 7,
+    title: 'Serve',
+    step: 'Serve the bowls immediately.',
+  });
+  const { caught, events } = await runRawTunaRepair(unrequestedPatch);
+  assert.ok(caught instanceof RecipeValidationError);
+  assert.ok(caught.issues.includes('repair_partial_effect'));
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.unrequestedReturnedIndices, [7]);
+  assert.ok(trace.rejectedStepIndices.some(({ targetIndex, reason }) =>
+    targetIndex === 7 && reason === 'step_index_not_requested'));
+});
+
+test('duplicate returned step indices are rejected', async () => {
+  const duplicatePatch = structuredClone(fullCoreRawTunaSuccessfulPatchFixture);
+  duplicatePatch.stepCorrections.push({
+    ...duplicatePatch.stepCorrections[0],
+    step: 'Coat the tuna for 2 minutes until glossy.',
+  });
+  const { caught, events } = await runRawTunaRepair(duplicatePatch);
+  assert.ok(caught instanceof RecipeValidationError);
+  assert.ok(caught.issues.includes('repair_partial_effect'));
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.duplicateReturnedIndices, [4]);
+  assert.ok(trace.rejectedStepIndices.some(({ targetIndex, reason }) =>
+    targetIndex === 4 && reason === 'duplicate_step_index'));
+});
+
+test('a completion-only repair rejects a legacy full returned steps array', async () => {
   const fullArrayPatch = {
     ingredients: [...fullCoreIndexThreeInitialFixture.ingredients],
     steps: fullCoreIndexThreeInitialFixture.steps.map((step, index) => {
@@ -413,70 +610,44 @@ test('a full returned steps array applies only requested index 3', async () => {
       return { ...step };
     }),
   };
-  const { events, output } = await runIndexThreeRepairSuccess(
-    'Full Array Chicken Sandwich',
-    fullArrayPatch,
+  await assert.rejects(
+    runIndexThreeRepairSuccess('Full Array Chicken Sandwich', fullArrayPatch),
+    (error: unknown) => error instanceof RecipeValidationError &&
+      error.issues.includes('repair_invalid_schema'),
   );
-  assert.equal(
-    typeof output.steps[2] === 'object' && output.steps[2].step,
-    fullCoreIndexThreeInitialFixture.steps[2].step,
-  );
-  assert.match(typeof output.steps[3] === 'object' ? output.steps[3].step : '', /6 minutes/);
-  assert.equal(
-    typeof output.steps[4] === 'object' && output.steps[4].step,
-    fullCoreIndexThreeInitialFixture.steps[4].step,
-  );
-  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
-  assert.deepEqual(trace.acceptedStepIndices, [3]);
-  assert.deepEqual(
-    trace.rejectedStepIndices.map(({ targetIndex, reason }) => ({ targetIndex, reason })),
-    [
-      { targetIndex: 0, reason: 'step_index_not_requested' },
-      { targetIndex: 1, reason: 'step_index_not_requested' },
-      { targetIndex: 2, reason: 'step_index_not_requested' },
-      { targetIndex: 4, reason: 'step_index_not_requested' },
-    ],
-  );
-  assert.deepEqual(trace.changedFields, ['steps.3.step']);
 });
 
-test('an unnumbered sparse correction maps positionally to the sole invalid index', async () => {
+test('a completion-only repair rejects an unnumbered sparse correction', async () => {
   const sparsePatch = {
-    ingredients: [...fullCoreIndexThreeInitialFixture.ingredients],
-    steps: [{
+    stepCorrections: [{
       title: 'Cook Chicken',
       step: 'Cook the chicken for 6 minutes until it reaches 165°F/74°C.',
       safetyNote: 'Cook chicken to 165°F/74°C.',
     }],
   };
-  const { events, output } = await runIndexThreeRepairSuccess(
-    'Sparse Chicken Sandwich',
-    sparsePatch,
+  await assert.rejects(
+    runIndexThreeRepairSuccess('Sparse Chicken Sandwich', sparsePatch),
+    (error: unknown) => error instanceof RecipeValidationError &&
+      error.issues.includes('repair_invalid_schema'),
   );
-  assert.match(typeof output.steps[3] === 'object' ? output.steps[3].step : '', /6 minutes/);
-  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
-  assert.deepEqual(trace.parsedReturnedStepNumbers, [{ returnedPosition: 0 }]);
-  assert.deepEqual(trace.acceptedStepIndices, [3]);
-  assert.deepEqual(trace.rejectedStepIndices, []);
 });
 
-test('a completion-only repair with no applicable change fails as repair_no_effect', async () => {
+test('an unchanged requested correction fails as repair_partial_effect', async () => {
   const originalFetch = globalThis.fetch;
   const originalLog = console.log;
   const events: unknown[][] = [];
   let calls = 0;
-  const wrongHumanIndexPatch = {
-    ingredients: [...fullCoreIndexThreeInitialFixture.ingredients],
-    steps: fullCoreIndexThreeInitialFixture.steps.map((step, index) =>
-      index === 2
-        ? { ...step, step: 'Cook the chicken for 6 minutes until it reaches 165°F/74°C.' }
-        : { ...step }),
+  const unchangedPatch = {
+    stepCorrections: [{
+      stepIndex: 3,
+      ...fullCoreIndexThreeInitialFixture.steps[3],
+    }],
   };
   globalThis.fetch = async () => {
     calls += 1;
     return providerResponse(calls === 1
       ? structuredClone(fullCoreIndexThreeInitialFixture)
-      : wrongHumanIndexPatch);
+      : unchangedPatch);
   };
   console.log = (...args: unknown[]) => { events.push(args); };
   try {
@@ -492,13 +663,14 @@ test('a completion-only repair with no applicable change fails as repair_no_effe
         requestId: 'full-repair-no-effect',
       }),
       (error: unknown) => error instanceof RecipeValidationError &&
-        error.issues.includes('repair_no_effect'),
+        error.issues.includes('repair_partial_effect'),
     );
     assert.equal(calls, 2);
     const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
     assert.deepEqual(trace.acceptedStepIndices, [3]);
-    assert.ok(trace.rejectedStepIndices.some(({ targetIndex, reason }) =>
-      targetIndex === 2 && reason === 'step_index_not_requested'));
+    assert.deepEqual(trace.unchangedRequestedIndices, [3]);
+    assert.deepEqual(trace.unresolvedRequestedIndices, [3]);
+    assert.ok(trace.finalFailureReasons.includes('repair_partial_effect'));
     assert.deepEqual(trace.changedFields, []);
     assert.equal(trace.originalStepTextHashes[3].hash, trace.mergedStepTextHashes[3].hash);
   } finally {
@@ -562,8 +734,8 @@ test('safe generic ingredient aliases remain valid in a repaired step', async ()
   const originalFetch = globalThis.fetch;
   let calls = 0;
   const aliasPatch = structuredClone(fullCoreRepairSuccessfulPatchFixture);
-  aliasPatch.steps[1] = {
-    ...aliasPatch.steps[1],
+  aliasPatch.stepCorrections[0] = {
+    ...aliasPatch.stepCorrections[0],
     step: 'Heat the oil in the large skillet for 1 minute until glossy.',
   };
   globalThis.fetch = async () => {
@@ -622,8 +794,8 @@ test('vague completion language remains invalid after the one repair', async () 
   const originalFetch = globalThis.fetch;
   let calls = 0;
   const vaguePatch = structuredClone(fullCoreRepairSuccessfulPatchFixture);
-  vaguePatch.steps[1] = {
-    ...vaguePatch.steps[1],
+  vaguePatch.stepCorrections[0] = {
+    ...vaguePatch.stepCorrections[0],
     doneWhen: 'The oil is ready and cooked thoroughly.',
   };
   globalThis.fetch = async () => {

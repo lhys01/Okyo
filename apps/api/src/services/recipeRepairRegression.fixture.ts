@@ -31,25 +31,19 @@ export const fullCoreRepairInitialFixture = {
 };
 
 export const fullCoreRepairSuccessfulPatchFixture = {
-  ingredients: [...fullCoreRepairInitialFixture.ingredients],
-  steps: fullCoreRepairInitialFixture.steps.map((step, index) =>
-    index === 1
-      ? {
-          ...step,
-          doneWhen: 'The olive oil looks glossy and moves easily across the skillet.',
-        }
-      : { ...step }),
+  stepCorrections: [{
+    stepIndex: 1,
+    ...fullCoreRepairInitialFixture.steps[1],
+    doneWhen: 'The olive oil looks glossy and moves easily across the skillet.',
+  }],
 };
 
 export const fullCoreRepairUnknownIngredientPatchFixture = {
-  ingredients: [...fullCoreRepairInitialFixture.ingredients],
-  steps: fullCoreRepairInitialFixture.steps.map((step, index) =>
-    index === 1
-      ? {
-          ...step,
-          step: 'Melt the butter in the large skillet for 1 minute until melted.',
-        }
-      : { ...step }),
+  stepCorrections: [{
+    stepIndex: 1,
+    ...fullCoreRepairInitialFixture.steps[1],
+    step: 'Melt the butter in the large skillet for 1 minute until melted.',
+  }],
 };
 
 // Production-shaped five-step fixture for request
@@ -85,8 +79,7 @@ export const fullCoreIndexThreeInitialFixture = {
 };
 
 export const fullCoreIndexThreeTimePatchFixture = {
-  ingredients: [...fullCoreIndexThreeInitialFixture.ingredients],
-  steps: [{
+  stepCorrections: [{
     stepIndex: 3,
     title: 'Cook Chicken',
     step: 'Cook the chicken in the large skillet for 6 minutes, flipping halfway.',
@@ -95,12 +88,58 @@ export const fullCoreIndexThreeTimePatchFixture = {
 };
 
 export const fullCoreIndexThreeSensoryPatchFixture = {
-  ingredients: [...fullCoreIndexThreeInitialFixture.ingredients],
-  steps: [{
-    stepNumber: 4,
+  stepCorrections: [{
+    stepIndex: 3,
     title: 'Cook Chicken',
     step: 'Cook the chicken in the large skillet.',
     doneWhen: 'The center reaches 165°F/74°C and the juices run clear.',
     safetyNote: 'Cook chicken to 165°F/74°C.',
   }],
+};
+
+// Safe synthetic reproduction of scan-photos-1784258523066-loj218. It keeps
+// the production shape without retaining user images or provider text.
+export const fullCoreRawTunaInitialFixture = {
+  title: 'Ahi Tuna Poke Bowl',
+  ingredients: [
+    '1 lb sushi-grade ahi tuna',
+    '2 cups cooked rice',
+    '2 tbsp olive oil',
+    '3 tbsp soy sauce',
+    '1 tbsp sesame seeds',
+    '1 cup cucumber, diced',
+    '1 avocado, sliced',
+    '1 lime, juiced',
+  ],
+  equipment: ['mixing bowl', 'chef knife', 'serving bowls'],
+  steps: [
+    { title: 'Cook Rice', step: 'Cook the rice for 15 minutes until tender.' },
+    { title: 'Cool Rice', step: 'Cool the rice for 10 minutes until it reaches room temperature.' },
+    { title: 'Mix Sauce', step: 'Mix the soy sauce and lime juice for 1 minute until combined.' },
+    { title: 'Dice Tuna', step: 'Dice the ahi tuna into bite-size cubes.' },
+    { title: 'Marinate Tuna', step: 'Marinate the tuna with soy sauce and oil.' },
+    { title: 'Build Bowls', step: 'Arrange the rice, cucumber, and avocado in serving bowls.' },
+    { title: 'Chill Tuna', step: 'Chill the tuna mixture.' },
+    { title: 'Serve', step: 'Serve the tuna over the prepared bowls with sesame seeds.' },
+  ],
+  prepTime: 20,
+  cookTime: 15,
+  totalTime: 35,
+  servings: 4,
+  skillLevel: 'Easy',
+};
+
+export const fullCoreRawTunaSuccessfulPatchFixture = {
+  stepCorrections: [
+    {
+      stepIndex: 4,
+      title: 'Marinate Tuna',
+      step: 'Marinate the tuna with soy sauce and oil for 5 minutes until evenly glossy.',
+    },
+    {
+      stepIndex: 6,
+      title: 'Chill Tuna',
+      step: 'Chill the tuna mixture for 10 minutes until cold.',
+    },
+  ],
 };

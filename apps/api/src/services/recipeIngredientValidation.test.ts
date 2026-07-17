@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   canonicalIngredientName,
+  findMatchingIngredientName,
   ingredientsMatch,
 } from './recipeIngredientValidation.js';
 
@@ -14,6 +15,26 @@ test('matches safe generic and specific ingredient aliases', () => {
   assert.equal(ingredientsMatch('8 oz spaghetti', 'penne'), false);
   assert.equal(ingredientsMatch('8 oz sushi-grade salmon', 'fish'), true);
   assert.equal(ingredientsMatch('8 oz chicken breast', 'fish'), false);
+  assert.equal(ingredientsMatch('1 lb sushi-grade ahi tuna', 'tuna'), true);
+  assert.equal(ingredientsMatch('1 lb yellowfin tuna steaks', 'tuna'), true);
+  assert.equal(ingredientsMatch('8 oz salmon', 'tuna'), false);
+  assert.equal(ingredientsMatch('2 capsules fish oil', 'oil'), false);
+});
+
+test('generic oil and tuna aliases require an unambiguous canonical target', () => {
+  assert.equal(
+    findMatchingIngredientName('oil', ['2 tbsp extra-virgin olive oil']),
+    '2 tbsp extra-virgin olive oil',
+  );
+  assert.equal(
+    findMatchingIngredientName('tuna', ['1 lb sushi-grade ahi tuna']),
+    '1 lb sushi-grade ahi tuna',
+  );
+  assert.equal(
+    findMatchingIngredientName('oil', ['1 tbsp olive oil', '1 tsp sesame oil']),
+    undefined,
+  );
+  assert.equal(findMatchingIngredientName('tuna', ['8 oz salmon']), undefined);
 });
 
 test('matches plurals, punctuation, quantities, and preparation words', () => {

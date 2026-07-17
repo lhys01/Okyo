@@ -54,9 +54,9 @@ const preparationWords = new Set([
   'about', 'approximately', 'boneless', 'chilled', 'chopped', 'coarsely', 'cold',
   'cooked', 'crushed', 'cubed', 'deseeded', 'diced', 'divided', 'drained', 'dried',
   'extra', 'fillet', 'fillets', 'finely', 'fresh', 'freshly', 'frozen', 'grade', 'grated', 'halved', 'julienned', 'large', 'lightly',
-  'medium', 'melted', 'minced', 'optional', 'peeled', 'prepared', 'quartered',
+  'juiced', 'medium', 'melted', 'minced', 'optional', 'peeled', 'prepared', 'quartered',
   'rinsed', 'roughly', 'seeded', 'shredded', 'skinless', 'sliced', 'small', 'softened',
-  'sushi', 'thinly', 'toasted', 'trimmed', 'virgin', 'warm',
+  'steak', 'steaks', 'sushi', 'thinly', 'toasted', 'trimmed', 'virgin', 'warm',
 ]);
 
 function normalizeIngredientText(name: string): string {
@@ -111,7 +111,14 @@ export function canonicalIngredientName(name: string): string {
   return normalized;
 }
 
-const safeGenericIngredientAliases = new Set(['oil', 'salt', 'pepper']);
+const safeGenericIngredientAliases = new Set(['salt', 'pepper']);
+const safeCookingOilQualifierTokens = new Set([
+  'avocado', 'canola', 'coconut', 'cooking', 'grapeseed', 'neutral', 'olive',
+  'peanut', 'rapeseed', 'safflower', 'sesame', 'sunflower', 'vegetable',
+]);
+const safeTunaQualifierTokens = new Set([
+  'ahi', 'albacore', 'bigeye', 'bluefin', 'skipjack', 'tuna', 'yellowfin',
+]);
 const safeGenericIngredientCategoryAliases = new Map<string, Set<string>>([
   ['pasta', new Set([
     'spaghetti', 'linguine', 'fettuccine', 'tagliatelle', 'penne', 'rigatoni',
@@ -138,6 +145,18 @@ export function ingredientsMatch(recipeIngredient: string, stepIngredient: strin
   const b = canonicalIngredientName(stepIngredient);
   if (!a || !b) return false;
   if (a === b) return true;
+  if (a === 'oil' || b === 'oil') {
+    const specificOil = a === 'oil' ? b : a;
+    const tokens = specificOil.split(' ').filter(Boolean);
+    return tokens.at(-1) === 'oil' &&
+      tokens.slice(0, -1).every((token) => safeCookingOilQualifierTokens.has(token));
+  }
+  if (a === 'tuna' || b === 'tuna') {
+    const specificTuna = a === 'tuna' ? b : a;
+    const tokens = specificTuna.split(' ').filter(Boolean);
+    return tokens.includes('tuna') &&
+      tokens.every((token) => safeTunaQualifierTokens.has(token));
+  }
   if (safeGenericIngredientAliases.has(a) && b.split(' ').includes(a)) return true;
   if (safeGenericIngredientAliases.has(b) && a.split(' ').includes(b)) return true;
   if (safeGenericIngredientCategoryAliases.get(a)?.has(b)) return true;
@@ -158,7 +177,22 @@ export function findMatchingIngredientName(
   reference: string,
   ingredientNames: string[],
 ): string | undefined {
-  return ingredientNames.find((ingredientName) => ingredientsMatch(ingredientName, reference));
+  const canonicalReference = canonicalIngredientName(reference);
+  const exact = ingredientNames.find(
+    (ingredientName) => canonicalIngredientName(ingredientName) === canonicalReference,
+  );
+  if (exact) return exact;
+
+  const matches = ingredientNames.filter((ingredientName) =>
+    ingredientsMatch(ingredientName, reference));
+  // A generic reference is safe only when the canonical list makes its target
+  // unambiguous. This prevents "oil" or "tuna" from silently selecting one of
+  // several distinct products.
+  if (canonicalReference === 'oil' || canonicalReference === 'tuna') {
+    const concepts = new Set(matches.map(canonicalIngredientName));
+    return concepts.size === 1 ? matches[0] : undefined;
+  }
+  return matches[0];
 }
 
 function matchesAnyIngredient(name: string, ingredientNames: string[]): boolean {
