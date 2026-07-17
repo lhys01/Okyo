@@ -29,7 +29,12 @@ export function scanRateLimitMiddleware(request: Request, response: Response, ne
         message: 'Too many scan requests. Please wait a moment before trying again.',
       },
     });
-    logCostEvent('rate_limit_hit', { ip: maskIp(ip), limit: config.scanRateLimitMax, windowMs: config.scanRateLimitWindowMs });
+    logCostEvent('rate_limit_hit', {
+      requestId: request.scanContext?.requestId,
+      ip: maskIp(ip),
+      limit: config.scanRateLimitMax,
+      windowMs: config.scanRateLimitWindowMs,
+    });
     return;
   }
 
@@ -45,28 +50,28 @@ export function scanRateLimitMiddleware(request: Request, response: Response, ne
 let fableDailyRequests = 0;
 let fableDailyResetAt = 0;
 
-export function checkAndIncrementFableCap(): boolean {
+export function checkAndIncrementFableCap(requestId?: string): boolean {
   const config = getCostControlConfig();
   const now = Date.now();
 
   if (now >= fableDailyResetAt) {
     if (fableDailyRequests > 0) {
-      logCostEvent('fable_cap_daily_reset', { previousCount: fableDailyRequests });
+      logCostEvent('fable_cap_daily_reset', { requestId, previousCount: fableDailyRequests });
     }
     fableDailyRequests = 0;
     fableDailyResetAt = getNextMidnightUtc();
   }
 
   const exceeded = fableDailyRequests >= config.fableDailyRequestCap;
-  console.log('[fable_cap]', { count: fableDailyRequests, cap: config.fableDailyRequestCap, exceeded });
+  console.log('[fable_cap]', { requestId, count: fableDailyRequests, cap: config.fableDailyRequestCap, exceeded });
 
   if (exceeded) {
-    logCostEvent('fable_cap_exceeded', { count: fableDailyRequests, cap: config.fableDailyRequestCap });
+    logCostEvent('fable_cap_exceeded', { requestId, count: fableDailyRequests, cap: config.fableDailyRequestCap });
     return false;
   }
 
   fableDailyRequests += 1;
-  logCostEvent('fable_cap_incremented', { count: fableDailyRequests, cap: config.fableDailyRequestCap });
+  logCostEvent('fable_cap_incremented', { requestId, count: fableDailyRequests, cap: config.fableDailyRequestCap });
   return true;
 }
 

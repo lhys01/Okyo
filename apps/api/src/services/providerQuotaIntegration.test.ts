@@ -46,6 +46,7 @@ test('reservation happens before fetch and denial prevents provider invocation',
         dishName: 'Chicken',
         config,
         quota,
+        requestId: 'coaching-quota-denied',
       }),
       QuotaDeniedError,
     );
@@ -99,6 +100,7 @@ test('each billable fallback model attempt is separately reserved and finalized'
       dishName: 'Chicken',
       config,
       quota,
+      requestId: 'coaching-failover-test',
     });
     assert.equal(result[0].why, 'Browning builds flavor.');
     assert.deepEqual(events.slice(0, 6), [

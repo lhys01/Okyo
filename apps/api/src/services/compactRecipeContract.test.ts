@@ -17,6 +17,7 @@ import {
   type CompactRecipeOutput,
 } from './openRouterProvider.js';
 import { validateIngredientClosure } from './recipeIngredientValidation.js';
+import { createScanAggregateTiming } from '../telemetry/scanTelemetry.js';
 
 const config: AiConfig = {
   enabled: true,
@@ -114,15 +115,22 @@ test('normal compact recipe is one provider call and skips Epicure enrichment', 
     return providerResponse(chickenRecipe());
   };
   try {
+    const timing = createScanAggregateTiming({ requestId: 'compact-call-count' });
     const output = await generateRecipeWithOpenRouter({
       analysis: analysis({ dishName: 'Call Count Lemon Chicken' }),
       config,
       mode: 'Restaurant Copy',
       quota,
       requestId: 'compact-call-count',
+      timing,
     });
     assert.equal(calls, 1);
+    assert.equal(timing.logicalProviderCalls, 1);
+    assert.equal(timing.providerAttempts, 1);
+    assert.deepEqual(timing.repairReasons, []);
     assert.equal(output.steps.length, 5);
+    assert.ok(output.steps.every((step) => typeof step === 'object' && Array.isArray(step.ingredients)));
+    assert.ok(output.steps.every((step) => typeof step === 'object' && Array.isArray(step.tools)));
     assert.equal(output.spicePairings.length, 0);
     assert.equal(output.substitutions.length, 0);
   } finally {
@@ -180,14 +188,19 @@ test('one targeted repair returns a complete compact object using the previous o
     return providerResponse(chickenRecipe({ title: 'Repair Lemon Chicken' }));
   };
   try {
+    const timing = createScanAggregateTiming({ requestId: 'compact-repair-count' });
     const output = await generateRecipeWithOpenRouter({
       analysis: analysis({ dishName: 'Repair Lemon Chicken' }),
       config,
       mode: 'Restaurant Copy',
       quota,
       requestId: 'compact-repair-count',
+      timing,
     });
     assert.equal(calls, 2);
+    assert.equal(timing.logicalProviderCalls, 2);
+    assert.equal(timing.providerAttempts, 2);
+    assert.deepEqual(timing.repairReasons, ['missing_safety_poultry']);
     assert.match(JSON.stringify(output.steps), /165/);
     assert.match(repairPrompt, /missing_safety_poultry/);
     assert.match(repairPrompt, /Full canonical ingredient list/);

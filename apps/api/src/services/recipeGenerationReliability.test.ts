@@ -8,9 +8,11 @@ import {
   type FoodImageAnalysis,
 } from './aiService.js';
 import {
+  analyzeFoodImageWithOpenRouter,
   generateRecipeWithOpenRouter,
 } from './openRouterProvider.js';
 import { ScanDeadlineExceededError } from './scanDeadline.js';
+import { createScanAggregateTiming } from '../telemetry/scanTelemetry.js';
 
 const fullConfig: AiConfig = {
   enabled: true,
@@ -110,17 +112,25 @@ test('full recipe succeeds on the initial provider output with local step metada
     calls += 1;
     const body = JSON.parse(String(init?.body)) as { max_tokens?: number };
     maxTokens = body.max_tokens ?? 0;
-    return providerResponse(fullRecipe());
+    const withoutStepMetadata = fullRecipe();
+    withoutStepMetadata.steps = (withoutStepMetadata.steps as Array<Record<string, unknown>>)
+      .map(({ ingredients: _ingredients, ingredientsUsed: _ingredientsUsed, tools: _tools, toolsUsed: _toolsUsed, ...step }) => step);
+    return providerResponse(withoutStepMetadata);
   };
   try {
+    const timing = createScanAggregateTiming({ requestId: 'full-initial-success' });
     const output = await generateRecipeWithOpenRouter({
       analysis: analysis({ dishName: 'Initial Full Tomato Garlic Pasta' }),
       config: fullConfig,
       mode: 'Restaurant Copy',
       quota,
       requestId: 'full-initial-success',
+      timing,
     });
     assert.equal(calls, 1);
+    assert.equal(timing.logicalProviderCalls, 1);
+    assert.equal(timing.providerAttempts, 1);
+    assert.deepEqual(timing.repairReasons, []);
     assert.equal(maxTokens, 1_400);
     const step = output.steps[2];
     assert.equal(typeof step === 'object' && step.stepNumber, 3);
@@ -136,6 +146,8 @@ test('full recipe succeeds on the initial provider output with local step metada
 
 test('full recipe succeeds after one complete targeted repair', async () => {
   const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
   let calls = 0;
   let repairPrompt = '';
   const initialOutput = fullRecipe({
@@ -156,22 +168,92 @@ test('full recipe succeeds after one complete targeted repair', async () => {
     repairPrompt = body.messages?.find((message) => message.role === 'user')?.content ?? '';
     return providerResponse(repairedOutput);
   };
+  console.log = (...args: unknown[]) => { events.push(args); };
   try {
+    const timing = createScanAggregateTiming({ requestId: 'full-repair-success' });
     const output = await generateRecipeWithOpenRouter({
       analysis: analysis({ dishName: 'Repair Full Tomato Garlic Pasta' }),
       config: fullConfig,
       mode: 'Restaurant Copy',
       quota,
       requestId: 'full-repair-success',
+      timing,
     });
     assert.equal(calls, 2);
+    assert.equal(timing.logicalProviderCalls, 2);
+    assert.equal(timing.providerAttempts, 2);
+    assert.deepEqual(timing.repairReasons, ['step_missing_time_or_completion_cue']);
     assert.equal(output.steps.length, 5);
     assert.match(repairPrompt, /step_missing_time_or_completion_cue/);
     assert.match(repairPrompt, /Full canonical ingredient list/);
     assert.match(repairPrompt, /Complete previous recipe object/);
     assert.match(repairPrompt, /8 oz spaghetti/);
+    const telemetryLabels = new Set([
+      '[recipe_contract_size]',
+      '[token_usage]',
+      '[scan_metric]',
+      '[failover_summary]',
+    ]);
+    const telemetry = events.filter(([label]) => telemetryLabels.has(String(label)));
+    assert.ok([...telemetryLabels].every((label) =>
+      telemetry.some(([actual]) => actual === label)));
+    assert.ok(telemetry.every(([, value]) =>
+      (value as { requestId?: string }).requestId === 'full-repair-success'));
   } finally {
     globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('vision token and provider telemetry retain the scan request ID', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  globalThis.fetch = async () => providerResponse({
+    dishName: 'Tomato Garlic Pasta',
+    scanState: 'clear_food',
+    broadDishCategory: 'pasta/noodles',
+    cuisine: 'Italian',
+    confidence: 0.92,
+    isFoodImage: true,
+    isRestaurantMeal: true,
+    visibleIngredients: ['spaghetti', 'tomatoes', 'garlic'],
+    likelyIngredients: ['olive oil', 'salt'],
+    possibleDishNames: ['Tomato Garlic Pasta'],
+    visibleComponents: {
+      protein: '',
+      sauce: 'tomato garlic sauce',
+      baseStarch: 'spaghetti',
+      vegetables: 'tomatoes',
+      toppingsGarnish: '',
+      cookingMethod: 'boiled and sauteed',
+    },
+    confidenceReason: 'The dish is clearly visible.',
+  });
+  console.log = (...args: unknown[]) => { events.push(args); };
+  try {
+    const requestId = 'vision-request-id-test';
+    const timing = createScanAggregateTiming({ requestId });
+    await analyzeFoodImageWithOpenRouter({
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId,
+      timing,
+    });
+    const telemetry = events.filter(([label]) =>
+      label === '[token_usage]' || label === '[scan_metric]');
+    assert.ok(telemetry.some(([label]) => label === '[token_usage]'));
+    assert.ok(telemetry.some(([label, value]) =>
+      label === '[scan_metric]' &&
+      (value as { stage?: string }).stage === 'provider_vision'));
+    assert.ok(telemetry.every(([, value]) =>
+      (value as { requestId?: string }).requestId === requestId));
+    assert.equal(timing.logicalProviderCalls, 1);
+    assert.equal(timing.providerAttempts, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
   }
 });
 

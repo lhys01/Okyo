@@ -22,7 +22,14 @@ import {
   waitForScanDelay,
   type ScanExecutionContext,
 } from './scanDeadline.js';
-import { logScanMetric } from '../telemetry/scanTelemetry.js';
+import {
+  logScanMetric,
+  measureScanAggregateStage,
+  recordLogicalProviderCall,
+  recordProviderAttempt,
+  recordRepairReasons,
+  setScanRecipeContract,
+} from '../telemetry/scanTelemetry.js';
 
 const openRouterEndpoint = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -430,6 +437,7 @@ async function callVisionOnce(
     content.push({ type: 'image_url', image_url: { url: imageUrl } });
   }
 
+  recordLogicalProviderCall(input.timing);
   const json = await callOpenRouterJson({
     config: input.config,
     messages: [
@@ -446,6 +454,10 @@ async function callVisionOnce(
     maxTokens: Math.min(input.config.maxOutputTokens, 900),
     stage,
     quota: input.quota,
+    requestId: input.requestId,
+    signal: input.signal,
+    deadlineAt: input.deadlineAt,
+    timing: input.timing,
   });
 
   const output = openRouterVisionOutputSchema.safeParse(json);
@@ -672,6 +684,10 @@ export async function generateRecipeWithOpenRouter(input: {
   quota: ProviderQuota;
 } & Partial<ScanExecutionContext>) {
   const mode: RecipeMode = input.mode ?? 'Restaurant Copy';
+  setScanRecipeContract(
+    input.timing,
+    input.config.compactRecipeEnabled ? 'compact-v1' : 'full-core-v2',
+  );
 
   // Cache check skips recipe generation entirely on a hit.
   const cacheKey = getRecipeCacheKey(input.analysis, mode, input.config.compactRecipeEnabled);
@@ -709,12 +725,16 @@ export async function generateRecipeWithOpenRouter(input: {
 
   let firstOutput: OpenRouterRecipeOutput | undefined;
   try {
-    firstOutput = await callRecipeStage(
-      input,
-      recipePrompt,
-      getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
-      'recipe',
-    );
+    firstOutput = await measureScanAggregateStage({
+      timing: input.timing,
+      stage: 'recipe',
+      run: () => callRecipeStage(
+        input,
+        recipePrompt,
+        getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
+        'recipe',
+      ),
+    });
   } catch (firstError) {
     if (isQuotaError(firstError) || isScanControlError(firstError)) throw firstError;
     if (!isRepairableRecipeOutputError(firstError)) {
@@ -753,12 +773,16 @@ async function repairFullRecipe(
   throwIfScanCancelled(input.signal, input.deadlineAt);
   let repaired: OpenRouterRecipeOutput;
   try {
-    repaired = await callRecipeStage(
-      input,
-      getFullRecipeRepairPrompt(input.analysis, previousOutput, issues),
-      getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
-      'recipe_repair',
-    );
+    repaired = await measureScanAggregateStage({
+      timing: input.timing,
+      stage: 'repair',
+      run: () => callRecipeStage(
+        input,
+        getFullRecipeRepairPrompt(input.analysis, previousOutput, issues),
+        getFullRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
+        'recipe_repair',
+      ),
+    });
   } catch (error) {
     if (isQuotaError(error) || isScanControlError(error)) throw error;
     throw new RecipeValidationError([
@@ -810,7 +834,6 @@ export function normalizeFullRecipeOutput(
     lastPhase = phase;
 
     return {
-      ...record,
       stepNumber: index + 1,
       phase,
       title: typeof record.title === 'string' && record.title.trim()
@@ -819,6 +842,12 @@ export function normalizeFullRecipeOutput(
       step: instruction,
       ingredients: [...new Set(normalizedIngredients.filter(Boolean))],
       tools: [...new Set(normalizedTools.filter(Boolean))],
+      doneWhen: typeof record.doneWhen === 'string' && record.doneWhen.trim()
+        ? record.doneWhen.trim()
+        : undefined,
+      safetyNote: typeof record.safetyNote === 'string' && record.safetyNote.trim()
+        ? record.safetyNote.trim()
+        : undefined,
     };
   });
 
@@ -933,7 +962,11 @@ async function generateCompactRecipeWithOpenRouter(
 
   let firstJson: unknown;
   try {
-    firstJson = await callCompactRecipeJson(input, prompt, 'compact_recipe', maxOutputTokens);
+    firstJson = await measureScanAggregateStage({
+      timing: input.timing,
+      stage: 'recipe',
+      run: () => callCompactRecipeJson(input, prompt, 'compact_recipe', maxOutputTokens),
+    });
   } catch (error) {
     if (isQuotaError(error) || isScanControlError(error)) throw error;
     if (!isRepairableRecipeOutputError(error)) {
@@ -952,13 +985,18 @@ async function generateCompactRecipeWithOpenRouter(
   }
 
   const firstParsed = compactRecipeOutputSchema.safeParse(firstJson);
-  const firstIssues = firstParsed.success
-    ? validateCompactRecipeOutput(firstParsed.data, input.analysis)
-    : getCompactSchemaIssues(firstParsed.error);
-  if (firstParsed.success && firstIssues.length === 0) {
+  let normalized: ReturnType<typeof normalizeCompactProviderOutput> | undefined;
+  let firstIssues: string[];
+  if (firstParsed.success) {
+    normalized = normalizeCompactProviderOutput(firstParsed.data, input.analysis);
+    firstIssues = validateCompactRecipeOutput(normalized.compact, input.analysis);
+  } else {
+    firstIssues = getCompactSchemaIssues(firstParsed.error);
+  }
+  if (normalized && firstIssues.length === 0) {
     return storeRecipeCache(
       cacheKey,
-      compactRecipeToCanonicalOutput(normalizeCompactRecipeTimes(firstParsed.data)),
+      normalized.canonical,
       input.analysis.dishName,
       { addImagePrompts: false },
     );
@@ -982,12 +1020,16 @@ async function repairCompactRecipe(
   throwIfScanCancelled(input.signal, input.deadlineAt);
   let repairJson: unknown;
   try {
-    repairJson = await callCompactRecipeJson(
-      input,
-      getCompactRecipeRepairPrompt(input.analysis, previousOutput, issues),
-      'compact_recipe_repair',
-      getCompactRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
-    );
+    repairJson = await measureScanAggregateStage({
+      timing: input.timing,
+      stage: 'repair',
+      run: () => callCompactRecipeJson(
+        input,
+        getCompactRecipeRepairPrompt(input.analysis, previousOutput, issues),
+        'compact_recipe_repair',
+        getCompactRecipeMaxTokens(input.analysis, input.config.maxOutputTokens),
+      ),
+    });
   } catch (error) {
     if (isQuotaError(error) || isScanControlError(error)) throw error;
     throw new RecipeValidationError([
@@ -1000,15 +1042,15 @@ async function repairCompactRecipe(
     throw new RecipeValidationError(getCompactSchemaIssues(repaired.error));
   }
 
-  const normalized = normalizeCompactRecipeTimes(repaired.data);
-  const remainingIssues = validateCompactRecipeOutput(normalized, input.analysis);
+  const normalized = normalizeCompactProviderOutput(repaired.data, input.analysis);
+  const remainingIssues = validateCompactRecipeOutput(normalized.compact, input.analysis);
   if (remainingIssues.length > 0) {
     throw new RecipeValidationError(remainingIssues);
   }
 
   return storeRecipeCache(
     cacheKey,
-    compactRecipeToCanonicalOutput(normalized),
+    normalized.canonical,
     input.analysis.dishName,
     { addImagePrompts: false },
   );
@@ -1044,6 +1086,7 @@ async function callCompactRecipeJson(
       requestId: input.requestId,
       signal: input.signal,
       deadlineAt: input.deadlineAt,
+      timing: input.timing,
     },
     getRecipeModelChain(input.config),
   );
@@ -1137,6 +1180,22 @@ function normalizeCompactRecipeTimes(output: CompactRecipeOutput): CompactRecipe
     cookTime,
     totalTime: calculatedTotal > 0 ? calculatedTotal : Math.max(1, output.totalTime),
     equipment: [...new Set(output.equipment.map((item) => item.trim()).filter(Boolean))].slice(0, 6),
+  };
+}
+
+function normalizeCompactProviderOutput(
+  output: CompactRecipeOutput,
+  analysis: FoodImageAnalysis,
+) {
+  const compact = normalizeCompactRecipeTimes(output);
+  return {
+    compact,
+    // Both recipe contracts derive canonical step metadata before the repair
+    // decision. Compact validation still evaluates its smaller content contract.
+    canonical: normalizeFullRecipeOutput(
+      compactRecipeToCanonicalOutput(compact),
+      analysis,
+    ),
   };
 }
 
@@ -1430,6 +1489,7 @@ async function callRecipeStage(
       requestId: input.requestId,
       signal: input.signal,
       deadlineAt: input.deadlineAt,
+      timing: input.timing,
     },
     getRecipeModelChain(input.config),
   );
@@ -1615,6 +1675,7 @@ async function callOpenRouterJson(input: {
 
   try {
     throwIfScanCancelled(input.signal, input.deadlineAt);
+    recordProviderAttempt(input.timing);
     const response = await fetch(openRouterEndpoint, {
       body: JSON.stringify({
         max_tokens: input.maxTokens,
@@ -1647,6 +1708,7 @@ async function callOpenRouterJson(input: {
     if (!response.ok) {
       const errorMessage = await getOpenRouterErrorMessage(response);
       console.error('openrouter_http_error', {
+        requestId: input.requestId,
         model: input.model,
         stage: input.stage ?? 'unknown',
         status: response.status,
@@ -1797,6 +1859,7 @@ function isBackoffError(error: unknown): boolean {
 }
 
 async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string[]): Promise<unknown> {
+  recordLogicalProviderCall(base.timing);
   let lastError: unknown = new Error('recipe_model_chain_empty');
   let failoverCount = 0;
   const chainStartedAt = Date.now();
@@ -2402,6 +2465,10 @@ export async function repairStepCoachingWithAI(input: {
   dishName: string;
   config: AiConfig;
   quota: ProviderQuota;
+  requestId: string;
+  signal?: AbortSignal;
+  deadlineAt?: number;
+  timing?: ScanExecutionContext['timing'];
 }): Promise<StepCoachingPatch[]> {
   const weakStepData = input.weaknesses.map(({ stepIndex, weakFields }) => {
     const step = input.steps[stepIndex];
@@ -2459,6 +2526,10 @@ export async function repairStepCoachingWithAI(input: {
       maxTokens,
       stage: 'coaching_repair',
       quota: input.quota,
+      requestId: input.requestId,
+      signal: input.signal,
+      deadlineAt: input.deadlineAt,
+      timing: input.timing,
     },
     getRecipeModelChain(input.config),
   );
@@ -2524,6 +2595,7 @@ export async function callComponentRepairWithOpenRouter(input: {
       requestId: input.requestId,
       signal: input.signal,
       deadlineAt: input.deadlineAt,
+      timing: input.timing,
     },
     getRecipeModelChain(input.config),
   );
@@ -2543,6 +2615,9 @@ function logRetryMetric(
   reason: string,
   model?: string,
 ): void {
+  if (stage.includes('repair')) {
+    recordRepairReasons(input.timing, reason);
+  }
   if (!input.requestId) return;
   logScanMetric({
     requestId: input.requestId,

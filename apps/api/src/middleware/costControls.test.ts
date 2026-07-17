@@ -10,7 +10,14 @@ test('persistent quota work leaves the existing per-IP scan limiter active', () 
   process.env.SCAN_RATE_LIMIT_MAX = '1';
   process.env.SCAN_RATE_LIMIT_WINDOW_MS = '60000';
 
-  const request = { ip: '203.0.113.246', socket: {} } as Request;
+  const request = {
+    ip: '203.0.113.246',
+    socket: {},
+    scanContext: Object.freeze({
+      requestId: 'scan-rate-limit-test',
+      ingressStartedAt: Date.now(),
+    }),
+  } as Request;
   let nextCalls = 0;
   let status: number | undefined;
   let payload: unknown;

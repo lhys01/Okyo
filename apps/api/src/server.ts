@@ -40,7 +40,12 @@ import {
   ScanCancelledError,
   ScanDeadlineExceededError,
 } from './services/scanDeadline.js';
-import { logScanMetric } from './telemetry/scanTelemetry.js';
+import {
+  createScanAggregateTiming,
+  logScanAggregateTiming,
+  logScanMetric,
+  type ScanMetricStatus,
+} from './telemetry/scanTelemetry.js';
 import { validatePaidFallbackAtStartup } from './services/openRouterProvider.js';
 import { getRecipeFailureApiError } from './services/recipeGenerationError.js';
 import { buildRecipeAdaptationPlan } from './services/recipeAdaptationService.js';
@@ -206,6 +211,12 @@ mountV1Authentication(app);
 
 app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) => {
   const requestId = request.scanContext?.requestId ?? 'missing-request-id';
+  const timing = createScanAggregateTiming({
+    requestId,
+    startedAt: request.scanContext?.ingressStartedAt,
+    recipeContract: getAiConfig().compactRecipeEnabled ? 'compact-v1' : 'full-core-v2',
+  });
+  let aggregateStatus: ScanMetricStatus = 'failure';
   const controller = new AbortController();
   const deadlineAt = (request.scanContext?.ingressStartedAt ?? Date.now()) + getScanDeadlineMs();
   const deadlineTimer = setTimeout(
@@ -228,7 +239,7 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
     const imageSizeBytes = body.image?.dataUrlSizeBytes ?? body.image?.dataUrl?.length ?? 0;
     const maxScanImageBytes = getCostControlConfig().maxScanImageBytes;
     if (imageSizeBytes > maxScanImageBytes) {
-      logCostEvent('scan_image_too_large', { imageSizeBytes, maxScanImageBytes });
+      logCostEvent('scan_image_too_large', { requestId, imageSizeBytes, maxScanImageBytes });
       sendError(response.status(413), 'image_payload_too_large', 'This photo was too large to scan. Try a smaller image.');
       return;
     }
@@ -240,21 +251,22 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
     const fableEnabled = getAiConfig().fableEnabled;
 
     if (fableRequested && !fableEnabled) {
-      console.log('[fable_route]', { requested: true, enabled: false, active: false, model: 'default', failClosed: true });
+      console.log('[fable_route]', { requestId, requested: true, enabled: false, active: false, model: 'default', failClosed: true });
       sendError(response.status(403), 'fable_not_enabled', 'Fable 5 is not enabled.');
       return;
     }
 
     let fableActive = false;
     if (fableRequested && fableEnabled) {
-      if (!checkAndIncrementFableCap()) {
-        console.log('[fable_route]', { requested: true, enabled: true, active: false, model: 'default', failClosed: true });
+      if (!checkAndIncrementFableCap(requestId)) {
+        console.log('[fable_route]', { requestId, requested: true, enabled: true, active: false, model: 'default', failClosed: true });
         sendError(response.status(429), 'fable_daily_cap_exceeded', "Fable 5's daily limit has been reached. Try again tomorrow.");
         return;
       }
       fableActive = true;
     }
     console.log('[fable_route]', {
+      requestId,
       requested: fableRequested,
       enabled: fableEnabled,
       active: fableActive,
@@ -269,6 +281,7 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
       requestId,
       signal: controller.signal,
       deadlineAt,
+      timing,
       generate: () => createAiScan({
         image: body.image,
         mode: body.mode,
@@ -279,6 +292,7 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
         requestId,
         signal: controller.signal,
         deadlineAt,
+        timing,
       }),
     });
 
@@ -287,9 +301,12 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
       image: getResponseImageMetadata(body.image),
       source: body.source,
     });
+    aggregateStatus = 'success';
   } catch (error) {
+    aggregateStatus = error instanceof ScanCancelledError ? 'cancelled' : 'failure';
     next(error);
   } finally {
+    logScanAggregateTiming(timing, aggregateStatus);
     clearTimeout(deadlineTimer);
     request.off('aborted', cancelForClientDisconnect);
     response.off('close', cancelForClientDisconnect);
@@ -400,7 +417,8 @@ app.post('/v1/recipes/:recipeId/coaching', scanRateLimitMiddleware, async (reque
     }
     const result = await enrichRecipeCoaching(
       recipe,
-      createProviderQuota({ userId, requestId: request.params.recipeId }),
+      createProviderQuota({ userId, requestId: request.scanContext!.requestId }),
+      { requestId: request.scanContext!.requestId },
     );
     if (!result) {
       sendNotFound(response, 'recipe_not_found', 'Recipe not found or expired. Please scan again.');

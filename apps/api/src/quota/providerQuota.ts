@@ -106,7 +106,7 @@ export function createProviderQuota(options: {
           status: 'failure',
           details: { operation, reason: 'repository_unavailable' },
         });
-        logCostEvent('persistent_quota_unavailable', { operation });
+        logCostEvent('persistent_quota_unavailable', { requestId: options.requestId, operation });
         throw new QuotaUnavailableError();
       }
 
@@ -118,7 +118,11 @@ export function createProviderQuota(options: {
           status: 'failure',
           details: { operation, reason: sanitizeReason(reservation.reason) },
         });
-        logCostEvent('persistent_quota_denied', { operation, reason: sanitizeReason(reservation.reason) });
+        logCostEvent('persistent_quota_denied', {
+          requestId: options.requestId,
+          operation,
+          reason: sanitizeReason(reservation.reason),
+        });
         throw new QuotaDeniedError();
       }
       if (!reservation.spendEventId) {
@@ -129,7 +133,7 @@ export function createProviderQuota(options: {
           status: 'failure',
           details: { operation, reason: 'invalid_result' },
         });
-        logCostEvent('persistent_quota_invalid_result', { operation });
+        logCostEvent('persistent_quota_invalid_result', { requestId: options.requestId, operation });
         throw new QuotaUnavailableError();
       }
       logScanMetric({
@@ -177,7 +181,10 @@ export function createProviderQuota(options: {
         });
         // The provider must never be called twice because telemetry finalization
         // failed. The RPC-created reservation row remains as durable evidence.
-        logCostEvent('provider_spend_finalize_failed', { operation: reservation.operation });
+        logCostEvent('provider_spend_finalize_failed', {
+          requestId: options.requestId,
+          operation: reservation.operation,
+        });
       }
     },
   };

@@ -16,6 +16,23 @@ export type ScanExecutionContext = {
   requestId: string;
   deadlineAt: number;
   signal: AbortSignal;
+  timing: ScanAggregateTiming;
+};
+
+export type ScanRecipeContract = 'full-core-v2' | 'compact-v1' | 'unknown';
+
+export type ScanAggregateTiming = {
+  requestId: string;
+  startedAt: number;
+  visionMs: number;
+  recipeMs: number;
+  repairMs: number;
+  persistenceMs: number;
+  logicalProviderCalls: number;
+  providerAttempts: number;
+  recipeContract: ScanRecipeContract;
+  repairReasons: string[];
+  emitted: boolean;
 };
 
 export function getScanDeadlineMs(): number {
