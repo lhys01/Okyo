@@ -31,6 +31,7 @@ import { authenticatedFetch } from '../api/authenticatedClient';
 import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
+import { KikoRecipeStepArt } from '../components/KikoRecipeStepArt';
 import { PressableScale, ProgressFill, RewardToast } from '../components/OkyoUI';
 import { RecipeQualityCard } from '../components/RecipeQualityCard';
 import { colors, fontFamilies, ingredientAvatar, layout, radius, shadows, surfaces } from '../theme/okyoTheme';
@@ -937,6 +938,10 @@ export function RecipeStepsScreen() {
               >
                 {activeStep.title}
               </Text>
+              <KikoRecipeStepArt
+                key={activeStep.stepNumber}
+                stepText={`${activeStep.title}. ${activeStep.instruction}`}
+              />
               <Text style={styles.guidedInstruction}>{activeStep.instruction}</Text>
 
               {activeTimer ? (

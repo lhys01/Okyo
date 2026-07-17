@@ -53,6 +53,11 @@ Warm premium cookbook + liquid iOS glass (translucency/depth used purposefully �
 - AI/scan safety + scan-state debugging → `.claude/skills/okyo-ai-safety/SKILL.md`
 - Product direction / copy / onboarding assets → `.claude/skills/okyo-project-context/SKILL.md`
 - General task workflow → `.claude/skills/okyo-task-workflow/SKILL.md`
+- Kiko mascot poses / animation / reward moments → `.claude/skills/okyo-kiko-system/SKILL.md`
+- XP / badges / streaks / notifications / habit loops → `.claude/skills/okyo-retention-engine/SKILL.md`
+- Model routing / providers / benchmarks / cost caps → `.claude/skills/okyo-ai-architecture/SKILL.md`
+- Auth / endpoints / secrets / deploy gates → `.claude/skills/okyo-security-hardening/SKILL.md`
+- Monetization / RevenueCat / paywall / free tier (company #1 problem) → `.claude/skills/okyo-live-problem/SKILL.md`
 
 ## Run & Verify
 
