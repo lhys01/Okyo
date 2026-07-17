@@ -1,7 +1,7 @@
 import type { OkyoModelOverride } from './types';
 
 const configuredApiUrl = process.env.EXPO_PUBLIC_OKYO_API_URL?.trim();
-const developmentApiFallback = 'http://192.168.2.42:8081';
+const developmentApiFallback = 'http://localhost:8081';
 
 if (__DEV__ && !configuredApiUrl) {
   console.warn('[Okyo] EXPO_PUBLIC_OKYO_API_URL not set — using dev fallback. Set this before production builds.');

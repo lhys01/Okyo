@@ -12,9 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AnimatedGradientBackground } from '../components/AnimatedGradientBackground';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
-import { PressableScale, ProgressFill, RewardToast } from '../components/OkyoUI';
-import { RecommendationCard } from '../components/RecommendationCard';
-import { getMealTimeForHour, getRecommendationsForMealTime } from '../data/recommendedRecipes';
+import { PressableScale, RewardToast } from '../components/OkyoUI';
 import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
@@ -24,7 +22,6 @@ import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '..
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { deriveHomeCommandCenter, type HomeCommandCard } from '../utils/homeCommandCenter';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
-import { useOpenRecommendation } from '../utils/useOpenRecommendation';
 
 type HomeNavigation = NativeStackNavigationProp<RootStackParamList>;
 
@@ -37,17 +34,11 @@ export function HomeScreen() {
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const savedFoodIdeas = useOkyoStore((state) => state.savedFoodIdeas);
-  const onboardingGoal = useOkyoStore((state) => state.onboardingGoal);
-  const mealRoutinePreference = useOkyoStore((state) => state.mealRoutinePreference);
-  const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
-  const weeklyGoal = useOkyoStore((state) => state.weeklyGoal);
   const lastDailyCheckInDate = useOkyoStore((state) => state.lastDailyCheckInDate);
   const claimDailyCheckIn = useOkyoStore((state) => state.claimDailyCheckIn);
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
-  const openRecommendation = useOpenRecommendation();
   const homeMoment = useMemo(() => getHomeMoment(), []);
-  const mealIdeas = useMemo(() => getRecommendationsForMealTime(getMealTimeForHour(new Date().getHours()), 4), []);
 
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [];
   const safeSavedFoodIdeas = Array.isArray(savedFoodIdeas) ? savedFoodIdeas.filter((idea) => idea?.id && idea?.title) : [];
@@ -59,9 +50,7 @@ export function HomeScreen() {
     getRealScanImageUri(latestScanSession?.selectedScanImage) ?? getRealScanImageUri(selectedScanImage),
   );
   const heroImageStatus = getRecipeImageStatus(heroRecipe);
-  const hasActivity = Boolean(heroRecipe || heroImageUri || safeSavedRecipes.length > 0 || weeklyScanCount > 0);
-  const weeklyTarget = getWeeklyGoalCount(weeklyGoal);
-  const weeklyProgress = Math.min(weeklyScanCount / weeklyTarget, 1);
+  const hasActivity = Boolean(heroRecipe || heroImageUri || safeSavedRecipes.length > 0);
   const todayKey = getLocalDateKey();
   const dailySpark = useMemo(() => getDailySpark(todayKey), [todayKey]);
   const [dailyRewardVisible, setDailyRewardVisible] = useState(false);
@@ -71,14 +60,10 @@ export function HomeScreen() {
   const commandCenter = useMemo(
     () => deriveHomeCommandCenter({
       latestScanRecipe,
-      mealIdeas,
-      mealRoutinePreference,
-      onboardingGoal,
       savedFoodIdeas: safeSavedFoodIdeas,
       savedRecipes: safeSavedRecipes,
-      weeklyScanCount,
     }),
-    [latestScanRecipe, mealIdeas, mealRoutinePreference, onboardingGoal, safeSavedFoodIdeas, safeSavedRecipes, weeklyScanCount],
+    [latestScanRecipe, safeSavedFoodIdeas, safeSavedRecipes],
   );
 
   const didTraceHero = useRef(false);
@@ -112,11 +97,6 @@ export function HomeScreen() {
   const openPlan = () => {
     uiLog('HomeScreen', 'open_plan');
     navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
-  };
-
-  const openDiscover = () => {
-    uiLog('HomeScreen', 'open_discover');
-    navigation.navigate('MainTabs', { screen: 'RestaurantPacksScreen' });
   };
 
   const openFoodIdea = () => {
@@ -163,18 +143,8 @@ export function HomeScreen() {
       case 'open_recipe':
         if (card.recipe) openRecipe(card.recipe);
         return;
-      case 'open_recommendation':
-        if (card.recommendation) {
-          openRecommendation(card.recommendation);
-          return;
-        }
-        if (card.recipe) openRecipe(card.recipe);
-        return;
       case 'open_food_idea':
         openFoodIdea();
-        return;
-      case 'open_discover':
-        openDiscover();
         return;
       case 'open_grocery':
         openGroceryForRecipe(card.recipe);
@@ -230,20 +200,6 @@ export function HomeScreen() {
             </View>
           </PressableScale>
         ) : null}
-
-        <View style={styles.momentumCard}>
-          <View style={styles.momentumHeader}>
-            <View style={styles.momentumCopy}>
-              <Text style={styles.momentumLabel}>Cooking momentum</Text>
-              <Text style={styles.momentumTitle}>{getMomentumTitle(weeklyScanCount, weeklyTarget)}</Text>
-            </View>
-            <View style={styles.momentumBadge}>
-              <Text style={styles.momentumBadgeText}>{weeklyScanCount}/{weeklyTarget}</Text>
-            </View>
-          </View>
-          <ProgressFill progress={weeklyProgress} tone="green" style={styles.momentumProgress} />
-          <Text style={styles.momentumBody}>{getMomentumBody(weeklyScanCount, weeklyTarget)}</Text>
-        </View>
 
         <Pressable
           accessibilityRole="button"
@@ -348,37 +304,6 @@ export function HomeScreen() {
           </View>
           <NavArrowRight color={colors.coral} height={21} strokeWidth={2.25} width={21} />
         </Pressable>
-
-        {mealIdeas.length > 0 ? (
-          <View style={styles.ideasSection}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Today's ideas</Text>
-              <Pressable accessibilityRole="button" hitSlop={8} style={styles.sectionLink} onPress={openDiscover}>
-                <Text style={styles.sectionLinkText}>Explore</Text>
-                <NavArrowRight color={colors.charcoal} height={18} strokeWidth={2} width={18} />
-              </Pressable>
-            </View>
-            <View style={styles.ideasGrid}>
-              {mealIdeas.map((recipe) => (
-                <RecommendationCard key={recipe.id} recipe={recipe} onPress={() => openRecommendation(recipe)} />
-              ))}
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.discoverPromptCard, pressed ? styles.pressed : null]}
-              onPress={openDiscover}
-            >
-              <View style={styles.discoverPromptIcon}>
-                <Spark color={colors.coral} height={18} strokeWidth={2.2} width={18} />
-              </View>
-              <View style={styles.discoverPromptCopy}>
-                <Text style={styles.discoverPromptTitle}>Want more recommendations?</Text>
-                <Text style={styles.discoverPromptBody}>Browse more Okyo ideas in Discover.</Text>
-              </View>
-              <NavArrowRight color={colors.coral} height={20} strokeWidth={2.2} width={20} />
-            </Pressable>
-          </View>
-        ) : null}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Recent meals</Text>
@@ -504,45 +429,6 @@ function getDailySpark(dateKey: string) {
   return sparks[index] ?? sparks[0];
 }
 
-function getWeeklyGoalCount(goal: string | null) {
-  switch (goal) {
-    case '1_meal':
-      return 1;
-    case '5_meals':
-      return 5;
-    case '7_meals':
-      return 7;
-    case '3_meals':
-    default:
-      return 3;
-  }
-}
-
-function getMomentumTitle(count: number, target: number) {
-  if (count >= target) {
-    return 'Weekly rhythm is warm';
-  }
-
-  if (count > 0) {
-    const remaining = target - count;
-    return `${remaining} scan${remaining === 1 ? '' : 's'} from your rhythm`;
-  }
-
-  return 'Start this week with one scan';
-}
-
-function getMomentumBody(count: number, target: number) {
-  if (count >= target) {
-    return 'Nice. You have enough inspiration banked for easy cooking decisions.';
-  }
-
-  if (count > 0) {
-    return 'Each scan turns a craving into a recipe, grocery list, and a little more kitchen momentum.';
-  }
-
-  return 'Scan a meal when a craving hits. Okyo will turn it into your first homemade plan.';
-}
-
 const styles = StyleSheet.create({
   safeArea: {
     backgroundColor: colors.background,
@@ -615,48 +501,6 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.extraBold,
     fontSize: 12,
     fontWeight: '800',
-  },
-  momentumCard: {
-    ...surfaces.card,
-    marginTop: 18,
-    padding: 18,
-  },
-  momentumHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 14,
-    justifyContent: 'space-between',
-  },
-  momentumCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  momentumLabel: {
-    ...typography.label,
-    color: colors.green,
-  },
-  momentumTitle: {
-    ...typography.heading,
-    marginTop: 3,
-  },
-  momentumBadge: {
-    backgroundColor: colors.greenSoft,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  momentumBadgeText: {
-    color: colors.green,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  momentumProgress: {
-    marginTop: 14,
-  },
-  momentumBody: {
-    ...typography.caption,
-    marginTop: 10,
   },
   tonightCard: {
     ...surfaces.card,
@@ -886,45 +730,6 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.body,
     fontSize: 13,
     lineHeight: 18,
-    marginTop: 2,
-  },
-  ideasSection: {
-    marginTop: spacing.section,
-  },
-  ideasGrid: {
-    columnGap: 14,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 14,
-    rowGap: 16,
-  },
-  discoverPromptCard: {
-    ...surfaces.panel,
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 16,
-    padding: 14,
-  },
-  discoverPromptIcon: {
-    alignItems: 'center',
-    backgroundColor: colors.cream,
-    borderRadius: 999,
-    height: 34,
-    justifyContent: 'center',
-    width: 34,
-  },
-  discoverPromptCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  discoverPromptTitle: {
-    color: colors.charcoal,
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  discoverPromptBody: {
-    ...typography.caption,
     marginTop: 2,
   },
   sectionHeader: {

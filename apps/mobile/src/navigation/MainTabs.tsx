@@ -5,7 +5,6 @@ import {
   Book,
   Camera,
   Cart,
-  Compass,
   HomeSimple,
   User,
 } from 'iconoir-react-native';
@@ -18,7 +17,6 @@ import { HomeScreen } from '../screens/HomeScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { RecipeDetailScreen, RecipeStepsScreen } from '../screens/RecipeDetailScreen';
-import { RestaurantPacksScreen } from '../screens/RestaurantPacksScreen';
 import { ScanScreen } from '../screens/ScanScreen';
 import type { MainTabParamList } from './types';
 
@@ -28,7 +26,6 @@ type MainTabRouteName = keyof MainTabParamList;
 
 const tabLabels: Record<MainTabRouteName, string> = {
   HomeScreen: 'Home',
-  RestaurantPacksScreen: 'Discover',
   ScanScreen: 'Scan',
   LibraryScreen: 'Saved',
   ProfileScreen: 'Profile',
@@ -51,8 +48,6 @@ function TabIcon({ color, focused, routeName }: { color: string; focused: boolea
   switch (routeName) {
     case 'HomeScreen':
       return <HomeSimple color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
-    case 'RestaurantPacksScreen':
-      return <Compass color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'GroceryListScreen':
       return <Cart color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'LibraryScreen':
@@ -212,7 +207,6 @@ export function MainTabs() {
       }}
     >
       <Tab.Screen name="HomeScreen" component={HomeScreen} options={{ title: 'Home' }} />
-      <Tab.Screen name="RestaurantPacksScreen" component={RestaurantPacksScreen} options={{ title: 'Discover' }} />
       <Tab.Screen name="ScanScreen" component={ScanScreen} options={{ title: 'Scan' }} />
       <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Saved' }} />
       <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />

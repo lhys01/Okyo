@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PressableProps, StyleProp, ViewStyle } from 'react-native';
 
 import { getSafeNumber, getSafeText, isRecipeMode } from '../mocks';
-import type { Recipe, RecipeMode, RestaurantPack } from '../mocks';
+import type { Recipe, RecipeMode } from '../mocks';
 import { colors, fontFamilies, layout, radius, shadows, spacing, surfaces, typography } from '../theme/okyoTheme';
 
 type ScreenContainerProps = {
@@ -424,41 +424,6 @@ export function RecipeCard({ recipe, onPress, onRemove }: RecipeCardProps) {
         </Pressable>
       ) : null}
     </View>
-  );
-}
-
-type PackCardProps = {
-  pack: RestaurantPack;
-  label: string;
-  description: string;
-  averageSavings: number;
-  topDish?: string;
-  onPress?: () => void;
-};
-
-export function PackCard({ pack, label, description, averageSavings, topDish, onPress }: PackCardProps) {
-  const dishes = Array.isArray(pack?.dishes) ? pack.dishes : [];
-  const name = getSafeText(pack?.name, 'Restaurant-inspired pack');
-
-  return (
-    <Pressable style={({ pressed }) => [styles.card, styles.cardPressable, pressed ? styles.pressed : null]} onPress={onPress}>
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle} numberOfLines={2}>{name}</Text>
-        <BadgePill tone={label === 'Free' ? 'green' : 'coral'}>{label}</BadgePill>
-      </View>
-      <Text style={styles.cardBody} numberOfLines={3}>{description}</Text>
-      <View style={styles.cardMetaRow}>
-        <View>
-          <Text style={styles.statLabel}>Dupes</Text>
-          <Text style={styles.cardMetaValue}>{dishes.length}</Text>
-        </View>
-        <View style={styles.cardMetaRight}>
-          <Text style={styles.statLabel}>Avg. savings</Text>
-          <Text style={styles.savingsText}>{formatCurrency(averageSavings)}</Text>
-        </View>
-      </View>
-      <Text style={styles.topDish}>Top dish: {topDish ?? 'Coming soon'}</Text>
-    </Pressable>
   );
 }
 

@@ -130,14 +130,11 @@ export function RecipeDetailScreen() {
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const savedFoodIdeas = useOkyoStore((state) => state.savedFoodIdeas);
-  const onboardingGoal = useOkyoStore((state) => state.onboardingGoal);
-  const mealRoutinePreference = useOkyoStore((state) => state.mealRoutinePreference);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
-  const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
   const [selectedMode, setSelectedMode] = useState<RecipeMode>(
     getSafeRecipeMode(initialMode ?? storeSelectedMode),
@@ -181,27 +178,22 @@ export function RecipeDetailScreen() {
   const qualityReport = useRecipeQualityReport(recipe, {
     source: savedFoodIdeas.some((idea) => idea.extractedRecipe?.id === recipe?.id) ? 'foodIdea' : 'savedRecipe',
     skillLevel: recipe?.difficulty,
-    userGoal: onboardingGoal ?? undefined,
   });
   const adaptationOptions = useMemo(
     () => (recipe
       ? deriveAdaptationOptions(recipe, {
-        mealRoutinePreference,
-        onboardingGoal,
         qualityReport,
         savedFoodIdeaCount: Array.isArray(savedFoodIdeas) ? savedFoodIdeas.length : 0,
         savedRecipeCount: Array.isArray(savedRecipes) ? savedRecipes.length : 0,
       })
       : []),
-    [mealRoutinePreference, onboardingGoal, qualityReport, recipe, savedFoodIdeas, savedRecipes],
+    [qualityReport, recipe, savedFoodIdeas, savedRecipes],
   );
   const [selectedAdaptationId, setSelectedAdaptationId] = useState<RecipeAdaptationGoal | null>(null);
   const adaptationContext = useMemo(() => ({
     source: savedFoodIdeas.some((idea) => idea.extractedRecipe?.id === recipe?.id) ? 'foodIdea' as const : 'savedRecipe' as const,
     skillLevel: recipe?.difficulty,
-    timePreference: mealRoutinePreference === 'quick_easy' ? 'under30' : undefined,
-    budgetPreference: mealRoutinePreference === 'budget_meals' ? 'low' : undefined,
-  }), [mealRoutinePreference, recipe?.difficulty, recipe?.id, savedFoodIdeas]);
+  }), [recipe?.difficulty, recipe?.id, savedFoodIdeas]);
   const [saveToastVisible, setSaveToastVisible] = useState(false);
   const [saveToastLabel, setSaveToastLabel] = useState('Saved to your library');
   const saveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -293,7 +285,6 @@ export function RecipeDetailScreen() {
     if (!alreadySaved) {
       awardXPOnce(saveEventId, 5);
     }
-    unlockBadge('first-dupe');
     track(analyticsEvents.RECIPE_SAVED, {
       dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
       mode: recipe.mode,
@@ -316,7 +307,6 @@ export function RecipeDetailScreen() {
     }
 
     navigation.navigate('ShareCardPreviewScreen', {
-      cardType: 'scan_result',
       mode: selectedMode,
       scanContext: {
         image: selectedScanImage,
@@ -581,7 +571,6 @@ export function RecipeStepsScreen() {
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
-  const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
@@ -723,7 +712,6 @@ export function RecipeStepsScreen() {
     if (!alreadySaved) {
       awardXPOnce(saveEventId, 5);
     }
-    unlockBadge('first-dupe');
     track(analyticsEvents.RECIPE_SAVED, {
       dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
       mode: recipe.mode,
@@ -744,7 +732,6 @@ export function RecipeStepsScreen() {
     }
 
     navigation.navigate('ShareCardPreviewScreen', {
-      cardType: 'scan_result',
       mode: selectedMode,
       scanContext: {
         image: selectedScanImage,

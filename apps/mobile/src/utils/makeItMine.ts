@@ -1,5 +1,4 @@
 import type { Recipe, RecipeQualityReport } from '../mocks';
-import type { OnboardingGoal, OnboardingMealRoutinePreference } from '../state/useOkyoStore';
 import { buildSmartGrocerySummary } from './smartGrocery';
 
 export type RecipeAdaptationGoal =
@@ -29,8 +28,6 @@ export type RecipeAdaptationOption = {
 
 type MakeItMineContext = {
   qualityReport?: RecipeQualityReport | null;
-  onboardingGoal?: OnboardingGoal | null;
-  mealRoutinePreference?: OnboardingMealRoutinePreference | null;
   savedFoodIdeaCount?: number;
   savedRecipeCount?: number;
 };
@@ -65,7 +62,7 @@ export function deriveAdaptationOptions(recipe: Recipe, context: MakeItMineConte
       ],
       tradeoff: 'A few garnishes may become optional, but the core flavor stays.',
       confidence: totalTime > 20 ? 'High' : 'Medium',
-      score: totalTime + stepCount * 2 + (context.mealRoutinePreference === 'quick_easy' ? 24 : 0),
+      score: totalTime + stepCount * 2,
     },
     {
       id: 'cheaper',
@@ -81,8 +78,7 @@ export function deriveAdaptationOptions(recipe: Recipe, context: MakeItMineConte
       ],
       tradeoff: 'The plate may taste a little more homey than restaurant-style.',
       confidence: recipe.estimatedHomemadeCost > 6 ? 'High' : 'Medium',
-      score: recipe.estimatedHomemadeCost * 4 + (context.onboardingGoal === 'Save money' ? 32 : 0) +
-        (context.mealRoutinePreference === 'budget_meals' ? 24 : 0),
+      score: recipe.estimatedHomemadeCost * 4,
     },
     {
       id: 'beginner',
@@ -98,8 +94,7 @@ export function deriveAdaptationOptions(recipe: Recipe, context: MakeItMineConte
       ],
       tradeoff: 'It may take a few extra minutes, but it should feel easier.',
       confidence: warningCount > 0 || recipe.difficulty !== 'Easy' ? 'High' : 'Medium',
-      score: warningCount * 12 + (recipe.difficulty === 'Easy' ? 8 : 28) +
-        (context.onboardingGoal === 'Learn to cook' ? 30 : 0),
+      score: warningCount * 12 + (recipe.difficulty === 'Easy' ? 8 : 28),
     },
     {
       id: 'pantry',
@@ -133,7 +128,7 @@ export function deriveAdaptationOptions(recipe: Recipe, context: MakeItMineConte
       ],
       tradeoff: 'This is about feel and balance, not calorie math.',
       confidence: hasCreamyRichness ? 'High' : 'Medium',
-      score: (hasCreamyRichness ? 28 : 12) + (context.onboardingGoal === 'Eat healthier' ? 32 : 0),
+      score: hasCreamyRichness ? 28 : 12,
     },
     {
       id: 'healthier',
@@ -148,8 +143,8 @@ export function deriveAdaptationOptions(recipe: Recipe, context: MakeItMineConte
         'Finish with acid and herbs instead of relying only on salt or fat.',
       ],
       tradeoff: 'This is a practical dinner tweak, not nutrition tracking.',
-      confidence: context.onboardingGoal === 'Eat healthier' || hasCreamyRichness ? 'High' : 'Medium',
-      score: (hasCreamyRichness ? 24 : 10) + (context.onboardingGoal === 'Eat healthier' ? 36 : 0),
+      confidence: hasCreamyRichness ? 'High' : 'Medium',
+      score: hasCreamyRichness ? 24 : 10,
     },
     {
       id: 'higher_protein',
@@ -163,8 +158,8 @@ export function deriveAdaptationOptions(recipe: Recipe, context: MakeItMineConte
         'Pair the protein with a grain or veg that reheats well.',
         'Use sauce at the end so the texture stays better.',
       ],
-      confidence: context.mealRoutinePreference === 'high_protein' || !hasProtein ? 'High' : 'Medium',
-      score: (hasProtein ? 12 : 26) + (context.mealRoutinePreference === 'high_protein' ? 34 : 0),
+      confidence: !hasProtein ? 'High' : 'Medium',
+      score: hasProtein ? 12 : 26,
     },
     {
       id: 'less_spicy',
@@ -210,7 +205,7 @@ export function deriveAdaptationOptions(recipe: Recipe, context: MakeItMineConte
         'Taste once before serving and adjust salt in small pinches.',
       ],
       confidence: 'High',
-      score: context.onboardingGoal === 'Recreate restaurant meals' || context.mealRoutinePreference === 'restaurant_style' ? 36 : 16,
+      score: 16,
     },
     {
       id: 'leftovers',

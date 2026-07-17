@@ -1,4 +1,4 @@
-import type { GroceryList, Recipe, RecipeMode, ScanResult, ScanState, ShareCard } from '../mocks';
+import type { Recipe, RecipeMode, ScanResult, ScanState } from '../mocks';
 
 export type OkyoModelOverride = 'fable';
 
@@ -58,8 +58,6 @@ export type CreateScanResult = {
   scanId?: string;
   recipe?: Recipe;
   recipes?: Recipe[];
-  groceryList?: GroceryList;
-  shareCard?: ShareCard;
   image?: ScanImageMetadata;
   note?: string;
   rejectionType?: ScanRejectionType;

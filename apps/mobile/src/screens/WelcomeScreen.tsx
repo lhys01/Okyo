@@ -3,10 +3,10 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Easing, StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { createMockScan } from '../api/client';
+import { createScan } from '../api/client';
 import { OKYO_MAX_SCAN_IMAGE_DATA_URL_BYTES } from '../api/config';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import {
@@ -16,7 +16,6 @@ import {
   OnboardingLoadingScreen,
   OnboardingScanCard,
   OnboardingScreenShell,
-  OnboardingStatefulButton,
   onboardingColors,
 } from '../components/onboarding/OnboardingUI';
 import { KikoMascot } from '../components/KikoMascot';
@@ -29,10 +28,8 @@ import type { RootStackParamList } from '../navigation/types';
 import {
   useOkyoStore,
   type LatestScanFailure,
-  type OnboardingWeeklyGoal,
 } from '../state/useOkyoStore';
 import { colors, fontFamilies, shadows } from '../theme/okyoTheme';
-import { scheduleOkyoDailyReminder } from '../utils/notifications';
 import { hasFoodEvidence, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
 import {
   logMobileScreenReveal,
@@ -46,8 +43,6 @@ type WelcomeNavigation = NativeStackNavigationProp<RootStackParamList, 'WelcomeS
 type OnboardingScreenKey =
   | 'splash'
   | 'hero'
-  | 'weeklyGoal'
-  | 'reminder'
   | 'scan'
   | 'loading'
   | 'firstResult';
@@ -56,24 +51,9 @@ const maxProcessedImageWidth = 1400;
 
 const progressSteps: OnboardingScreenKey[] = [
   'hero',
-  'weeklyGoal',
-  'reminder',
-  'loading',
   'scan',
+  'loading',
   'firstResult',
-];
-
-type WeeklyGoalOption = {
-  frequency: string;
-  id: string;
-  label: string;
-};
-
-const weeklyGoalOptions: WeeklyGoalOption[] = [
-  { id: '1_meal', frequency: '1 meal / week', label: 'Casual' },
-  { id: '3_meals', frequency: '3 meals / week', label: 'Regular' },
-  { id: '5_meals', frequency: '5 meals / week', label: 'Serious' },
-  { id: '7_meals', frequency: '7 meals / week', label: 'All in' },
 ];
 
 export function WelcomeScreen() {
@@ -81,7 +61,6 @@ export function WelcomeScreen() {
   const [screenKey, setScreenKey] = useState<OnboardingScreenKey>('splash');
   const [scanError, setScanError] = useState<string | null>(null);
   const [isScanSubmitting, setIsScanSubmitting] = useState(false);
-  const [selectedWeeklyGoal, setSelectedWeeklyGoal] = useState<string | null>(null);
   const didTrackStart = useRef(false);
   const splashOpacity = useRef(new Animated.Value(0)).current;
   const selectedMode = useOkyoStore((state) => state.selectedMode);
@@ -93,11 +72,6 @@ export function WelcomeScreen() {
   const beginLatestScanSession = useOkyoStore((state) => state.beginLatestScanSession);
   const writeLatestScanSession = useOkyoStore((state) => state.writeLatestScanSession);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
-  const setWeeklyGoal = useOkyoStore((state) => state.setWeeklyGoal);
-  const notificationChoice = useOkyoStore((state) => state.notificationChoice);
-  const setNotificationChoice = useOkyoStore((state) => state.setNotificationChoice);
-  const markFirstOnboardingScanCompleted = useOkyoStore((state) => state.markFirstOnboardingScanCompleted);
-  const markFirstOnboardingResultSeen = useOkyoStore((state) => state.markFirstOnboardingResultSeen);
   const resultRecipe = latestScanRecipe;
 
   useEffect(() => {
@@ -140,19 +114,6 @@ export function WelcomeScreen() {
     });
   }, [screenKey, splashOpacity]);
 
-  // Auto-advance from the "Building Your Plan" loading screen to scan after 2.5s
-  useEffect(() => {
-    if (screenKey !== 'loading' || selectedScanImage?.uri) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      setScreenKey('scan');
-    }, 2500);
-
-    return () => clearTimeout(timer);
-  }, [screenKey, selectedScanImage?.uri]);
-
   const progress = useMemo(() => {
     const index = progressSteps.indexOf(screenKey);
     if (index < 0) {
@@ -168,12 +129,6 @@ export function WelcomeScreen() {
       return;
     }
 
-    // Skip the 'loading' (Building Your Plan) step when navigating back from scan
-    if (screenKey === 'scan') {
-      setScreenKey('reminder');
-      return;
-    }
-
     setScreenKey(progressSteps[currentIndex - 1]);
   };
 
@@ -182,21 +137,6 @@ export function WelcomeScreen() {
     if (currentIndex >= 0 && currentIndex < progressSteps.length - 1) {
       setScreenKey(progressSteps[currentIndex + 1]);
     }
-  };
-
-  const commitWeeklyGoal = () => {
-    setWeeklyGoal((selectedWeeklyGoal ?? '3_meals') as OnboardingWeeklyGoal);
-    advance();
-  };
-
-  const remindMe = () => {
-    setNotificationChoice('remind_me');
-    advance();
-  };
-
-  const skipReminder = () => {
-    setNotificationChoice('not_now');
-    advance();
   };
 
   const takePhoto = async () => {
@@ -298,7 +238,7 @@ export function WelcomeScreen() {
     });
 
     try {
-      const result = await createMockScan({ requestId, image, mode: selectedMode, source });
+      const result = await createScan({ requestId, image, mode: selectedMode, source });
       if (!isActiveScanSession(scanSessionId)) {
         return;
       }
@@ -390,8 +330,6 @@ export function WelcomeScreen() {
         source,
         reason: 'WelcomeScreen.api_success',
       });
-      markFirstOnboardingScanCompleted();
-      markFirstOnboardingResultSeen();
       setScreenKey('firstResult');
       return true;
     }
@@ -419,9 +357,6 @@ export function WelcomeScreen() {
   const finishOnboarding = () => {
     track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'WelcomeScreen' });
     completeOnboarding();
-    if (notificationChoice === 'remind_me') {
-      scheduleOkyoDailyReminder();
-    }
     navigation.dispatch(
       CommonActions.reset({
         index: 0,
@@ -477,24 +412,9 @@ export function WelcomeScreen() {
   return (
     <OnboardingScreenShell
       canGoBack={progressSteps.indexOf(screenKey) > 0}
-      footer={getFooter(screenKey, {
-        selectedWeeklyGoal,
-        onCommitWeeklyGoal: commitWeeklyGoal,
-        onRemindMe: remindMe,
-        onSkipReminder: skipReminder,
-      })}
       onBack={goBack}
       progress={progress}
     >
-      {screenKey === 'weeklyGoal' ? (
-        <WeeklyGoalScreen
-          selectedId={selectedWeeklyGoal}
-          onSelect={setSelectedWeeklyGoal}
-        />
-      ) : null}
-
-      {screenKey === 'reminder' ? <ReminderScreen /> : null}
-
       {screenKey === 'scan' ? (
         <ScanIntroScreen
           errorMessage={scanError}
@@ -538,111 +458,6 @@ function SplashScreen({ opacity }: { opacity: Animated.Value }) {
   );
 }
 
-// ── Weekly goal ───────────────────────────────────────────────────────────────
-
-function WeeklyGoalScreen({
-  onSelect,
-  selectedId,
-}: {
-  onSelect: (id: string) => void;
-  selectedId: string | null;
-}) {
-  return (
-    <View style={styles.screenBlock}>
-      <KikoSpeechBubble
-        pose="recipeCard"
-        text="What's your weekly cooking goal?"
-        typed={!selectedId}
-      />
-      <View style={styles.goalOptionList}>
-        {weeklyGoalOptions.map((option, index) => (
-          <WeeklyGoalCard
-            key={option.id}
-            delay={index * 75}
-            option={option}
-            selected={selectedId === option.id}
-            onPress={() => onSelect(option.id)}
-          />
-        ))}
-      </View>
-    </View>
-  );
-}
-
-function WeeklyGoalCard({
-  delay = 0,
-  onPress,
-  option,
-  selected,
-}: {
-  delay?: number;
-  onPress: () => void;
-  option: WeeklyGoalOption;
-  selected: boolean;
-}) {
-  const intro = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    intro.setValue(0);
-    Animated.timing(intro, {
-      delay,
-      duration: 300,
-      easing: Easing.out(Easing.cubic),
-      toValue: 1,
-      useNativeDriver: true,
-    }).start();
-  }, [delay, intro]);
-
-  const pressIn = () => Animated.spring(scale, { toValue: 0.975, damping: 18, mass: 0.6, stiffness: 280, useNativeDriver: true }).start();
-  const pressOut = () => Animated.spring(scale, { toValue: 1, damping: 18, mass: 0.6, stiffness: 280, useNativeDriver: true }).start();
-
-  return (
-    <Animated.View
-      style={{
-        opacity: intro,
-        transform: [
-          { translateY: intro.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) },
-          { scale },
-        ],
-      }}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ selected }}
-        onPress={onPress}
-        onPressIn={pressIn}
-        onPressOut={pressOut}
-        style={[styles.goalCard, selected ? styles.goalCardSelected : null]}
-      >
-        <Text style={[styles.goalFrequency, selected ? styles.goalFrequencySelected : null]}>
-          {option.frequency}
-        </Text>
-        <Text style={[styles.goalLabel, selected ? styles.goalLabelSelected : null]}>
-          {option.label}
-        </Text>
-      </Pressable>
-    </Animated.View>
-  );
-}
-
-// ── Reminder ──────────────────────────────────────────────────────────────────
-
-function ReminderScreen() {
-  return (
-    <View style={styles.screenBlock}>
-      <KikoSpeechBubble
-        pose="happy"
-        text="I'll remind you to cook so it becomes a habit!"
-        typed
-      />
-      <Text style={styles.reminderNote}>
-        A gentle nudge on your cooking days — no spam, and you can turn it off anytime in Settings.
-      </Text>
-    </View>
-  );
-}
-
 // ── Scan intro ────────────────────────────────────────────────────────────────
 
 function ScanIntroScreen({
@@ -669,48 +484,6 @@ function ScanIntroScreen({
       />
     </View>
   );
-}
-
-// ── Footer factory ────────────────────────────────────────────────────────────
-
-function getFooter(
-  screenKey: OnboardingScreenKey,
-  context: {
-    selectedWeeklyGoal: string | null;
-    onCommitWeeklyGoal: () => void;
-    onRemindMe: () => void;
-    onSkipReminder: () => void;
-  },
-) {
-  if (screenKey === 'weeklyGoal') {
-    return (
-      <OnboardingStatefulButton
-        disabled={!context.selectedWeeklyGoal}
-        label="I'm committed"
-        onPress={context.onCommitWeeklyGoal}
-      />
-    );
-  }
-
-  if (screenKey === 'reminder') {
-    return (
-      <View style={styles.reminderFooter}>
-        <OnboardingStatefulButton
-          label="Remind me to cook"
-          onPress={context.onRemindMe}
-        />
-        <Pressable
-          accessibilityRole="button"
-          onPress={context.onSkipReminder}
-          style={styles.skipLink}
-        >
-          <Text style={styles.skipLinkText}>Maybe later</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  return null;
 }
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
@@ -999,66 +772,5 @@ const styles = StyleSheet.create({
   },
   screenBlock: {
     flex: 1,
-  },
-  // Weekly goal cards
-  goalOptionList: {
-    gap: 12,
-  },
-  goalCard: {
-    alignItems: 'center',
-    backgroundColor: onboardingColors.card,
-    borderColor: onboardingColors.border,
-    borderRadius: 22,
-    borderWidth: 1.5,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    minHeight: 68,
-    paddingHorizontal: 22,
-    paddingVertical: 18,
-    ...shadows.card,
-  },
-  goalCardSelected: {
-    backgroundColor: colors.coralSoft,
-    borderColor: onboardingColors.primary,
-  },
-  goalFrequency: {
-    color: onboardingColors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 20,
-    fontWeight: '800',
-    lineHeight: 26,
-  },
-  goalFrequencySelected: {
-    color: onboardingColors.primary,
-  },
-  goalLabel: {
-    color: onboardingColors.gray,
-    fontFamily: fontFamilies.body,
-    fontSize: 15,
-  },
-  goalLabelSelected: {
-    color: onboardingColors.primary,
-  },
-  // Reminder — iOS permission dialog
-  reminderNote: {
-    color: onboardingColors.gray,
-    fontFamily: fontFamilies.body,
-    fontSize: 15,
-    lineHeight: 21,
-    marginTop: 4,
-  },
-  // Reminder footer
-  reminderFooter: {
-    gap: 6,
-  },
-  skipLink: {
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  skipLinkText: {
-    color: onboardingColors.gray,
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
-    fontWeight: '700',
   },
 });

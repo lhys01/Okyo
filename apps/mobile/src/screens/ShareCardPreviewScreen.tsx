@@ -24,17 +24,15 @@ import { KikoMascot } from '../components/KikoMascot';
 import { RewardToast } from '../components/OkyoUI';
 import { colors, shadows } from '../theme/okyoTheme';
 import {
-  defaultRestaurantPack,
   defaultScanResult,
   getSafeRecipeForMode,
   getSafeRecipeMode,
-  mockRestaurantPacks,
   type Difficulty,
   type Recipe,
   type RecipeMode,
   type ScanResult,
 } from '../mocks';
-import type { RootStackParamList, ShareCardType } from '../navigation/types';
+import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getRecipeImageUrl } from '../utils/recipeImages';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
@@ -43,7 +41,6 @@ import { imageTraceLog, uiLog } from '../utils/uiDebug';
 type ShareCardRoute = RouteProp<RootStackParamList, 'ShareCardPreviewScreen'>;
 type ShareCardNavigation = NativeStackNavigationProp<RootStackParamList, 'ShareCardPreviewScreen'>;
 type ShareCardData = {
-  cardType: ShareCardType;
   dishName: string;
   eyebrow: string;
   restaurantPrice: number;
@@ -62,12 +59,10 @@ const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 export function ShareCardPreviewScreen() {
   const navigation = useNavigation<ShareCardNavigation>();
   const route = useRoute<ShareCardRoute>();
-  const cardType = getSafeCardType(route.params?.cardType);
   const storeMode = useOkyoStore((state) => state.selectedMode);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
@@ -78,23 +73,13 @@ export function ShareCardPreviewScreen() {
   const routeRecipe = scanContext?.recipe ?? null;
   const recipe = getShareRecipe(selectedMode, latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, routeRecipe, isDemoScan);
   const scanResult = scanContext?.scanResult ?? latestScanResult ?? (isDemoScan ? defaultScanResult : null);
-  const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
-  const latestChallenge = safeCompletedChallenges[safeCompletedChallenges.length - 1];
-  const selectedPack =
-    mockRestaurantPacks.find((restaurantPack) => restaurantPack.id === route.params?.packId) ??
-    defaultRestaurantPack;
-  const packDish =
-    selectedPack.dishes.find((dish) => dish.id === route.params?.dishId) ??
-    selectedPack.dishes[0];
   const cardRecipe = recipe ?? getSafeRecipeForMode(selectedMode);
-  const fallbackScanResult = scanResult ?? defaultScanResult;
   const hasScanShareContext = Boolean(
-    cardType !== 'scan_result' ||
     recipe ||
     (scanResult && (scanContext?.recipe || latestScanRecipe)) ||
     isDemoScan,
   );
-  const missingScanResult = cardType === 'scan_result' && !hasScanShareContext;
+  const missingScanResult = !hasScanShareContext;
 
   // Scan-result cards only claim savings from a price the user actually paid.
   // Demo scans are the labeled example exception.
@@ -110,98 +95,31 @@ export function ShareCardPreviewScreen() {
       ? recipe?.estimatedSavings ?? scanResult?.estimatedSavings ?? cardRecipe.estimatedSavings
       : Math.max(0, scanRestaurantPrice - scanHomemadeCost);
 
-    const dataByType: Record<ShareCardType, Omit<ShareCardData, 'caption'>> = {
-      scan_result: {
-        cardType: 'scan_result',
-        eyebrow: 'Restaurant-style swap',
-        dishName: scanDishName,
-        restaurantPrice: scanRestaurantPrice,
-        homemadeCost: scanHomemadeCost,
-        estimatedSavings: scanEstimatedSavings,
-        selectedMode,
-        recipe: cardRecipe,
-        scanResult,
-        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
-        homemadeImageUri: getHomemadeImageUri(cardRecipe),
-      },
-      challenge_result: {
-        cardType: 'challenge_result',
-        eyebrow: 'Challenge complete',
-        dishName: latestChallenge?.recipeTitle ?? fallbackScanResult.dishName,
-        restaurantPrice: fallbackScanResult.restaurantPrice,
-        homemadeCost: cardRecipe.estimatedHomemadeCost,
-        estimatedSavings: latestChallenge?.moneySaved ?? cardRecipe.estimatedSavings,
-        selectedMode: latestChallenge?.mode ?? selectedMode,
-        recipe: cardRecipe,
-        scanResult: fallbackScanResult,
-        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
-        homemadeImageUri: getHomemadeImageUri(cardRecipe),
-      },
-      ranking: {
-        cardType: 'ranking',
-        eyebrow: 'Cooking win',
-        dishName: fallbackScanResult.dishName,
-        restaurantPrice: fallbackScanResult.restaurantPrice,
-        homemadeCost: cardRecipe.estimatedHomemadeCost,
-        estimatedSavings: cardRecipe.estimatedSavings,
-        selectedMode,
-        recipe: cardRecipe,
-        scanResult: fallbackScanResult,
-        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
-        homemadeImageUri: getHomemadeImageUri(cardRecipe),
-      },
-      badge: {
-        cardType: 'badge',
-        eyebrow: 'Saved at home',
-        dishName: fallbackScanResult.dishName,
-        restaurantPrice: fallbackScanResult.restaurantPrice,
-        homemadeCost: cardRecipe.estimatedHomemadeCost,
-        estimatedSavings: cardRecipe.estimatedSavings,
-        selectedMode,
-        recipe: cardRecipe,
-        scanResult: fallbackScanResult,
-        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
-        homemadeImageUri: getHomemadeImageUri(cardRecipe),
-      },
-      restaurant_pack: {
-        cardType: 'restaurant_pack',
-        eyebrow: selectedPack.name,
-        dishName: packDish?.dishName ?? selectedPack.name,
-        restaurantPrice: packDish?.restaurantPrice ?? 0,
-        homemadeCost: packDish?.homemadeCost ?? 0,
-        estimatedSavings: packDish?.estimatedSavings ?? 0,
-        selectedMode: packDish?.difficulty ?? 'Pack',
-        recipe: cardRecipe,
-        scanResult: fallbackScanResult,
-        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
-        homemadeImageUri: getHomemadeImageUri(cardRecipe),
-      },
+    const nextData: Omit<ShareCardData, 'caption'> = {
+      eyebrow: 'Restaurant-style swap',
+      dishName: scanDishName,
+      restaurantPrice: scanRestaurantPrice,
+      homemadeCost: scanHomemadeCost,
+      estimatedSavings: scanEstimatedSavings,
+      selectedMode,
+      recipe: cardRecipe,
+      scanResult,
+      imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
+      homemadeImageUri: getHomemadeImageUri(cardRecipe),
     };
-    const nextData = dataByType[cardType];
 
     return {
       ...nextData,
-      caption: buildCaption(nextData, cardType === 'scan_result' ? hasUserPrice : true),
+      caption: buildCaption(nextData, hasUserPrice),
     };
   }, [
     cardRecipe,
-    cardType,
-    fallbackScanResult,
     hasUserPrice,
     isDemoScan,
     userRestaurantPrice,
-    latestChallenge?.mode,
-    latestChallenge?.moneySaved,
-    latestChallenge?.recipeTitle,
-    packDish?.difficulty,
-    packDish?.dishName,
-    packDish?.estimatedSavings,
-    packDish?.homemadeCost,
-    packDish?.restaurantPrice,
     recipe,
     scanResult,
     selectedMode,
-    selectedPack.name,
     shareImage?.uri,
   ]);
   const shareStats = useMemo(() => getShareStats(cardData.recipe), [cardData.recipe]);
@@ -215,12 +133,11 @@ export function ShareCardPreviewScreen() {
     if (didTrackGenerated.current) {
       return;
     }
-    uiLog('ShareCardPreviewScreen', 'enter', { cardType, missingScanResult });
+    uiLog('ShareCardPreviewScreen', 'enter', { cardType: 'scan_result', missingScanResult });
 
     didTrackGenerated.current = true;
     if (missingScanResult) {
       track(analyticsEvents.RESULT_ERROR, {
-        cardType,
         errorMessage: 'Share card opened without a latest scan result.',
         screen: 'ShareCardPreviewScreen',
       });
@@ -228,14 +145,12 @@ export function ShareCardPreviewScreen() {
     }
 
     track(analyticsEvents.SHARE_CARD_GENERATED, {
-      cardType,
       dishName: cardData.dishName,
       mode: cardData.selectedMode,
       savings: cardData.estimatedSavings,
-      packName: cardType === 'restaurant_pack' ? selectedPack.name : undefined,
       screen: 'ShareCardPreviewScreen',
     });
-  }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, cardType, missingScanResult, selectedPack.name]);
+  }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, missingScanResult]);
 
   useEffect(() => {
     const imageUri = cardData.imageUri ?? null;
@@ -243,7 +158,7 @@ export function ShareCardPreviewScreen() {
     checkImageFileExists(imageUri).then((fileExists) => {
       imageTraceLog('ShareCardPreviewScreen', {
         screen: 'ShareCardPreviewScreen',
-        cardType,
+        cardType: 'scan_result',
         recipeId: cardRecipe.id,
         imageSource: !usingFallback ? 'shareImage.uri' : 'recipe.imageUri',
         imageUri,
@@ -255,7 +170,7 @@ export function ShareCardPreviewScreen() {
         storageLocation: getStorageLocation(imageUri),
       });
     });
-  }, [cardData.imageUri, cardType]);
+  }, [cardData.imageUri]);
 
   const goBack = () => {
     if (navigation.canGoBack()) {
@@ -268,21 +183,19 @@ export function ShareCardPreviewScreen() {
 
   const shareCard = async () => {
     try {
-      uiLog('ShareCardPreviewScreen', 'share_tapped', { cardType, dishName: cardData.dishName });
+      uiLog('ShareCardPreviewScreen', 'share_tapped', { cardType: 'scan_result', dishName: cardData.dishName });
       track(analyticsEvents.SHARE_TAPPED, {
-        cardType,
         dishName: cardData.dishName,
         savings: cardData.estimatedSavings,
         screen: 'ShareCardPreviewScreen',
       });
       const didShareImage = await shareImageCard();
       if (didShareImage) {
-        const shareEventId = `share-card-${cardType}-${selectedMode}`;
+        const shareEventId = `share-card-scan-result-${selectedMode}`;
         const willAwardShareXp = !awardedXpEvents.includes(shareEventId);
         awardXPOnce(shareEventId, 20);
         showShareReward(willAwardShareXp ? 'Share moment ready +20 XP' : 'Share moment ready');
         track(analyticsEvents.SHARE_COMPLETED, {
-          cardType,
           dishName: cardData.dishName,
           savings: cardData.estimatedSavings,
           screen: 'ShareCardPreviewScreen',
@@ -296,12 +209,11 @@ export function ShareCardPreviewScreen() {
         return;
       }
 
-      const shareEventId = `share-card-${cardType}-${selectedMode}`;
+      const shareEventId = `share-card-scan-result-${selectedMode}`;
       const willAwardShareXp = !awardedXpEvents.includes(shareEventId);
       awardXPOnce(shareEventId, 20);
       showShareReward(willAwardShareXp ? 'Share moment ready +20 XP' : 'Share moment ready');
       track(analyticsEvents.SHARE_COMPLETED, {
-        cardType,
         dishName: cardData.dishName,
         savings: cardData.estimatedSavings,
         screen: 'ShareCardPreviewScreen',
@@ -341,7 +253,7 @@ export function ShareCardPreviewScreen() {
 
   const copyCaption = async () => {
     try {
-      uiLog('ShareCardPreviewScreen', 'copy_caption', { cardType });
+      uiLog('ShareCardPreviewScreen', 'copy_caption', { cardType: 'scan_result' });
       await Clipboard.setStringAsync(cardData.caption);
       showShareReward('Caption copied');
     } catch {
@@ -398,7 +310,7 @@ export function ShareCardPreviewScreen() {
           <View style={styles.remadeRow}>
             <View style={styles.remadeLine} />
             <Text style={styles.remadeText}>
-              {cardType === 'scan_result' && !hasUserPrice ? 'from photo to home recipe' : 'remade at home'}
+              {!hasUserPrice ? 'from photo to home recipe' : 'remade at home'}
             </Text>
             <View style={styles.remadeLine} />
           </View>
@@ -430,7 +342,7 @@ export function ShareCardPreviewScreen() {
         </View>
       </View>
 
-      {cardType === 'scan_result' && !hasUserPrice ? (
+      {!hasUserPrice ? (
         <View style={styles.priceSummary}>
           <View style={styles.priceColumn}>
             <Text style={styles.priceLabel}>Home estimate</Text>
@@ -571,13 +483,6 @@ function SecondaryAction({ icon, label, onPress }: { icon: ReactNode; label: str
       <Text style={styles.secondaryActionText}>{label}</Text>
     </Pressable>
   );
-}
-
-function getSafeCardType(cardType: unknown): ShareCardType {
-  const cardTypes: ShareCardType[] = ['scan_result', 'challenge_result', 'ranking', 'badge', 'restaurant_pack'];
-  return typeof cardType === 'string' && cardTypes.includes(cardType as ShareCardType)
-    ? cardType as ShareCardType
-    : 'scan_result';
 }
 
 function buildCaption(data: Omit<ShareCardData, 'caption'>, hasUserPrice: boolean) {
@@ -736,7 +641,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     flexDirection: 'row',
     gap: 4,
-    minHeight: 40,
+    minHeight: 44,
     paddingHorizontal: 10,
   },
   backText: {

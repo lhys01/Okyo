@@ -16,7 +16,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { createMockScan } from '../api/client';
+import { createScan } from '../api/client';
 import { OKYO_MAX_SCAN_IMAGE_DATA_URL_BYTES } from '../api/config';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import { FoodImage } from '../components/FoodImage';
@@ -77,7 +77,7 @@ export function ScanScreen() {
     });
     navigation.navigate('AnalysisLoadingScreen', { scanSessionId });
 
-    createMockScan({ requestId, image, mode: selectedMode, source })
+    createScan({ requestId, image, mode: selectedMode, source })
       .then((result) => {
         if (!isActiveScanSession(scanSessionId)) {
           logIgnoredScanSessionWrite(scanSessionId, 'ScanScreen.api_response_stale');

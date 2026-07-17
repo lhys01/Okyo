@@ -41,7 +41,7 @@ export class ScanConnectionError extends Error {
   }
 }
 
-export async function createMockScan(request: CreateScanRequest): Promise<CreateScanResult> {
+export async function createScan(request: CreateScanRequest): Promise<CreateScanResult> {
   return postJson<CreateScanResult>('/v1/scans', request);
 }
 

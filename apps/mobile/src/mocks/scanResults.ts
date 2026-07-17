@@ -16,8 +16,6 @@ export const mockScanResults: ScanResult[] = [
     difficulty: 'Easy',
     modes: ['Restaurant Copy', 'Budget', 'Healthy'],
     recipeId: 'recipe-spicy-vodka-rigatoni',
-    groceryListId: 'grocery-spicy-vodka-rigatoni',
-    shareCardId: 'share-spicy-vodka-rigatoni',
   },
   {
     id: '002',
@@ -34,8 +32,6 @@ export const mockScanResults: ScanResult[] = [
     difficulty: 'Easy',
     modes: ['Restaurant Copy', 'Budget', 'Healthy'],
     recipeId: 'recipe-cheddar-biscuits',
-    groceryListId: 'grocery-cheddar-biscuits',
-    shareCardId: 'share-cheddar-biscuits',
   },
   {
     id: '003',
@@ -52,8 +48,6 @@ export const mockScanResults: ScanResult[] = [
     difficulty: 'Easy',
     modes: ['Restaurant Copy', 'Budget', 'Healthy'],
     recipeId: 'recipe-cava-grain-bowl',
-    groceryListId: 'grocery-cava-grain-bowl',
-    shareCardId: 'share-cava-grain-bowl',
   },
 ];
 

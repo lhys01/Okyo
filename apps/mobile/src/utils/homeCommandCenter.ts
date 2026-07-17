@@ -1,14 +1,10 @@
-import type { RecommendationRecipe } from '../data/recommendedRecipes';
 import type { Recipe, RecipeQualityReport, SavedFoodIdea } from '../mocks';
-import type { OnboardingGoal, OnboardingMealRoutinePreference } from '../state/useOkyoStore';
 import { buildSmartGrocerySummary } from './smartGrocery';
 
 export type HomeCommandAction =
   | 'open_recipe'
-  | 'open_recommendation'
   | 'open_food_idea'
   | 'open_scan'
-  | 'open_discover'
   | 'open_grocery';
 
 export type HomeCommandKind =
@@ -28,7 +24,6 @@ export type HomeCommandCard = {
   action: HomeCommandAction;
   kind: HomeCommandKind;
   recipe?: Recipe;
-  recommendation?: RecommendationRecipe;
   reason?: string;
   tone: 'coral' | 'green' | 'cream';
 };
@@ -44,12 +39,8 @@ export type HomeCommandCenter = {
 
 type HomeCommandInput = {
   latestScanRecipe?: Recipe | null;
-  mealIdeas: RecommendationRecipe[];
-  onboardingGoal?: OnboardingGoal | null;
-  mealRoutinePreference?: OnboardingMealRoutinePreference | null;
   savedFoodIdeas: SavedFoodIdea[];
   savedRecipes: Recipe[];
-  weeklyScanCount: number;
 };
 
 export function deriveHomeCommandCenter(input: HomeCommandInput): HomeCommandCenter {
@@ -60,24 +51,22 @@ export function deriveHomeCommandCenter(input: HomeCommandInput): HomeCommandCen
     input.latestScanRecipe,
     ...safeSavedRecipes,
     ...safeIdeas.map((idea) => idea.extractedRecipe ?? null),
-    ...input.mealIdeas,
   ]);
-  const recommendation = input.mealIdeas[0];
-  const tonightRecipe = input.latestScanRecipe ?? safeSavedRecipes[0] ?? latestIdeaRecipe ?? quickRecipe ?? recommendation ?? null;
+  const tonightRecipe = input.latestScanRecipe ?? safeSavedRecipes[0] ?? latestIdeaRecipe ?? quickRecipe ?? null;
 
-  const tonightCard = buildTonightCard(tonightRecipe, recommendation);
+  const tonightCard = buildTonightCard(tonightRecipe);
   const foodIdeaCard = buildFoodIdeaCard(safeIdeas);
-  const scanCard = buildScanCard(input.weeklyScanCount);
+  const scanCard = buildScanCard(Boolean(input.latestScanRecipe || safeSavedRecipes.length));
   const useWhatYouHaveCard = buildUseWhatYouHaveCard(tonightRecipe, latestIdeaRecipe, safeIdeas);
-  const lowEffortCard = buildLowEffortCard(quickRecipe, recommendation);
-  const askOkyoCard = buildAskOkyoCard(input.mealRoutinePreference);
+  const lowEffortCard = buildLowEffortCard(quickRecipe);
+  const askOkyoCard = buildAskOkyoCard();
   const quickCards = [foodIdeaCard, scanCard, useWhatYouHaveCard, lowEffortCard, askOkyoCard].filter((card, index, cards) => (
     cards.findIndex((candidate) => candidate.id === card.id) === index
   ));
 
   return {
     headline: getHeadline(),
-    subheadline: getSubheadline(input.onboardingGoal, input.mealRoutinePreference),
+    subheadline: getSubheadline(),
     tonightCard,
     foxFind: buildFoxFind(input, quickRecipe),
     quickCards,
@@ -85,18 +74,17 @@ export function deriveHomeCommandCenter(input: HomeCommandInput): HomeCommandCen
   };
 }
 
-function buildTonightCard(recipe: Recipe | null, recommendation?: RecommendationRecipe): HomeCommandCard {
+function buildTonightCard(recipe: Recipe | null): HomeCommandCard {
   if (recipe) {
     return {
       id: `tonight-${recipe.id}`,
       title: recipe.title,
       body: `${recipe.difficulty} dinner, about ${getTotalMinutes(recipe)} min. Okyo can check, adapt, shop, and coach it.`,
       cta: 'Cook tonight',
-      action: recipe.id.startsWith('rec-') && recommendation?.id === recipe.id ? 'open_recommendation' : 'open_recipe',
+      action: 'open_recipe',
       kind: 'tonightPick',
       recipe,
-      recommendation: recipe.id.startsWith('rec-') ? recommendation : undefined,
-      reason: 'Picked from your latest scan, saved recipes, saved ideas, or current Okyo recommendations.',
+      reason: 'Picked from your latest scan, saved recipes, or saved ideas.',
       tone: 'coral',
     };
   }
@@ -142,11 +130,11 @@ function buildFoodIdeaCard(savedFoodIdeas: SavedFoodIdea[]): HomeCommandCard {
   };
 }
 
-function buildScanCard(weeklyScanCount: number): HomeCommandCard {
+function buildScanCard(hasRecipe: boolean): HomeCommandCard {
   return {
     id: 'scan-photo',
-    title: weeklyScanCount > 0 ? 'Scan another meal' : 'Scan your first meal',
-    body: weeklyScanCount > 0
+    title: hasRecipe ? 'Scan another meal' : 'Scan your first meal',
+    body: hasRecipe
       ? 'Turn a restaurant photo into an inspired-by recipe you can actually make.'
       : 'Photo scan is still the fastest way to teach Okyo what you crave.',
     cta: 'Open camera',
@@ -194,41 +182,38 @@ function buildUseWhatYouHaveCard(recipe: Recipe | null, ideaRecipe: Recipe | und
   };
 }
 
-function buildLowEffortCard(recipe: Recipe | null, recommendation?: RecommendationRecipe): HomeCommandCard {
+function buildLowEffortCard(recipe: Recipe | null): HomeCommandCard {
   if (recipe) {
     return {
       id: `low-${recipe.id}`,
       title: 'Low-effort dinner',
       body: `${recipe.title} has the cleanest path for tonight.`,
       cta: 'Open recipe',
-      action: recipe.id.startsWith('rec-') && recommendation?.id === recipe.id ? 'open_recommendation' : 'open_recipe',
+      action: 'open_recipe',
       kind: 'lowEffort',
       recipe,
-      recommendation: recipe.id.startsWith('rec-') ? recommendation : undefined,
-      reason: 'Lowest total time among local recipes and recommendations.',
+      reason: 'Lowest total time among your local recipes.',
       tone: 'green',
     };
   }
 
   return {
-    id: 'low-discover',
+    id: 'low-idea',
     title: 'Low-effort dinner',
-    body: 'Browse Okyo ideas when the fridge is giving nothing.',
-    cta: 'Browse ideas',
-    action: 'open_discover',
+    body: 'Save a craving or rough note when the fridge is giving nothing.',
+    cta: 'Save an idea',
+    action: 'open_food_idea',
     kind: 'lowEffort',
     reason: 'Fallback when no local recipe is ready.',
     tone: 'green',
   };
 }
 
-function buildAskOkyoCard(preference?: OnboardingMealRoutinePreference | null): HomeCommandCard {
+function buildAskOkyoCard(): HomeCommandCard {
   return {
     id: 'ask-okyo',
-    title: preference === 'budget_meals' ? 'Ask for a cheaper dinner' : 'Ask Okyo',
-    body: preference === 'high_protein'
-      ? 'Save a rough craving and Okyo can shape it into something filling.'
-      : 'Drop a messy craving, link, caption, or note and let Okyo check it.',
+    title: 'Ask Okyo',
+    body: 'Drop a messy craving, link, caption, or note and let Okyo check it.',
     cta: 'Start note',
     action: 'open_food_idea',
     kind: 'askOkyo',
@@ -260,7 +245,7 @@ function buildFoxFind(input: HomeCommandInput, quickRecipe: Recipe | null): Home
       title: 'Daily Fox Find',
       body: `Kiko found ${quickRecipe.title}: about ${getTotalMinutes(quickRecipe)} minutes and easy to adapt tonight.`,
       cta: 'Open recipe',
-      action: quickRecipe.id.startsWith('rec-') ? 'open_recommendation' : 'open_recipe',
+      action: 'open_recipe',
       kind: 'foxFind',
       recipe: quickRecipe,
       reason: 'Fastest local recipe candidate.',
@@ -287,16 +272,6 @@ function buildTasteNote(input: HomeCommandInput) {
     return 'Okyo learns on this device from what you save and cook.';
   }
 
-  if (input.mealRoutinePreference === 'quick_easy') {
-    return `Okyo noticed ${count} saved dinner signal${count === 1 ? '' : 's'} and will bias toward quicker ideas.`;
-  }
-  if (input.onboardingGoal === 'Save money') {
-    return `Okyo noticed ${count} saved dinner signal${count === 1 ? '' : 's'} and will look for cheaper swaps.`;
-  }
-  if (input.onboardingGoal === 'Learn to cook') {
-    return `Okyo noticed ${count} saved dinner signal${count === 1 ? '' : 's'} and will keep steps beginner-friendly.`;
-  }
-
   return `Okyo noticed ${count} saved dinner signal${count === 1 ? '' : 's'} on this device.`;
 }
 
@@ -313,16 +288,7 @@ function getHeadline() {
   return 'What should we cook tonight?';
 }
 
-function getSubheadline(goal?: OnboardingGoal | null, preference?: OnboardingMealRoutinePreference | null) {
-  if (goal === 'Save money' || preference === 'budget_meals') {
-    return 'Okyo is looking for a cookable, cheaper path from your photos, ideas, and saves.';
-  }
-  if (goal === 'Learn to cook') {
-    return 'Okyo is lining up recipes it can check, simplify, shop, and coach.';
-  }
-  if (preference === 'quick_easy') {
-    return 'Okyo is prioritizing fast dinner moves without burying the scan button.';
-  }
+function getSubheadline() {
   return 'Scan food, save messy ideas, or pick a dinner Okyo can check and adapt.';
 }
 

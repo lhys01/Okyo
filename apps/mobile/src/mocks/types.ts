@@ -33,8 +33,6 @@ export type ScanResult = {
   difficulty: Difficulty;
   modes: RecipeMode[];
   recipeId: string;
-  groceryListId: string;
-  shareCardId: string;
 };
 
 export type RecipeIngredient = {
@@ -147,13 +145,6 @@ export type Recipe = {
   isCompactRecipe?: boolean;
 };
 
-export type GroceryList = {
-  id: string;
-  recipeId: string;
-  title: string;
-  items: GroceryListItem[];
-};
-
 export type FoodIdeaSourceType =
   | 'link'
   | 'text'
@@ -191,52 +182,4 @@ export type SavedFoodIdea = {
   createdAt: string;
   extractedRecipe?: Recipe;
   qualityReport?: RecipeQualityReport;
-};
-
-export type ShareCard = {
-  id: string;
-  scanResultId?: string;
-  kind: 'scan-result' | 'ranking' | 'badge';
-  headline: string;
-  subheadline: string;
-  savedAmount?: number;
-  matchScore?: number;
-  footer: string;
-};
-
-export type RestaurantPackDish = {
-  id: string;
-  dishName: string;
-  restaurantPrice: number;
-  homemadeCost: number;
-  estimatedSavings: number;
-  difficulty: Difficulty;
-};
-
-export type RestaurantPack = {
-  id: string;
-  name: string;
-  dishes: RestaurantPackDish[];
-};
-
-export type XpEvent = {
-  id: string;
-  label: string;
-  points: number;
-};
-
-export type Badge = {
-  id: string;
-  name: string;
-  description: string;
-  unlocked: boolean;
-};
-
-export type LeaderboardEntry = {
-  id: string;
-  rank: number;
-  displayName: string;
-  category: string;
-  value: string;
-  xp: number;
 };

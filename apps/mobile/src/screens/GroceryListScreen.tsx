@@ -123,7 +123,6 @@ export function GroceryListScreen() {
   const exportToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
-  const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const didTrackView = useRef(false);
   const groceryItems = smartSummary.needToBuy;
   const pantryItems = smartSummary.probablyHave;
@@ -237,7 +236,6 @@ export function GroceryListScreen() {
       const exportEventId = `export-grocery-list-${recipe.id}`;
       const willAwardExportXp = !awardedXpEvents.includes(exportEventId);
       awardXPOnce(exportEventId, 10);
-      unlockBadge('grocery-exporter');
       showExportToast(willAwardExportXp ? 'Grocery list exported +10 XP' : 'Grocery list exported');
       track(analyticsEvents.GROCERY_LIST_EXPORTED, {
         dishName: recipe?.title ?? 'Missing recipe',
@@ -266,7 +264,6 @@ export function GroceryListScreen() {
       const exportEventId = `export-grocery-list-${recipe.id}`;
       const willAwardExportXp = !awardedXpEvents.includes(exportEventId);
       awardXPOnce(exportEventId, 10);
-      unlockBadge('grocery-exporter');
       showExportToast(willAwardExportXp ? 'Grocery list exported +10 XP' : 'Grocery list exported');
       track(analyticsEvents.GROCERY_LIST_EXPORTED, {
         dishName: recipe?.title ?? 'Missing recipe',

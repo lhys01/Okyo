@@ -68,12 +68,10 @@ export function ResultSummaryScreen() {
   const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
   const setUserRestaurantPrice = useOkyoStore((state) => state.setUserRestaurantPrice);
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
-  const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
   const saveRecipe = useOkyoStore((state) => state.saveRecipe);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
-  const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const routeScanSessionId = route.params?.scanSessionId;
   const stateSource = latestScanSession ? 'latest_scan_session' : 'legacy_latest_scan_fields';
   const latestScanResult = latestScanSession?.latestScanResult ?? storedLatestScanResult;
@@ -310,9 +308,6 @@ export function ResultSummaryScreen() {
         screen: 'ResultSummaryScreen',
       });
     }
-    if (!awardedXpEvents.includes(firstScanEventId)) {
-      incrementWeeklyScanCount();
-    }
     awardXPOnce(firstScanEventId, 10);
     track(analyticsEvents.RESULT_VIEWED, {
       dishName: scanResult.dishName,
@@ -320,7 +315,7 @@ export function ResultSummaryScreen() {
       savings: estimatedSavings ?? 0,
       screen: 'ResultSummaryScreen',
     });
-  }, [awardXPOnce, awardedXpEvents, estimatedSavings, firstScanEventId, incrementWeeklyScanCount, isDemoScan, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult, selectedMode, selectedModeRaw, setLatestScanResult, shouldShowFailure, shouldShowPartial]);
+  }, [awardXPOnce, estimatedSavings, firstScanEventId, isDemoScan, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult, selectedMode, selectedModeRaw, setLatestScanResult, shouldShowFailure, shouldShowPartial]);
 
   // Persist a user dish-name edit so every screen (Recipe, Grocery, Share,
   // Library-on-save) shows the corrected name, not just this one.
@@ -350,7 +345,6 @@ export function ResultSummaryScreen() {
     if (!alreadySaved) {
       awardXPOnce(saveEventId, 5);
     }
-    unlockBadge('first-dupe');
     track(analyticsEvents.RECIPE_SAVED, {
       dishName: selectedRecipe.title,
       mode: selectedRecipe.mode,
@@ -373,7 +367,6 @@ export function ResultSummaryScreen() {
     }
 
     navigation.navigate('ShareCardPreviewScreen', {
-      cardType: 'scan_result',
       mode: selectedMode,
       scanContext: {
         image: selectedScanImage,

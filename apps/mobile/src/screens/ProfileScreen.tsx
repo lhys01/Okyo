@@ -3,14 +3,12 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   NavArrowRight,
   Settings,
-  StatsUpSquare,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { KikoMascot } from '../components/KikoMascot';
-import { ProgressFill } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { colors, layout, spacing, surfaces, typography } from '../theme/okyoTheme';
@@ -22,14 +20,12 @@ const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 
 export function ProfileScreen() {
   const navigation = useNavigation<ProfileNavigation>();
-  const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
-  const weeklyGoal = useOkyoStore((state) => state.weeklyGoal);
+  const savedRecipeCount = useOkyoStore((state) => state.savedRecipes.length);
+  const xp = useOkyoStore((state) => state.xp);
 
-  const weeklyTarget = getWeeklyGoalCount(weeklyGoal);
-
-  const goTo = (screen: 'SavingsDashboardScreen' | 'SettingsScreen') => {
-    uiLog('ProfileScreen', 'open_row', { screen });
-    navigation.navigate(screen);
+  const openSettings = () => {
+    uiLog('ProfileScreen', 'open_row', { screen: 'SettingsScreen' });
+    navigation.navigate('SettingsScreen');
   };
 
   return (
@@ -42,35 +38,26 @@ export function ProfileScreen() {
           <View style={styles.headerCopy}>
             <Text style={styles.kicker}>Profile</Text>
             <Text style={styles.title}>Your Okyo kitchen</Text>
-            <Text style={styles.body}>{weeklyScanCount} scans this week</Text>
+            <Text style={styles.body}>{savedRecipeCount} saved {savedRecipeCount === 1 ? 'recipe' : 'recipes'}</Text>
           </View>
         </View>
 
         <View style={styles.progressCard}>
           <View style={styles.progressHeader}>
-            <Text style={styles.progressLabel}>Weekly cooking rhythm</Text>
-            <Text style={styles.progressValue}>{weeklyScanCount}/{weeklyTarget}</Text>
+            <Text style={styles.progressLabel}>Kitchen sparks</Text>
+            <Text style={styles.progressValue}>{xp} XP</Text>
           </View>
-          <ProgressFill progress={Math.min(weeklyScanCount / weeklyTarget, 1)} tone="green" style={styles.progressFillMeter} />
           <Text style={styles.progressHint}>
-            {weeklyScanCount >= weeklyTarget
-              ? 'You have a solid week of meal ideas ready.'
-              : 'Scan meals you actually want to remake. That is the whole habit.'}
+            Earn lightweight rewards by scanning, saving, cooking, and sharing. No rankings or streak pressure.
           </Text>
         </View>
 
         <View style={styles.menu}>
           <ProfileRow
-            icon={<StatsUpSquare color={colors.green} height={22} strokeWidth={2} width={22} />}
-            label="Savings"
-            meta="Kitchen ledger"
-            onPress={() => goTo('SavingsDashboardScreen')}
-          />
-          <ProfileRow
             icon={<Settings color={colors.charcoal} height={22} strokeWidth={2} width={22} />}
             label="Settings"
             meta="App and local data"
-            onPress={() => goTo('SettingsScreen')}
+            onPress={openSettings}
           />
         </View>
       </ScrollView>
@@ -99,20 +86,6 @@ function ProfileRow({
       <NavArrowRight color={colors.muted} height={21} strokeWidth={2} width={21} />
     </Pressable>
   );
-}
-
-function getWeeklyGoalCount(goal: string | null) {
-  switch (goal) {
-    case '1_meal':
-      return 1;
-    case '5_meals':
-      return 5;
-    case '7_meals':
-      return 7;
-    case '3_meals':
-    default:
-      return 3;
-  }
 }
 
 const styles = StyleSheet.create({
@@ -175,9 +148,6 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 14,
     fontWeight: '600',
-  },
-  progressFillMeter: {
-    marginTop: 14,
   },
   progressHint: {
     ...typography.caption,
