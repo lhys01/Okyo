@@ -280,6 +280,10 @@ export const compactRecipeOutputSchema = z.object({
 // contract. It may correct the canonical ingredient list and step content, but
 // cannot reintroduce enrichment or model-authored step metadata.
 const fullRecipeRepairStepSchema = z.object({
+  // stepIndex is the canonical zero-based identifier. stepNumber is accepted
+  // only as a provider compatibility input and converted from one-based.
+  stepIndex: z.number().int().nonnegative().optional(),
+  stepNumber: z.number().int().positive().optional(),
   title: z.string().optional().default(''),
   step: z.string().optional().default(''),
   instruction: z.string().optional().default(''),
@@ -1658,6 +1662,154 @@ async function callRecipeRepairStage(
   );
 }
 
+type FullRecipeRepairStep = z.infer<typeof fullRecipeRepairStepSchema>;
+
+type RepairReturnedStepNumber = {
+  returnedPosition: number;
+  stepIndex?: number;
+  stepNumber?: number;
+};
+
+type RejectedRepairStepIndex = {
+  returnedPosition: number;
+  targetIndex?: number;
+  reason: string;
+};
+
+type RepairStepHash = {
+  stepIndex?: number;
+  returnedPosition?: number;
+  hash: string;
+};
+
+type CompletionRepairMerge = {
+  steps: ProviderStepLike[];
+  acceptedStepIndices: number[];
+  rejectedStepIndices: RejectedRepairStepIndex[];
+  returnedTargets: Array<number | undefined>;
+};
+
+function getRawRepairStepNumbers(repairJson: unknown): RepairReturnedStepNumber[] {
+  const record = getRecord(repairJson);
+  const steps = Array.isArray(record?.steps) ? record.steps : [];
+  return steps.map((step, returnedPosition) => {
+    const stepRecord = getRecord(step);
+    return {
+      returnedPosition,
+      ...(typeof stepRecord?.stepIndex === 'number'
+        ? { stepIndex: stepRecord.stepIndex }
+        : {}),
+      ...(typeof stepRecord?.stepNumber === 'number'
+        ? { stepNumber: stepRecord.stepNumber }
+        : {}),
+    };
+  });
+}
+
+function getParsedRepairStepNumbers(
+  steps: FullRecipeRepairStep[],
+): RepairReturnedStepNumber[] {
+  return steps.map((step, returnedPosition) => ({
+    returnedPosition,
+    ...(step.stepIndex !== undefined ? { stepIndex: step.stepIndex } : {}),
+    ...(step.stepNumber !== undefined ? { stepNumber: step.stepNumber } : {}),
+  }));
+}
+
+function getRepairStepHash(step: ProviderStepLike | undefined): string {
+  const record = typeof step === 'object' && step ? step : {};
+  const safeCompletionText = [
+    getProviderStepText(step),
+    record.doneWhen ?? '',
+    record.safetyNote ?? '',
+  ].join('\n');
+  return createHash('sha256').update(safeCompletionText).digest('hex').slice(0, 16);
+}
+
+function getIndexedStepHashes(steps: ProviderStepLike[]): RepairStepHash[] {
+  return steps.map((step, stepIndex) => ({
+    stepIndex,
+    hash: getRepairStepHash(step),
+  }));
+}
+
+function mapCompletionRepairSteps(
+  previousSteps: ProviderStepLike[],
+  returnedSteps: FullRecipeRepairStep[],
+  requestedInvalidIndices: number[],
+): CompletionRepairMerge {
+  const requested = new Set(requestedInvalidIndices);
+  const accepted = new Set<number>();
+  const rejectedStepIndices: RejectedRepairStepIndex[] = [];
+  const returnedTargets: Array<number | undefined> = [];
+  const mergedSteps = [...previousSteps];
+  const isFullArray = returnedSteps.length === previousSteps.length;
+  const isPositionalSparseArray = returnedSteps.length === requestedInvalidIndices.length;
+
+  returnedSteps.forEach((step, returnedPosition) => {
+    const zeroBasedTarget = step.stepIndex;
+    const oneBasedTarget = step.stepNumber !== undefined
+      ? step.stepNumber - 1
+      : undefined;
+    if (zeroBasedTarget !== undefined && oneBasedTarget !== undefined &&
+      zeroBasedTarget !== oneBasedTarget) {
+      returnedTargets.push(undefined);
+      rejectedStepIndices.push({
+        returnedPosition,
+        reason: 'conflicting_step_identifiers',
+      });
+      return;
+    }
+
+    const targetIndex = zeroBasedTarget ?? oneBasedTarget ?? (
+      isFullArray
+        ? returnedPosition
+        : isPositionalSparseArray
+          ? requestedInvalidIndices[returnedPosition]
+          : undefined
+    );
+    returnedTargets.push(targetIndex);
+    if (targetIndex === undefined) {
+      rejectedStepIndices.push({ returnedPosition, reason: 'missing_step_index' });
+      return;
+    }
+    if (targetIndex < 0 || targetIndex >= previousSteps.length) {
+      rejectedStepIndices.push({
+        returnedPosition,
+        targetIndex,
+        reason: 'step_index_out_of_range',
+      });
+      return;
+    }
+    if (!requested.has(targetIndex)) {
+      rejectedStepIndices.push({
+        returnedPosition,
+        targetIndex,
+        reason: 'step_index_not_requested',
+      });
+      return;
+    }
+    if (accepted.has(targetIndex)) {
+      rejectedStepIndices.push({
+        returnedPosition,
+        targetIndex,
+        reason: 'duplicate_step_index',
+      });
+      return;
+    }
+
+    accepted.add(targetIndex);
+    mergedSteps[targetIndex] = step;
+  });
+
+  return {
+    steps: mergedSteps,
+    acceptedStepIndices: [...accepted].sort((a, b) => a - b),
+    rejectedStepIndices,
+    returnedTargets,
+  };
+}
+
 function applyFullRecipeRepairPatch(
   input: { analysis: FoodImageAnalysis } & Partial<ScanExecutionContext>,
   previousOutput: OpenRouterRecipeOutput,
@@ -1665,10 +1817,27 @@ function applyFullRecipeRepairPatch(
   issues: string[],
 ): OpenRouterRecipeOutput {
   const initialDiagnostics = getFullRecipeRepairDiagnostics(previousOutput, input.analysis);
+  const requestedInvalidIndices = initialDiagnostics.stepsMissingCompletionCue;
+  const rawReturnedStepNumbers = getRawRepairStepNumbers(repairJson);
+  const originalStepTextHashes = getIndexedStepHashes(previousOutput.steps);
   const parsedPatch = fullRecipeRepairPatchSchema.safeParse(repairJson);
   if (!parsedPatch.success) {
+    logFullRecipeRepairTrace(input, {
+      requestedInvalidIndices,
+      rawReturnedStepNumbers,
+      parsedReturnedStepNumbers: [],
+      acceptedStepIndices: [],
+      rejectedStepIndices: rawReturnedStepNumbers.map(({ returnedPosition }) => ({
+        returnedPosition,
+        reason: 'repair_schema_invalid',
+      })),
+      originalStepTextHashes,
+      repairedStepTextHashes: [],
+      mergedStepTextHashes: originalStepTextHashes,
+      changedFields: [],
+    });
     logFullRecipeRepairValidation(input, {
-      initialInvalidStepIndices: initialDiagnostics.stepsMissingCompletionCue,
+      initialInvalidStepIndices: requestedInvalidIndices,
       repairedInvalidStepIndices: [],
       unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
       unknownIngredientsAfterRepair: [],
@@ -1679,27 +1848,25 @@ function applyFullRecipeRepairPatch(
   }
 
   const patch = parsedPatch.data;
+  const parsedReturnedStepNumbers = getParsedRepairStepNumbers(patch.steps);
   const canonicalIngredients = normalizeProviderIngredientList(previousOutput.ingredients);
   const repairedIngredients = normalizeProviderIngredientList(patch.ingredients);
   const completionOnlyRepair = issues.every(
     (issue) => issue === 'step_missing_time_or_completion_cue',
   );
-  if (completionOnlyRepair && patch.steps.length !== previousOutput.steps.length) {
-    logFullRecipeRepairValidation(input, {
-      initialInvalidStepIndices: initialDiagnostics.stepsMissingCompletionCue,
-      repairedInvalidStepIndices: [],
-      unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
-      unknownIngredientsAfterRepair: [],
-      presentationOnlyStepIndices: initialDiagnostics.presentationOnlyStepIndices,
-      repairChangedFields: ['steps.length'],
-    });
-    throw new RecipeValidationError(['repair_changed_step_count']);
-  }
-  const invalidCompletionIndices = new Set(initialDiagnostics.stepsMissingCompletionCue);
-  const repairedSteps = completionOnlyRepair
-    ? previousOutput.steps.map((step, index) =>
-        invalidCompletionIndices.has(index) ? patch.steps[index] : step)
-    : patch.steps;
+  const completionMerge = completionOnlyRepair
+    ? mapCompletionRepairSteps(
+        previousOutput.steps,
+        patch.steps,
+        requestedInvalidIndices,
+      )
+    : {
+        steps: patch.steps,
+        acceptedStepIndices: patch.steps.map((_step, index) => index),
+        rejectedStepIndices: [],
+        returnedTargets: patch.steps.map((_step, index) => index),
+      };
+  const repairedSteps = completionMerge.steps;
   const unknownIngredientListEntries = repairedIngredients
     .filter((ingredient) => !findMatchingIngredientName(ingredient, canonicalIngredients))
     .map(canonicalIngredientName)
@@ -1721,36 +1888,52 @@ function applyFullRecipeRepairPatch(
     ...unknownStepIngredients,
   ])];
   const repairedInvalidStepIndices = getInvalidCompletionStepIndices(repairedSteps);
-  const repairChangedFields = getRepairChangedFields(previousOutput, {
-    ingredients: repairedIngredients,
-    steps: repairedSteps.map((step) => typeof step === 'string'
-      ? { title: '', step, instruction: '', doneWhen: '', safetyNote: '' }
-      : {
-          title: step.title ?? '',
-          step: step.step ?? '',
-          instruction: step.instruction ?? '',
-          doneWhen: step.doneWhen ?? '',
-          safetyNote: step.safetyNote ?? '',
-        }),
-  });
+  const repairChangedFields = getRepairChangedFields(
+    previousOutput,
+    repairedIngredients,
+    repairedSteps,
+  );
+  const repairedStepTextHashes = patch.steps.map((step, returnedPosition) => ({
+    returnedPosition,
+    ...(completionMerge.returnedTargets[returnedPosition] !== undefined
+      ? { stepIndex: completionMerge.returnedTargets[returnedPosition] }
+      : {}),
+    hash: getRepairStepHash(step),
+  }));
 
   const repairTelemetry = {
-    initialInvalidStepIndices: initialDiagnostics.stepsMissingCompletionCue,
+    initialInvalidStepIndices: requestedInvalidIndices,
     repairedInvalidStepIndices,
     unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
     unknownIngredientsAfterRepair,
     presentationOnlyStepIndices: initialDiagnostics.presentationOnlyStepIndices,
     repairChangedFields,
   };
+  const logRepairTrace = (
+    mergedSteps: ProviderStepLike[],
+    changedFields: string[],
+  ) => logFullRecipeRepairTrace(input, {
+    requestedInvalidIndices,
+    rawReturnedStepNumbers,
+    parsedReturnedStepNumbers,
+    acceptedStepIndices: completionMerge.acceptedStepIndices,
+    rejectedStepIndices: completionMerge.rejectedStepIndices,
+    originalStepTextHashes,
+    repairedStepTextHashes,
+    mergedStepTextHashes: getIndexedStepHashes(mergedSteps),
+    changedFields,
+  });
 
   // Validate the patch against the previous canonical ingredient concepts
   // before it can be merged. Aliases and plurals use the same matcher as final
   // closure validation; genuinely new or removed ingredients fail closed.
   if (unknownIngredientsAfterRepair.length > 0) {
+    logRepairTrace(repairedSteps, repairChangedFields);
     logFullRecipeRepairValidation(input, repairTelemetry);
     throw new RecipeValidationError(['step_uses_unlisted_ingredients']);
   }
   if (removedCanonicalIngredients.length > 0) {
+    logRepairTrace(repairedSteps, repairChangedFields);
     logFullRecipeRepairValidation(input, repairTelemetry);
     throw new RecipeValidationError(['repair_changed_ingredient_set']);
   }
@@ -1763,37 +1946,63 @@ function applyFullRecipeRepairPatch(
   });
   const normalized = normalizeFullRecipeOutput(merged, input.analysis);
   const finalDiagnostics = getFullRecipeRepairDiagnostics(normalized, input.analysis);
+  const finalChangedFields = getRepairChangedFields(
+    previousOutput,
+    normalized.ingredients,
+    normalized.steps,
+  );
+  logRepairTrace(normalized.steps, finalChangedFields);
   logFullRecipeRepairValidation(input, {
     ...repairTelemetry,
     repairedInvalidStepIndices: finalDiagnostics.stepsMissingCompletionCue,
     unknownIngredientsAfterRepair: finalDiagnostics.unknownIngredients,
+    repairChangedFields: finalChangedFields,
   });
+  if (completionOnlyRepair) {
+    const changedRequestedCompletionField = completionMerge.acceptedStepIndices.some(
+      (stepIndex) => finalChangedFields.some((field) =>
+        field === `steps.${stepIndex}.step` || field === `steps.${stepIndex}.doneWhen`),
+    );
+    const requestedStepStillInvalid = requestedInvalidIndices.some((stepIndex) =>
+      finalDiagnostics.stepsMissingCompletionCue.includes(stepIndex));
+    if (!changedRequestedCompletionField || requestedStepStillInvalid) {
+      throw new RecipeValidationError([
+        'repair_no_effect',
+        ...(requestedStepStillInvalid ? ['step_missing_time_or_completion_cue'] : []),
+        ...(getRecipeQualityIssues(normalized, input.analysis, false).includes('vague_step')
+          ? ['vague_step']
+          : []),
+      ]);
+    }
+  }
   return normalized;
 }
 
 function getRepairChangedFields(
   previousOutput: OpenRouterRecipeOutput,
-  patch: z.infer<typeof fullRecipeRepairPatchSchema>,
+  repairedIngredients: string[],
+  repairedSteps: ProviderStepLike[],
 ): string[] {
   const changed = new Set<string>();
   if (JSON.stringify(normalizeProviderIngredientList(previousOutput.ingredients)) !==
-    JSON.stringify(normalizeProviderIngredientList(patch.ingredients))) {
+    JSON.stringify(normalizeProviderIngredientList(repairedIngredients))) {
     changed.add('ingredients');
   }
-  if (previousOutput.steps.length !== patch.steps.length) {
+  if (previousOutput.steps.length !== repairedSteps.length) {
     changed.add('steps.length');
   }
-  const maxSteps = Math.max(previousOutput.steps.length, patch.steps.length);
+  const maxSteps = Math.max(previousOutput.steps.length, repairedSteps.length);
   for (let index = 0; index < maxSteps; index += 1) {
     const before = previousOutput.steps[index];
-    const after = patch.steps[index];
+    const after = repairedSteps[index];
     if (!before || !after) continue;
     const beforeRecord: SafeRecord = typeof before === 'object' && before ? before : {};
+    const afterRecord: SafeRecord = typeof after === 'object' && after ? after : {};
     const fields = {
-      title: [beforeRecord.title ?? '', after.title],
+      title: [beforeRecord.title ?? '', afterRecord.title ?? ''],
       step: [getProviderStepText(before), getProviderStepText(after)],
-      doneWhen: [beforeRecord.doneWhen ?? '', after.doneWhen],
-      safetyNote: [beforeRecord.safetyNote ?? '', after.safetyNote],
+      doneWhen: [beforeRecord.doneWhen ?? '', afterRecord.doneWhen ?? ''],
+      safetyNote: [beforeRecord.safetyNote ?? '', afterRecord.safetyNote ?? ''],
     };
     for (const [field, [beforeValue, afterValue]] of Object.entries(fields)) {
       if (String(beforeValue).trim() !== String(afterValue).trim()) {
@@ -1817,6 +2026,32 @@ function logFullRecipeRepairValidation(
 ): void {
   console.log('[recipe_repair_validation]', {
     requestId: input.requestId,
+    ...details,
+  });
+}
+
+function logFullRecipeRepairTrace(
+  input: Partial<ScanExecutionContext>,
+  details: {
+    requestedInvalidIndices: number[];
+    rawReturnedStepNumbers: RepairReturnedStepNumber[];
+    parsedReturnedStepNumbers: RepairReturnedStepNumber[];
+    acceptedStepIndices: number[];
+    rejectedStepIndices: RejectedRepairStepIndex[];
+    originalStepTextHashes: RepairStepHash[];
+    repairedStepTextHashes: RepairStepHash[];
+    mergedStepTextHashes: RepairStepHash[];
+    changedFields: string[];
+  },
+): void {
+  console.log('[recipe_repair_trace]', {
+    requestId: input.requestId,
+    indexSemantics: {
+      stepIndex: 'zero_based',
+      stepNumber: 'one_based_converted_to_zero_based',
+      arrayPosition: 'zero_based_only_for_full_arrays',
+      sparsePosition: 'ordered_requested_invalid_indices_when_counts_match',
+    },
     ...details,
   });
 }
@@ -1914,9 +2149,10 @@ function getFullRecipeRepairPrompt(
         title: previousOutput.title,
         ingredients: previousOutput.ingredients,
         equipment: previousOutput.equipment,
-        steps: previousOutput.steps.map((step) => typeof step === 'string'
-          ? { title: '', step }
+        steps: previousOutput.steps.map((step, stepIndex) => typeof step === 'string'
+          ? { stepIndex, title: '', step }
           : {
+              stepIndex,
               title: step.title,
               step: getProviderStepText(step),
               ...(step.doneWhen ? { doneWhen: step.doneWhen } : {}),
@@ -1933,13 +2169,15 @@ function getFullRecipeRepairPrompt(
     `Correct the previous recipe JSON for "${analysis.dishName}".`,
     `Exact validation failures: ${issues.join(', ')}.`,
     previousOutput
-      ? 'Return ONLY a minified correction object with exactly two keys: {"ingredients":[...the entire corrected ingredient list...],"steps":[...the entire corrected step list...]}. Do not repeat title, equipment, times, servings, or difficulty.'
+      ? issues.every((issue) => issue === 'step_missing_time_or_completion_cue')
+        ? 'Return ONLY a minified correction object with exactly two keys: {"ingredients":[...copy the entire locked ingredient list...],"steps":[...only the corrected invalid steps...]}. Every returned step MUST include stepIndex using the zero-based index supplied below. Do not return unrelated steps.'
+        : 'Return ONLY a minified correction object with exactly two keys: {"ingredients":[...the entire corrected ingredient list...],"steps":[...the entire corrected step list...]}. Do not repeat title, equipment, times, servings, or difficulty.'
       : 'Return ONLY the entire corrected recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, and skillLevel.',
     'Fix every listed problem. Every active cooking instruction must contain a specific time, temperature, or concrete sensory cue such as golden, tender, bubbling, thickened, or aromatic.',
     'Never use vague completion language such as "until done", "until ready", or "cook thoroughly". Do not add a cue to non-cooking actions such as gathering ingredients, plating, garnishing, serving, or dividing into bowls unless that same step also cooks food.',
     'INGREDIENT LOCK: do not introduce, substitute, or remove any ingredient concept. Copy the complete canonical ingredient list below. An amount may change only to fix ingredients_missing_amounts. Every ingredient word in every repaired step must resolve to that list.',
-    `Exact invalid active-cooking step indices (zero-based): ${JSON.stringify(diagnostics?.stepsMissingCompletionCue ?? [])}. Correct those steps without rewriting already-valid steps.`,
-    'Step shape: {"title":"short action","step":"cookable instruction with time or sensory completion","doneWhen":"optional useful cue","safetyNote":"required food-safety rule when applicable"}. Step numbers, phases, per-step ingredients, and per-step tools are derived locally and are not required.',
+    `Exact invalid active-cooking step indices (zero-based): ${JSON.stringify(diagnostics?.stepsMissingCompletionCue ?? [])}. Correct exactly those steps without rewriting already-valid steps.`,
+    'Corrected step shape: {"stepIndex":3,"title":"short action","step":"cookable instruction","doneWhen":"specific time, temperature, or sensory cue","safetyNote":"required food-safety rule when applicable"}. stepIndex is always zero-based. Do not use human one-based numbering. Phases, per-step ingredients, and per-step tools are derived locally.',
     `Use at least ${bounds.min} steps and preferably no more than ${bounds.max}; keep each instruction under 30 words. A presentation-only final step may simply serve or plate the finished dish.`,
     'INGREDIENT CLOSURE IS MANDATORY: every ingredient named in an instruction must appear in the locked top-level ingredient list with an exact usable amount.',
     'Safety is mandatory: poultry 165°F/74°C; ground meat 160°F/71°C; pork and cooked fish 145°F/63°C. Raw-fish dishes must specify sushi-grade or previously frozen fish kept cold.',

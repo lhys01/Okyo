@@ -15,6 +15,9 @@ import {
 } from './openRouterProvider.js';
 import { RecipeValidationError } from './recipeGenerationError.js';
 import {
+  fullCoreIndexThreeInitialFixture,
+  fullCoreIndexThreeSensoryPatchFixture,
+  fullCoreIndexThreeTimePatchFixture,
   fullCoreRepairInitialFixture,
   fullCoreRepairSuccessfulPatchFixture,
   fullCoreRepairUnknownIngredientPatchFixture,
@@ -46,6 +49,30 @@ const quota: ProviderQuota = {
     return { spendEventId: `spend-${input.operation}`, operation: input.operation };
   },
   async completeAttempt() {},
+};
+
+type RepairTraceEvent = {
+  requestedInvalidIndices: number[];
+  rawReturnedStepNumbers: Array<{
+    returnedPosition: number;
+    stepIndex?: number;
+    stepNumber?: number;
+  }>;
+  parsedReturnedStepNumbers: Array<{
+    returnedPosition: number;
+    stepIndex?: number;
+    stepNumber?: number;
+  }>;
+  acceptedStepIndices: number[];
+  rejectedStepIndices: Array<{
+    returnedPosition: number;
+    targetIndex?: number;
+    reason: string;
+  }>;
+  originalStepTextHashes: Array<{ stepIndex: number; hash: string }>;
+  repairedStepTextHashes: Array<{ returnedPosition: number; stepIndex?: number; hash: string }>;
+  mergedStepTextHashes: Array<{ stepIndex: number; hash: string }>;
+  changedFields: string[];
 };
 
 function analysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAnalysis {
@@ -129,6 +156,40 @@ function fullRecipeRepairPatch(
       ...(step.safetyNote ? { safetyNote: String(step.safetyNote) } : {}),
     })),
   };
+}
+
+async function runIndexThreeRepairSuccess(
+  dishName: string,
+  repairOutput: unknown,
+) {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(calls === 1
+      ? structuredClone(fullCoreIndexThreeInitialFixture)
+      : structuredClone(repairOutput));
+  };
+  console.log = (...args: unknown[]) => { events.push(args); };
+  try {
+    const timing = createScanAggregateTiming({ requestId: `trace-${dishName}` });
+    recordLogicalProviderCall(timing);
+    recordProviderAttempt(timing);
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName, broadDishCategory: 'burger/sandwich' }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: `trace-${dishName}`,
+      timing,
+    });
+    return { calls, events, output, timing };
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
 }
 
 test('full recipe succeeds on the initial provider output with local step metadata', async () => {
@@ -230,6 +291,7 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
     assert.match(repairPrompt, /step_missing_time_or_completion_cue/);
     assert.match(repairPrompt, /exactly two keys/);
     assert.match(repairPrompt, /Exact invalid active-cooking step indices \(zero-based\): \[1\]/);
+    assert.match(repairPrompt, /MUST include stepIndex/);
     assert.match(repairPrompt, /do not introduce, substitute, or remove any ingredient concept/i);
     assert.match(repairPrompt, /Full canonical ingredient list/);
     assert.match(repairPrompt, /Complete previous recipe object/);
@@ -241,6 +303,7 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
       '[failover_summary]',
       '[recipe_validation_details]',
       '[recipe_repair_validation]',
+      '[recipe_repair_trace]',
     ]);
     const telemetry = events.filter(([label]) => telemetryLabels.has(String(label)));
     assert.ok([...telemetryLabels].every((label) =>
@@ -266,6 +329,178 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
     assert.equal(aggregate.providerAttempts, 3);
     assert.equal(aggregate.recipeMs, timing.recipeMs);
     assert.equal(aggregate.repairMs, timing.repairMs);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('zero-based sparse repair updates exactly invalid step index 3 and survives normalization', async () => {
+  const { calls, events, output, timing } = await runIndexThreeRepairSuccess(
+    'Zero Based Chicken Sandwich',
+    fullCoreIndexThreeTimePatchFixture,
+  );
+  assert.equal(calls, 2);
+  assert.equal(timing.logicalProviderCalls, 3);
+  assert.equal(timing.providerAttempts, 3);
+  assert.equal(getScanAggregateTimingEvent(timing, 'success').status, 'success');
+  assert.equal(
+    typeof output.steps[3] === 'object' && output.steps[3].step,
+    'Cook the chicken in the large skillet for 6 minutes, flipping halfway.',
+  );
+  assert.deepEqual(
+    typeof output.steps[3] === 'object' && output.steps[3].ingredients,
+    ['chicken breast'],
+  );
+  assert.equal(
+    typeof output.steps[4] === 'object' && output.steps[4].step,
+    fullCoreIndexThreeInitialFixture.steps[4].step,
+  );
+  assert.deepEqual(output.ingredients, fullCoreIndexThreeInitialFixture.ingredients);
+
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.requestedInvalidIndices, [3]);
+  assert.deepEqual(trace.rawReturnedStepNumbers, [{ returnedPosition: 0, stepIndex: 3 }]);
+  assert.deepEqual(trace.parsedReturnedStepNumbers, [{ returnedPosition: 0, stepIndex: 3 }]);
+  assert.deepEqual(trace.acceptedStepIndices, [3]);
+  assert.deepEqual(trace.rejectedStepIndices, []);
+  assert.ok(trace.changedFields.includes('steps.3.step'));
+  assert.notEqual(trace.originalStepTextHashes[3].hash, trace.mergedStepTextHashes[3].hash);
+  assert.equal(trace.repairedStepTextHashes[0].hash, trace.mergedStepTextHashes[3].hash);
+  assert.equal(trace.originalStepTextHashes[4].hash, trace.mergedStepTextHashes[4].hash);
+  const validation = events.find(([label]) => label === '[recipe_repair_validation]')?.[1] as {
+    repairedInvalidStepIndices: number[];
+    repairChangedFields: string[];
+  };
+  assert.deepEqual(validation.repairedInvalidStepIndices, []);
+  assert.ok(validation.repairChangedFields.includes('steps.3.step'));
+});
+
+test('one-based provider stepNumber 4 converts to zero-based index 3', async () => {
+  const { calls, events, output, timing } = await runIndexThreeRepairSuccess(
+    'One Based Chicken Sandwich',
+    fullCoreIndexThreeSensoryPatchFixture,
+  );
+  assert.equal(calls, 2);
+  assert.equal(timing.logicalProviderCalls, 3);
+  assert.equal(
+    typeof output.steps[3] === 'object' && output.steps[3].doneWhen,
+    'The center reaches 165°F/74°C and the juices run clear.',
+  );
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.rawReturnedStepNumbers, [{ returnedPosition: 0, stepNumber: 4 }]);
+  assert.deepEqual(trace.parsedReturnedStepNumbers, [{ returnedPosition: 0, stepNumber: 4 }]);
+  assert.deepEqual(trace.acceptedStepIndices, [3]);
+  assert.ok(trace.changedFields.includes('steps.3.doneWhen'));
+});
+
+test('a full returned steps array applies only requested index 3', async () => {
+  const fullArrayPatch = {
+    ingredients: [...fullCoreIndexThreeInitialFixture.ingredients],
+    steps: fullCoreIndexThreeInitialFixture.steps.map((step, index) => {
+      if (index === 2) {
+        return { ...step, step: 'Toast the buns for 9 minutes until charred.' };
+      }
+      if (index === 3) {
+        return {
+          ...step,
+          step: 'Cook the chicken for 6 minutes until it reaches 165°F/74°C.',
+        };
+      }
+      if (index === 4) {
+        return { ...step, step: 'Serve the sandwich with an unrelated rewrite.' };
+      }
+      return { ...step };
+    }),
+  };
+  const { events, output } = await runIndexThreeRepairSuccess(
+    'Full Array Chicken Sandwich',
+    fullArrayPatch,
+  );
+  assert.equal(
+    typeof output.steps[2] === 'object' && output.steps[2].step,
+    fullCoreIndexThreeInitialFixture.steps[2].step,
+  );
+  assert.match(typeof output.steps[3] === 'object' ? output.steps[3].step : '', /6 minutes/);
+  assert.equal(
+    typeof output.steps[4] === 'object' && output.steps[4].step,
+    fullCoreIndexThreeInitialFixture.steps[4].step,
+  );
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.acceptedStepIndices, [3]);
+  assert.deepEqual(
+    trace.rejectedStepIndices.map(({ targetIndex, reason }) => ({ targetIndex, reason })),
+    [
+      { targetIndex: 0, reason: 'step_index_not_requested' },
+      { targetIndex: 1, reason: 'step_index_not_requested' },
+      { targetIndex: 2, reason: 'step_index_not_requested' },
+      { targetIndex: 4, reason: 'step_index_not_requested' },
+    ],
+  );
+  assert.deepEqual(trace.changedFields, ['steps.3.step']);
+});
+
+test('an unnumbered sparse correction maps positionally to the sole invalid index', async () => {
+  const sparsePatch = {
+    ingredients: [...fullCoreIndexThreeInitialFixture.ingredients],
+    steps: [{
+      title: 'Cook Chicken',
+      step: 'Cook the chicken for 6 minutes until it reaches 165°F/74°C.',
+      safetyNote: 'Cook chicken to 165°F/74°C.',
+    }],
+  };
+  const { events, output } = await runIndexThreeRepairSuccess(
+    'Sparse Chicken Sandwich',
+    sparsePatch,
+  );
+  assert.match(typeof output.steps[3] === 'object' ? output.steps[3].step : '', /6 minutes/);
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.parsedReturnedStepNumbers, [{ returnedPosition: 0 }]);
+  assert.deepEqual(trace.acceptedStepIndices, [3]);
+  assert.deepEqual(trace.rejectedStepIndices, []);
+});
+
+test('a completion-only repair with no applicable change fails as repair_no_effect', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  let calls = 0;
+  const wrongHumanIndexPatch = {
+    ingredients: [...fullCoreIndexThreeInitialFixture.ingredients],
+    steps: fullCoreIndexThreeInitialFixture.steps.map((step, index) =>
+      index === 2
+        ? { ...step, step: 'Cook the chicken for 6 minutes until it reaches 165°F/74°C.' }
+        : { ...step }),
+  };
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(calls === 1
+      ? structuredClone(fullCoreIndexThreeInitialFixture)
+      : wrongHumanIndexPatch);
+  };
+  console.log = (...args: unknown[]) => { events.push(args); };
+  try {
+    await assert.rejects(
+      generateRecipeWithOpenRouter({
+        analysis: analysis({
+          dishName: 'No Effect Chicken Sandwich',
+          broadDishCategory: 'burger/sandwich',
+        }),
+        config: fullConfig,
+        mode: 'Restaurant Copy',
+        quota,
+        requestId: 'full-repair-no-effect',
+      }),
+      (error: unknown) => error instanceof RecipeValidationError &&
+        error.issues.includes('repair_no_effect'),
+    );
+    assert.equal(calls, 2);
+    const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+    assert.deepEqual(trace.acceptedStepIndices, [3]);
+    assert.ok(trace.rejectedStepIndices.some(({ targetIndex, reason }) =>
+      targetIndex === 2 && reason === 'step_index_not_requested'));
+    assert.deepEqual(trace.changedFields, []);
+    assert.equal(trace.originalStepTextHashes[3].hash, trace.mergedStepTextHashes[3].hash);
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;

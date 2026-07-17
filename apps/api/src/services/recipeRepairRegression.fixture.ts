@@ -51,3 +51,56 @@ export const fullCoreRepairUnknownIngredientPatchFixture = {
         }
       : { ...step }),
 };
+
+// Production-shaped five-step fixture for request
+// scan-photos-1784255341665-br54io: one active invalid step at zero-based index
+// 3 and one presentation-only step at index 4.
+export const fullCoreIndexThreeInitialFixture = {
+  title: 'Grilled Chicken Sandwich',
+  ingredients: [
+    '2 boneless chicken breasts',
+    '2 sandwich buns',
+    '2 tbsp mayonnaise',
+    '1 tbsp mustard',
+    '1/2 tsp salt',
+    '1 tbsp olive oil',
+  ],
+  equipment: ['mixing bowl', 'large skillet'],
+  steps: [
+    { title: 'Gather', step: 'Gather the chicken, buns, mayonnaise, mustard, salt, and olive oil.' },
+    { title: 'Mix Sauce', step: 'Mix the mayonnaise and mustard in the bowl.' },
+    { title: 'Toast Buns', step: 'Toast the buns for 2 minutes until golden.' },
+    {
+      title: 'Cook Chicken',
+      step: 'Cook the chicken in the large skillet.',
+      safetyNote: 'Cook chicken to 165°F/74°C.',
+    },
+    { title: 'Serve', step: 'Serve the chicken on the buns with the sauce.' },
+  ],
+  prepTime: 8,
+  cookTime: 12,
+  totalTime: 20,
+  servings: 2,
+  skillLevel: 'Easy',
+};
+
+export const fullCoreIndexThreeTimePatchFixture = {
+  ingredients: [...fullCoreIndexThreeInitialFixture.ingredients],
+  steps: [{
+    stepIndex: 3,
+    title: 'Cook Chicken',
+    step: 'Cook the chicken in the large skillet for 6 minutes, flipping halfway.',
+    safetyNote: 'Cook chicken to 165°F/74°C.',
+  }],
+};
+
+export const fullCoreIndexThreeSensoryPatchFixture = {
+  ingredients: [...fullCoreIndexThreeInitialFixture.ingredients],
+  steps: [{
+    stepNumber: 4,
+    title: 'Cook Chicken',
+    step: 'Cook the chicken in the large skillet.',
+    doneWhen: 'The center reaches 165°F/74°C and the juices run clear.',
+    safetyNote: 'Cook chicken to 165°F/74°C.',
+  }],
+};
