@@ -10,6 +10,7 @@ import {
 import {
   analyzeFoodImageWithOpenRouter,
   generateRecipeWithOpenRouter,
+  hasUsableIngredientAmount,
   normalizeFullRecipeOutput,
   openRouterRecipeOutputSchema,
 } from './openRouterProvider.js';
@@ -18,6 +19,8 @@ import {
   fullCoreIndexThreeInitialFixture,
   fullCoreIndexThreeSensoryPatchFixture,
   fullCoreIndexThreeTimePatchFixture,
+  fullCoreMochiMixedInitialFixture,
+  fullCoreMochiMixedSuccessfulPatchFixture,
   fullCoreRepairInitialFixture,
   fullCoreRawTunaInitialFixture,
   fullCoreRawTunaSuccessfulPatchFixture,
@@ -54,6 +57,18 @@ const quota: ProviderQuota = {
 };
 
 type RepairTraceEvent = {
+  requestedIngredientIndices: number[];
+  returnedIngredientIndices: number[];
+  missingIngredientIndices: number[];
+  duplicateIngredientIndices: number[];
+  unrequestedIngredientIndices: number[];
+  changedIngredientIndices: number[];
+  requestedStepIndices: number[];
+  returnedStepIndices: number[];
+  missingStepIndices: number[];
+  changedStepIndices: number[];
+  originalStepCount: number;
+  mergedStepCount: number;
   requestedInvalidIndices: number[];
   requiredReturnedIndices: number[];
   returnedIndices: number[];
@@ -65,6 +80,8 @@ type RepairTraceEvent = {
   resolvedRequestedIndices: number[];
   unresolvedRequestedIndices: number[];
   aliasMatchesApplied: string[];
+  suppressedNestedIngredientMentions: string[];
+  unresolvedIngredientMentions: string[];
   deterministicSafetyApplied: boolean;
   finalFailureReasons: string[];
   rawReturnedStepNumbers: Array<{
@@ -158,20 +175,6 @@ function fullRecipe(
   };
 }
 
-function fullRecipeRepairPatch(
-  recipe: Record<string, unknown> = fullRecipe(),
-): { ingredients: string[]; steps: Array<Record<string, unknown>> } {
-  return {
-    ingredients: [...(recipe.ingredients as string[])],
-    steps: (recipe.steps as Array<Record<string, unknown>>).map((step) => ({
-      title: String(step.title ?? ''),
-      step: String(step.step ?? step.instruction ?? ''),
-      ...(step.doneWhen ? { doneWhen: String(step.doneWhen) } : {}),
-      ...(step.safetyNote ? { safetyNote: String(step.safetyNote) } : {}),
-    })),
-  };
-}
-
 async function runIndexThreeRepairSuccess(
   dishName: string,
   repairOutput: unknown,
@@ -249,6 +252,58 @@ async function runRawTunaRepair(repairOutput: unknown) {
     console.log = originalLog;
   }
   return { calls, caught, events, output, timing };
+}
+
+let mochiRepairRun = 0;
+
+async function runMochiMixedRepair(repairOutput: unknown) {
+  mochiRepairRun += 1;
+  const runId = `mochi-mixed-repair-${mochiRepairRun}`;
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  let calls = 0;
+  let repairPrompt = '';
+  let output: Awaited<ReturnType<typeof generateRecipeWithOpenRouter>> | undefined;
+  let caught: unknown;
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    if (calls === 2) {
+      const body = JSON.parse(String(init?.body)) as {
+        messages?: Array<{ role?: string; content?: string }>;
+      };
+      repairPrompt = body.messages?.find((message) => message.role === 'user')?.content ?? '';
+    }
+    return providerResponse(calls === 1
+      ? structuredClone(fullCoreMochiMixedInitialFixture)
+      : structuredClone(repairOutput));
+  };
+  console.log = (...args: unknown[]) => { events.push(args); };
+  const timing = createScanAggregateTiming({ requestId: runId });
+  recordLogicalProviderCall(timing);
+  recordProviderAttempt(timing);
+  try {
+    output = await generateRecipeWithOpenRouter({
+      analysis: analysis({
+        dishName: `Mochi ${mochiRepairRun}`,
+        broadDishCategory: 'dessert',
+        cuisine: 'Japanese',
+        visibleIngredients: ['mochi', 'sweet rice flour', 'cornstarch'],
+        likelyIngredients: ['water', 'sugar'],
+      }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: runId,
+      timing,
+    });
+  } catch (error) {
+    caught = error;
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+  return { calls, caught, events, output, repairPrompt, timing };
 }
 
 test('full recipe succeeds on the initial provider output with local step metadata', async () => {
@@ -348,9 +403,9 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
       'The olive oil looks glossy and moves easily across the skillet.',
     );
     assert.match(repairPrompt, /step_missing_time_or_completion_cue/);
-    assert.match(repairPrompt, /exactly one key/);
+    assert.match(repairPrompt, /indexed correction object/);
     assert.match(repairPrompt, /"stepCorrections"/);
-    assert.match(repairPrompt, /Required returned step indices \(zero-based\): \[1\]/);
+    assert.match(repairPrompt, /Required step correction indices \(zero-based\): \[1\]/);
     assert.match(repairPrompt, /do not introduce, substitute, or remove any ingredient concept/i);
     assert.match(repairPrompt, /Full canonical ingredient list/);
     assert.match(repairPrompt, /Complete previous recipe object/);
@@ -508,6 +563,195 @@ test('production-shaped raw tuna repair resolves both steps, aliases, and safety
   assert.deepEqual(trace.changedFields.sort(), ['steps.4.step', 'steps.6.step']);
 });
 
+test('six-step Mochi mixed repair applies exact ingredient and step patches without shortening', async () => {
+  const { calls, caught, events, output, repairPrompt, timing } = await runMochiMixedRepair(
+    fullCoreMochiMixedSuccessfulPatchFixture,
+  );
+  assert.equal(caught, undefined);
+  assert.ok(output);
+  assert.equal(calls, 2);
+  assert.equal(timing.logicalProviderCalls, 3);
+  assert.equal(timing.providerAttempts, 3);
+  assert.equal(output.ingredients.length, fullCoreMochiMixedInitialFixture.ingredients.length);
+  assert.equal(output.steps.length, 6);
+  assert.equal(output.ingredients[3], '2 tbsp cornstarch, for dusting');
+  assert.equal(
+    typeof output.steps[2] === 'object' && output.steps[2].step,
+    fullCoreMochiMixedSuccessfulPatchFixture.stepCorrections[0].step,
+  );
+  assert.equal(
+    typeof output.steps[4] === 'object' && output.steps[4].step,
+    fullCoreMochiMixedSuccessfulPatchFixture.stepCorrections[1].step,
+  );
+  for (const stepIndex of [0, 1, 3, 5]) {
+    assert.equal(
+      typeof output.steps[stepIndex] === 'object' && output.steps[stepIndex].step,
+      fullCoreMochiMixedInitialFixture.steps[stepIndex].step,
+    );
+  }
+
+  assert.match(repairPrompt, /ingredientCorrections/);
+  assert.match(repairPrompt, /stepCorrections/);
+  assert.match(repairPrompt, /Required ingredient correction indices \(zero-based\): \[3\]/);
+  assert.match(repairPrompt, /Required step correction indices \(zero-based\): \[2,4\]/);
+  assert.match(repairPrompt, /Never return complete ingredients or steps arrays/);
+
+  const initial = events.find(([label]) => label === '[recipe_validation_details]')?.[1] as {
+    issues: string[];
+    ingredientIndicesMissingAmounts: number[];
+    stepsMissingCompletionCue: number[];
+    unknownIngredients: string[];
+    suppressedNestedIngredientMentions: string[];
+    presentationOnlyStepIndices: number[];
+  };
+  assert.deepEqual(initial.issues, [
+    'ingredients_missing_amounts',
+    'step_missing_time_or_completion_cue',
+  ]);
+  assert.deepEqual(initial.ingredientIndicesMissingAmounts, [3]);
+  assert.deepEqual(initial.stepsMissingCompletionCue, [2, 4]);
+  assert.deepEqual(initial.unknownIngredients, []);
+  assert.ok(initial.suppressedNestedIngredientMentions.includes('rice'));
+  assert.ok(initial.suppressedNestedIngredientMentions.includes('flour'));
+  assert.deepEqual(initial.presentationOnlyStepIndices, [5]);
+
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.requestedIngredientIndices, [3]);
+  assert.deepEqual(trace.returnedIngredientIndices, [3]);
+  assert.deepEqual(trace.missingIngredientIndices, []);
+  assert.deepEqual(trace.changedIngredientIndices, [3]);
+  assert.deepEqual(trace.requestedStepIndices, [2, 4]);
+  assert.deepEqual(trace.returnedStepIndices, [2, 4]);
+  assert.deepEqual(trace.missingStepIndices, []);
+  assert.deepEqual(trace.changedStepIndices, [2, 4]);
+  assert.equal(trace.originalStepCount, 6);
+  assert.equal(trace.mergedStepCount, 6);
+  assert.ok(trace.suppressedNestedIngredientMentions.includes('rice'));
+  assert.deepEqual(trace.unresolvedIngredientMentions, []);
+  assert.deepEqual(trace.resolvedRequestedIndices, [2, 4]);
+  assert.deepEqual(trace.unresolvedRequestedIndices, []);
+  assert.deepEqual(trace.finalFailureReasons, []);
+  assert.deepEqual(trace.changedFields.sort(), [
+    'ingredients.3',
+    'steps.2.step',
+    'steps.4.step',
+  ]);
+});
+
+test('Mochi quantity validation remains strict for dusting ingredients', () => {
+  assert.equal(hasUsableIngredientAmount('cornstarch for dusting'), false);
+  assert.equal(hasUsableIngredientAmount('2 tbsp cornstarch, for dusting'), true);
+  assert.equal(hasUsableIngredientAmount('cornstarch as needed'), false);
+});
+
+test('standalone rice remains an unknown ingredient when only sweet rice flour is listed', async () => {
+  const initial = structuredClone(fullCoreMochiMixedInitialFixture);
+  initial.ingredients[3] = '2 tbsp cornstarch, for dusting';
+  initial.steps[2] = fullCoreMochiMixedSuccessfulPatchFixture.stepCorrections[0];
+  initial.steps[4] = fullCoreMochiMixedSuccessfulPatchFixture.stepCorrections[1];
+  initial.steps[1] = {
+    ...initial.steps[1],
+    step: 'Mix the sweet rice flour, cooked rice, water, and sugar into a smooth batter.',
+  };
+  const repair = {
+    stepCorrections: [{
+      stepIndex: 1,
+      ...fullCoreMochiMixedInitialFixture.steps[1],
+    }],
+  };
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  let calls = 0;
+  globalThis.fetch = async () => providerResponse(++calls === 1 ? initial : repair);
+  console.log = (...args: unknown[]) => { events.push(args); };
+  try {
+    await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: 'Standalone Rice Mochi', broadDishCategory: 'dessert' }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: 'standalone-rice-mochi',
+    });
+    assert.equal(calls, 2);
+    const validation = events.find(([label]) => label === '[recipe_validation_details]')?.[1] as {
+      unknownIngredients: string[];
+      stepsUsingUnlistedIngredientIndices: number[];
+    };
+    assert.deepEqual(validation.unknownIngredients, ['rice']);
+    assert.deepEqual(validation.stepsUsingUnlistedIngredientIndices, [1]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('Mochi mixed repair fails closed when an ingredient correction is missing', async () => {
+  const patch = structuredClone(fullCoreMochiMixedSuccessfulPatchFixture);
+  patch.ingredientCorrections = [];
+  const { caught, events } = await runMochiMixedRepair(patch);
+  assert.ok(caught instanceof RecipeValidationError);
+  assert.ok(caught.issues.includes('repair_missing_required_correction'));
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.missingIngredientIndices, [3]);
+});
+
+test('Mochi mixed repair fails closed when a step correction is missing', async () => {
+  const patch = structuredClone(fullCoreMochiMixedSuccessfulPatchFixture);
+  patch.stepCorrections = [patch.stepCorrections[0]];
+  const { caught, events } = await runMochiMixedRepair(patch);
+  assert.ok(caught instanceof RecipeValidationError);
+  assert.ok(caught.issues.includes('repair_missing_required_correction'));
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.missingStepIndices, [4]);
+});
+
+test('Mochi mixed repair rejects duplicate indexed corrections', async () => {
+  const patch = structuredClone(fullCoreMochiMixedSuccessfulPatchFixture);
+  patch.ingredientCorrections.push({
+    ingredientIndex: 3,
+    value: '3 tbsp cornstarch, for dusting',
+  });
+  const { caught, events } = await runMochiMixedRepair(patch);
+  assert.ok(caught instanceof RecipeValidationError);
+  assert.ok(caught.issues.includes('repair_duplicate_correction'));
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.duplicateIngredientIndices, [3]);
+});
+
+test('Mochi mixed repair rejects unrequested indexed corrections', async () => {
+  const patch = structuredClone(fullCoreMochiMixedSuccessfulPatchFixture);
+  patch.ingredientCorrections.push({
+    ingredientIndex: 0,
+    value: '2 cups sweet rice flour',
+  });
+  const { caught, events } = await runMochiMixedRepair(patch);
+  assert.ok(caught instanceof RecipeValidationError);
+  assert.ok(caught.issues.includes('repair_unrequested_correction'));
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.unrequestedIngredientIndices, [0]);
+});
+
+test('Mochi mixed repair rejects an unchanged requested correction', async () => {
+  const patch = structuredClone(fullCoreMochiMixedSuccessfulPatchFixture);
+  patch.ingredientCorrections[0].value = fullCoreMochiMixedInitialFixture.ingredients[3];
+  const { caught, events } = await runMochiMixedRepair(patch);
+  assert.ok(caught instanceof RecipeValidationError);
+  assert.ok(caught.issues.includes('repair_partial_effect'));
+  const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+  assert.deepEqual(trace.changedIngredientIndices, []);
+  assert.ok(trace.finalFailureReasons.includes('repair_partial_effect'));
+});
+
+test('Mochi mixed repair rejects a legacy full-array response', async () => {
+  const { caught } = await runMochiMixedRepair({
+    ingredients: [...fullCoreMochiMixedInitialFixture.ingredients],
+    steps: [...fullCoreMochiMixedInitialFixture.steps],
+  });
+  assert.ok(caught instanceof RecipeValidationError);
+  assert.ok(caught.issues.includes('repair_invalid_schema'));
+});
+
 test('cooked tuna does not receive raw-fish handling instructions', () => {
   const cookedTuna = structuredClone(fullCoreRawTunaInitialFixture);
   cookedTuna.title = 'Seared Ahi Tuna Rice Bowl';
@@ -528,20 +772,20 @@ test('cooked tuna does not receive raw-fish handling instructions', () => {
   assert.doesNotMatch(safetyText, /sushi-grade|previously frozen|refrigerated until serving/i);
 });
 
-test('repair omitting one requested index fails as repair_partial_effect', async () => {
+test('repair omitting one requested index fails as repair_missing_required_correction', async () => {
   const partialPatch = {
     stepCorrections: [fullCoreRawTunaSuccessfulPatchFixture.stepCorrections[0]],
   };
   const { calls, caught, events, timing } = await runRawTunaRepair(partialPatch);
   assert.ok(caught instanceof RecipeValidationError);
-  assert.ok(caught.issues.includes('repair_partial_effect'));
+  assert.ok(caught.issues.includes('repair_missing_required_correction'));
   assert.equal(calls, 2);
   assert.equal(timing.logicalProviderCalls, 3);
   const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
   assert.deepEqual(trace.missingReturnedIndices, [6]);
   assert.deepEqual(trace.resolvedRequestedIndices, [4]);
   assert.deepEqual(trace.unresolvedRequestedIndices, [6]);
-  assert.ok(trace.finalFailureReasons.includes('repair_partial_effect'));
+  assert.ok(trace.finalFailureReasons.includes('repair_missing_required_correction'));
 });
 
 test('repair returning an unchanged requested step fails as repair_partial_effect', async () => {
@@ -569,7 +813,7 @@ test('repair returning an unrequested index is rejected', async () => {
   });
   const { caught, events } = await runRawTunaRepair(unrequestedPatch);
   assert.ok(caught instanceof RecipeValidationError);
-  assert.ok(caught.issues.includes('repair_partial_effect'));
+  assert.ok(caught.issues.includes('repair_unrequested_correction'));
   const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
   assert.deepEqual(trace.unrequestedReturnedIndices, [7]);
   assert.ok(trace.rejectedStepIndices.some(({ targetIndex, reason }) =>
@@ -584,7 +828,7 @@ test('duplicate returned step indices are rejected', async () => {
   });
   const { caught, events } = await runRawTunaRepair(duplicatePatch);
   assert.ok(caught instanceof RecipeValidationError);
-  assert.ok(caught.issues.includes('repair_partial_effect'));
+  assert.ok(caught.issues.includes('repair_duplicate_correction'));
   const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
   assert.deepEqual(trace.duplicateReturnedIndices, [4]);
   assert.ok(trace.rejectedStepIndices.some(({ targetIndex, reason }) =>
@@ -632,7 +876,7 @@ test('a completion-only repair rejects an unnumbered sparse correction', async (
   );
 });
 
-test('an unchanged requested correction fails as repair_partial_effect', async () => {
+test('an unchanged requested correction fails as repair_no_effect', async () => {
   const originalFetch = globalThis.fetch;
   const originalLog = console.log;
   const events: unknown[][] = [];
@@ -663,14 +907,14 @@ test('an unchanged requested correction fails as repair_partial_effect', async (
         requestId: 'full-repair-no-effect',
       }),
       (error: unknown) => error instanceof RecipeValidationError &&
-        error.issues.includes('repair_partial_effect'),
+        error.issues.includes('repair_no_effect'),
     );
     assert.equal(calls, 2);
     const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
     assert.deepEqual(trace.acceptedStepIndices, [3]);
     assert.deepEqual(trace.unchangedRequestedIndices, [3]);
     assert.deepEqual(trace.unresolvedRequestedIndices, [3]);
-    assert.ok(trace.finalFailureReasons.includes('repair_partial_effect'));
+    assert.ok(trace.finalFailureReasons.includes('repair_no_effect'));
     assert.deepEqual(trace.changedFields, []);
     assert.equal(trace.originalStepTextHashes[3].hash, trace.mergedStepTextHashes[3].hash);
   } finally {
@@ -974,7 +1218,13 @@ test('a truly unlisted full-recipe ingredient triggers the one repair', async ()
   });
   globalThis.fetch = async () => {
     calls += 1;
-    return providerResponse(calls === 1 ? unlistedButter : fullRecipeRepairPatch());
+    return providerResponse(calls === 1 ? unlistedButter : {
+      stepCorrections: [{
+        stepIndex: 2,
+        title: 'Heat Oil',
+        step: 'Heat the olive oil in a large skillet for 1 minute until shimmering.',
+      }],
+    });
   };
   try {
     await generateRecipeWithOpenRouter({
