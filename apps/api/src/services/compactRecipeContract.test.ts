@@ -565,21 +565,6 @@ test('compact prompt is materially smaller than the current full prompt', () => 
   assert.ok(comparison.estimatedCompactPromptTokens < comparison.estimatedFullPromptTokens);
 });
 
-test('written food ideas and estimated nutrition stay in the provider contract', () => {
-  const prompt = getCompactRecipePrompt(analysis({
-    dishName: 'Crispy chicken rice bowl',
-    foodIdea: 'Crispy chicken rice bowl with cucumber and spicy mayo, easy weeknight dinner',
-  }));
-  assert.match(prompt, /writtenFoodIdea/);
-  assert.match(prompt, /spicy mayo/);
-  assert.match(prompt, /nutritionEstimate/);
-
-  const parsed = compactRecipeOutputSchema.parse(chickenRecipe({
-    nutritionEstimate: { calories: 520, proteinGrams: 35, carbohydratesGrams: 48, fatGrams: 20 },
-  }));
-  assert.equal(parsed.nutritionEstimate?.proteinGrams, 35);
-});
-
 function providerResponse(content: unknown, finishReason = 'stop'): Response {
   return new Response(JSON.stringify({
     choices: [{

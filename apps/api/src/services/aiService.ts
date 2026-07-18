@@ -840,7 +840,6 @@ export function createCompactRecipeFromOpenRouterOutput(
     confidenceNote:
       `AI-assisted best guess. Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
     equipment,
-    nutritionEstimate: output.nutritionEstimate,
     isCompactRecipe: true,
   }, analysis);
 
@@ -1026,7 +1025,6 @@ function createRecipeFromVariant(
     equipment: getSafeList(variant.equipment, getDefaultEquipment(analysis), 5).map(cleanRecipeCopy),
     spicePairings: [],
     cookingTerms: [],
-    nutritionEstimate: variant.nutritionEstimate,
     isCompactRecipe: isCompactRecipe || undefined,
   }, analysis);
 }

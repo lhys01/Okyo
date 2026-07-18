@@ -148,6 +148,8 @@ function analysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAnalysis
       toppingsGarnish: '',
       cookingMethod: 'boiled and sautéed',
     },
+    restaurantPriceEstimate: 0,
+    homemadeCostEstimate: 0,
     matchScore: 8.5,
     difficulty: 'Easy',
     modes: ['Restaurant Copy', 'Budget', 'Healthy'],
