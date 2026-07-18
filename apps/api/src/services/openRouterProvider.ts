@@ -320,11 +320,6 @@ const fullRecipeIndexedRepairPatchSchema = z.object({
   { message: 'At least one indexed correction is required.' },
 );
 
-const fullRecipeRepairPatchSchema = z.object({
-  ingredients: z.array(z.string().min(1)).min(1),
-  steps: z.array(fullRecipeRepairStepSchema).min(1),
-}).strict();
-
 export type OpenRouterVisionOutput = z.input<typeof openRouterVisionOutputSchema>;
 export type OpenRouterRecipeOutput = z.infer<typeof openRouterRecipeOutputSchema>;
 export type OpenRouterRecipeVariant = z.infer<typeof recipeVariantSchema>;
@@ -817,35 +812,71 @@ export async function generateRecipeWithOpenRouter(input: {
   const issues = validateFullRecipeOutput(normalized, input.analysis, isDrink);
   const deterministicFixContext: FullRecipeDeterministicFixContext = {
     issuesBeforeDeterministicFixes,
-    deterministicFixesApplied: initialNormalization.diagnostics.deterministicFixesApplied,
+    deterministicFixesApplied: [...new Set([
+      ...normalizationBeforeDeterministicFixes.diagnostics.deterministicFixesApplied,
+      ...initialNormalization.diagnostics.deterministicFixesApplied,
+    ])],
     issuesAfterDeterministicFixes: issues,
   };
+  const initialDecision = classifyFullRecipeIssues(issues);
+  const nonRepairableFatalIssues = initialDecision.fatalIssues.filter(
+    (issue) => issue !== 'step_uses_unlisted_ingredients',
+  );
+  const hasIndexedRepairIssue = initialDecision.repairableIssues.length > 0 ||
+    initialDecision.fatalIssues.includes('step_uses_unlisted_ingredients');
   console.log('[recipe_deterministic_fixes]', {
     requestId: input.requestId,
     ...deterministicFixContext,
-    selectedRepairMode: issues.length > 0
-      ? selectFullRecipeRepairMode(normalized, issues)
+    selectedRepairMode: nonRepairableFatalIssues.length === 0 && hasIndexedRepairIssue
+      ? 'indexed'
       : 'none',
   });
-  if (issues.length === 0) {
+  if (initialDecision.fatalIssues.length === 0 && initialDecision.repairableIssues.length === 0) {
     console.log('[recipe_repair_outcome]', {
       requestId: input.requestId,
       selectedRepairMode: 'none',
       finalFailureReasons: [],
     });
+    logScanRecipeDecision(input, {
+      initialIssues: issuesBeforeDeterministicFixes,
+      deterministicFixesApplied: deterministicFixContext.deterministicFixesApplied,
+      ...initialDecision,
+      repairAttempted: false,
+      repairSucceeded: false,
+      returnedOriginalSafeRecipe: false,
+      finalDecision: 'success',
+      finalFailureReasons: [],
+    });
     return storeRecipeCache(cacheKey, normalized, input.analysis.dishName, { addImagePrompts: false });
   }
 
-  logFullRecipeValidationDetails(input, normalized, issues);
-  logRetryMetric(input, 'recipe_repair', issues.join(','));
+  if (nonRepairableFatalIssues.length > 0) {
+    logScanRecipeDecision(input, {
+      initialIssues: issuesBeforeDeterministicFixes,
+      deterministicFixesApplied: deterministicFixContext.deterministicFixesApplied,
+      ...initialDecision,
+      repairAttempted: false,
+      repairSucceeded: false,
+      returnedOriginalSafeRecipe: false,
+      finalDecision: 'failure',
+      finalFailureReasons: nonRepairableFatalIssues,
+    });
+    throw new RecipeValidationError(nonRepairableFatalIssues);
+  }
+
+  const repairIssues = issues.filter((issue) => indexedFullRecipeRepairIssues.has(issue));
+
+  logFullRecipeValidationDetails(input, normalized, repairIssues);
+  logRetryMetric(input, 'recipe_repair', repairIssues.join(','));
   return repairFullRecipe(
     input,
     cacheKey,
     normalized,
-    issues,
+    repairIssues,
     isDrink,
     initialNormalization.diagnostics,
     deterministicFixContext,
+    initialDecision,
   );
 }
 
@@ -861,9 +892,11 @@ async function repairFullRecipe(
   isDrink: boolean,
   initialNormalizationDiagnostics?: FullRecipeNormalizationDiagnostics,
   deterministicFixContext?: FullRecipeDeterministicFixContext,
+  initialDecision?: FullRecipeIssueDecision,
 ): Promise<OpenRouterRecipeOutput> {
   throwIfScanCancelled(input.signal, input.deadlineAt);
   const selectedRepairMode = selectFullRecipeRepairMode(previousOutput, issues);
+  const issueDecision = initialDecision ?? classifyFullRecipeIssues(issues);
   console.log('[recipe_repair_mode]', {
     requestId: input.requestId,
     selectedRepairMode,
@@ -875,9 +908,9 @@ async function repairFullRecipe(
     issuesAfterDeterministicFixes:
       deterministicFixContext?.issuesAfterDeterministicFixes ?? issues,
   });
-  let normalized: OpenRouterRecipeOutput;
+  let repairWarnings: string[] = [];
   try {
-    normalized = await measureScanAggregateStage({
+    const normalized = await measureScanAggregateStage({
       timing: input.timing,
       stage: 'repair',
       run: async () => {
@@ -893,7 +926,7 @@ async function repairFullRecipe(
           'recipe_repair',
         );
         if (previousOutput) {
-          return applyFullRecipeRepairPatch(
+          const application = applyFullRecipeRepairPatch(
             input,
             previousOutput,
             repairJson,
@@ -902,6 +935,8 @@ async function repairFullRecipe(
             selectedRepairMode,
             initialNormalizationDiagnostics,
           );
+          repairWarnings = application.warnings;
+          return application.output;
         }
         const repaired = openRouterRecipeOutputSchema.safeParse(repairJson);
         if (!repaired.success) {
@@ -923,8 +958,39 @@ async function repairFullRecipe(
         return normalizedRepair;
       },
     });
+    const remainingIssues = validateFullRecipeOutput(normalized, input.analysis, isDrink);
+    const remainingDecision = classifyFullRecipeIssues(remainingIssues);
+    if (remainingDecision.fatalIssues.length > 0 ||
+      remainingDecision.repairableIssues.length > 0) {
+      throw new RecipeValidationError(remainingIssues);
+    }
+    console.log('[recipe_repair_outcome]', {
+      requestId: input.requestId,
+      selectedRepairMode,
+      finalFailureReasons: [],
+    });
+    logScanRecipeDecision(input, {
+      initialIssues: deterministicFixContext?.issuesBeforeDeterministicFixes ?? issues,
+      deterministicFixesApplied: deterministicFixContext?.deterministicFixesApplied ?? [],
+      ...issueDecision,
+      warnings: [...new Set([
+        ...issueDecision.warnings,
+        ...remainingDecision.warnings,
+        ...repairWarnings,
+      ])],
+      repairAttempted: true,
+      repairSucceeded: true,
+      returnedOriginalSafeRecipe: false,
+      finalDecision: 'success',
+      finalFailureReasons: [],
+    });
+    return storeRecipeCache(
+      cacheKey,
+      normalized,
+      input.analysis.dishName,
+      { addImagePrompts: false },
+    );
   } catch (error) {
-    if (isQuotaError(error) || isScanControlError(error)) throw error;
     const finalFailureReasons = error instanceof RecipeValidationError
       ? error.issues
       : [
@@ -938,26 +1004,63 @@ async function repairFullRecipe(
       selectedRepairMode,
       finalFailureReasons,
     });
-    throw error instanceof RecipeValidationError
-      ? error
-      : new RecipeValidationError(finalFailureReasons);
-  }
 
-  const remainingIssues = validateFullRecipeOutput(normalized, input.analysis, isDrink);
-  console.log('[recipe_repair_outcome]', {
-    requestId: input.requestId,
-    selectedRepairMode,
-    finalFailureReasons: remainingIssues,
-  });
-  if (remainingIssues.length > 0) {
-    throw new RecipeValidationError(remainingIssues);
+    if (previousOutput && !isQuotaError(error) && !isScanControlError(error)) {
+      const fallbackNormalization = normalizeFullRecipeOutputWithDiagnostics(
+        previousOutput,
+        input.analysis,
+      );
+      const fallbackIssues = validateFullRecipeOutput(
+        fallbackNormalization.output,
+        input.analysis,
+        isDrink,
+      );
+      const fallbackDecision = classifyFullRecipeIssues(fallbackIssues);
+      if (fallbackDecision.fatalIssues.length === 0) {
+        logScanRecipeDecision(input, {
+          initialIssues: deterministicFixContext?.issuesBeforeDeterministicFixes ?? issues,
+          deterministicFixesApplied: deterministicFixContext?.deterministicFixesApplied ?? [],
+          ...issueDecision,
+          warnings: [...new Set([
+            ...issueDecision.warnings,
+            ...repairWarnings,
+            ...finalFailureReasons,
+          ])],
+          repairAttempted: true,
+          repairSucceeded: false,
+          returnedOriginalSafeRecipe: true,
+          finalDecision: 'safe_fallback',
+          finalFailureReasons: [],
+        });
+        return storeRecipeCache(
+          cacheKey,
+          fallbackNormalization.output,
+          input.analysis.dishName,
+          { addImagePrompts: false },
+        );
+      }
+    }
+
+    const failureDecision = previousOutput
+      ? classifyFullRecipeIssues(validateFullRecipeOutput(previousOutput, input.analysis, isDrink))
+      : issueDecision;
+    const stableFinalFailureReasons = failureDecision.fatalIssues.length > 0
+      ? failureDecision.fatalIssues
+      : finalFailureReasons;
+    logScanRecipeDecision(input, {
+      initialIssues: deterministicFixContext?.issuesBeforeDeterministicFixes ?? issues,
+      deterministicFixesApplied: deterministicFixContext?.deterministicFixesApplied ?? [],
+      ...issueDecision,
+      warnings: [...new Set([...issueDecision.warnings, ...repairWarnings])],
+      repairAttempted: true,
+      repairSucceeded: false,
+      returnedOriginalSafeRecipe: false,
+      finalDecision: 'failure',
+      finalFailureReasons: stableFinalFailureReasons,
+    });
+    if (isQuotaError(error) || isScanControlError(error)) throw error;
+    throw new RecipeValidationError(stableFinalFailureReasons);
   }
-  return storeRecipeCache(
-    cacheKey,
-    normalized,
-    input.analysis.dishName,
-    { addImagePrompts: false },
-  );
 }
 
 type FullRecipeNormalizationDiagnostics = {
@@ -974,12 +1077,60 @@ type FullRecipeDeterministicFixContext = {
   issuesAfterDeterministicFixes: string[];
 };
 
+type FullRecipeIssueDecision = {
+  fatalIssues: string[];
+  repairableIssues: string[];
+  warnings: string[];
+};
+
+type ScanRecipeDecision = FullRecipeIssueDecision & {
+  initialIssues: string[];
+  deterministicFixesApplied: string[];
+  repairAttempted: boolean;
+  repairSucceeded: boolean;
+  returnedOriginalSafeRecipe: boolean;
+  finalDecision: 'success' | 'safe_fallback' | 'failure';
+  finalFailureReasons: string[];
+};
+
+const repairableFullRecipeIssues = new Set([
+  'ingredients_missing_amounts',
+  'step_missing_time_or_completion_cue',
+]);
+
+const warningFullRecipeIssues = new Set([
+  'too_many_steps',
+  'step_count_above_preferred',
+  'optional_metadata_missing',
+]);
+
+function classifyFullRecipeIssues(issues: string[]): FullRecipeIssueDecision {
+  const uniqueIssues = [...new Set(issues)];
+  return {
+    fatalIssues: uniqueIssues.filter((issue) =>
+      !repairableFullRecipeIssues.has(issue) && !warningFullRecipeIssues.has(issue)),
+    repairableIssues: uniqueIssues.filter((issue) => repairableFullRecipeIssues.has(issue)),
+    warnings: uniqueIssues.filter((issue) => warningFullRecipeIssues.has(issue)),
+  };
+}
+
+function logScanRecipeDecision(
+  input: Partial<ScanExecutionContext>,
+  decision: ScanRecipeDecision,
+): void {
+  console.log('[scan_recipe_decision]', {
+    requestId: input.requestId,
+    ...decision,
+  });
+}
+
 function normalizeFullRecipeOutputWithDiagnostics(
   output: OpenRouterRecipeOutput,
   analysis: FoodImageAnalysis,
   options: { applyDeterministicSafety?: boolean } = {},
 ): { output: OpenRouterRecipeOutput; diagnostics: FullRecipeNormalizationDiagnostics } {
-  const ingredientNames = normalizeProviderIngredientList(output.ingredients);
+  const ingredientNormalization = normalizeProviderIngredientListWithDiagnostics(output.ingredients);
+  const ingredientNames = ingredientNormalization.ingredients;
   const equipment = output.equipment
     .map((tool) => typeof tool === 'string' ? tool.trim() : '')
     .filter(Boolean);
@@ -1055,7 +1206,10 @@ function normalizeFullRecipeOutputWithDiagnostics(
     diagnostics: {
       ...mentionDiagnostics,
       deterministicSafetyApplied: safety.applied,
-      deterministicFixesApplied: safety.fixesApplied,
+      deterministicFixesApplied: [
+        ...ingredientNormalization.fixesApplied,
+        ...safety.fixesApplied,
+      ],
     },
   };
 }
@@ -1068,13 +1222,30 @@ export function normalizeFullRecipeOutput(
 }
 
 function normalizeProviderIngredientList(ingredients: string[]): string[] {
-  return ingredients
-    .map((ingredient) => typeof ingredient === 'string'
-      ? ingredient.trim()
-          .replace(/^~\s*/i, '')
-          .replace(/^(?:about|approximately|approx\.?)\s+/i, '')
-      : '')
+  return normalizeProviderIngredientListWithDiagnostics(ingredients).ingredients;
+}
+
+function normalizeProviderIngredientListWithDiagnostics(
+  ingredients: string[],
+): { ingredients: string[]; fixesApplied: string[] } {
+  const fixesApplied: string[] = [];
+  const normalized = ingredients
+    .map((ingredient, index) => {
+      if (typeof ingredient !== 'string') return '';
+      const trimmed = ingredient.trim()
+        .replace(/^~\s*/i, '')
+        .replace(/^(?:about|approximately|approx\.?)\s+/i, '');
+      const trailingAmount = trimmed.match(
+        /^(.+?)(?:\s*[,;–—-]\s*|\s*\()(\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter)\s+((?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|g|grams?|kg|ml|liters?|cloves?|slices?|cans?|bunches?|pieces?|packages?)\b[^)]*)\)?$/i,
+      );
+      if (!trailingAmount) return trimmed;
+      fixesApplied.push(`normalized_ingredient_amount_format:${index}`);
+      return `${trailingAmount[2]} ${trailingAmount[3]} ${trailingAmount[1]}`
+        .replace(/\s+/g, ' ')
+        .trim();
+    })
     .filter(Boolean);
+  return { ingredients: normalized, fixesApplied };
 }
 
 function validateFullRecipeOutput(
@@ -1095,6 +1266,9 @@ function validateFullRecipeOutput(
     if (typeof step === 'string') return step;
     return `${getProviderStepText(step)} ${step.safetyNote ?? ''}`;
   }).join(' ');
+  if (safetyRequirement && hasUnsafeRequiredFoodTemperature(output.steps, safetyRequirement)) {
+    issues.push(`unsafe_temperature_${safetyRequirement.code}`);
+  }
   if (safetyRequirement && !safetyRequirement.pattern.test(safetyText)) {
     issues.push(`missing_safety_${safetyRequirement.code}`);
   }
@@ -1527,9 +1701,12 @@ export function hasUsableIngredientAmount(value: string): boolean {
   return false;
 }
 
-const activeCookingActionPattern = /\b(?:bak(?:e|es|ed|ing)|blanch(?:es|ed|ing)?|boil(?:s|ed|ing)?|brais(?:e|es|ed|ing)|broil(?:s|ed|ing)?|cook(?:s|ed|ing)?|deep[- ]?(?:fry|fries|fried|frying)|(?:fry|fries|fried|frying)|grill(?:s|ed|ing)?|heat(?:s|ed|ing)?|melt(?:s|ed|ing)?|microwav(?:e|es|ed|ing)|pan[- ]?(?:fry|fries|fried|frying)|poach(?:es|ed|ing)?|preheat(?:s|ed|ing)?|reduc(?:e|es|ed|ing)|roast(?:s|ed|ing)?|saut[eé](?:s|ed|ing)?|sear(?:s|ed|ing)?|simmer(?:s|ed|ing)?|steam(?:s|ed|ing)?|stew(?:s|ed|ing)?|toast(?:s|ed|ing)?)\b/i;
-const preparationOnlyActionPattern = /^\s*(?:gather|measure|wash|rinse|pat|peel|trim|chop|slice|dice|mince|grate|combine|mix|whisk|toss|assemble|add|season|sprinkle|crack|open|drain|reserve|set aside|pour|transfer)\b/i;
-const presentationOnlyActionPattern = /^\s*(?:plate|garnish|serve|divide|arrange|portion|ladle|spoon|enjoy)\b/i;
+// Past-participle food descriptions ("cooked rice", "roasted chicken",
+// "fried noodles") are ingredients, not cooking actions. Active instructions
+// use an imperative, third-person, or progressive verb form.
+const activeCookingActionPattern = /\b(?:bak(?:e|es|ing)|blanch(?:es|ing)?|boil(?:s|ing)?|brais(?:e|es|ing)|broil(?:s|ing)?|cook(?:s|ing)?|deep[- ]?(?:fry|fries|frying)|(?:fry|fries|frying)|grill(?:s|ing)?|heat(?:s|ing)?|melt(?:s|ing)?|microwav(?:e|es|ing)|pan[- ]?(?:fry|fries|frying)|poach(?:es|ing)?|preheat(?:s|ing)?|reduc(?:e|es|ing)|roast(?:s|ing)?|saut[eé](?:s|ing)?|sear(?:s|ing)?|simmer(?:s|ing)?|steam(?:s|ing)?|stew(?:s|ing)?|toast(?:s|ing)?)\b/i;
+const preparationOnlyActionPattern = /^\s*(?:gather|measure|wash|rinse|pat|peel|trim|chop|slice|halve|cut|dice|mince|grate|shred|tear|combine|mix|whisk|toss|assemble|add|season|sprinkle|crack|open|drain|reserve|set aside|pour|transfer|roll|stretch|shape|knead|coat|brush|spread|top|place|layer|wrap|fill|stuff|press|form)\b/i;
+const presentationOnlyActionPattern = /^\s*(?:plate|garnish|serve|divide|arrange|portion|ladle|spoon|drizzle|finish|enjoy)\b/i;
 
 function isPresentationOnlyStep(instruction: string): boolean {
   return presentationOnlyActionPattern.test(instruction) &&
@@ -1627,6 +1804,21 @@ type IngredientMentionOccurrence = {
   matchedIngredient?: string;
 };
 
+function isUnmeasuredUtilityWater(
+  occurrence: IngredientMentionOccurrence,
+  stepText: string,
+): boolean {
+  if (occurrence.concept !== 'water' || occurrence.matchedIngredient) return false;
+  const nearbyText = stepText.slice(Math.max(0, occurrence.start - 36), occurrence.end + 48);
+  const hasMeasuredWater = /(?:\d+(?:\.\d+)?|\d+\/\d+|[¼½¾⅓⅔⅛⅜⅝⅞]|one|two|three|four|five|six|seven|eight)\s*(?:cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|milliliters?|ml|liters?|l)?\s+water\b/i.test(
+    nearbyText,
+  );
+  if (hasMeasuredWater) return false;
+  return /\b(?:pot|saucepan|kettle|sink|ice bath)\b[^.]{0,80}\bwater\b|\bwater\b[^.]{0,80}\b(?:boil|rinse|wash|drain|cover)\b|\b(?:boiling|ice|cold|running|tap|salted)\s+water\b/i.test(
+    stepText,
+  );
+}
+
 function getIngredientMentionOccurrences(
   text: string,
   candidates: string[],
@@ -1673,6 +1865,10 @@ function getIngredientMentionDiagnostics(
         other.end >= occurrence.end &&
         (other.end - other.start) > (occurrence.end - occurrence.start));
       if (shadowingMention) {
+        suppressedNestedIngredientMentions.add(occurrence.concept);
+        continue;
+      }
+      if (isUnmeasuredUtilityWater(occurrence, stepText)) {
         suppressedNestedIngredientMentions.add(occurrence.concept);
         continue;
       }
@@ -1762,6 +1958,37 @@ type RecipeSafetyRequirement = {
   targetPattern: RegExp;
   note: string;
 };
+
+const minimumSafeTemperatures: Partial<Record<RecipeSafetyRequirement['code'], {
+  fahrenheit: number;
+  celsius: number;
+}>> = {
+  poultry: { fahrenheit: 165, celsius: 74 },
+  ground_meat: { fahrenheit: 160, celsius: 71 },
+  pork: { fahrenheit: 145, celsius: 63 },
+  cooked_fish: { fahrenheit: 145, celsius: 63 },
+};
+
+function hasUnsafeRequiredFoodTemperature(
+  steps: ProviderStepLike[],
+  requirement: RecipeSafetyRequirement,
+): boolean {
+  const minimum = minimumSafeTemperatures[requirement.code];
+  if (!minimum) return false;
+  return steps.some((step) => {
+    const text = typeof step === 'string'
+      ? step
+      : `${getProviderStepText(step)} ${step.safetyNote ?? ''}`;
+    if (!requirement.targetPattern.test(text)) return false;
+    const temperatures = [...text.matchAll(/\b(\d{2,3})\s*°?\s*([fc])\b/gi)];
+    return temperatures.some((match) => {
+      const value = Number(match[1]);
+      return match[2].toLowerCase() === 'f'
+        ? value < minimum.fahrenheit
+        : value < minimum.celsius;
+    });
+  });
+}
 
 function applyDeterministicRecipeSafety(
   steps: PreparedProviderStep[],
@@ -2235,18 +2462,22 @@ const indexedFullRecipeRepairIssues = new Set([
   'step_uses_unlisted_ingredients',
 ]);
 
-function shouldUseIndexedFullRecipeRepair(issues: string[]): boolean {
-  return issues.length > 0 && issues.every((issue) => indexedFullRecipeRepairIssues.has(issue));
-}
+type FullRecipeRepairMode = 'indexed' | 'whole_recipe_regeneration';
 
-type FullRecipeRepairMode = 'indexed' | 'full_regeneration' | 'whole_recipe_regeneration';
+type FullRecipeRepairApplication = {
+  output: OpenRouterRecipeOutput;
+  warnings: string[];
+};
 
 function selectFullRecipeRepairMode(
   previousOutput: OpenRouterRecipeOutput | undefined,
-  issues: string[],
+  _issues: string[],
 ): FullRecipeRepairMode {
   if (!previousOutput) return 'whole_recipe_regeneration';
-  return shouldUseIndexedFullRecipeRepair(issues) ? 'indexed' : 'full_regeneration';
+  // Parsed recipes never replace complete arrays in the ordinary scan path.
+  // Fatal structural defects are rejected before this point; all eligible
+  // content repairs use exact indexed corrections.
+  return 'indexed';
 }
 
 function applyFullRecipeRepairPatch(
@@ -2257,19 +2488,8 @@ function applyFullRecipeRepairPatch(
   isDrink: boolean,
   selectedRepairMode: FullRecipeRepairMode,
   initialNormalizationDiagnostics?: FullRecipeNormalizationDiagnostics,
-): OpenRouterRecipeOutput {
+): FullRecipeRepairApplication {
   const initialDiagnostics = getFullRecipeRepairDiagnostics(previousOutput, input.analysis);
-  if (selectedRepairMode === 'full_regeneration') {
-    return applyLegacyFullRecipeRepairPatch(
-      input,
-      previousOutput,
-      repairJson,
-      issues,
-      isDrink,
-      initialDiagnostics,
-      initialNormalizationDiagnostics,
-    );
-  }
   if (selectedRepairMode !== 'indexed') {
     throw new RecipeValidationError(['repair_invalid_mode']);
   }
@@ -2404,6 +2624,8 @@ function applyFullRecipeRepairPatch(
     ...(ingredientMerge.duplicateIngredientIndices.length > 0 ||
       stepMerge.duplicateReturnedIndices.length > 0
       ? ['repair_duplicate_correction'] : []),
+  ];
+  const repairWarnings = [
     ...(ingredientMerge.unrequestedIngredientIndices.length > 0 ||
       stepMerge.unrequestedReturnedIndices.length > 0
       ? ['repair_unrequested_correction'] : []),
@@ -2488,109 +2710,16 @@ function applyFullRecipeRepairPatch(
     presentationOnlyStepIndices: finalDiagnostics.presentationOnlyStepIndices,
     repairChangedFields: finalChangedFields,
   });
+  if (repairWarnings.length > 0) {
+    console.log('[recipe_repair_warning]', {
+      requestId: input.requestId,
+      warnings: repairWarnings,
+    });
+  }
   if (finalFailureReasons.length > 0) {
     throw new RecipeValidationError(finalFailureReasons);
   }
-  return normalized;
-}
-
-function applyLegacyFullRecipeRepairPatch(
-  input: { analysis: FoodImageAnalysis } & Partial<ScanExecutionContext>,
-  previousOutput: OpenRouterRecipeOutput,
-  repairJson: unknown,
-  issues: string[],
-  isDrink: boolean,
-  initialDiagnostics: ReturnType<typeof getFullRecipeRepairDiagnostics>,
-  initialNormalizationDiagnostics?: FullRecipeNormalizationDiagnostics,
-): OpenRouterRecipeOutput {
-  const parsedPatch = fullRecipeRepairPatchSchema.safeParse(repairJson);
-  if (!parsedPatch.success) throw new RecipeValidationError(['repair_invalid_schema']);
-  const canonicalIngredients = normalizeProviderIngredientList(previousOutput.ingredients);
-  const repairedIngredients = normalizeProviderIngredientList(parsedPatch.data.ingredients);
-  const changedIngredientConcept = repairedIngredients.some(
-    (ingredient) => !findMatchingIngredientName(ingredient, canonicalIngredients),
-  ) || canonicalIngredients.some(
-    (ingredient) => !findMatchingIngredientName(ingredient, repairedIngredients),
-  );
-  if (changedIngredientConcept) {
-    throw new RecipeValidationError(['repair_changed_ingredient_set']);
-  }
-  const merged = openRouterRecipeOutputSchema.parse({
-    ...previousOutput,
-    ingredients: issues.includes('ingredients_missing_amounts')
-      ? repairedIngredients
-      : canonicalIngredients,
-    steps: parsedPatch.data.steps,
-  });
-  const finalNormalization = normalizeFullRecipeOutputWithDiagnostics(merged, input.analysis);
-  const normalized = finalNormalization.output;
-  const finalDiagnostics = getFullRecipeRepairDiagnostics(normalized, input.analysis);
-  const finalFailureReasons = validateFullRecipeOutput(normalized, input.analysis, isDrink);
-  const changedFields = getRepairChangedFields(
-    previousOutput,
-    normalized.ingredients,
-    normalized.steps,
-  );
-  logFullRecipeRepairTrace(input, {
-    requestedIngredientIndices: [],
-    returnedIngredientIndices: [],
-    missingIngredientIndices: [],
-    duplicateIngredientIndices: [],
-    unrequestedIngredientIndices: [],
-    changedIngredientIndices: [],
-    requestedStepIndices: [],
-    returnedStepIndices: [],
-    missingStepIndices: [],
-    changedStepIndices: [],
-    originalStepCount: previousOutput.steps.length,
-    mergedStepCount: normalized.steps.length,
-    requestedInvalidIndices: [],
-    requiredReturnedIndices: [],
-    returnedIndices: [],
-    missingReturnedIndices: [],
-    duplicateReturnedIndices: [],
-    unrequestedReturnedIndices: [],
-    changedRequestedIndices: [],
-    unchangedRequestedIndices: [],
-    resolvedRequestedIndices: [],
-    unresolvedRequestedIndices: [],
-    aliasMatchesApplied: [...new Set([
-      ...(initialNormalizationDiagnostics?.aliasMatchesApplied ?? []),
-      ...finalNormalization.diagnostics.aliasMatchesApplied,
-    ])],
-    suppressedNestedIngredientMentions: [...new Set([
-      ...(initialNormalizationDiagnostics?.suppressedNestedIngredientMentions ?? []),
-      ...finalNormalization.diagnostics.suppressedNestedIngredientMentions,
-    ])],
-    unresolvedIngredientMentions: finalDiagnostics.unknownIngredients,
-    deterministicSafetyApplied:
-      (initialNormalizationDiagnostics?.deterministicSafetyApplied ?? false) ||
-      finalNormalization.diagnostics.deterministicSafetyApplied,
-    finalFailureReasons,
-    rawReturnedStepNumbers: getRawRepairStepNumbers(repairJson),
-    parsedReturnedStepNumbers: getParsedRepairStepNumbers(parsedPatch.data.steps),
-    acceptedStepIndices: [],
-    rejectedStepIndices: [],
-    originalStepTextHashes: getIndexedStepHashes(previousOutput.steps),
-    repairedStepTextHashes: parsedPatch.data.steps.map((step, returnedPosition) => ({
-      returnedPosition,
-      hash: getRepairStepHash(step),
-    })),
-    mergedStepTextHashes: getIndexedStepHashes(normalized.steps),
-    changedFields,
-  });
-  logFullRecipeRepairValidation(input, {
-    initialInvalidStepIndices: initialDiagnostics.stepsMissingCompletionCue,
-    repairedInvalidStepIndices: finalDiagnostics.stepsMissingCompletionCue,
-    unknownIngredientsBeforeRepair: initialDiagnostics.unknownIngredients,
-    unknownIngredientsAfterRepair: finalDiagnostics.unknownIngredients,
-    presentationOnlyStepIndices: finalDiagnostics.presentationOnlyStepIndices,
-    repairChangedFields: changedFields,
-  });
-  if (finalFailureReasons.length > 0) {
-    throw new RecipeValidationError(finalFailureReasons);
-  }
-  return normalized;
+  return { output: normalized, warnings: repairWarnings };
 }
 
 function getRepairChangedFields(
@@ -2844,15 +2973,9 @@ function getFullRecipeRepairPrompt(
         'Indexed shapes: {"ingredientIndex":3,"value":"2 tbsp cornstarch, for dusting"} and {"stepIndex":3,"title":"short action","step":"cookable instruction","doneWhen":"specific completion cue","safetyNote":"required food-safety rule when applicable"}. Indices are zero-based. Do not add, remove, or reorder recipe steps.',
         'INGREDIENT LOCK: use the canonical list below as the only allowed vocabulary, but return only requested indexed corrections. Amounts may change only for requested quantity defects.',
       ]
-    : selectedRepairMode === 'full_regeneration'
-      ? [
-          'Selected repair contract: full regeneration. Return ONLY a minified object with exactly two keys: {"ingredients":[...the complete corrected ingredient list...],"steps":[...the complete corrected step list in final recipe order...]}.',
-          'Return every ingredient and every step. The steps array is a complete ordered replacement, never a subset. Each step may contain only title, step, doneWhen, and safetyNote.',
-          'INGREDIENT LOCK: return the complete canonical ingredient list with the same ingredient concepts. Amounts may change only to fix ingredients_missing_amounts.',
-        ]
-      : [
+    : [
           'Selected repair contract: whole recipe regeneration. Return ONLY the entire corrected recipe object with title, ingredients, equipment, steps, prepTime, cookTime, totalTime, servings, and skillLevel.',
-        ];
+      ];
   return [
     `Correct the previous recipe JSON for "${analysis.dishName}".`,
     `Exact validation failures: ${issues.join(', ')}.`,
