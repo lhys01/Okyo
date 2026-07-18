@@ -216,44 +216,6 @@ function mixedStructuralRepairInitialRecipe(): Record<string, unknown> {
   };
 }
 
-function mixedStructuralFullRegenerationRepair(): {
-  ingredients: string[];
-  steps: Array<Record<string, unknown>>;
-} {
-  return {
-    ingredients: [
-      '2 chicken breasts',
-      '2 cups chicken broth',
-      '1/2 tsp salt, for garnish',
-      '1 tbsp olive oil',
-      '2 ramen noodle cakes',
-    ],
-    steps: [
-      {
-        title: 'Gather',
-        step: 'Gather the chicken, chicken broth, salt, olive oil, and ramen noodles.',
-      },
-      {
-        title: 'Heat Oil',
-        step: 'Heat the olive oil for 1 minute until shimmering.',
-      },
-      {
-        title: 'Cook Chicken',
-        step: 'Cook the chicken in olive oil for 6 minutes until the center reaches 165°F/74°C.',
-        safetyNote: 'Cook chicken to an internal temperature of 165°F/74°C.',
-      },
-      {
-        title: 'Simmer Noodles',
-        step: 'Simmer the chicken broth and ramen noodles for 5 minutes until bubbling.',
-      },
-      {
-        title: 'Serve',
-        step: 'Serve the chicken ramen with the salt garnish.',
-      },
-    ],
-  };
-}
-
 async function runIndexThreeRepairSuccess(
   dishName: string,
   repairOutput: unknown,
@@ -541,29 +503,38 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
   }
 });
 
-test('mixed target issues plus a safety issue select a consistent full-regeneration contract', async () => {
+test('deterministic poultry safety preserves indexed repair for completion and closure defects', async () => {
   const originalFetch = globalThis.fetch;
   const originalLog = console.log;
   const events: unknown[][] = [];
   let calls = 0;
   let repairPrompt = '';
+  const initial = mixedStructuralRepairInitialRecipe();
+  (initial.ingredients as string[])[2] = '1/2 tsp salt, for garnish';
+  const repair = {
+    stepCorrections: [{
+      stepIndex: 2,
+      title: 'Cook Chicken',
+      step: 'Cook the chicken in olive oil for 6 minutes until golden.',
+    }],
+  };
   globalThis.fetch = async (_url, init) => {
     calls += 1;
-    if (calls === 1) return providerResponse(mixedStructuralRepairInitialRecipe());
+    if (calls === 1) return providerResponse(initial);
     const body = JSON.parse(String(init?.body)) as {
       messages?: Array<{ role?: string; content?: string }>;
     };
     repairPrompt = body.messages?.find((message) => message.role === 'user')?.content ?? '';
-    return providerResponse(mixedStructuralFullRegenerationRepair());
+    return providerResponse(repair);
   };
   console.log = (...args: unknown[]) => { events.push(args); };
   try {
-    const timing = createScanAggregateTiming({ requestId: 'full-regeneration-mixed-issues' });
+    const timing = createScanAggregateTiming({ requestId: 'deterministic-poultry-indexed-repair' });
     recordLogicalProviderCall(timing);
     recordProviderAttempt(timing);
     const output = await generateRecipeWithOpenRouter({
       analysis: analysis({
-        dishName: 'Chicken Ramen Full Regeneration',
+        dishName: 'Chicken Ramen Indexed Safety',
         broadDishCategory: 'ramen/noodles',
         visibleIngredients: ['chicken', 'ramen noodles', 'broth'],
         likelyIngredients: ['olive oil', 'salt'],
@@ -571,35 +542,49 @@ test('mixed target issues plus a safety issue select a consistent full-regenerat
       config: fullConfig,
       mode: 'Restaurant Copy',
       quota,
-      requestId: 'full-regeneration-mixed-issues',
+      requestId: 'deterministic-poultry-indexed-repair',
       timing,
     });
     assert.equal(calls, 2);
-    assert.equal(output.steps.length, 5);
-    assert.equal(output.ingredients[2], '1/2 tsp salt, for garnish');
+    assert.equal(output.ingredients.length, (initial.ingredients as string[]).length);
+    assert.equal(output.steps.length, (initial.steps as unknown[]).length);
+    assert.deepEqual(output.ingredients, initial.ingredients);
     assert.match(
       output.steps.map((step) => typeof step === 'object' ? step.safetyNote ?? '' : '').join(' '),
-      /165°F\/74°C/,
+      /165°F \/ 74°C/,
     );
-    assert.match(repairPrompt, /Selected repair contract: full regeneration/);
-    assert.match(repairPrompt, /complete corrected ingredient list/);
-    assert.match(repairPrompt, /complete corrected step list in final recipe order/);
-    assert.match(repairPrompt, /complete ordered replacement, never a subset/);
-    assert.doesNotMatch(repairPrompt, /ingredientCorrections|stepCorrections/);
-    assert.doesNotMatch(repairPrompt, /Required (?:ingredient|step) correction indices/);
-    assert.doesNotMatch(repairPrompt, /stepIndex|ingredientIndex|zero-based/);
+    assert.match(repairPrompt, /Selected repair contract: indexed/);
+    assert.match(repairPrompt, /Required step correction indices \(zero-based\): \[2\]/);
+    assert.doesNotMatch(repairPrompt, /Selected repair contract: full regeneration/);
 
     const mode = events.find(([label]) => label === '[recipe_repair_mode]')?.[1] as {
       selectedRepairMode: string;
       initialIssues: string[];
+      issuesBeforeDeterministicFixes: string[];
+      deterministicFixesApplied: string[];
+      issuesAfterDeterministicFixes: string[];
     };
-    assert.equal(mode.selectedRepairMode, 'full_regeneration');
-    assert.deepEqual(mode.initialIssues, [
-      'ingredients_missing_amounts',
+    assert.equal(mode.selectedRepairMode, 'indexed');
+    assert.deepEqual(mode.issuesBeforeDeterministicFixes, [
       'step_missing_time_or_completion_cue',
       'step_uses_unlisted_ingredients',
       'missing_safety_poultry',
     ]);
+    assert.deepEqual(mode.deterministicFixesApplied, ['missing_safety_poultry']);
+    assert.deepEqual(mode.issuesAfterDeterministicFixes, [
+      'step_missing_time_or_completion_cue',
+      'step_uses_unlisted_ingredients',
+    ]);
+    assert.deepEqual(mode.initialIssues, mode.issuesAfterDeterministicFixes);
+    const trace = events.find(([label]) => label === '[recipe_repair_trace]')?.[1] as RepairTraceEvent;
+    assert.deepEqual(trace.requestedInvalidIndices, [2]);
+    assert.deepEqual(trace.changedRequestedIndices, [2]);
+    assert.deepEqual(trace.resolvedRequestedIndices, [2]);
+    assert.equal(trace.originalStepCount, 5);
+    assert.equal(trace.mergedStepCount, 5);
+    assert.deepEqual(trace.changedFields, ['steps.2.step']);
+    assert.equal(trace.deterministicSafetyApplied, true);
+    assert.deepEqual(trace.finalFailureReasons, []);
     assert.equal(timing.logicalProviderCalls, 3);
     assert.equal(timing.providerAttempts, 3);
   } finally {
@@ -611,8 +596,10 @@ test('mixed target issues plus a safety issue select a consistent full-regenerat
 test('full-regeneration mode rejects an indexed repair response', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
+  const structuralInitial = mixedStructuralRepairInitialRecipe();
+  structuralInitial.steps = (structuralInitial.steps as unknown[]).slice(0, 4);
   globalThis.fetch = async () => providerResponse(++calls === 1
-    ? mixedStructuralRepairInitialRecipe()
+    ? structuralInitial
     : {
         ingredientCorrections: [{
           ingredientIndex: 2,
@@ -1022,6 +1009,61 @@ test('cooked tuna does not receive raw-fish handling instructions', () => {
   const safetyText = normalized.steps.map((step) =>
     typeof step === 'object' ? step.safetyNote ?? '' : '').join(' ');
   assert.doesNotMatch(safetyText, /sushi-grade|previously frozen|refrigerated until serving/i);
+});
+
+test('deterministic safety adds the required cooked-food temperatures locally', () => {
+  const cases = [
+    {
+      dishName: 'Roast Chicken',
+      category: 'poultry',
+      ingredient: '2 chicken breasts',
+      instruction: 'Roast the chicken until golden.',
+      expected: /165°F \/ 74°C/,
+    },
+    {
+      dishName: 'Beef Meatballs',
+      category: 'ground meat',
+      ingredient: '1 lb ground beef',
+      instruction: 'Bake the ground beef meatballs until browned.',
+      expected: /160°F \/ 71°C/,
+    },
+    {
+      dishName: 'Roast Pork',
+      category: 'pork',
+      ingredient: '1 lb pork loin',
+      instruction: 'Roast the pork until browned.',
+      expected: /145°F \/ 63°C/,
+    },
+    {
+      dishName: 'Baked Cod',
+      category: 'cooked fish',
+      ingredient: '1 lb cod fillets',
+      instruction: 'Bake the cod until flaky.',
+      expected: /145°F \/ 63°C/,
+    },
+  ];
+
+  for (const testCase of cases) {
+    const candidate = openRouterRecipeOutputSchema.parse(fullRecipe({
+      title: testCase.dishName,
+      ingredients: [testCase.ingredient, '1 tbsp olive oil', '1/2 tsp salt'],
+      steps: [
+        { title: 'Prepare', step: 'Gather the ingredients.' },
+        { title: 'Cook', step: testCase.instruction },
+        { title: 'Rest', step: 'Set the cooked food aside for 5 minutes.' },
+        { title: 'Plate', step: 'Plate the food.' },
+        { title: 'Serve', step: 'Serve immediately.' },
+      ],
+    }));
+    const normalized = normalizeFullRecipeOutput(candidate, analysis({
+      dishName: testCase.dishName,
+      broadDishCategory: testCase.category,
+      visibleIngredients: [testCase.ingredient],
+    }));
+    const safetyText = normalized.steps.map((step) =>
+      typeof step === 'object' ? step.safetyNote ?? '' : '').join(' ');
+    assert.match(safetyText, testCase.expected);
+  }
 });
 
 test('repair omitting one requested index fails as repair_missing_required_correction', async () => {
