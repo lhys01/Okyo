@@ -806,13 +806,40 @@ export async function generateRecipeWithOpenRouter(input: {
     return repairFullRecipe(input, cacheKey, undefined, [reason], isDrink);
   }
 
-  const initialNormalization = normalizeFullRecipeOutputWithDiagnostics(
+  const normalizationBeforeDeterministicFixes = normalizeFullRecipeOutputWithDiagnostics(
     firstOutput,
+    input.analysis,
+    { applyDeterministicSafety: false },
+  );
+  const issuesBeforeDeterministicFixes = validateFullRecipeOutput(
+    normalizationBeforeDeterministicFixes.output,
+    input.analysis,
+    isDrink,
+  );
+  const initialNormalization = normalizeFullRecipeOutputWithDiagnostics(
+    normalizationBeforeDeterministicFixes.output,
     input.analysis,
   );
   const normalized = initialNormalization.output;
   const issues = validateFullRecipeOutput(normalized, input.analysis, isDrink);
+  const deterministicFixContext: FullRecipeDeterministicFixContext = {
+    issuesBeforeDeterministicFixes,
+    deterministicFixesApplied: initialNormalization.diagnostics.deterministicFixesApplied,
+    issuesAfterDeterministicFixes: issues,
+  };
+  console.log('[recipe_deterministic_fixes]', {
+    requestId: input.requestId,
+    ...deterministicFixContext,
+    selectedRepairMode: issues.length > 0
+      ? selectFullRecipeRepairMode(normalized, issues)
+      : 'none',
+  });
   if (issues.length === 0) {
+    console.log('[recipe_repair_outcome]', {
+      requestId: input.requestId,
+      selectedRepairMode: 'none',
+      finalFailureReasons: [],
+    });
     return storeRecipeCache(cacheKey, normalized, input.analysis.dishName, { addImagePrompts: false });
   }
 
@@ -825,6 +852,7 @@ export async function generateRecipeWithOpenRouter(input: {
     issues,
     isDrink,
     initialNormalization.diagnostics,
+    deterministicFixContext,
   );
 }
 
@@ -839,6 +867,7 @@ async function repairFullRecipe(
   issues: string[],
   isDrink: boolean,
   initialNormalizationDiagnostics?: FullRecipeNormalizationDiagnostics,
+  deterministicFixContext?: FullRecipeDeterministicFixContext,
 ): Promise<OpenRouterRecipeOutput> {
   throwIfScanCancelled(input.signal, input.deadlineAt);
   const selectedRepairMode = selectFullRecipeRepairMode(previousOutput, issues);
@@ -846,6 +875,12 @@ async function repairFullRecipe(
     requestId: input.requestId,
     selectedRepairMode,
     initialIssues: issues,
+    issuesBeforeDeterministicFixes:
+      deterministicFixContext?.issuesBeforeDeterministicFixes ?? issues,
+    deterministicFixesApplied:
+      deterministicFixContext?.deterministicFixesApplied ?? [],
+    issuesAfterDeterministicFixes:
+      deterministicFixContext?.issuesAfterDeterministicFixes ?? issues,
   });
   let normalized: OpenRouterRecipeOutput;
   try {
@@ -897,14 +932,30 @@ async function repairFullRecipe(
     });
   } catch (error) {
     if (isQuotaError(error) || isScanControlError(error)) throw error;
-    if (error instanceof RecipeValidationError) throw error;
-    throw new RecipeValidationError([
-      ...issues,
-      error instanceof OpenRouterProviderError ? error.failure.reason : 'repair_output_unavailable',
-    ]);
+    const finalFailureReasons = error instanceof RecipeValidationError
+      ? error.issues
+      : [
+          ...issues,
+          error instanceof OpenRouterProviderError
+            ? error.failure.reason
+            : 'repair_output_unavailable',
+        ];
+    console.log('[recipe_repair_outcome]', {
+      requestId: input.requestId,
+      selectedRepairMode,
+      finalFailureReasons,
+    });
+    throw error instanceof RecipeValidationError
+      ? error
+      : new RecipeValidationError(finalFailureReasons);
   }
 
   const remainingIssues = validateFullRecipeOutput(normalized, input.analysis, isDrink);
+  console.log('[recipe_repair_outcome]', {
+    requestId: input.requestId,
+    selectedRepairMode,
+    finalFailureReasons: remainingIssues,
+  });
   if (remainingIssues.length > 0) {
     throw new RecipeValidationError(remainingIssues);
   }
@@ -921,11 +972,19 @@ type FullRecipeNormalizationDiagnostics = {
   suppressedNestedIngredientMentions: string[];
   unresolvedIngredientMentions: string[];
   deterministicSafetyApplied: boolean;
+  deterministicFixesApplied: string[];
+};
+
+type FullRecipeDeterministicFixContext = {
+  issuesBeforeDeterministicFixes: string[];
+  deterministicFixesApplied: string[];
+  issuesAfterDeterministicFixes: string[];
 };
 
 function normalizeFullRecipeOutputWithDiagnostics(
   output: OpenRouterRecipeOutput,
   analysis: FoodImageAnalysis,
+  options: { applyDeterministicSafety?: boolean } = {},
 ): { output: OpenRouterRecipeOutput; diagnostics: FullRecipeNormalizationDiagnostics } {
   const ingredientNames = normalizeProviderIngredientList(output.ingredients);
   const equipment = output.equipment
@@ -953,11 +1012,9 @@ function normalizeFullRecipeOutputWithDiagnostics(
     preparedSteps.map((step) => step.step),
     ingredientNames,
   );
-  const safety = applyDeterministicRawFishSafety(
-    preparedSteps,
-    analysis,
-    ingredientNames,
-  );
+  const safety = options.applyDeterministicSafety === false
+    ? { steps: preparedSteps, applied: false, fixesApplied: [] }
+    : applyDeterministicRecipeSafety(preparedSteps, analysis, ingredientNames);
   let lastPhase = 1;
   const steps = safety.steps.map((step, index) => {
     const instruction = step.step;
@@ -1005,6 +1062,7 @@ function normalizeFullRecipeOutputWithDiagnostics(
     diagnostics: {
       ...mentionDiagnostics,
       deterministicSafetyApplied: safety.applied,
+      deterministicFixesApplied: safety.fixesApplied,
     },
   };
 }
@@ -1687,10 +1745,20 @@ function getUnlistedStepIngredientText(stepTexts: string[], ingredients: string[
 
 const RAW_FISH_SAFETY_NOTE =
   'Use sushi-grade or previously frozen fish and keep it refrigerated until serving.';
-const rawFishGradePattern = /\b(?:sushi[- ]grade|previously frozen)\b/i;
-const rawFishColdPattern = /\b(?:keep(?: it| the fish)? (?:chilled|cold|refrigerated)|refrigerated until serving)\b/i;
+const POULTRY_SAFETY_NOTE =
+  'Cook poultry to an internal temperature of 165°F / 74°C.';
+const GROUND_MEAT_SAFETY_NOTE =
+  'Cook ground meat to an internal temperature of 160°F / 71°C.';
+const PORK_SAFETY_NOTE =
+  'Cook pork to an internal temperature of 145°F / 63°C.';
+const COOKED_FISH_SAFETY_NOTE =
+  'Cook fish to an internal temperature of 145°F / 63°C.';
 const rawFishPreparationPattern = /\b(?:sushi|sashimi|ceviche|poke|crudo|tartare)\b/i;
 const rawFishSubjectPattern = /\b(?:fish|salmon|tuna|yellowfin|ahi|bluefin|albacore|trout|snapper|halibut|sea bass)\b/i;
+const poultrySubjectPattern = /\b(?:chicken|poultry|turkey|duck)\b/i;
+const groundMeatSubjectPattern = /\b(?:ground|ground beef|ground pork|ground lamb|minced|burger|meatball|sausage)\b/i;
+const porkSubjectPattern = /\bpork\b/i;
+const cookedFishSubjectPattern = /\b(?:fish|salmon|cod|tilapia|tuna|trout|snapper|halibut|sea bass)\b/i;
 
 function isExplicitRawFishPreparation(
   analysis: FoodImageAnalysis,
@@ -1711,10 +1779,6 @@ function isExplicitRawFishPreparation(
   );
 }
 
-function hasCompleteRawFishSafety(value: string): boolean {
-  return rawFishGradePattern.test(value) && rawFishColdPattern.test(value);
-}
-
 type PreparedProviderStep = {
   title: string;
   step: string;
@@ -1722,30 +1786,47 @@ type PreparedProviderStep = {
   safetyNote?: string;
 };
 
-function applyDeterministicRawFishSafety(
+type RecipeSafetyRequirement = {
+  code: 'raw_fish' | 'poultry' | 'ground_meat' | 'pork' | 'cooked_fish';
+  pattern: RegExp;
+  targetPattern: RegExp;
+  note: string;
+};
+
+function applyDeterministicRecipeSafety(
   steps: PreparedProviderStep[],
   analysis: FoodImageAnalysis,
   ingredients: string[],
-): { steps: PreparedProviderStep[]; applied: boolean } {
-  if (!isExplicitRawFishPreparation(analysis, ingredients, steps)) {
-    return { steps, applied: false };
+): { steps: PreparedProviderStep[]; applied: boolean; fixesApplied: string[] } {
+  const requirement = getRecipeSafetyRequirement(analysis, ingredients, steps);
+  if (!requirement) {
+    return { steps, applied: false, fixesApplied: [] };
   }
-  const existingSafety = steps.map((step) => step.safetyNote ?? '').join(' ');
-  if (hasCompleteRawFishSafety(existingSafety)) {
-    return { steps, applied: false };
+  const existingSafety = steps.map((step) =>
+    `${step.step} ${step.safetyNote ?? ''}`).join(' ');
+  if (requirement.pattern.test(existingSafety)) {
+    return { steps, applied: false, fixesApplied: [] };
   }
-  const targetIndex = steps.findIndex((step) => rawFishSubjectPattern.test(step.step));
-  const safeTargetIndex = targetIndex >= 0 ? targetIndex : 0;
+  const cookingTargetIndex = steps.findIndex((step) =>
+    requirement.targetPattern.test(step.step) && activeCookingActionPattern.test(step.step));
+  const subjectTargetIndex = steps.findIndex((step) => requirement.targetPattern.test(step.step));
+  const activeTargetIndex = steps.findIndex((step) => activeCookingActionPattern.test(step.step));
+  const safeTargetIndex = cookingTargetIndex >= 0
+    ? cookingTargetIndex
+    : subjectTargetIndex >= 0
+      ? subjectTargetIndex
+      : activeTargetIndex >= 0 ? activeTargetIndex : 0;
   return {
     steps: steps.map((step, index) => index === safeTargetIndex
       ? {
           ...step,
           safetyNote: step.safetyNote
-            ? `${step.safetyNote} ${RAW_FISH_SAFETY_NOTE}`
-            : RAW_FISH_SAFETY_NOTE,
+            ? `${step.safetyNote} ${requirement.note}`
+            : requirement.note,
         }
       : step),
     applied: true,
+    fixesApplied: [`missing_safety_${requirement.code}`],
   };
 }
 
@@ -1753,22 +1834,47 @@ function getRecipeSafetyRequirement(
   analysis: FoodImageAnalysis,
   ingredients: string[],
   steps: ProviderStepLike[] = [],
-): { code: string; pattern: RegExp } | null {
+): RecipeSafetyRequirement | null {
   const text = `${analysis.dishName} ${analysis.broadDishCategory} ${ingredients.join(' ')}`.toLowerCase();
   if (isExplicitRawFishPreparation(analysis, ingredients, steps)) {
     return {
       code: 'raw_fish',
       pattern: /(?=[\s\S]*\b(?:sushi[- ]grade|previously frozen)\b)(?=[\s\S]*\b(?:keep(?: it| the fish)? (?:chilled|cold|refrigerated)|refrigerated until serving)\b)[\s\S]*/i,
+      targetPattern: rawFishSubjectPattern,
+      note: RAW_FISH_SAFETY_NOTE,
     };
   }
-  if (/\b(chicken|poultry|turkey|duck)\b/.test(text)) {
-    return { code: 'poultry', pattern: /\b165\s*°?\s*f\b|\b74\s*°?\s*c\b/i };
+  if (poultrySubjectPattern.test(text)) {
+    return {
+      code: 'poultry',
+      pattern: /\b165\s*°?\s*f\b|\b74\s*°?\s*c\b/i,
+      targetPattern: poultrySubjectPattern,
+      note: POULTRY_SAFETY_NOTE,
+    };
   }
   if (/\b(ground|minced|burger|meatball|sausage)\b/.test(text) && /\b(beef|pork|lamb|meat)\b/.test(text)) {
-    return { code: 'ground_meat', pattern: /\b160\s*°?\s*f\b|\b71\s*°?\s*c\b/i };
+    return {
+      code: 'ground_meat',
+      pattern: /\b160\s*°?\s*f\b|\b71\s*°?\s*c\b/i,
+      targetPattern: groundMeatSubjectPattern,
+      note: GROUND_MEAT_SAFETY_NOTE,
+    };
   }
-  if (/\b(pork|fish|salmon|cod|tilapia|tuna|trout)\b/.test(text)) {
-    return { code: 'pork_or_fish', pattern: /\b145\s*°?\s*f\b|\b63\s*°?\s*c\b/i };
+  if (porkSubjectPattern.test(text)) {
+    return {
+      code: 'pork',
+      pattern: /\b145\s*°?\s*f\b|\b63\s*°?\s*c\b/i,
+      targetPattern: porkSubjectPattern,
+      note: PORK_SAFETY_NOTE,
+    };
+  }
+  if (cookedFishSubjectPattern.test(text)) {
+    return {
+      code: 'cooked_fish',
+      pattern: /\b145\s*°?\s*f\b|\b63\s*°?\s*c\b/i,
+      targetPattern: cookedFishSubjectPattern,
+      note: COOKED_FISH_SAFETY_NOTE,
+    };
   }
   return null;
 }
