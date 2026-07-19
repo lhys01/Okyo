@@ -95,3 +95,17 @@ test('output schema carries a single recipe (no per-mode keys)', () => {
   assert.equal('restaurantCopy' in parsed, false);
   assert.ok(Array.isArray(parsed.steps));
 });
+
+test('output schema strips nutrition estimates from the recipe contract', () => {
+  const parsed = openRouterRecipeOutputSchema.parse({
+    ...buildValidRecipe(),
+    nutritionEstimate: {
+      calories: 520,
+      proteinGrams: 35,
+      carbohydratesGrams: 48,
+      fatGrams: 20,
+    },
+  });
+
+  assert.equal('nutritionEstimate' in parsed, false);
+});
