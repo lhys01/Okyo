@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 
 import type { AiConfig } from '../config/aiConfig.js';
@@ -53,7 +54,85 @@ export class OpenRouterProviderError extends Error {
   }
 }
 
+const recipeValidationFailureCodes = new Set([
+  'too_few_ingredients',
+  'ingredients_missing_amounts',
+  'vague_ingredient_name',
+  'vague_main_ingredient',
+  'too_few_steps',
+  'vague_step',
+  'unsafe_temperature_poultry',
+  'steps_not_array',
+  'step_not_structured',
+  'step_missing_instruction',
+  'step_missing_title',
+  'step_missing_ingredients',
+  'step_missing_tools',
+  'stepNumber_missing',
+  'stepNumber_not_sequential',
+]);
+
+export function isRecipeValidationFailure(error: unknown): boolean {
+  if (error instanceof Error && error.name === 'RecipeValidationError') {
+    return true;
+  }
+  if (!(error instanceof OpenRouterProviderError) || error.failure.reason !== 'openrouter_invalid_schema') {
+    return false;
+  }
+
+  const message = error.failure.openRouterErrorMessage ?? error.message;
+  return message.includes('Recipe remained invalid after repair') ||
+    message.includes('Recipe remained invalid after combined repair') ||
+    message.includes('Recipe steps were structurally invalid after repair') ||
+    message.includes('Recipe remained invalid after deterministic restoration') ||
+    [...recipeValidationFailureCodes].some((code) => message.includes(code));
+}
+
 type SafeRecord = Record<string, unknown>;
+
+export type OpenRouterRequestMetrics = {
+  providerCallCount: number;
+  deterministicRepairMs: number;
+  combinedRepairMs: number;
+  stages: string[];
+};
+
+const openRouterMetricsStorage = new AsyncLocalStorage<OpenRouterRequestMetrics>();
+
+export async function runWithOpenRouterMetrics<T>(fn: () => Promise<T>): Promise<T> {
+  return openRouterMetricsStorage.run({
+    providerCallCount: 0,
+    deterministicRepairMs: 0,
+    combinedRepairMs: 0,
+    stages: [],
+  }, fn);
+}
+
+export function getOpenRouterMetrics(): OpenRouterRequestMetrics {
+  const metrics = openRouterMetricsStorage.getStore();
+  return metrics
+    ? { ...metrics, stages: [...metrics.stages] }
+    : { providerCallCount: 0, deterministicRepairMs: 0, combinedRepairMs: 0, stages: [] };
+}
+
+function recordOpenRouterCall(stage: string | undefined) {
+  const metrics = openRouterMetricsStorage.getStore();
+  if (!metrics) return;
+  metrics.providerCallCount += 1;
+  metrics.stages.push(stage ?? 'unknown');
+}
+
+function addDeterministicRepairMs(durationMs: number) {
+  const metrics = openRouterMetricsStorage.getStore();
+  if (!metrics) return;
+  metrics.deterministicRepairMs += durationMs;
+}
+
+function addCombinedRepairMs(durationMs: number) {
+  const metrics = openRouterMetricsStorage.getStore();
+  if (!metrics) return;
+  metrics.combinedRepairMs += durationMs;
+}
 
 export const openRouterVisionOutputSchema = z.object({
   dishName: z.string().optional(),
@@ -658,12 +737,9 @@ export async function generateRecipeWithOpenRouter(input: {
     firstOutput = await callRecipeStage(input, getCompactRecipeRetryPrompt(input.analysis), 1024, 'recipe_retry');
   }
 
-  // Structural gate (FAIL-CLOSED): the single recipe MUST have well-formed,
-  // sequential steps each carrying an instruction, title, ingredients, and
-  // tools. One targeted repair pass; if it still fails, throw rather than
-  // fabricate. aiService routes the throw to the honest scan-failure UX.
-  firstOutput = await enforceRecipeStructure(input, firstOutput);
-  firstOutput = normalizeRecipeOutputForValidation(firstOutput, input.analysis);
+  const deterministicStartedAt = Date.now();
+  firstOutput = applyDeterministicRecipeRepair(firstOutput, firstOutput, input.analysis);
+  addDeterministicRepairMs(Date.now() - deterministicStartedAt);
 
   // Strip fields the model generates despite prompt bans — deterministic, no
   // prompt-compliance required.
@@ -677,47 +753,49 @@ export async function generateRecipeWithOpenRouter(input: {
     };
   }
 
-  // Quality gate: even structurally valid JSON can be too vague to cook from.
-  // One focused repair pass, then keep whichever output is cleaner (and still
-  // structurally valid). The deterministic sanitizer in aiService is the final
-  // safety net after this.
-  const issues = getRecipeQualityIssues(firstOutput, isDrink, input.analysis);
+  const issues = getRecipeValidationIssues(firstOutput, isDrink, input.analysis);
   if (issues.length === 0) {
     return storeRecipeCache(cacheKey, firstOutput, input.analysis.dishName);
   }
 
-  logOpenRouterDebug('openrouter_recipe_quality_check', {
+  logOpenRouterDebug('openrouter_recipe_combined_check', {
     dishName: input.analysis.dishName,
     issues,
-    willRepair: true,
+    deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
+    willModelRepair: true,
   });
 
   try {
-    await waitMs(250);
+    const combinedStartedAt = Date.now();
     const repaired = await callRecipeStage(
       input,
-      getRecipeRepairPrompt(input.analysis, firstOutput, issues),
+      getCombinedRecipeRepairPrompt(input.analysis, firstOutput, issues),
       input.config.maxOutputTokens,
-      'recipe_quality_repair',
+      'recipe_combined_repair',
     );
+    addCombinedRepairMs(Date.now() - combinedStartedAt);
     const normalizedRepair = normalizeRecipeOutputForValidation(repaired, input.analysis);
-    const repairedIssues = getRecipeQualityIssues(normalizedRepair, isDrink, input.analysis);
-    const repairedStructure = validateRecipeStructure(normalizedRepair);
-    const usedRepair = repairedStructure.length === 0 && repairedIssues.length === 0;
-    logOpenRouterDebug('openrouter_recipe_quality_repair_result', {
+    const mergedRepair = mergeRecipeRepairOutput(firstOutput, normalizedRepair, input.analysis);
+    const restoredRepair = applyDeterministicRecipeRepair(mergedRepair, firstOutput, input.analysis);
+    const repairedIssues = getRecipeValidationIssues(restoredRepair, isDrink, input.analysis);
+    const usedRepair = repairedIssues.length === 0;
+    logOpenRouterDebug('openrouter_recipe_combined_repair_result', {
       beforeIssues: issues,
       afterIssues: repairedIssues,
-      repairedStructureIssues: repairedStructure,
       usedRepair,
+      originalIngredientCount: firstOutput.ingredients.length,
+      repairIngredientCount: normalizedRepair.ingredients.length,
+      finalIngredientCount: restoredRepair.ingredients.length,
+      combinedRepairMs: getOpenRouterMetrics().combinedRepairMs,
     });
     if (!usedRepair) {
       throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
-        openRouterErrorMessage: `Recipe remained invalid after repair: ${[...repairedStructure, ...repairedIssues].join(', ')}`,
+        openRouterErrorMessage: `Recipe remained invalid after combined repair: ${repairedIssues.join(', ')}`,
       });
     }
-    return storeRecipeCache(cacheKey, normalizedRepair, input.analysis.dishName);
+    return storeRecipeCache(cacheKey, restoredRepair, input.analysis.dishName);
   } catch (repairError) {
-    logOpenRouterDebug('openrouter_recipe_quality_repair_failed', {
+    logOpenRouterDebug('openrouter_recipe_combined_repair_failed', {
       reason: repairError instanceof OpenRouterProviderError ? repairError.failure.reason : 'unknown',
     });
     throw repairError;
@@ -750,13 +828,366 @@ async function enforceRecipeStructure(
     'recipe_structure_repair',
   );
   const normalizedRepair = normalizeRecipeOutputForValidation(repaired, input.analysis);
-  const repairedIssues = validateRecipeStructure(normalizedRepair);
+  const mergedRepair = mergeRecipeRepairOutput(output, normalizedRepair, input.analysis);
+  const restoredRepair = restoreRecipeIngredientsForValidation(mergedRepair, output, input.analysis);
+  const repairedIssues = validateRecipeStructure(restoredRepair);
   if (repairedIssues.length > 0) {
     throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
       openRouterErrorMessage: `Recipe steps were structurally invalid after repair: ${repairedIssues.join(', ')}`,
     });
   }
-  return normalizedRepair;
+  return restoredRepair;
+}
+
+function getRecipeValidationIssues(
+  output: OpenRouterRecipeOutput,
+  isDrink: boolean,
+  analysis: FoodImageAnalysis,
+): string[] {
+  return [...new Set([
+    ...validateRecipeStructure(output),
+    ...getRecipeQualityIssues(output, isDrink, analysis),
+  ])];
+}
+
+function applyDeterministicRecipeRepair(
+  candidate: OpenRouterRecipeOutput,
+  original: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+): OpenRouterRecipeOutput {
+  const normalized = normalizeRecipeOutputForValidation(candidate, analysis);
+  const ingredients = dedupeIngredients([
+    ...normalized.ingredients.map(ensureIngredientAmount),
+    ...flattenIngredientGroups(normalized.ingredientGroups).map(ensureIngredientAmount),
+  ]);
+  const sourceIngredients = dedupeIngredients([
+    ...original.ingredients,
+    ...flattenIngredientGroups(original.ingredientGroups),
+    ...ingredients,
+  ].map(ensureIngredientAmount));
+  const repairedSteps = normalizeProviderStepsDeterministically(normalized.steps, sourceIngredients);
+  const repaired = restoreRecipeIngredientsForValidation({
+    ...normalized,
+    ingredients,
+    steps: repairedSteps,
+  }, {
+    ...original,
+    ingredients: sourceIngredients,
+  }, analysis);
+
+  return normalizeRecipeOutputForValidation({
+    ...repaired,
+    steps: normalizeProviderStepsDeterministically(repaired.steps, repaired.ingredients),
+  }, analysis);
+}
+
+function normalizeProviderStepsDeterministically(
+  steps: OpenRouterRecipeOutput['steps'],
+  ingredients: string[],
+): OpenRouterRecipeOutput['steps'] {
+  return steps.map((step, index) => {
+    const rawText = getProviderStepText(step);
+    const stepRefs = typeof step === 'object' && step
+      ? getStepIngredientReferences([step])
+      : inferStepIngredientReferences(rawText, ingredients);
+    const repairedRefs = stepRefs.length > 0 ? stepRefs : [getIngredientSearchName(ingredients[0] ?? 'ingredient') || 'ingredient'];
+    const repairedText = repairStepInstructionText(rawText, repairedRefs);
+    const tools = typeof step === 'object' && step && Array.isArray(step.tools) && step.tools.some((value) => typeof value === 'string' && value.trim())
+      ? step.tools
+      : typeof step === 'object' && step && Array.isArray(step.toolsUsed) && step.toolsUsed.some((value) => typeof value === 'string' && value.trim())
+        ? step.toolsUsed
+        : [inferStepTool(repairedText)];
+
+    if (typeof step === 'object' && step) {
+      return {
+        ...step,
+        stepNumber: index + 1,
+        phase: typeof step.phase === 'number' ? step.phase : inferStepPhase(index, steps.length),
+        title: step.title?.trim() || deriveStepTitle(repairedText, index),
+        step: repairedText,
+        ingredients: repairedRefs,
+        tools,
+      };
+    }
+
+    return {
+      stepNumber: index + 1,
+      phase: inferStepPhase(index, steps.length),
+      title: deriveStepTitle(repairedText, index),
+      step: repairedText,
+      instruction: '',
+      text: '',
+      ingredients: repairedRefs,
+      tools,
+      timeEstimate: '',
+      visualCue: '',
+      whyItMatters: '',
+      safetyNote: '',
+      flavorBoost: '',
+    };
+  });
+}
+
+function repairStepInstructionText(text: string, ingredientRefs: string[]): string {
+  const ingredients = formatIngredientReferences(ingredientRefs);
+  const base = text.trim();
+  if (!base || vagueStepPattern.test(base.toLowerCase())) {
+    return `Cook ${ingredients} for 5 minutes until hot, glossy, and cooked through.`;
+  }
+
+  let repaired = base;
+  if (!/\b\d+\s*(?:seconds?|minutes?|mins?|hours?|hrs?)\b/i.test(repaired)) {
+    repaired = repaired.replace(/[.!?]?\s*$/, ' for 2 minutes.');
+  }
+  if (!/\buntil\b|\bwhen\b|\blook(?:s)?\b|\bgolden\b|\btender\b|\bglossy\b|\bcrisp\b|\bhot\b|\bfragrant\b|\bopaque\b|\bpink\b/i.test(repaired)) {
+    repaired = repaired.replace(/[.!?]?\s*$/, ' until hot and evenly coated.');
+  }
+  return repaired;
+}
+
+function inferStepIngredientReferences(text: string, ingredients: string[]): string[] {
+  return ingredients
+    .map(getIngredientSearchName)
+    .filter((name) => name && containsIngredientMention(text.toLowerCase(), name));
+}
+
+function formatIngredientReferences(references: string[]): string {
+  const cleaned = references.map(getIngredientSearchName).filter(Boolean).slice(0, 3);
+  if (cleaned.length === 0) return 'the ingredients';
+  if (cleaned.length === 1) return cleaned[0];
+  return `${cleaned.slice(0, -1).join(', ')} and ${cleaned[cleaned.length - 1]}`;
+}
+
+function inferStepTool(text: string): string {
+  if (/\bboil|pasta|water\b/i.test(text)) return 'large pot';
+  if (/\bwhisk|sauce|cream\b/i.test(text)) return 'whisk';
+  if (/\bcut|slice|chop|mince\b/i.test(text)) return 'chef knife';
+  if (/\bserve|plate|bowl\b/i.test(text)) return 'serving bowl';
+  return 'skillet';
+}
+
+function inferStepPhase(index: number, total: number): number {
+  if (index === 0) return 1;
+  if (index === 1) return 2;
+  if (index >= total - 1) return 6;
+  if (index >= total - 2) return 5;
+  return 3;
+}
+
+function deriveStepTitle(text: string, index: number): string {
+  const words = text
+    .replace(/[^a-zA-Z\s]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3);
+  return words.length > 0 ? words.map((word) => word[0].toUpperCase() + word.slice(1).toLowerCase()).join(' ') : `Step ${index + 1}`;
+}
+
+function mergeRecipeRepairOutput(
+  original: OpenRouterRecipeOutput,
+  repair: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+): OpenRouterRecipeOutput {
+  const merged: OpenRouterRecipeOutput = { ...original };
+
+  for (const key of Object.keys(repair) as (keyof OpenRouterRecipeOutput)[]) {
+    const value = repair[key];
+    if (Array.isArray(value)) {
+      continue;
+    }
+    if (typeof value === 'string') {
+      if (value.trim()) {
+        (merged as SafeRecord)[key] = value;
+      }
+      continue;
+    }
+    if (value !== undefined && value !== null) {
+      (merged as SafeRecord)[key] = value;
+    }
+  }
+
+  merged.steps = repair.steps.length > 0 ? repair.steps : original.steps;
+  merged.ingredients = chooseCompleteIngredientList(original.ingredients, repair.ingredients, merged.steps);
+  merged.ingredientGroups = chooseIngredientGroups(original.ingredientGroups, repair.ingredientGroups);
+
+  for (const key of [
+    'equipment',
+    'substitutions',
+    'groceryItems',
+    'spicePairings',
+    'cookingTerms',
+  ] as const) {
+    if (repair[key].length > 0) {
+      (merged as SafeRecord)[key] = repair[key];
+    }
+  }
+
+  return normalizeRecipeOutputForValidation(merged, analysis);
+}
+
+function chooseCompleteIngredientList(
+  original: string[],
+  repair: string[],
+  steps: OpenRouterRecipeOutput['steps'],
+): string[] {
+  const normalizedOriginal = normalizeProviderIngredientList(original);
+  const normalizedRepair = normalizeProviderIngredientList(repair);
+  if (
+    hasCompleteIngredientList(normalizedRepair, steps) &&
+    normalizedRepair.length >= Math.min(normalizedOriginal.length, 4)
+  ) {
+    return normalizedRepair;
+  }
+  return normalizedOriginal.length > 0 ? normalizedOriginal : normalizedRepair;
+}
+
+function chooseIngredientGroups(
+  original: OpenRouterRecipeOutput['ingredientGroups'],
+  repair: OpenRouterRecipeOutput['ingredientGroups'],
+): OpenRouterRecipeOutput['ingredientGroups'] {
+  const originalItems = flattenIngredientGroups(original);
+  const repairItems = flattenIngredientGroups(repair);
+  if (repair.length > 0 && hasCompleteIngredientList(repairItems, []) && repairItems.length >= Math.min(originalItems.length, 4)) {
+    return repair;
+  }
+  return original.length > 0 ? original : repair;
+}
+
+function restoreRecipeIngredientsForValidation(
+  candidate: OpenRouterRecipeOutput,
+  original: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+): OpenRouterRecipeOutput {
+  const normalized = normalizeRecipeOutputForValidation(candidate, analysis);
+  const restored = dedupeIngredients(normalized.ingredients.map(ensureIngredientAmount));
+  const sourceIngredients = dedupeIngredients([
+    ...original.ingredients,
+    ...flattenIngredientGroups(original.ingredientGroups),
+    ...candidate.ingredients,
+    ...flattenIngredientGroups(candidate.ingredientGroups),
+  ].map(ensureIngredientAmount));
+
+  for (const stepIngredient of getStepIngredientReferences(normalized.steps)) {
+    if (ingredientListContainsReference(restored, stepIngredient)) {
+      continue;
+    }
+    const sourced = findIngredientForReference(sourceIngredients, stepIngredient);
+    restored.push(sourced ?? quantifyIngredientReference(stepIngredient));
+  }
+
+  for (const source of sourceIngredients) {
+    if (restored.length >= 4) {
+      break;
+    }
+    if (!ingredientListContainsReference(restored, getIngredientSearchName(source))) {
+      restored.push(source);
+    }
+  }
+
+  return normalizeRecipeOutputForValidation({ ...normalized, ingredients: dedupeIngredients(restored) }, analysis);
+}
+
+function hasCompleteIngredientList(ingredients: string[], steps: OpenRouterRecipeOutput['steps']): boolean {
+  const normalized = normalizeProviderIngredientList(ingredients);
+  if (normalized.length < 4) {
+    return false;
+  }
+  const missingAmounts = normalized.filter((value) => !hasIngredientAmount(value));
+  if (missingAmounts.length > Math.max(1, Math.floor(normalized.length / 3))) {
+    return false;
+  }
+  return getStepIngredientReferences(steps).every((reference) => ingredientListContainsReference(normalized, reference));
+}
+
+function flattenIngredientGroups(groups: OpenRouterRecipeOutput['ingredientGroups']): string[] {
+  return groups.flatMap((group) => group.items).map((item) => item.trim()).filter(Boolean);
+}
+
+function getStepIngredientReferences(steps: OpenRouterRecipeOutput['steps']): string[] {
+  const references = steps.flatMap((step) => {
+    if (typeof step === 'string') {
+      return [];
+    }
+    const ingredients = Array.isArray(step.ingredients) && step.ingredients.length > 0
+      ? step.ingredients
+      : Array.isArray(step.ingredientsUsed)
+        ? step.ingredientsUsed
+        : [];
+    return ingredients;
+  });
+  return dedupeIngredients(references.map(getIngredientSearchName).filter(Boolean));
+}
+
+function ingredientListContainsReference(ingredients: string[], reference: string): boolean {
+  const needle = getIngredientSearchName(reference);
+  return ingredients.some((ingredient) => {
+    const haystack = getIngredientSearchName(ingredient);
+    return haystack === needle || haystack.includes(needle) || needle.includes(haystack);
+  });
+}
+
+function findIngredientForReference(ingredients: string[], reference: string): string | undefined {
+  return ingredients.find((ingredient) => ingredientListContainsReference([ingredient], reference));
+}
+
+function quantifyIngredientReference(reference: string): string {
+  const name = getIngredientSearchName(reference) || reference.trim();
+  if (!name) {
+    return '1 ingredient';
+  }
+  if (hasIngredientAmount(name)) {
+    return name;
+  }
+  if (/\b(salt|pepper|seasoning|spice|herbs?)\b/i.test(name)) {
+    return `1/2 tsp ${name}`;
+  }
+  if (/\b(oil|butter|cream|milk|sauce|broth|water|lemon juice)\b/i.test(name)) {
+    return `2 tbsp ${name}`;
+  }
+  return `1 cup ${name}`;
+}
+
+function ensureIngredientAmount(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || hasIngredientAmount(trimmed)) {
+    return trimmed;
+  }
+  return quantifyIngredientReference(trimmed);
+}
+
+function getIngredientSearchName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\b\d+\s+\d+\/\d+\b/g, ' ')
+    .replace(/\b\d+(?:\.\d+)?\/\d+\b/g, ' ')
+    .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
+    .replace(/[¼½¾⅓⅔⅛⅜⅝⅞]/g, ' ')
+    .replace(/\b(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|pinch|dash|handful|some|to taste)\b/g, ' ')
+    .replace(/\b(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|pounds?|lbs?|grams?|g|kg|ml|milliliters?|l|liters?|cloves?|cans?|packages?|sticks?|slices?)\b/g, ' ')
+    .replace(/\b(?:fresh|frozen|large|small|medium|diced|chopped|minced|grated|shredded|softened|melted|divided|plus more)\b/g, ' ')
+    .replace(/[^a-z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function dedupeIngredients(ingredients: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const ingredient of ingredients) {
+    const trimmed = ingredient.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const key = getIngredientSearchName(trimmed) || trimmed.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
 }
 
 // Strict structural validation of the single recipe. Returns issue codes (empty
@@ -1092,6 +1523,32 @@ function getRecipeRepairPrompt(
   ].join('\n');
 }
 
+function getCombinedRecipeRepairPrompt(
+  analysis: FoodImageAnalysis,
+  badOutput: OpenRouterRecipeOutput,
+  issues: string[],
+): string {
+  return [
+    `Your previous recipe JSON for "${analysis.dishName}" still has these validation problems after deterministic cleanup: ${issues.join(', ')}.`,
+    'Return ONLY valid minified JSON. Return either a patch with the fields you are changing OR a complete recipe object. Do not return markdown or explanations.',
+    'If you return ingredients or ingredientGroups, they must be complete valid replacements, not partial lists. Otherwise omit them so the original complete list can be preserved.',
+    'Fix all structural and quality problems in this single response. There will be no second repair pass.',
+    'Every ingredient must start with an exact amount and real grocery name. Preserve core visible/likely ingredients unless truly unsafe or impossible.',
+    'Every step object must include stepNumber, phase, title, step, ingredients, and tools. stepNumber starts at 1 and is sequential. ingredients/tools cannot be empty.',
+    'Every step sentence must include real ingredient names, a time, and a visible completion cue. Never write "cook until done", "season to taste", "prepare the ingredients", or "mix everything".',
+    'Keep food safety strict: poultry internal temperature must be 165°F / 74°C, and do not weaken raw-fish or ingredient-closure requirements.',
+    `Current recipe: ${JSON.stringify(badOutput)}`,
+    `Food: ${JSON.stringify({
+      dishName: analysis.dishName,
+      cuisine: analysis.cuisine,
+      broadDishCategory: analysis.broadDishCategory,
+      visibleIngredients: analysis.visibleIngredients,
+      likelyIngredients: analysis.likelyIngredients.slice(0, 8),
+      visibleComponents: analysis.visibleComponents,
+    })}`,
+  ].join('\n');
+}
+
 async function callOpenRouterJson(input: {
   config: AiConfig;
   maxTokens: number;
@@ -1104,6 +1561,8 @@ async function callOpenRouterJson(input: {
       openRouterErrorMessage: 'OpenRouter API key is missing.',
     });
   }
+
+  recordOpenRouterCall(input.stage);
 
   logOpenRouterDebug('openrouter_call_start', {
     model: input.model,

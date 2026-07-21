@@ -27,10 +27,12 @@ import {
   analyzeFoodImageWithOpenRouter,
   callComponentRepairWithOpenRouter,
   generateRecipeWithOpenRouter,
+  getOpenRouterMetrics,
   isDrinkAnalysisText,
   isGenericDishName,
   OpenRouterProviderError,
   repairStepCoachingWithAI,
+  runWithOpenRouterMetrics,
   type ComponentRepairOutput,
   type OpenRouterRecipeOutput,
   type OpenRouterRecipeVariant,
@@ -462,6 +464,10 @@ export function estimateIngredientCosts(input: EstimateIngredientCostsInput): In
 }
 
 export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
+  return runWithOpenRouterMetrics(() => createAiScanWithMetrics(input));
+}
+
+async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
   const config = getAiConfig({ fableActive: input.fableActive });
   const uploadedImage = hasRealUploadedImage(input);
   const providerVisible = isProviderVisibleImage(input.image);
@@ -563,14 +569,17 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       recipeSkipped: !foodGatePassed,
     });
     if (rejection) {
-      console.log('[scan_timing]', {
-        dish: analysis.dishName,
-        scanState: analysis.scanState,
-        visionMs,
-        recipeMs: 0,
-        totalMs: Date.now() - scanStartedAt,
-        rejected: rejection.rejectionType,
-      });
+    console.log('[scan_timing]', {
+      dish: analysis.dishName,
+      scanState: analysis.scanState,
+      visionMs,
+      recipeMs: 0,
+      providerCallCount: getOpenRouterMetrics().providerCallCount,
+      deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
+      combinedRepairMs: getOpenRouterMetrics().combinedRepairMs,
+      totalMs: Date.now() - scanStartedAt,
+      rejected: rejection.rejectionType,
+    });
       if (scanCacheKey) {
         scanCache.set(scanCacheKey, { kind: 'rejection', error: rejection, expiresAt: Date.now() + SCAN_REJECTION_CACHE_TTL_MS });
       }
@@ -672,6 +681,9 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
       scanState: analysis.scanState,
       visionMs,
       recipeMs, // includes Epicure pre-call + recipe + structure/quality/component repairs
+      providerCallCount: getOpenRouterMetrics().providerCallCount,
+      deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
+      combinedRepairMs: getOpenRouterMetrics().combinedRepairMs,
       totalMs: Date.now() - scanStartedAt,
     });
 
@@ -682,6 +694,13 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
   } catch (error) {
     // Fail-closed: throw on any provider error. Never return rejected scans.
     const errorMessage = error instanceof Error ? error.message : String(error);
+    console.log('[scan_timing]', {
+      providerCallCount: getOpenRouterMetrics().providerCallCount,
+      deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
+      combinedRepairMs: getOpenRouterMetrics().combinedRepairMs,
+      totalMs: Date.now() - scanStartedAt,
+      failed: true,
+    });
     console.error('api_scan_provider_failure', {
       model: config.openRouterVisionModel,
       errorMessage,
@@ -4607,6 +4626,13 @@ async function ensureComponentCoverage(
   let repairedRecipe = recipe;
 
   if (repairNeeded) {
+    if (getOpenRouterMetrics().providerCallCount >= 3) {
+      console.warn('[component-coverage] repair skipped_provider_call_cap', {
+        dish: analysis.dishName,
+        providerCallCount: getOpenRouterMetrics().providerCallCount,
+        missing: missingPrimaryComponents,
+      });
+    } else {
     console.log('[component-coverage] repair triggered', {
       dish: analysis.dishName,
       coveragePercent,
@@ -4634,6 +4660,7 @@ async function ensureComponentCoverage(
         dish: analysis.dishName,
         reason: repairError instanceof OpenRouterProviderError ? repairError.failure.reason : 'unknown',
       });
+    }
     }
   }
 

@@ -25,10 +25,11 @@ import {
   saveRecipe,
 } from './store.js';
 import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
+import { isRecipeValidationFailure } from './services/openRouterProvider.js';
 import type { ApiFailure, ApiResponse } from './types.js';
 
 const port = Number(process.env.PORT ?? 8081);
-const app = express();
+export const app = express();
 const maxImageDataUrlChars = 12_000_000;
 const jsonBodyLimit = '16mb';
 
@@ -281,15 +282,27 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
     return;
   }
 
+  if (isRecipeValidationFailure(error)) {
+    sendError(
+      response.status(422),
+      'recipe_validation_failed',
+      'Okyo could not build a safe complete recipe from this scan. Try another photo or scan again.',
+      getRecipeValidationErrorDetails(error),
+    );
+    return;
+  }
+
   sendError(response.status(500), 'internal_error', 'Unexpected API error.');
 });
 
-app.listen(port, () => {
-  console.log(`Okyo API listening on http://localhost:${port}`);
-  // Best-effort startup warning if the Epicure enrichment layer is misconfigured.
-  // Never fatal — the API boots regardless and enrichment simply stays off.
-  validateEpicureConfigAtStartup();
-});
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(port, () => {
+    console.log(`Okyo API listening on http://localhost:${port}`);
+    // Best-effort startup warning if the Epicure enrichment layer is misconfigured.
+    // Never fatal — the API boots regardless and enrichment simply stays off.
+    validateEpicureConfigAtStartup();
+  });
+}
 
 function parseRequest<TSchema extends z.ZodTypeAny>(schema: TSchema, value: unknown): z.infer<TSchema> {
   return schema.parse(value);
@@ -310,6 +323,17 @@ function sendError(response: Response, code: string, message: string, details?: 
     error: { code, message, details },
   };
   response.json(payload);
+}
+
+function getRecipeValidationErrorDetails(error: unknown) {
+  if (error && typeof error === 'object' && 'failure' in error) {
+    const failure = (error as { failure?: { reason?: string; openRouterErrorMessage?: string } }).failure;
+    return {
+      reason: failure?.reason ?? 'recipe_validation_failed',
+      validationMessage: failure?.openRouterErrorMessage,
+    };
+  }
+  return undefined;
 }
 
 function logScanRequest(body: z.infer<typeof scanRequestSchema>, contentType: string | undefined) {
