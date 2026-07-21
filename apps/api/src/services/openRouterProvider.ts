@@ -857,14 +857,33 @@ export function normalizeFullRecipeOutput(
   output: OpenRouterRecipeOutput,
   analysis: FoodImageAnalysis,
 ): OpenRouterRecipeOutput {
-  const ingredientNames = normalizeProviderIngredientList(output.ingredients);
+  const ingredientNames = addMissingWaterIngredient(
+    normalizeProviderIngredientList(output.ingredients),
+    output.steps.map(getProviderStepText),
+  );
   const equipment = output.equipment
     .map((tool) => typeof tool === 'string' ? tool.trim() : '')
     .filter(Boolean);
   let lastPhase = 1;
   const steps = output.steps.map((rawStep, index) => {
     const record: SafeRecord = typeof rawStep === 'object' && rawStep ? rawStep : {};
-    const instruction = getProviderStepText(rawStep).trim();
+    const instruction = correctPoultrySafetyTemperaturesInText(
+      getProviderStepText(rawStep).trim(),
+      analysis,
+      ingredientNames,
+    );
+    const rawDoneWhen = typeof record.doneWhen === 'string' && record.doneWhen.trim()
+      ? record.doneWhen.trim()
+      : undefined;
+    const doneWhen = rawDoneWhen
+      ? correctPoultrySafetyTemperaturesInText(rawDoneWhen, analysis, ingredientNames)
+      : undefined;
+    const rawSafetyNote = typeof record.safetyNote === 'string' && record.safetyNote.trim()
+      ? record.safetyNote.trim()
+      : undefined;
+    const safetyNote = rawSafetyNote
+      ? correctPoultrySafetyTemperaturesInText(rawSafetyNote, analysis, ingredientNames)
+      : undefined;
     // Per-step references are always derived from the final canonical lists.
     // Provider arrays are optional metadata and must never create a closure
     // failure or survive a targeted repair unchanged.
@@ -886,12 +905,8 @@ export function normalizeFullRecipeOutput(
       step: instruction,
       ingredients: [...new Set(normalizedIngredients.filter(Boolean))],
       tools: [...new Set(normalizedTools.filter(Boolean))],
-      doneWhen: typeof record.doneWhen === 'string' && record.doneWhen.trim()
-        ? record.doneWhen.trim()
-        : undefined,
-      safetyNote: typeof record.safetyNote === 'string' && record.safetyNote.trim()
-        ? record.safetyNote.trim()
-        : undefined,
+      doneWhen,
+      safetyNote,
     };
   });
 
@@ -922,6 +937,118 @@ function normalizeProviderIngredientList(ingredients: string[]): string[] {
     .filter(Boolean);
 }
 
+function addMissingWaterIngredient(ingredients: string[], stepTexts: string[]): string[] {
+  if (findMatchingIngredientName('water', ingredients)) {
+    return ingredients;
+  }
+  const waterIngredient = inferWaterIngredient(stepTexts);
+  return waterIngredient ? [...ingredients, waterIngredient] : ingredients;
+}
+
+function inferWaterIngredient(stepTexts: string[]): string | undefined {
+  const text = stepTexts.join(' ');
+  if (!containsIngredientMention(text.toLowerCase(), 'water')) {
+    return undefined;
+  }
+
+  const quantified = text.match(
+    /\b((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|a)\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|ml|milliliters?|l|liters?)?)\s+(?:cold\s+|warm\s+|hot\s+|boiling\s+)?(?:pasta\s+)?water\b/i,
+  );
+  if (quantified?.[1]) {
+    return `${quantified[1].trim()} water`;
+  }
+
+  if (/\b(?:bring|boil|cook|simmer)\b[\s\S]*\bwater\b/i.test(text) ||
+    /\bwater\b[\s\S]*\b(?:boil|simmer|cook|reserve)\b/i.test(text)) {
+    return '8 cups water';
+  }
+
+  if (/\b(?:splash|loosen|thin)\b[\s\S]*\bwater\b/i.test(text) ||
+    /\bwater\b[\s\S]*\b(?:loosen|thin)\b/i.test(text)) {
+    return '2 tbsp water';
+  }
+
+  return undefined;
+}
+
+function correctCompactPoultrySafetyTemperatures(
+  output: CompactRecipeOutput,
+  analysis: FoodImageAnalysis,
+): CompactRecipeOutput {
+  return {
+    ...output,
+    steps: output.steps.map((step) => ({
+      ...step,
+      instruction: correctPoultrySafetyTemperaturesInText(
+        step.instruction,
+        analysis,
+        output.ingredients,
+      ),
+      doneWhen: step.doneWhen
+        ? correctPoultrySafetyTemperaturesInText(step.doneWhen, analysis, output.ingredients)
+        : step.doneWhen,
+      safetyNote: step.safetyNote
+        ? correctPoultrySafetyTemperaturesInText(step.safetyNote, analysis, output.ingredients)
+        : step.safetyNote,
+    })),
+  };
+}
+
+function correctPoultrySafetyTemperaturesInText(
+  text: string,
+  analysis: FoodImageAnalysis,
+  ingredients: string[],
+): string {
+  if (!isPoultryRecipe(analysis, ingredients) || !text.trim()) {
+    return text;
+  }
+  return text.replace(/\b(\d{2,3})\s*°?\s*([fc])\b/gi, (match, rawValue: string, rawUnit: string, offset: number) => {
+    if (!isUnsafePoultryTemperature(Number(rawValue), rawUnit) ||
+      !isInternalTemperatureContext(text, offset)) {
+      return match;
+    }
+    return rawUnit.toLowerCase() === 'f' ? '165°F' : '74°C';
+  });
+}
+
+function hasUnsafePoultryTemperature(
+  texts: string[],
+  analysis: FoodImageAnalysis,
+  ingredients: string[],
+): boolean {
+  if (!isPoultryRecipe(analysis, ingredients)) {
+    return false;
+  }
+  return texts.some((text) => {
+    for (const match of text.matchAll(/\b(\d{2,3})\s*°?\s*([fc])\b/gi)) {
+      if (isUnsafePoultryTemperature(Number(match[1]), match[2]) &&
+        isInternalTemperatureContext(text, match.index ?? 0)) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+function isPoultryRecipe(analysis: FoodImageAnalysis, ingredients: string[]): boolean {
+  const text = `${analysis.dishName} ${analysis.broadDishCategory} ${ingredients.join(' ')}`.toLowerCase();
+  return /\b(chicken|poultry|turkey|duck)\b/.test(text);
+}
+
+function isUnsafePoultryTemperature(value: number, unit: string): boolean {
+  const normalizedUnit = unit.toLowerCase();
+  if (normalizedUnit === 'f') return value >= 90 && value < 165;
+  if (normalizedUnit === 'c') return value >= 45 && value < 74;
+  return false;
+}
+
+function isInternalTemperatureContext(text: string, index: number): boolean {
+  const before = text.slice(Math.max(0, index - 70), index);
+  const after = text.slice(index, Math.min(text.length, index + 70));
+  const context = `${before} ${after}`;
+  return /\b(?:internal|inside|thermometer|thickest part|center|centre|reaches?|temperature|cook(?:ed)?\s+(?:to|until))\b/i.test(context);
+}
+
 function validateFullRecipeOutput(
   output: OpenRouterRecipeOutput,
   analysis: FoodImageAnalysis,
@@ -938,6 +1065,15 @@ function validateFullRecipeOutput(
   }).join(' ');
   if (safetyRequirement && !safetyRequirement.pattern.test(safetyText)) {
     issues.push(`missing_safety_${safetyRequirement.code}`);
+  }
+  if (hasUnsafePoultryTemperature(
+    output.steps.map((step) => typeof step === 'string'
+      ? step
+      : `${getProviderStepText(step)} ${step.doneWhen ?? ''} ${step.safetyNote ?? ''}`),
+    analysis,
+    output.ingredients,
+  )) {
+    issues.push('unsafe_temperature_poultry');
   }
   if (isGenuinePlatterMeal(analysis)) {
     const coverage = getRecipeComponentCoverage(
@@ -1237,7 +1373,14 @@ function normalizeCompactProviderOutput(
   output: CompactRecipeOutput,
   analysis: FoodImageAnalysis,
 ) {
-  const compact = normalizeCompactRecipeTimes(output);
+  const timed = normalizeCompactRecipeTimes(output);
+  const compact = correctCompactPoultrySafetyTemperatures({
+    ...timed,
+    ingredients: addMissingWaterIngredient(
+      timed.ingredients,
+      timed.steps.map((step) => step.instruction),
+    ),
+  }, analysis);
   return {
     compact,
     // Both recipe contracts derive canonical step metadata before the repair
@@ -1335,6 +1478,13 @@ export function validateCompactRecipeOutput(
   const safetyNotes = output.steps.map((step) => step.safetyNote).join(' ');
   if (safetyRequirement && !safetyRequirement.pattern.test(safetyNotes)) {
     issues.push(`missing_safety_${safetyRequirement.code}`);
+  }
+  if (hasUnsafePoultryTemperature(
+    output.steps.map((step) => `${step.instruction} ${step.doneWhen ?? ''} ${step.safetyNote ?? ''}`),
+    analysis,
+    output.ingredients,
+  )) {
+    issues.push('unsafe_temperature_poultry');
   }
 
   if (isPlatter) {
@@ -1768,6 +1918,10 @@ function applyFullRecipeRepairPatch(
     repairedInvalidStepIndices: finalDiagnostics.stepsMissingCompletionCue,
     unknownIngredientsAfterRepair: finalDiagnostics.unknownIngredients,
   });
+  const finalQualityIssues = getRecipeQualityIssues(normalized, input.analysis, false);
+  if (finalQualityIssues.length > 0) {
+    throw new RecipeValidationError(finalQualityIssues);
+  }
   return normalized;
 }
 

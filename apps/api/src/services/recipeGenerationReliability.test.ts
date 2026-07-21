@@ -174,6 +174,92 @@ test('full recipe succeeds on the initial provider output with local step metada
   }
 });
 
+test('full recipe adds quantified water when cooking steps require it', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const recipe = fullRecipe({
+    ingredients: [
+      '8 oz spaghetti',
+      '2 tbsp olive oil',
+      '3 cloves garlic, minced',
+      '1 cup tomatoes, chopped',
+      '1/2 tsp salt',
+    ],
+  });
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(recipe);
+  };
+  try {
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: 'Water Closure Tomato Garlic Pasta' }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: 'full-water-closure',
+    });
+    assert.equal(calls, 1);
+    assert.ok(output.ingredients.includes('8 cups water'));
+    assert.deepEqual(
+      typeof output.steps[0] === 'object' && output.steps[0].ingredients,
+      ['water'],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('full recipe deterministically corrects unsafe poultry internal temperature', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const chicken = fullRecipe({
+    title: 'Lemon Chicken',
+    ingredients: [
+      '1 lb boneless chicken breasts',
+      '1 tbsp olive oil',
+      '1/2 tsp salt',
+      '1 lemon',
+    ],
+    equipment: ['large skillet', 'instant-read thermometer'],
+    steps: [
+      { title: 'Pat Dry', step: 'Pat the chicken dry for 1 minute.' },
+      { title: 'Heat Oil', step: 'Heat the olive oil for 2 minutes until shimmering.' },
+      { title: 'Sear Chicken', step: 'Sear the chicken for 5 minutes until golden.' },
+      {
+        title: 'Cook Through',
+        step: 'Cook the chicken for 6 minutes until it reaches 145°F / 63°C in the center.',
+        safetyNote: 'Chicken should reach 145°F / 63°C inside.',
+      },
+      { title: 'Rest', step: 'Rest the chicken for 5 minutes before slicing.' },
+    ],
+  });
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(chicken);
+  };
+  try {
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({
+        dishName: 'Lemon Chicken',
+        broadDishCategory: 'grilled poultry',
+        visibleIngredients: ['chicken', 'lemon'],
+        likelyIngredients: ['olive oil', 'salt'],
+      }),
+      config: fullConfig,
+      mode: 'Restaurant Copy',
+      quota,
+      requestId: 'full-poultry-temperature',
+    });
+    const text = JSON.stringify(output.steps);
+    assert.equal(calls, 1);
+    assert.match(text, /165°F/);
+    assert.match(text, /74°C/);
+    assert.doesNotMatch(text, /145°F|63°C/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('production-shaped full-core fixture captures every stage and succeeds after one targeted repair', async () => {
   const originalFetch = globalThis.fetch;
   const originalLog = console.log;
@@ -266,6 +352,49 @@ test('production-shaped full-core fixture captures every stage and succeeds afte
     assert.equal(aggregate.providerAttempts, 3);
     assert.equal(aggregate.recipeMs, timing.recipeMs);
     assert.equal(aggregate.repairMs, timing.repairMs);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('indexed full repair fails when changed text leaves the merged recipe invalid', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const events: unknown[][] = [];
+  let calls = 0;
+  const unresolvedPatch = structuredClone(fullCoreRepairSuccessfulPatchFixture);
+  unresolvedPatch.steps[1] = {
+    ...unresolvedPatch.steps[1],
+    step: 'Warm the olive oil in the large skillet.',
+    doneWhen: '',
+  };
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(calls === 1
+      ? structuredClone(fullCoreRepairInitialFixture)
+      : unresolvedPatch);
+  };
+  console.log = (...args: unknown[]) => { events.push(args); };
+  try {
+    await assert.rejects(
+      generateRecipeWithOpenRouter({
+        analysis: analysis({ dishName: 'Unresolved Indexed Repair Pasta' }),
+        config: fullConfig,
+        mode: 'Restaurant Copy',
+        quota,
+        requestId: 'full-repair-unresolved-merge',
+      }),
+      (error: unknown) => error instanceof RecipeValidationError &&
+        error.issues.includes('step_missing_time_or_completion_cue'),
+    );
+    assert.equal(calls, 2);
+    const validation = events.find(([label]) => label === '[recipe_repair_validation]')?.[1] as {
+      repairedInvalidStepIndices: number[];
+      repairChangedFields: string[];
+    };
+    assert.deepEqual(validation.repairedInvalidStepIndices, [1]);
+    assert.ok(validation.repairChangedFields.includes('steps.1.step'));
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;

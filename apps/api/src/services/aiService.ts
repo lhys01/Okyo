@@ -2991,24 +2991,49 @@ function ensureSafetyTemperature(steps: string[], dishName: string) {
   if (isDrinkAnalysisText(dishText)) {
     return steps;
   }
-  const stepText = steps.join(' ').toLowerCase();
+  const temperatureCorrectedSteps = dishText.includes('chicken')
+    ? steps.map(correctUnsafeChickenTemperature)
+    : steps;
+  const stepText = temperatureCorrectedSteps.join(' ').toLowerCase();
 
   if (dishText.includes('burger') && !stepText.includes('160')) {
-    return steps.map((step) => (
+    return temperatureCorrectedSteps.map((step) => (
       step.toLowerCase().includes('patty') || step.toLowerCase().includes('patties')
         ? `${step} For ground beef or turkey, check for 160°F inside.`
         : step
     ));
   }
   if (dishText.includes('chicken') && !stepText.includes('165')) {
-    return steps.map((step) => (
+    return temperatureCorrectedSteps.map((step) => (
       step.toLowerCase().includes('chicken')
         ? `${step} Chicken should reach 165°F inside.`
         : step
     ));
   }
 
-  return steps;
+  return temperatureCorrectedSteps;
+}
+
+function correctUnsafeChickenTemperature(step: string) {
+  return step.replace(/\b(\d{2,3})\s*°?\s*([fc])\b/gi, (match, rawValue: string, rawUnit: string, offset: number) => {
+    const value = Number(rawValue);
+    const unit = rawUnit.toLowerCase();
+    const unsafe = unit === 'f'
+      ? value >= 90 && value < 165
+      : value >= 45 && value < 74;
+    if (!unsafe || !isChickenInternalTemperatureContext(step, offset)) {
+      return match;
+    }
+    return unit === 'f' ? '165°F' : '74°C';
+  });
+}
+
+function isChickenInternalTemperatureContext(text: string, index: number) {
+  const before = text.slice(Math.max(0, index - 70), index);
+  const after = text.slice(index, Math.min(text.length, index + 70));
+  return /\b(?:internal|inside|thermometer|thickest part|center|centre|reaches?|temperature|cook(?:ed)?\s+(?:to|until))\b/i.test(
+    `${before} ${after}`,
+  );
 }
 
 function getIngredientGroups(
