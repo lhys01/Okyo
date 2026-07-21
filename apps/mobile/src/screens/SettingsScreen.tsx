@@ -1,17 +1,26 @@
-import { useEffect, useRef } from 'react';
+import { NavArrowRight } from 'iconoir-react-native';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import appConfig from '../../app.json';
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
-import { SecondaryButton, sharedStyles } from '../components/OkyoUI';
+import { KikoMascot } from '../components/KikoMascot';
+import { SecondaryButton } from '../components/OkyoUI';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { colors, radius, spacing, typography } from '../theme/okyoTheme';
+import { colors, spacing, typography } from '../theme/okyoTheme';
 import { legalUrls } from '../config/legalConfig';
+import { cancelOkyoDailyReminder, scheduleOkyoDailyReminder } from '../utils/notifications';
+import { useReducedMotion } from '../utils/useReducedMotion';
 
 export function SettingsScreen() {
   const resetOnboarding = useOkyoStore((state) => state.resetOnboarding);
   const clearSavedData = useOkyoStore((state) => state.clearSavedData);
+  const notificationChoice = useOkyoStore((state) => state.notificationChoice);
+  const setNotificationChoice = useOkyoStore((state) => state.setNotificationChoice);
+  const reduceMotion = useReducedMotion();
+  const [isUpdatingReminder, setIsUpdatingReminder] = useState(false);
   const appVersion = appConfig.expo.version;
   const didTrackView = useRef(false);
 
@@ -25,10 +34,6 @@ export function SettingsScreen() {
     didTrackView.current = true;
     track(analyticsEvents.SETTINGS_VIEWED, { screen: 'SettingsScreen' });
   }, []);
-
-  const showUnavailable = (label: string) => {
-    Alert.alert(label, 'This setting is not enabled in this preview build.');
-  };
 
   const openLegalDestination = async (label: string, url: string | undefined) => {
     if (!url) {
@@ -77,92 +82,177 @@ export function SettingsScreen() {
     );
   };
 
+  const updateDailyReminder = async (enabled: boolean) => {
+    if (isUpdatingReminder) {
+      return;
+    }
+
+    setIsUpdatingReminder(true);
+    try {
+      if (enabled) {
+        const scheduled = await scheduleOkyoDailyReminder();
+        if (!scheduled) {
+          Alert.alert(
+            'Notifications are off',
+            'Allow notifications in your device settings to get Okyo cooking reminders.',
+            [
+              { text: 'Not now', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            ],
+          );
+          return;
+        }
+        setNotificationChoice('remind_me');
+      } else {
+        await cancelOkyoDailyReminder();
+        setNotificationChoice('not_now');
+      }
+    } finally {
+      setIsUpdatingReminder(false);
+    }
+  };
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.kicker}>Settings</Text>
-      <Text style={styles.title}>Okyo</Text>
-      <Text style={styles.description}>Version {appVersion}</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+        <Text style={styles.title}>Settings</Text>
+        <Text style={styles.subtitle}>Make Okyo work the way your kitchen does.</Text>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Preferences</Text>
-        <View style={styles.row}>
-          <View style={styles.rowText}>
-            <Text style={styles.rowTitle}>Notifications</Text>
-            <Text style={styles.rowBody}>Okyo is not requesting push notifications in this build.</Text>
+        <View style={styles.identityRow}>
+          <View style={styles.heroMascotWrap}>
+            <KikoMascot animated="idle" pose="sideProfile" size={76} />
           </View>
-          <Switch value={false} onValueChange={() => showUnavailable('Notifications')} />
-        </View>
-        <View style={styles.row}>
-          <View style={styles.rowText}>
-            <Text style={styles.rowTitle}>Dark theme</Text>
-            <Text style={styles.rowBody}>The editorial light theme is active for this preview.</Text>
+          <View style={styles.heroCopy}>
+            <Text style={styles.heroTitle}>Okyo</Text>
+            <Text style={styles.description}>Your AI cooking companion · Version {appVersion}</Text>
           </View>
-          <Switch value={false} onValueChange={() => showUnavailable('Theme')} />
         </View>
-      </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Help and legal</Text>
-        <Text style={styles.privacySummary}>
-          Food photos are sent to OpenRouter and downstream AI providers for analysis. The backend processes the upload without retaining the image. Saved recipes and photo copies stay on this device until you remove the recipe or clear local data. During the cohort, backend operational logs may include dish labels, status, timing, model and token usage, but not raw photo contents. Mobile analytics and crash reporting are not enabled in this build.
-        </Text>
-        <Pressable style={styles.linkRow} onPress={() => openLegalDestination('Privacy Policy', legalUrls.privacy)}>
-          <Text style={styles.linkText}>Privacy Policy</Text>
-        </Pressable>
-        <Pressable style={styles.linkRow} onPress={() => openLegalDestination('Support', legalUrls.support)}>
-          <Text style={styles.linkText}>Support</Text>
-        </Pressable>
-        <Pressable style={styles.linkRow} onPress={() => openLegalDestination('Terms', legalUrls.terms)}>
-          <Text style={styles.linkText}>Terms</Text>
-        </Pressable>
-      </View>
-
-      {__DEV__ ? (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Development</Text>
-          <SecondaryButton onPress={confirmResetOnboarding}>Reset Onboarding</SecondaryButton>
-          <Pressable style={styles.dangerButton} onPress={confirmClearData}>
-            <Text style={styles.dangerButtonText}>Delete Saved Data</Text>
-          </Pressable>
+          <Text style={styles.sectionTitle}>Preferences</Text>
+          <View style={styles.row}>
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>Daily cooking reminder</Text>
+              <Text style={styles.rowBody}>A gentle nudge at 6:00 PM.</Text>
+            </View>
+            <Switch
+              accessibilityLabel="Daily cooking reminder"
+              disabled={isUpdatingReminder}
+              ios_backgroundColor={colors.creamDeep}
+              onValueChange={updateDailyReminder}
+              thumbColor={colors.card}
+              trackColor={{ false: colors.creamDeep, true: colors.green }}
+              value={notificationChoice === 'remind_me'}
+            />
+          </View>
+          <View style={styles.row}>
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>Reduce Motion</Text>
+              <Text style={styles.rowBody}>Follows your device setting · {reduceMotion ? 'On' : 'Off'}</Text>
+            </View>
+            <Text style={styles.systemBadge}>System</Text>
+          </View>
         </View>
-      ) : null}
-    </ScrollView>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Privacy and help</Text>
+          <View style={styles.privacyNote}>
+            <Text style={styles.privacyTitle}>Your food photos stay temporary</Text>
+            <Text style={styles.privacySummary}>
+              Photos are sent through OpenRouter for analysis and are not retained by Okyo unless you save a recipe. AI results are estimates you can retry or edit.
+            </Text>
+          </View>
+          <SettingsLink label="Privacy Policy" onPress={() => openLegalDestination('Privacy Policy', legalUrls.privacy)} />
+          <SettingsLink label="Support" onPress={() => openLegalDestination('Support', legalUrls.support)} />
+          <SettingsLink label="Terms" onPress={() => openLegalDestination('Terms', legalUrls.terms)} />
+        </View>
+
+        {__DEV__ ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Development</Text>
+            <SecondaryButton onPress={confirmResetOnboarding}>Reset Onboarding</SecondaryButton>
+            <Pressable style={styles.dangerButton} onPress={confirmClearData}>
+              <Text style={styles.dangerButtonText}>Delete Saved Data</Text>
+            </Pressable>
+          </View>
+        ) : null}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function SettingsLink({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable accessibilityRole="button" style={styles.linkRow} onPress={onPress}>
+      <Text style={styles.linkText}>{label}</Text>
+      <NavArrowRight color={colors.muted} height={19} strokeWidth={2} width={19} />
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    backgroundColor: colors.background,
+    flex: 1,
+  },
   container: {
     backgroundColor: colors.background,
     padding: spacing.screen,
     paddingBottom: 220,
   },
-  kicker: {
-    color: colors.coral,
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
   title: {
-    color: colors.charcoal,
-    fontSize: 34,
-    fontWeight: '700',
-    lineHeight: 39,
+    ...typography.title,
+    textAlign: 'center',
+  },
+  subtitle: {
+    ...typography.body,
+    fontSize: 14,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  identityRow: {
+    alignItems: 'center',
+    borderBottomColor: colors.borderStrong,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+    paddingBottom: 18,
+  },
+  heroCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  heroTitle: {
+    ...typography.heading,
+    fontSize: 19,
   },
   description: {
     ...typography.body,
-    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 3,
+  },
+  heroMascotWrap: {
+    alignItems: 'center',
+    backgroundColor: colors.infoSoft,
+    borderRadius: 8,
+    height: 78,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    width: 78,
   },
   section: {
-    ...sharedStyles.card,
+    borderBottomColor: colors.borderStrong,
+    borderBottomWidth: 1,
     marginTop: 18,
-    padding: 18,
+    paddingBottom: 8,
   },
   sectionTitle: {
     color: colors.charcoal,
     fontSize: 18,
     fontWeight: '700',
-    marginBottom: 12,
+    marginBottom: 4,
   },
   privacySummary: {
     ...typography.caption,
@@ -172,8 +262,8 @@ const styles = StyleSheet.create({
   },
   row: {
     alignItems: 'center',
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: 14,
     minHeight: 74,
@@ -193,11 +283,35 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginTop: 4,
   },
+  systemBadge: {
+    backgroundColor: colors.infoSoft,
+    borderRadius: 8,
+    color: colors.info,
+    fontSize: 12,
+    fontWeight: '700',
+    overflow: 'hidden',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  privacyNote: {
+    backgroundColor: colors.greenSoft,
+    borderRadius: 8,
+    marginBottom: 4,
+    padding: 14,
+  },
+  privacyTitle: {
+    color: colors.green,
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 5,
+  },
   linkRow: {
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
+    alignItems: 'center',
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     minHeight: 48,
-    justifyContent: 'center',
   },
   linkText: {
     color: colors.charcoal,
@@ -207,7 +321,7 @@ const styles = StyleSheet.create({
   dangerButton: {
     alignItems: 'center',
     borderColor: colors.danger,
-    borderRadius: radius.chip,
+    borderRadius: 8,
     borderWidth: 1,
     minHeight: 50,
     justifyContent: 'center',

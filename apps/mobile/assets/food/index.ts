@@ -1,11 +1,11 @@
 // Category-level fallback images (used by OnboardingUI, ScanScreen, etc.)
 export const foodAssets = {
-  bowl: require('./sample-bowl.png'),
-  breakfast: require('./sample-breakfast.png'),
-  burger: require('./sample-burger.png'),
-  dessert: require('./sample-dessert.png'),
-  pasta: require('./sample-pasta.png'),
-  salad: require('./sample-salad.png'),
+  bowl: require('./recipes/teriyaki-chicken-bowl.png'),
+  breakfast: require('./recipes/avocado-toast-poached-egg.png'),
+  burger: require('./recipes/smash-cheeseburger.png'),
+  dessert: require('./recipes/chocolate-mug-cake.png'),
+  pasta: require('./recipes/creamy-tomato-rigatoni.png'),
+  salad: require('./recipes/crunchy-chickpea-salad.png'),
 };
 
 // Per-recipe images for RecommendationsScreen and recipe cards.

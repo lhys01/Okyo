@@ -43,7 +43,15 @@ export function KikoMascot({
   const [reduceMotion, setReduceMotion] = useState(false);
   const progress = useRef(new Animated.Value(0)).current;
 
-  const baseStyle = [{ height: size, width: size }, style];
+  // Approved Kiko bitmaps are cropped from the supplied character sheet. The
+  // matching cream stage turns their soft edge into an intentional asset tile
+  // instead of a faint rectangle on white cards.
+  const baseStyle = [{
+    backgroundColor: '#FBF8F2',
+    borderRadius: 8,
+    height: size,
+    width: size,
+  }, style];
 
   useEffect(() => {
     AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);

@@ -4,12 +4,12 @@ const OKYO_DAILY_REMINDER_ID = 'okyo-daily-reminder';
 
 // Schedule a daily 6pm local notification reminding the user to cook.
 // Silently does nothing if permission is denied.
-export async function scheduleOkyoDailyReminder(): Promise<void> {
+export async function scheduleOkyoDailyReminder(): Promise<boolean> {
   const response = await Notifications.requestPermissionsAsync({
     ios: { allowAlert: true, allowSound: true, allowBadge: true },
   });
   if ((response as any).granted !== true) {
-    return;
+    return false;
   }
 
   // Cancel any existing reminder before re-scheduling to stay idempotent.
@@ -27,4 +27,10 @@ export async function scheduleOkyoDailyReminder(): Promise<void> {
       minute: 0,
     },
   });
+
+  return true;
+}
+
+export async function cancelOkyoDailyReminder(): Promise<void> {
+  await Notifications.cancelScheduledNotificationAsync(OKYO_DAILY_REMINDER_ID).catch(() => undefined);
 }

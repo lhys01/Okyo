@@ -1,25 +1,18 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { BlurView } from 'expo-blur';
-import {
-  Book,
-  Camera,
-  Cart,
-  Compass,
-  HomeSimple,
-  User,
-} from 'iconoir-react-native';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Book, Cart, HomeSimple, Settings } from 'iconoir-react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, fontFamilies } from '../theme/okyoTheme';
+import { haptics } from '../utils/haptics';
+import { devQaScreen } from '../utils/devQa';
 import { GroceryListScreen } from '../screens/GroceryListScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
-import { ProfileScreen } from '../screens/ProfileScreen';
 import { RecipeDetailScreen, RecipeStepsScreen } from '../screens/RecipeDetailScreen';
-import { RestaurantPacksScreen } from '../screens/RestaurantPacksScreen';
-import { ScanScreen } from '../screens/ScanScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import type { MainTabParamList } from './types';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -28,40 +21,36 @@ type MainTabRouteName = keyof MainTabParamList;
 
 const tabLabels: Record<MainTabRouteName, string> = {
   HomeScreen: 'Home',
-  RestaurantPacksScreen: 'Discover',
-  ScanScreen: 'Scan',
+  GroceryListScreen: 'Grocery',
   LibraryScreen: 'Saved',
-  ProfileScreen: 'Profile',
+  SettingsScreen: 'Settings',
   RecipeDetailScreen: 'Recipe',
   RecipeStepsScreen: 'Steps',
-  GroceryListScreen: 'Grocery',
 };
 
+// The four real product destinations. Recipe detail/steps stay registered in
+// the navigator (so recipe flows keep tab context) but never appear in the bar.
 const visibleTabOrder: MainTabRouteName[] = [
   'HomeScreen',
   'GroceryListScreen',
   'LibraryScreen',
-  'ProfileScreen',
+  'SettingsScreen',
 ];
 
 function TabIcon({ color, focused, routeName }: { color: string; focused: boolean; routeName: MainTabRouteName }) {
-  const iconSize = routeName === 'ScanScreen' ? 36 : focused ? 27 : 26;
-  const strokeWidth = routeName === 'ScanScreen' ? 2.1 : focused ? 2.2 : 1.9;
+  const iconSize = focused ? 27 : 26;
+  const strokeWidth = focused ? 2.2 : 1.9;
 
   switch (routeName) {
-    case 'HomeScreen':
-      return <HomeSimple color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
-    case 'RestaurantPacksScreen':
-      return <Compass color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'GroceryListScreen':
       return <Cart color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'LibraryScreen':
       return <Book color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
-    case 'ProfileScreen':
-      return <User color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
-    case 'ScanScreen':
+    case 'SettingsScreen':
+      return <Settings color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
+    case 'HomeScreen':
     default:
-      return <Camera color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
+      return <HomeSimple color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
   }
 }
 
@@ -92,6 +81,7 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
     });
 
     if (!isFocused && !event.defaultPrevented) {
+      haptics.selection();
       if (routeName === 'GroceryListScreen') {
         navigation.navigate('GroceryListScreen', { mode: undefined });
         return;
@@ -114,79 +104,48 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
     });
   };
 
-  const renderSideTab = (routeName: MainTabRouteName) => {
-    const route = routesByName[routeName];
-
-    if (!route) {
-      return null;
-    }
-
-    const descriptor = descriptors[route.key];
-    const options = descriptor?.options;
-    const focused = focusedRoute?.key === route.key;
-    const color = focused ? colors.charcoal : inactiveGray;
-    const label =
-      typeof options?.tabBarLabel === 'string'
-        ? options.tabBarLabel
-        : options?.title ?? tabLabels[routeName];
-
-    return (
-      <Pressable
-        key={routeName}
-        accessibilityLabel={options?.tabBarAccessibilityLabel}
-        accessibilityRole="button"
-        accessibilityState={focused ? { selected: true } : undefined}
-        hitSlop={8}
-        style={({ pressed }) => [styles.sideTab, pressed ? styles.tabPressed : null]}
-        testID={options?.tabBarButtonTestID}
-        onLongPress={() => onLongPress(routeName)}
-        onPress={() => navigateToTab(routeName)}
-      >
-        <TabIcon color={color} focused={focused} routeName={routeName} />
-        <Text numberOfLines={1} style={[styles.sideLabel, focused ? styles.sideLabelActive : null]}>
-          {label}
-        </Text>
-      </Pressable>
-    );
-  };
-
-  const scanRoute = routesByName.ScanScreen;
-  const scanFocused = focusedRoute?.key === scanRoute?.key;
-
   return (
-    <View pointerEvents="box-none" style={[styles.tabBarRoot, { height: 122 + bottomInset }]}>
+    <View pointerEvents="box-none" style={[styles.tabBarRoot, { height: 96 + bottomInset }]}>
       <View style={[styles.tabBarPill, { bottom: bottomInset + 8 }]}>
         <BlurView intensity={55} pointerEvents="none" style={styles.tabBarBlur} tint="light" />
-        <View style={styles.sideTabRow}>
-          {visibleTabOrder.slice(0, 2).map(renderSideTab)}
-          <View pointerEvents="none" style={styles.scanGap} />
-          {visibleTabOrder.slice(2).map(renderSideTab)}
+        <View style={styles.tabRow}>
+          {visibleTabOrder.map((routeName) => {
+            const route = routesByName[routeName];
+
+            if (!route) {
+              return null;
+            }
+
+            const descriptor = descriptors[route.key];
+            const options = descriptor?.options;
+            const focused = focusedRoute?.key === route.key;
+            const color = focused ? colors.coral : inactiveGray;
+            const label =
+              typeof options?.tabBarLabel === 'string'
+                ? options.tabBarLabel
+                : options?.title ?? tabLabels[routeName];
+
+            return (
+              <Pressable
+                key={routeName}
+                accessibilityLabel={options?.tabBarAccessibilityLabel ?? label}
+                accessibilityRole="button"
+                accessibilityState={focused ? { selected: true } : undefined}
+                hitSlop={8}
+                style={({ pressed }) => [styles.tab, pressed ? styles.tabPressed : null]}
+                testID={options?.tabBarButtonTestID}
+                onLongPress={() => onLongPress(routeName)}
+                onPress={() => navigateToTab(routeName)}
+              >
+                <TabIcon color={color} focused={focused} routeName={routeName} />
+                <Text numberOfLines={1} style={[styles.tabLabel, focused ? styles.tabLabelActive : null]}>
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
       </View>
-
-      {scanRoute ? (
-        <Pressable
-          accessibilityLabel={descriptors[scanRoute.key]?.options.tabBarAccessibilityLabel}
-          accessibilityRole="button"
-          accessibilityState={scanFocused ? { selected: true } : undefined}
-          hitSlop={10}
-          style={({ pressed }) => [
-            styles.scanTab,
-            { bottom: bottomInset + 20 },
-            pressed ? styles.scanTabPressed : null,
-          ]}
-          testID={descriptors[scanRoute.key]?.options.tabBarButtonTestID}
-          onLongPress={() => onLongPress('ScanScreen')}
-          onPress={() => navigateToTab('ScanScreen')}
-        >
-          <View style={styles.scanCircle}>
-            <TabIcon color="#fffdf8" focused routeName="ScanScreen" />
-          </View>
-          <Text style={[styles.scanLabel, scanFocused ? styles.scanLabelActive : styles.scanLabelInactive]}>
-            {tabLabels.ScanScreen}
-          </Text>
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -194,7 +153,7 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
 export function MainTabs() {
   return (
     <Tab.Navigator
-      initialRouteName="HomeScreen"
+      initialRouteName={getDevQaTabRoute()}
       tabBar={(props) => {
         const focusedRoute = props.state.routes[props.state.index];
 
@@ -212,15 +171,33 @@ export function MainTabs() {
       }}
     >
       <Tab.Screen name="HomeScreen" component={HomeScreen} options={{ title: 'Home' }} />
-      <Tab.Screen name="RestaurantPacksScreen" component={RestaurantPacksScreen} options={{ title: 'Discover' }} />
-      <Tab.Screen name="ScanScreen" component={ScanScreen} options={{ title: 'Scan' }} />
+      <Tab.Screen name="GroceryListScreen" component={GroceryListScreen} options={{ title: 'Grocery' }} />
       <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Saved' }} />
-      <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />
+      <Tab.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
       <Tab.Screen name="RecipeDetailScreen" component={RecipeDetailScreen} options={{ title: 'Recipe' }} />
       <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps', tabBarStyle: { display: 'none' } }} />
-      <Tab.Screen name="GroceryListScreen" component={GroceryListScreen} options={{ title: 'Grocery' }} />
     </Tab.Navigator>
   );
+}
+
+function getDevQaTabRoute(): MainTabRouteName {
+  switch (devQaScreen) {
+    case 'grocery':
+    case 'grocery-empty':
+      return 'GroceryListScreen';
+    case 'saved':
+    case 'saved-empty':
+      return 'LibraryScreen';
+    case 'settings':
+      return 'SettingsScreen';
+    case 'recipe':
+      return 'RecipeDetailScreen';
+    case 'steps':
+    case 'completion':
+      return 'RecipeStepsScreen';
+    default:
+      return 'HomeScreen';
+  }
 }
 
 const inactiveGray = '#7d7466';
@@ -232,8 +209,8 @@ const styles = StyleSheet.create({
   },
   tabBarPill: {
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 253, 248, 0.72)',
-    borderColor: 'rgba(255, 255, 255, 0.78)',
+    backgroundColor: colors.glassFill,
+    borderColor: colors.glassStroke,
     borderRadius: 34,
     borderWidth: StyleSheet.hairlineWidth,
     height: 76,
@@ -260,13 +237,13 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
   },
-  sideTabRow: {
+  tabRow: {
     alignItems: 'center',
     flexDirection: 'row',
     height: '100%',
     width: '100%',
   },
-  sideTab: {
+  tab: {
     alignItems: 'center',
     borderRadius: 22,
     flex: 1,
@@ -277,7 +254,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
     paddingTop: 2,
   },
-  sideLabel: {
+  tabLabel: {
     color: inactiveGray,
     fontFamily: fontFamilies.bold,
     fontSize: 10.5,
@@ -287,52 +264,9 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     textAlign: 'center',
   },
-  sideLabelActive: {
-    color: colors.charcoal,
-    fontWeight: '700',
-  },
-  scanGap: {
-    width: 76,
-  },
-  scanTab: {
-    alignItems: 'center',
-    alignSelf: 'center',
-    position: 'absolute',
-    width: 92,
-    zIndex: 2,
-  },
-  scanTabPressed: {
-    transform: [{ scale: 0.96 }],
-  },
-  scanCircle: {
-    alignItems: 'center',
-    backgroundColor: colors.coral,
-    borderColor: 'rgba(255, 255, 255, 0.92)',
-    borderRadius: 40,
-    borderWidth: 4,
-    height: 76,
-    justifyContent: 'center',
-    shadowColor: '#c2401f',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: Platform.OS === 'ios' ? 0.26 : 0.32,
-    shadowRadius: 16,
-    width: 76,
-    elevation: 14,
-  },
-  scanLabel: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
-    includeFontPadding: false,
-    lineHeight: 15,
-    marginTop: 6,
-    textAlign: 'center',
-  },
-  scanLabelActive: {
+  tabLabelActive: {
     color: colors.coral,
-  },
-  scanLabelInactive: {
-    color: inactiveGray,
+    fontWeight: '700',
   },
   tabPressed: {
     opacity: 0.7,

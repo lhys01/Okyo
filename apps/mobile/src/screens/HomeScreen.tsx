@@ -1,9 +1,11 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
+  Camera,
   NavArrowRight,
   PasteClipboard,
   Spark,
+  Upload,
 } from 'iconoir-react-native';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -15,6 +17,7 @@ import { KikoMascot } from '../components/KikoMascot';
 import { PressableScale, ProgressFill, RewardToast } from '../components/OkyoUI';
 import { RecommendationCard } from '../components/RecommendationCard';
 import { getMealTimeForHour, getRecommendationsForMealTime } from '../data/recommendedRecipes';
+import { useScanLauncher } from '../hooks/useScanLauncher';
 import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
@@ -46,6 +49,7 @@ export function HomeScreen() {
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const openRecommendation = useOpenRecommendation();
+  const { takePhoto, uploadFromPhotos } = useScanLauncher();
   const homeMoment = useMemo(() => getHomeMoment(), []);
   const mealIdeas = useMemo(() => getRecommendationsForMealTime(getMealTimeForHour(new Date().getHours()), 4), []);
 
@@ -106,7 +110,12 @@ export function HomeScreen() {
 
   const openScan = () => {
     uiLog('HomeScreen', 'scan_cta');
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    void takePhoto();
+  };
+
+  const openUpload = () => {
+    uiLog('HomeScreen', 'upload_cta');
+    void uploadFromPhotos();
   };
 
   const openPlan = () => {
@@ -116,7 +125,7 @@ export function HomeScreen() {
 
   const openDiscover = () => {
     uiLog('HomeScreen', 'open_discover');
-    navigation.navigate('MainTabs', { screen: 'RestaurantPacksScreen' });
+    navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
   };
 
   const openFoodIdea = () => {
@@ -213,6 +222,49 @@ export function HomeScreen() {
           <Text style={styles.kicker}>{homeMoment.greeting}</Text>
           <Text style={styles.title}>{commandCenter.headline}</Text>
           <Text style={styles.headerBody}>{commandCenter.subheadline}</Text>
+        </View>
+
+        <View style={styles.scanEntryCard}>
+          <View style={styles.scanEntryTop}>
+            <View style={styles.scanEntryCopy}>
+              <Text style={styles.scanEntryLabel}>Start here</Text>
+              <Text style={styles.scanEntryTitle}>Show Kiko what you’ve got.</Text>
+              <Text style={styles.scanEntryBody}>
+                Snap a plate, upload a photo, or describe the craving. Okyo will shape it into a recipe you can actually cook.
+              </Text>
+            </View>
+            <View style={styles.scanEntryMascotGlow}>
+              <KikoMascot animated="idle" pose="wave" size={92} />
+            </View>
+          </View>
+          <View style={styles.primaryScanRow}>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.takePhotoButton, pressed ? styles.takePhotoButtonPressed : null]}
+              onPress={openScan}
+            >
+              <Camera color={colors.onCoral} height={22} strokeWidth={2.35} width={22} />
+              <Text style={styles.takePhotoText}>Take photo</Text>
+            </Pressable>
+          </View>
+          <View style={styles.scanSecondaryRow}>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.scanSecondaryAction, pressed ? styles.pressed : null]}
+              onPress={openUpload}
+            >
+              <Upload color={colors.charcoal} height={19} strokeWidth={2.2} width={19} />
+              <Text style={styles.scanSecondaryText}>Upload photo</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.scanSecondaryAction, pressed ? styles.pressed : null]}
+              onPress={openFoodIdea}
+            >
+              <PasteClipboard color={colors.charcoal} height={19} strokeWidth={2.2} width={19} />
+              <Text style={styles.scanSecondaryText}>Describe idea</Text>
+            </Pressable>
+          </View>
         </View>
 
         {shouldShowDailyCheckIn ? (
@@ -568,6 +620,101 @@ const styles = StyleSheet.create({
     ...typography.body,
     marginTop: 8,
     maxWidth: 340,
+  },
+  scanEntryCard: {
+    ...surfaces.card,
+    borderRadius: radius.hero,
+    marginTop: 22,
+    overflow: 'hidden',
+    padding: 18,
+  },
+  scanEntryTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+  },
+  scanEntryCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  scanEntryLabel: {
+    ...typography.label,
+    color: colors.coralDark,
+  },
+  scanEntryTitle: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.display,
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: 0,
+    lineHeight: 34,
+    marginTop: 4,
+  },
+  scanEntryBody: {
+    color: colors.body,
+    fontFamily: fontFamilies.body,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 8,
+  },
+  scanEntryMascotGlow: {
+    alignItems: 'center',
+    backgroundColor: colors.coralSoft,
+    borderRadius: 999,
+    height: 104,
+    justifyContent: 'center',
+    width: 104,
+  },
+  primaryScanRow: {
+    marginTop: 18,
+  },
+  takePhotoButton: {
+    alignItems: 'center',
+    backgroundColor: colors.coral,
+    borderColor: 'rgba(255, 255, 255, 0.64)',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 9,
+    justifyContent: 'center',
+    minHeight: 58,
+    paddingHorizontal: 20,
+    ...shadows.cta,
+  },
+  takePhotoButtonPressed: {
+    backgroundColor: colors.coralDark,
+    transform: [{ scale: 0.98 }],
+  },
+  takePhotoText: {
+    color: colors.onCoral,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  scanSecondaryRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 11,
+  },
+  scanSecondaryAction: {
+    alignItems: 'center',
+    backgroundColor: colors.cardWarm,
+    borderColor: colors.border,
+    borderRadius: 999,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 7,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 10,
+  },
+  scanSecondaryText: {
+    color: colors.charcoal,
+    flexShrink: 1,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 13,
+    fontWeight: '800',
   },
   dailyCheckInCard: {
     ...surfaces.panel,

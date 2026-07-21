@@ -1,4 +1,4 @@
-import { Check, NavArrowLeft, Spark, Upload } from 'iconoir-react-native';
+import { Book, Camera, Check, MoneySquare, NavArrowLeft, NavArrowRight, Spark, Upload } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -464,12 +464,15 @@ export function OnboardingHeroScreen({ onContinue, progress }: OnboardingHeroScr
       <ScrollView contentContainerStyle={heroStyles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Hero food image */}
         <Animated.View style={[heroStyles.imageCard, { transform: [{ scale: imageScale }] }]}>
-          <Image source={foodAssets.burger} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+          <Image source={foodAssets.pasta} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
           <View style={heroStyles.imageGradient} />
+          <View style={heroStyles.kikoBadge}>
+            <KikoMascot animated="idle" pose="wave" size={94} />
+          </View>
           {/* Food variety strip at bottom of image */}
           <View style={heroStyles.foodThumbs}>
             <View style={heroStyles.foodThumbItem}>
-              <Image source={foodAssets.pasta} style={heroStyles.foodThumbImage} resizeMode="cover" />
+              <Image source={foodAssets.burger} style={heroStyles.foodThumbImage} resizeMode="cover" />
             </View>
             <View style={heroStyles.foodThumbItem}>
               <Image source={foodAssets.salad} style={heroStyles.foodThumbImage} resizeMode="cover" />
@@ -497,18 +500,18 @@ export function OnboardingHeroScreen({ onContinue, progress }: OnboardingHeroScr
             },
           ]}
         >
-          <Text style={heroStyles.headline}>Turn any meal into{'\n'}a recipe. Instantly.</Text>
+          <Text style={heroStyles.headline}>Turn any meal into{'\n'}a recipe.</Text>
           <Text style={heroStyles.sub}>
-            Snap any restaurant dish — Okyo builds you the recipe, grocery list, and step-by-step cooking guide.
+            Snap a restaurant dish and Kiko will help shape an inspired-by recipe, grocery list, and calm cooking guide.
           </Text>
 
           {/* Proof row */}
           <View style={heroStyles.proofRow}>
-            <ProofPill emoji="📸" label="Snap it" />
+            <ProofPill icon={<Camera color={colors.coralDark} height={18} strokeWidth={2.2} width={18} />} label="Snap" />
             <ProofArrow />
-            <ProofPill emoji="📋" label="Get recipe" />
+            <ProofPill icon={<Book color={colors.green} height={18} strokeWidth={2.2} width={18} />} label="Recipe" />
             <ProofArrow />
-            <ProofPill emoji="💰" label="Save money" />
+            <ProofPill icon={<MoneySquare color={colors.info} height={18} strokeWidth={2.2} width={18} />} label="Remake" />
           </View>
         </Animated.View>
       </ScrollView>
@@ -520,17 +523,17 @@ export function OnboardingHeroScreen({ onContinue, progress }: OnboardingHeroScr
   );
 }
 
-function ProofPill({ emoji, label }: { emoji: string; label: string }) {
+function ProofPill({ icon, label }: { icon: ReactNode; label: string }) {
   return (
     <View style={heroStyles.proofPill}>
-      <Text style={heroStyles.proofEmoji}>{emoji}</Text>
+      {icon}
       <Text style={heroStyles.proofLabel}>{label}</Text>
     </View>
   );
 }
 
 function ProofArrow() {
-  return <Text style={heroStyles.proofArrow}>›</Text>;
+  return <NavArrowRight color={colors.muted} height={18} strokeWidth={2.2} width={18} />;
 }
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
@@ -1636,7 +1639,7 @@ const heroStyles = StyleSheet.create({
   },
   imageGradient: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(26,20,12,0.12)',
+    backgroundColor: 'rgba(26,20,12,0.04)',
   },
   foodThumbs: {
     bottom: 16,
@@ -1661,12 +1664,28 @@ const heroStyles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 28,
   },
+  kikoBadge: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.coralSoft,
+    borderColor: colors.card,
+    borderRadius: 24,
+    borderWidth: 2,
+    height: 98,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'absolute',
+    right: 14,
+    top: 14,
+    width: 98,
+    ...shadows.soft,
+  },
   headline: {
     color: onboardingColors.charcoal,
     fontFamily: fontFamilies.display,
     fontSize: 40,
     fontWeight: '800',
-    letterSpacing: -0.5,
+    letterSpacing: 0,
     lineHeight: 46,
   },
   sub: {
@@ -1679,7 +1698,7 @@ const heroStyles = StyleSheet.create({
   proofRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 8,
+    gap: 4,
     marginTop: 24,
   },
   proofPill: {
@@ -1690,23 +1709,15 @@ const heroStyles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: 6,
-    paddingHorizontal: 12,
+    flexShrink: 1,
+    paddingHorizontal: 9,
     paddingVertical: 8,
     ...shadows.card,
-  },
-  proofEmoji: {
-    fontSize: 16,
   },
   proofLabel: {
     color: onboardingColors.charcoal,
     fontFamily: fontFamilies.bold,
     fontSize: 13,
-    fontWeight: '700',
-  },
-  proofArrow: {
-    color: onboardingColors.gray,
-    fontFamily: fontFamilies.bold,
-    fontSize: 20,
     fontWeight: '700',
   },
 });

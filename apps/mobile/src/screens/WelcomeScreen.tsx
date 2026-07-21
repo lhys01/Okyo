@@ -58,8 +58,8 @@ const progressSteps: OnboardingScreenKey[] = [
   'hero',
   'weeklyGoal',
   'reminder',
-  'loading',
   'scan',
+  'loading',
   'firstResult',
 ];
 
@@ -140,19 +140,6 @@ export function WelcomeScreen() {
     });
   }, [screenKey, splashOpacity]);
 
-  // Auto-advance from the "Building Your Plan" loading screen to scan after 2.5s
-  useEffect(() => {
-    if (screenKey !== 'loading' || selectedScanImage?.uri) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      setScreenKey('scan');
-    }, 2500);
-
-    return () => clearTimeout(timer);
-  }, [screenKey, selectedScanImage?.uri]);
-
   const progress = useMemo(() => {
     const index = progressSteps.indexOf(screenKey);
     if (index < 0) {
@@ -165,12 +152,6 @@ export function WelcomeScreen() {
   const goBack = () => {
     const currentIndex = progressSteps.indexOf(screenKey);
     if (currentIndex <= 0 || screenKey === 'loading' || screenKey === 'firstResult') {
-      return;
-    }
-
-    // Skip the 'loading' (Building Your Plan) step when navigating back from scan
-    if (screenKey === 'scan') {
-      setScreenKey('reminder');
       return;
     }
 
@@ -430,7 +411,7 @@ export function WelcomeScreen() {
             name: 'MainTabs',
             params: latestScanRecipe
               ? { screen: 'RecipeDetailScreen', params: { mode: getSafeRecipeMode(latestScanRecipe.mode) } }
-              : { screen: 'ScanScreen' },
+              : { screen: 'HomeScreen' },
           },
         ],
       }),
@@ -660,7 +641,7 @@ function ScanIntroScreen({
     <View style={styles.screenBlock}>
       <KikoSpeechBubble
         pose="scanning"
-        text="Now show me what you're craving 👀"
+        text="Now show me what you're craving."
       />
       <OnboardingScanCard
         errorMessage={errorMessage}
@@ -962,7 +943,7 @@ function noop() {
 const styles = StyleSheet.create({
   splash: {
     alignItems: 'center',
-    backgroundColor: onboardingColors.primary,
+    backgroundColor: onboardingColors.background,
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 24,
@@ -972,15 +953,13 @@ const styles = StyleSheet.create({
   },
   splashMascot: {
     alignItems: 'center',
-    backgroundColor: colors.onCoral,
-    borderRadius: 44,
-    height: 190,
+    height: 210,
     justifyContent: 'center',
-    width: 190,
-    ...shadows.hero,
+    overflow: 'hidden',
+    width: 250,
   },
   splashWordmark: {
-    color: colors.onCoral,
+    color: colors.charcoal,
     fontFamily: fontFamilies.display,
     fontSize: 58,
     fontWeight: '800',
@@ -990,7 +969,7 @@ const styles = StyleSheet.create({
     textTransform: 'lowercase',
   },
   splashTagline: {
-    color: '#fff3eb',
+    color: colors.body,
     fontFamily: fontFamilies.bold,
     fontSize: 18,
     fontWeight: '700',

@@ -1,4 +1,4 @@
-// Okyo design tokens — "warm cookbook" pass. This is the ONLY source of design
+// Okyo design tokens — Kiko pastel companion pass. This is the ONLY source of design
 // tokens (colors, spacing, radius, typography, shadows, surfaces, layout).
 // OkyoUI.tsx must not re-export these — import tokens from here directly.
 //
@@ -9,47 +9,53 @@
 //     (tab bar, floating headers, sheets). Scrolling content never blurs.
 
 export const colors = {
-  background: '#faf7f0',
-  card: '#ffffff',
-  cardWarm: '#fffdf8',
-  cream: '#f6efe2',
-  creamDeep: '#eadfcb',
-  coral: '#e9552f',
-  coralDark: '#c2401f',
-  coralSoft: '#fdeee7',
-  green: '#1d7a4d',
-  greenSoft: '#e9f5ee',
-  charcoal: '#1c1813',
-  body: '#575047',
+  background: '#F6F2EB',
+  card: '#FFFDF8',
+  cardWarm: '#FFF9F1',
+  cream: '#F6F2EB',
+  creamDeep: '#E9DEC9',
+  coral: '#F36F7D',
+  coralDark: '#B84A54',
+  coralSoft: '#FFE8E8',
+  green: '#2F7D54',
+  greenSoft: '#E5F7ED',
+  charcoal: '#242631',
+  body: '#55505B',
   // AA at caption sizes on the ivory canvas (≥4.5:1). Use mutedSoft only for
   // decorative/disabled elements, never for text that must be read.
-  muted: '#6f675c',
-  mutedSoft: '#8e867b',
-  border: '#efe8db',
-  borderStrong: '#e3dac9',
-  danger: '#a33524',
-  dangerSoft: '#f9e8e3',
+  muted: '#706B75',
+  mutedSoft: '#918A95',
+  border: '#ECE3D8',
+  borderStrong: '#DED1C1',
+  danger: '#A84242',
+  dangerSoft: '#F9E4E4',
   // Neutral supporting tones for "why this matters" / practical-info blocks
   // and low-key caution callouts (guided cooking, cook-coach tips).
-  info: '#46707c',
-  infoSoft: '#e9f1f2',
-  cautionSoft: '#f9efce',
-  onCoral: '#fffdf8',
+  info: '#39708A',
+  infoSoft: '#E7F4FB',
+  cautionSoft: '#FFF3CF',
+  onCoral: '#FFFDF8',
   // Glass chrome (tab bar, floating headers, sheets).
-  glassFill: 'rgba(255, 253, 248, 0.72)',
+  glassFill: 'rgba(255, 253, 248, 0.78)',
   glassStroke: 'rgba(255, 255, 255, 0.78)',
-  scrim: 'rgba(28, 24, 19, 0.35)',
+  scrim: 'rgba(36, 38, 49, 0.35)',
 };
 
 // Decorative-only pastels for ambient art. Keep these behind readable
 // surfaces and text; they are not semantic UI colors.
 export const ambientColors = {
-  pink: '#f5b7cf',
-  peach: '#f8c7a8',
-  yellow: '#f7e19d',
-  mint: '#bee2cf',
-  blue: '#bedcee',
-  lavender: '#d7c7ec',
+  pink: '#FFB6C1',
+  peach: '#FFC9A6',
+  yellow: '#FFE59A',
+  mint: '#C8F0D6',
+  blue: '#B8E6FF',
+  lavender: '#D9C8FF',
+} as const;
+
+export const gradients = {
+  primary: ['#FF9AAE', '#FFD166', '#9ADBC0', '#9FD0FF'] as const,
+  soft: ['#FFE8E8', '#FFF3CF', '#E5F7ED', '#E7F4FB'] as const,
+  celebration: ['#FFB6C1', '#FFE59A', '#C8F0D6', '#B8E6FF', '#D9C8FF'] as const,
 } as const;
 
 export const spacing = {
@@ -81,10 +87,11 @@ export const fontSizes = {
 };
 
 export const fontFamilies = {
-  display: 'Baloo2_800ExtraBold',
-  body: 'Nunito_400Regular',
-  bold: 'Nunito_700Bold',
-  extraBold: 'Nunito_800ExtraBold',
+  display: 'Sora_800ExtraBold',
+  body: 'Sora_400Regular',
+  bold: 'Sora_700Bold',
+  semiBold: 'Sora_600SemiBold',
+  extraBold: 'Sora_800ExtraBold',
 } as const;
 
 // Editorial type presets. Spread into StyleSheet entries:
@@ -151,7 +158,7 @@ export const typography = {
 export const shadows = {
   // Resting card on the ivory canvas.
   card: {
-    shadowColor: '#4a3a28',
+    shadowColor: '#514334',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.07,
     shadowRadius: 16,
@@ -159,7 +166,7 @@ export const shadows = {
   },
   // Barely-there lift for dense lists (grocery rows, menu rows).
   soft: {
-    shadowColor: '#4a3a28',
+    shadowColor: '#514334',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.05,
     shadowRadius: 10,
@@ -167,7 +174,7 @@ export const shadows = {
   },
   // Hero moments: scan results, big imagery, celebration cards.
   hero: {
-    shadowColor: '#4a3a28',
+    shadowColor: '#514334',
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.1,
     shadowRadius: 24,
@@ -175,7 +182,7 @@ export const shadows = {
   },
   // Warm glow under the primary coral CTA.
   cta: {
-    shadowColor: '#e9552f',
+    shadowColor: '#F36F7D',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.2,
     shadowRadius: 16,

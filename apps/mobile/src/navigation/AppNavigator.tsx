@@ -4,36 +4,35 @@ import { useEffect, useRef } from 'react';
 import { analyticsEvents, track } from '../analytics/track';
 import { colors } from '../theme/okyoTheme';
 import { AnalysisLoadingScreen } from '../screens/AnalysisLoadingScreen';
-import { ChallengeCompleteScreen } from '../screens/ChallengeCompleteScreen';
-import { DupeChallengeScreen } from '../screens/DupeChallengeScreen';
 import { FoodIdeaScreen } from '../screens/FoodIdeaScreen';
-import { GoalScreen } from '../screens/GoalScreen';
-import { RestaurantPackDetailScreen } from '../screens/RestaurantPackDetailScreen';
 import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
-import { KitchenLetterScreen } from '../screens/KitchenLetterScreen';
-import { RecommendationCategoryScreen } from '../screens/RecommendationCategoryScreen';
-import { SavingsDashboardScreen } from '../screens/SavingsDashboardScreen';
-import { ScanScreen } from '../screens/ScanScreen';
-import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { devQaScreen, seedDevQaState } from '../utils/devQa';
 import { uiLog } from '../utils/uiDebug';
 import { defaultScanResult, getSafeRecipeForMode, getSafeRecipeMode } from '../mocks';
 import { MainTabs } from './MainTabs';
 import type { RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
-const devResultSummaryQaScanSessionId = 'dev-result-summary-qa';
+const devResultSummaryQaScanSessionId = 'dev-result-summary-qa-v2';
 const shouldOpenDevResultSummaryQa =
   typeof __DEV__ !== 'undefined' &&
   __DEV__ &&
   process.env.EXPO_PUBLIC_OKYO_RESULT_SUMMARY_QA === '1';
+const shouldBypassOnboarding = shouldOpenDevResultSummaryQa || Boolean(devQaScreen && devQaScreen !== 'onboarding');
 
 export function AppNavigator() {
   const hasCompletedOnboarding = useOkyoStore((state) => state.hasCompletedOnboarding);
   const didTrackAppOpen = useRef(false);
   const didSeedDevResultSummaryQa = useRef(false);
+  const didSeedDevQa = useRef(false);
+
+  if (devQaScreen && !didSeedDevQa.current) {
+    didSeedDevQa.current = true;
+    seedDevQaState(devQaScreen);
+  }
 
   if (shouldOpenDevResultSummaryQa && !didSeedDevResultSummaryQa.current) {
     didSeedDevResultSummaryQa.current = true;
@@ -53,7 +52,7 @@ export function AppNavigator() {
     uiLog('AppNavigator', 'onboarding_state', { hasCompletedOnboarding });
   }, [hasCompletedOnboarding]);
 
-  if (!hasCompletedOnboarding) {
+  if (!hasCompletedOnboarding && !shouldBypassOnboarding) {
     return (
       <Stack.Navigator
         key="onboarding"
@@ -71,7 +70,7 @@ export function AppNavigator() {
   return (
     <Stack.Navigator
       key="main"
-      initialRouteName={shouldOpenDevResultSummaryQa ? 'ResultSummaryScreen' : 'MainTabs'}
+      initialRouteName={getDevQaRootRoute()}
       screenOptions={{
         contentStyle: { backgroundColor: colors.background },
         headerBackButtonDisplayMode: 'generic',
@@ -82,9 +81,7 @@ export function AppNavigator() {
       }}
     >
       <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} options={{ title: 'Okyo' }} />
-      <Stack.Screen name="GoalScreen" component={GoalScreen} options={{ title: 'Goal' }} />
       <Stack.Screen name="FoodIdeaScreen" component={FoodIdeaScreen} options={{ headerShown: false, title: 'Food Idea' }} />
-      <Stack.Screen name="ScanScreen" component={ScanScreen} options={{ headerShown: false, title: 'Scan' }} />
       <Stack.Screen
         name="AnalysisLoadingScreen"
         component={AnalysisLoadingScreen}
@@ -100,40 +97,26 @@ export function AppNavigator() {
         component={ShareCardPreviewScreen}
         options={{ headerShown: false, presentation: 'modal', title: 'Share Preview' }}
       />
-      <Stack.Screen
-        name="DupeChallengeScreen"
-        component={DupeChallengeScreen}
-        options={{ title: 'Dupe Challenge' }}
-      />
-      <Stack.Screen
-        name="ChallengeCompleteScreen"
-        component={ChallengeCompleteScreen}
-        options={{ title: 'Challenge Complete' }}
-      />
-      <Stack.Screen
-        name="RestaurantPackDetailScreen"
-        component={RestaurantPackDetailScreen}
-        options={{ title: 'Pack Detail' }}
-      />
-      <Stack.Screen
-        name="SavingsDashboardScreen"
-        component={SavingsDashboardScreen}
-        options={{ headerShown: false, title: 'Savings' }}
-      />
-      <Stack.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
-      <Stack.Screen
-        name="RecommendationCategoryScreen"
-        component={RecommendationCategoryScreen}
-        options={{ headerShown: false, title: 'Food Ideas' }}
-      />
-      <Stack.Screen
-        name="KitchenLetterScreen"
-        component={KitchenLetterScreen}
-        options={{ headerShown: false, presentation: 'modal', title: 'Kitchen Letter' }}
-      />
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false, title: 'Okyo' }} />
     </Stack.Navigator>
   );
+}
+
+function getDevQaRootRoute(): keyof RootStackParamList {
+  if (devQaScreen === 'onboarding') {
+    return 'WelcomeScreen';
+  }
+  if (shouldOpenDevResultSummaryQa || devQaScreen === 'result' || devQaScreen === 'result-error') {
+    return 'ResultSummaryScreen';
+  }
+  if (devQaScreen === 'analysis' || devQaScreen === 'analysis-timeout') {
+    return 'AnalysisLoadingScreen';
+  }
+  if (devQaScreen === 'share') {
+    return 'ShareCardPreviewScreen';
+  }
+
+  return 'MainTabs';
 }
 
 function seedDevResultSummaryQa() {
