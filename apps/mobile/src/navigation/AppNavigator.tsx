@@ -1,5 +1,6 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { colors } from '../components/OkyoUI';
@@ -18,16 +19,25 @@ import { ScanScreen } from '../screens/ScanScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
+import { onboardingPersistence } from '../state/onboardingPersistence';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { uiLog } from '../utils/uiDebug';
 import { MainTabs } from './MainTabs';
+import { getOnboardingStartupStatus, getStartupRoute } from './startupGate';
 import type { RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function AppNavigator() {
   const hasCompletedOnboarding = useOkyoStore((state) => state.hasCompletedOnboarding);
+  const setOnboardingCompletionFromStorage = useOkyoStore((state) => state.setOnboardingCompletionFromStorage);
+  const [persistedOnboardingCompleted, setPersistedOnboardingCompleted] = useState<boolean | null>(null);
   const didTrackAppOpen = useRef(false);
+  const startupStatus = useMemo(
+    () => getOnboardingStartupStatus(persistedOnboardingCompleted),
+    [persistedOnboardingCompleted],
+  );
+  const startupRoute = getStartupRoute(startupStatus);
 
   useEffect(() => {
     if (didTrackAppOpen.current) {
@@ -39,10 +49,51 @@ export function AppNavigator() {
   }, []);
 
   useEffect(() => {
-    uiLog('AppNavigator', 'onboarding_state', { hasCompletedOnboarding });
-  }, [hasCompletedOnboarding]);
+    let isMounted = true;
 
-  if (!hasCompletedOnboarding) {
+    onboardingPersistence.readCompleted()
+      .then((completed) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setOnboardingCompletionFromStorage(completed);
+        setPersistedOnboardingCompleted(completed);
+      })
+      .catch((error: unknown) => {
+        if (!isMounted) {
+          return;
+        }
+
+        uiLog('AppNavigator', 'onboarding_hydration_failed', { error: String(error) });
+        setOnboardingCompletionFromStorage(false);
+        setPersistedOnboardingCompleted(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [setOnboardingCompletionFromStorage]);
+
+  useEffect(() => {
+    if (startupStatus === 'onboardingRequired' && hasCompletedOnboarding) {
+      setPersistedOnboardingCompleted(true);
+    }
+
+    if (startupStatus === 'onboardingComplete' && !hasCompletedOnboarding) {
+      setPersistedOnboardingCompleted(false);
+    }
+  }, [hasCompletedOnboarding, startupStatus]);
+
+  useEffect(() => {
+    uiLog('AppNavigator', 'onboarding_state', { hasCompletedOnboarding, startupStatus });
+  }, [hasCompletedOnboarding, startupStatus]);
+
+  if (startupRoute === null) {
+    return <StartupLoadingScreen />;
+  }
+
+  if (startupRoute === 'WelcomeScreen') {
     return (
       <Stack.Navigator
         key="onboarding"
@@ -52,7 +103,6 @@ export function AppNavigator() {
         }}
       >
         <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} />
-        <Stack.Screen name="MainTabs" component={MainTabs} />
       </Stack.Navigator>
     );
   }
@@ -68,9 +118,8 @@ export function AppNavigator() {
         headerShadowVisible: false,
         headerStyle: { backgroundColor: colors.background },
         headerTintColor: colors.charcoal,
-      }}
-    >
-      <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} options={{ title: 'Okyo' }} />
+    }}
+  >
       <Stack.Screen name="GoalScreen" component={GoalScreen} options={{ title: 'Goal' }} />
       <Stack.Screen name="ScanScreen" component={ScanScreen} options={{ headerShown: false, title: 'Scan' }} />
       <Stack.Screen
@@ -123,5 +172,20 @@ export function AppNavigator() {
       />
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false, title: 'Okyo' }} />
     </Stack.Navigator>
+  );
+}
+
+function StartupLoadingScreen() {
+  return (
+    <View
+      style={{
+        alignItems: 'center',
+        backgroundColor: colors.background,
+        flex: 1,
+        justifyContent: 'center',
+      }}
+    >
+      <ActivityIndicator color={colors.coral} />
+    </View>
   );
 }

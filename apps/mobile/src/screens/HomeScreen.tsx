@@ -75,7 +75,7 @@ export function HomeScreen() {
 
   const openScan = () => {
     uiLog('HomeScreen', 'scan_cta');
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('ScanScreen');
   };
 
   const openPlan = () => {
