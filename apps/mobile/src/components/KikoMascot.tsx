@@ -8,6 +8,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useEffect, useRef, useState } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 
 import { mascotAssets } from '../../assets/mascot';
 
@@ -40,15 +41,11 @@ export function KikoMascot({
   const safePose = getSafePose(pose);
   const imageSource = mascotAssets[safePose] ?? mascotAssets.default;
   const motion = getMotionState(animated, safePose);
+  const isFocused = useIsFocused();
   const [reduceMotion, setReduceMotion] = useState(false);
   const progress = useRef(new Animated.Value(0)).current;
 
-  // Approved Kiko bitmaps are cropped from the supplied character sheet. The
-  // matching cream stage turns their soft edge into an intentional asset tile
-  // instead of a faint rectangle on white cards.
   const baseStyle = [{
-    backgroundColor: '#FBF8F2',
-    borderRadius: 8,
     height: size,
     width: size,
   }, style];
@@ -64,7 +61,7 @@ export function KikoMascot({
     progress.stopAnimation();
     progress.setValue(0);
 
-    if (!motion || reduceMotion) {
+    if (!motion || reduceMotion || !isFocused) {
       return;
     }
 
@@ -105,9 +102,9 @@ export function KikoMascot({
     loop.start();
 
     return () => loop.stop();
-  }, [motion, progress, reduceMotion]);
+  }, [isFocused, motion, progress, reduceMotion]);
 
-  if (!motion || reduceMotion) {
+  if (!motion || reduceMotion || !isFocused) {
     return <Image resizeMode="contain" source={imageSource} style={baseStyle} />;
   }
 

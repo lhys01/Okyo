@@ -1,11 +1,11 @@
 export const mascotAssets = {
   default: require('./kiko-pastel-default.png'),
   wave: require('./kiko-pastel-wave.png'),
-  happy: require('./kiko-pastel-happy.png'),
+  happy: require('./kiko-pastel-default.png'),
   thinking: require('./kiko-pastel-thinking.png'),
   cooking: require('./kiko-pastel-recipe.png'),
   celebrating: require('./kiko-pastel-celebrating.png'),
-  success: require('./kiko-pastel-happy.png'),
+  success: require('./kiko-pastel-default.png'),
   pointing: require('./kiko-pastel-grocery-list.png'),
   scanning: require('./kiko-pastel-thinking.png'),
   groceryList: require('./kiko-pastel-grocery-list.png'),
