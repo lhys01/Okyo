@@ -41,7 +41,7 @@ import { getShareStatusCopy, type ShareLifecycle } from '../utils/shareLifecycle
 
 type ShareCardRoute = RouteProp<RootStackParamList, 'ShareCardPreviewScreen'>;
 type ShareCardNavigation = NativeStackNavigationProp<RootStackParamList, 'ShareCardPreviewScreen'>;
-type ShareTemplate = 'remake' | 'savings' | 'recipe';
+type ShareTemplate = 'remake' | 'recipe';
 type ShareCardData = {
   cardType: ShareCardType;
   dishName: string;
@@ -363,7 +363,6 @@ function ShareTemplatePicker({
 }) {
   const options: { label: string; value: ShareTemplate }[] = [
     { label: 'Remake', value: 'remake' },
-    { label: 'Savings', value: 'savings' },
     { label: 'Recipe', value: 'recipe' },
   ];
 
@@ -409,33 +408,6 @@ function ShareTemplateCard({
   const title = cleanDisplayText(cardData.dishName);
   const ingredients = getTopIngredients(cardData.recipe);
 
-  if (template === 'savings') {
-    return (
-      <>
-        <Text style={styles.cardEyebrow}>A small delicious win</Text>
-        <Text adjustsFontSizeToFit minimumFontScale={0.68} numberOfLines={2} style={styles.cardTitle}>
-          {hasUserPrice ? `About ${formatCurrency(cardData.estimatedSavings)} kept in my pocket` : `${formatCurrency(cardData.homemadeCost)} home estimate`}
-        </Text>
-        <PhotoBlock dishName={cardData.dishName} imageUri={cardData.imageUri} homemadeImageUri={cardData.homemadeImageUri} />
-        <View style={styles.costStory}>
-          {hasUserPrice ? (
-            <>
-              <CostPoint label={isDemoScan ? 'Restaurant example' : 'Restaurant'} value={formatCurrency(cardData.restaurantPrice)} />
-              <ArrowRight color={colors.green} height={22} strokeWidth={2.4} width={22} />
-              <CostPoint label="At home" value={formatCurrency(cardData.homemadeCost)} />
-            </>
-          ) : (
-            <>
-              <CostPoint label="At home" value={formatCurrency(cardData.homemadeCost)} />
-              <CostPoint label="Ready in" value={formatDuration(getTotalTime(cardData.recipe))} />
-            </>
-          )}
-        </View>
-        <ShareCardFooter label="Remade with" />
-      </>
-    );
-  }
-
   if (template === 'recipe') {
     return (
       <>
@@ -469,15 +441,6 @@ function ShareTemplateCard({
       </View>
       <ShareCardFooter label="Remade with" />
     </>
-  );
-}
-
-function CostPoint({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.costPoint}>
-      <Text numberOfLines={1} style={styles.costLabel}>{label}</Text>
-      <Text style={styles.costValue}>{value}</Text>
-    </View>
   );
 }
 
@@ -570,6 +533,10 @@ function ShareStat({ stat }: { stat: ShareStatData }) {
 }
 
 function ShareStatus({ state }: { state: ShareLifecycle }) {
+  if (state === 'ready') {
+    return null;
+  }
+
   const copy = getShareStatusCopy(state);
   return (
     <View accessibilityLiveRegion="polite" accessibilityRole="text" style={[styles.shareStatus, state === 'failed' ? styles.shareStatusFailed : null]}>
@@ -625,7 +592,7 @@ function getQaShareTemplate(): ShareTemplate {
   }
 
   const value = process.env.EXPO_PUBLIC_OKYO_QA_SHARE_TEMPLATE;
-  return value === 'savings' || value === 'recipe' ? value : 'remake';
+  return value === 'recipe' ? value : 'remake';
 }
 
 function getQaShareState(): ShareLifecycle {

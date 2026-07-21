@@ -412,8 +412,8 @@ export function ResultSummaryScreen() {
     return (
       <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Scan issue</Text>
-        <Text style={styles.failureHeadline}>{failureCopy.title}</Text>
-        <Text style={styles.subtitle}>{failureCopy.body}</Text>
+        <Text maxFontSizeMultiplier={1.35} style={styles.failureHeadline}>{failureCopy.title}</Text>
+        <Text maxFontSizeMultiplier={1.5} style={styles.subtitle}>{failureCopy.body}</Text>
 
         {selectedScanImageUri ? (
           <Image source={{ uri: selectedScanImageUri }} resizeMode="contain" style={styles.standaloneScanPreview} />
@@ -436,7 +436,7 @@ export function ResultSummaryScreen() {
     return (
       <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Scanning</Text>
-        <Text style={styles.failureHeadline}>Okyo is still looking.</Text>
+        <Text maxFontSizeMultiplier={1.35} style={styles.failureHeadline}>Okyo is still looking.</Text>
         <Text style={styles.subtitle}>
           This can take a few seconds for real food photos. We will only show a result when it is safe to trust.
         </Text>
@@ -454,7 +454,7 @@ export function ResultSummaryScreen() {
     return (
       <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
         <Text style={styles.kicker}>Recipe issue</Text>
-        <Text style={styles.failureHeadline}>The scan worked, but the recipe needs another try.</Text>
+        <Text maxFontSizeMultiplier={1.35} style={styles.failureHeadline}>The scan worked, but the recipe needs another try.</Text>
         <Text style={styles.subtitle}>
           {latestScanResult
             ? `Okyo recognized ${cleanDisplayText(scanResult?.dishName ?? 'this dish')}, but no safe ${selectedModeUi.label} recipe came back for this real scan.`
@@ -564,18 +564,6 @@ export function ResultSummaryScreen() {
         {bestGuessNote ? (
           <Text style={styles.bestGuessNote}>{bestGuessNote}</Text>
         ) : null}
-        {foodContext ? (
-          <View accessibilityLabel={`Ingredient context. ${foodContext.summary}`} style={styles.foodContextRow}>
-            <Leaf color={colors.green} height={20} strokeWidth={2.1} width={20} />
-            <View style={styles.foodContextCopy}>
-              <Text style={styles.foodContextTitle}>Ingredient context</Text>
-              <Text style={styles.foodContextText}>{foodContext.summary}</Text>
-              {foodContext.allergens.length > 0 ? (
-                <Text style={styles.foodContextNote}>Check for: {foodContext.allergens.join(', ')}</Text>
-              ) : null}
-            </View>
-          </View>
-        ) : null}
       </View>
 
       <View style={styles.actions}>
@@ -601,6 +589,20 @@ export function ResultSummaryScreen() {
           />
         </View>
       </View>
+
+      {foodContext ? (
+        <View accessibilityLabel={`Ingredient notes. ${foodContext.summary}`} style={styles.foodContextRow}>
+          <Leaf color={colors.green} height={18} strokeWidth={2.1} width={18} />
+          <View style={styles.foodContextCopy}>
+            <Text style={styles.foodContextTitle}>Ingredient notes</Text>
+            <Text style={styles.foodContextText}>
+              {foodContext.allergens.length > 0
+                ? `Based on the recipe list. Check for ${foodContext.allergens.join(', ')}.`
+                : 'Based on the recipe ingredient list.'}
+            </Text>
+          </View>
+        </View>
+      ) : null}
 
       {shouldPinDevResultSummaryQa && qualityReport ? <RecipeQualityCard compact report={qualityReport} /> : null}
 
@@ -1233,22 +1235,28 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   failureHeadline: {
+    alignSelf: 'stretch',
     color: colors.charcoal,
+    flexShrink: 1,
     fontFamily: fontFamilies.display,
     fontSize: 31,
     fontWeight: '800',
     letterSpacing: 0,
     lineHeight: 36,
     minWidth: 0,
+    width: '100%',
   },
   subtitle: {
+    alignSelf: 'stretch',
     color: colors.muted,
+    flexShrink: 1,
     fontFamily: fontFamilies.body,
     fontSize: 16,
     fontWeight: '400',
     lineHeight: 24,
     marginTop: 8,
     minWidth: 0,
+    width: '100%',
   },
   matchPill: {
     alignItems: 'center',
@@ -1277,11 +1285,13 @@ const styles = StyleSheet.create({
   },
   foodContextRow: {
     alignItems: 'flex-start',
-    backgroundColor: colors.greenSoft,
-    borderRadius: 8,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
     flexDirection: 'row',
     gap: 10,
-    padding: 12,
+    marginTop: 18,
+    paddingHorizontal: 2,
+    paddingTop: 14,
     width: '100%',
   },
   foodContextCopy: {
@@ -1297,12 +1307,6 @@ const styles = StyleSheet.create({
     color: colors.body,
     fontSize: 12,
     lineHeight: 17,
-  },
-  foodContextNote: {
-    color: colors.body,
-    fontSize: 11,
-    fontWeight: '700',
-    lineHeight: 16,
   },
   foodImageCard: {
     alignItems: 'center',

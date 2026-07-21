@@ -85,17 +85,17 @@ export function AppNavigator() {
       <Stack.Screen
         name="AnalysisLoadingScreen"
         component={AnalysisLoadingScreen}
-        options={{ headerShown: false, title: 'Analyzing' }}
+        options={{ animation: 'fade_from_bottom', headerShown: false, title: 'Analyzing' }}
       />
       <Stack.Screen
         name="ResultSummaryScreen"
         component={ResultSummaryScreen}
-        options={{ headerShown: false, title: 'Result' }}
+        options={{ animation: 'fade', headerShown: false, title: 'Result' }}
       />
       <Stack.Screen
         name="ShareCardPreviewScreen"
         component={ShareCardPreviewScreen}
-        options={{ headerShown: false, presentation: 'modal', title: 'Share Preview' }}
+        options={{ animation: 'slide_from_bottom', headerShown: false, presentation: 'modal', title: 'Share Preview' }}
       />
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false, title: 'Okyo' }} />
     </Stack.Navigator>

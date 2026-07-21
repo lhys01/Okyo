@@ -1,4 +1,4 @@
-import { NavArrowRight } from 'iconoir-react-native';
+import { NavArrowRight, Spark } from 'iconoir-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -6,7 +6,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import appConfig from '../../app.json';
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
-import { KikoMascot } from '../components/KikoMascot';
 import { SecondaryButton } from '../components/OkyoUI';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { colors, spacing, typography } from '../theme/okyoTheme';
@@ -120,7 +119,7 @@ export function SettingsScreen() {
 
         <View style={styles.identityRow}>
           <View style={styles.heroMascotWrap}>
-            <KikoMascot animated="idle" pose="sideProfile" size={76} />
+            <Spark color={colors.coral} height={28} strokeWidth={2.2} width={28} />
           </View>
           <View style={styles.heroCopy}>
             <Text style={styles.heroTitle}>Okyo</Text>
@@ -216,8 +215,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     flexDirection: 'row',
     gap: 12,
-    marginTop: 20,
-    paddingBottom: 18,
+    marginTop: 16,
+    paddingBottom: 14,
   },
   heroCopy: {
     flex: 1,
@@ -237,10 +236,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.infoSoft,
     borderRadius: 8,
-    height: 78,
+    height: 48,
     justifyContent: 'center',
     overflow: 'hidden',
-    width: 78,
+    width: 48,
   },
   section: {
     borderBottomColor: colors.borderStrong,

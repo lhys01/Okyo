@@ -70,11 +70,11 @@ export const spacing = {
 };
 
 export const radius = {
-  hero: 32,
-  card: 24,
-  panel: 20,
-  chip: 16,
-  button: 999,
+  hero: 8,
+  card: 8,
+  panel: 8,
+  chip: 8,
+  button: 12,
   pill: 999,
 };
 
@@ -160,17 +160,17 @@ export const shadows = {
   card: {
     shadowColor: '#514334',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.07,
-    shadowRadius: 16,
-    elevation: 3,
+    shadowOpacity: 0.045,
+    shadowRadius: 12,
+    elevation: 2,
   },
   // Barely-there lift for dense lists (grocery rows, menu rows).
   soft: {
     shadowColor: '#514334',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
+    shadowOpacity: 0.035,
+    shadowRadius: 8,
+    elevation: 1,
   },
   // Hero moments: scan results, big imagery, celebration cards.
   hero: {

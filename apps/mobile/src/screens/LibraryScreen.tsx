@@ -31,10 +31,10 @@ type LibrarySort = 'newest' | 'name' | 'fastest';
 
 const filters: Array<{ id: LibraryFilter; label: string }> = [
   { id: 'all', label: 'All' },
-  { id: 'restaurant', label: 'Restaurant Style' },
+  { id: 'restaurant', label: 'Restaurant' },
   { id: 'budget', label: 'Budget' },
   { id: 'lighter', label: 'Lighter' },
-  { id: 'fast', label: 'Fast meals' },
+  { id: 'fast', label: 'Fast' },
 ];
 const sortOptions: Array<{ id: LibrarySort; label: string }> = [
   { id: 'newest', label: 'Newest' },
@@ -571,7 +571,7 @@ const styles = StyleSheet.create({
   filterChip: {
     alignItems: 'center',
     backgroundColor: colors.cream,
-    borderRadius: 999,
+    borderRadius: 8,
     justifyContent: 'center',
     minHeight: 36,
     paddingHorizontal: 12,
@@ -604,7 +604,7 @@ const styles = StyleSheet.create({
   },
   recipeImage: {
     backgroundColor: colors.cream,
-    borderRadius: 16,
+    borderRadius: 8,
     height: 80,
     width: 80,
   },
@@ -622,7 +622,7 @@ const styles = StyleSheet.create({
   modePill: {
     alignItems: 'center',
     backgroundColor: colors.coralSoft,
-    borderRadius: 999,
+    borderRadius: 6,
     flexDirection: 'row',
     gap: 5,
     maxWidth: '82%',

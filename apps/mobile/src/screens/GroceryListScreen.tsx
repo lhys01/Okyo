@@ -15,11 +15,8 @@ import {
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, ImageBackground, Pressable, Share, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, Share, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-// Design-first asset (see apps/mobile/assets/textures/README.md).
-const linenTexture = require('../../assets/textures/linen-warm.png');
 
 import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
@@ -590,7 +587,7 @@ type ScreenFrameProps = {
 function ScreenFrame({ children, onBack, rewardToast, showBack = true, subtitle, title }: ScreenFrameProps) {
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ImageBackground resizeMode="repeat" source={linenTexture} style={styles.linenBackdrop}>
+      <View style={styles.linenBackdrop}>
       <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
         <View style={styles.topBar}>
           {showBack ? (
@@ -612,7 +609,7 @@ function ScreenFrame({ children, onBack, rewardToast, showBack = true, subtitle,
         </View>
         {children}
       </ScrollView>
-      </ImageBackground>
+      </View>
       {rewardToast}
     </SafeAreaView>
   );

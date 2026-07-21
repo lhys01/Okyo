@@ -18,6 +18,8 @@ import {
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
   Image,
   Pressable,
   ScrollView,
@@ -72,6 +74,7 @@ import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 import { devQaScreen } from '../utils/devQa';
 import { getRecipeFoodContext } from '../utils/recipeFoodContext';
+import { useReducedMotion } from '../utils/useReducedMotion';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 type RecipeDetailNavigation = CompositeNavigationProp<
@@ -163,7 +166,7 @@ export function RecipeDetailScreen() {
   const ingredientGroups = getSafeIngredientGroups(recipe);
   const equipment = getSafeTextList(recipe?.equipment);
   const substitutions = getSafeTextList(recipe?.substitutions);
-  const displayTitle = cleanDisplayText(recipe?.title ?? '');
+  const displayTitle = cleanRecipeTitle(recipe?.title ?? '');
   const displayDescription = cleanDisplayText(recipe?.description ?? '');
   const ingredientCount = getIngredientCount(recipe);
   const fallbackIngredients = (Array.isArray(recipe?.ingredients) ? recipe.ingredients : [])
@@ -616,7 +619,7 @@ export function RecipeStepsScreen() {
       ? recipe.estimatedSavings
       : Math.max(0, restaurantPrice - recipe.estimatedHomemadeCost);
   const guidedSteps = useMemo(() => getGuidedCookingSteps(recipe), [recipe]);
-  const displayTitle = cleanDisplayText(recipe?.title ?? '');
+  const displayTitle = cleanRecipeTitle(recipe?.title ?? '');
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
   const [activeStepIndex, setActiveStepIndex] = useState(0);
@@ -641,9 +644,26 @@ export function RecipeStepsScreen() {
   const [timerStatus, setTimerStatus] = useState<StepTimerStatus>('idle');
   const [timerEndsAt, setTimerEndsAt] = useState<number | null>(null);
   const [hasRestoredSession, setHasRestoredSession] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const stepReveal = useRef(new Animated.Value(1)).current;
   const isRestoringSession = useRef(false);
   const activeTimer = coachHelp.timers.find((timer) => timer.id === activeTimerId) ?? coachHelp.timers[0] ?? null;
   const cookingSessionKey = recipe ? `okyo-cooking-session:${recipe.id}` : null;
+
+  useEffect(() => {
+    stepReveal.stopAnimation();
+    if (reduceMotion) {
+      stepReveal.setValue(1);
+      return;
+    }
+    stepReveal.setValue(0);
+    Animated.timing(stepReveal, {
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  }, [activeStepIndex, reduceMotion, stepReveal]);
 
   useEffect(() => {
     uiLog('RecipeStepsScreen', 'enter', { routeMode, selectedMode });
@@ -958,8 +978,8 @@ export function RecipeStepsScreen() {
                 showFallbackLabel
                 style={styles.completionImage}
               />
-              <Text numberOfLines={2} style={styles.completionTitle}>
-                {displayTitle.replace(/\s+inspired-by$/i, '')}
+              <Text adjustsFontSizeToFit minimumFontScale={0.82} numberOfLines={2} style={styles.completionTitle}>
+                {displayTitle}
               </Text>
               <Text style={styles.completionBody}>
                 Nice work. Let it rest if the recipe calls for it, taste once more, then enjoy your Okyo version.
@@ -1011,7 +1031,12 @@ export function RecipeStepsScreen() {
         <ProgressFill progress={progress / 100} style={styles.guidedProgressTrack} />
 
         {activeStep ? (
-          <View style={styles.guidedStepCard}>
+          <Animated.View style={[styles.guidedStepCard, {
+            opacity: stepReveal,
+            transform: [{
+              translateX: stepReveal.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }),
+            }],
+          }]}>
             <ScrollView contentContainerStyle={styles.guidedStepCardContent} nestedScrollEnabled showsVerticalScrollIndicator={false}>
               <View style={styles.guidedStepTopRow}>
                 <Text style={styles.guidedStepNumber}>Step {activeStep.stepNumber}</Text>
@@ -1097,7 +1122,7 @@ export function RecipeStepsScreen() {
                 values={activeStep.toolsUsed.slice(0, 3)}
               />
             </ScrollView>
-          </View>
+          </Animated.View>
         ) : null}
 
         <View style={styles.guidedControlArea}>
@@ -1268,8 +1293,7 @@ function CookCoachPanel({
   onSelectAction: (action: CookRescueAction) => void;
   selectedAction: CookRescueAction | null;
 }) {
-  const activeAction = selectedAction ?? 'howShouldItLook';
-  const tips = coachHelp.rescueTips[activeAction] ?? [];
+  const tips = selectedAction ? coachHelp.rescueTips[selectedAction] ?? [] : [];
 
   return (
     <View style={styles.cookCoachCard}>
@@ -1282,7 +1306,7 @@ function CookCoachPanel({
       </View>
       <View style={styles.cookCoachActionGrid}>
         {COACH_ACTIONS.map((action) => {
-          const selected = action.id === activeAction;
+          const selected = action.id === selectedAction;
           return (
             <Pressable
               accessibilityRole="button"
@@ -2333,7 +2357,7 @@ const styles = StyleSheet.create({
   },
   guidedSafetyBlock: {
     backgroundColor: colors.cautionSoft,
-    borderRadius: 20,
+    borderRadius: 8,
     marginTop: 12,
     padding: 14,
   },
@@ -2353,12 +2377,10 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   cookCoachCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 22,
-    borderWidth: 1,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
     marginTop: 16,
-    padding: 14,
+    paddingTop: 16,
   },
   cookCoachHeader: {
     alignItems: 'center',
@@ -2392,7 +2414,7 @@ const styles = StyleSheet.create({
   cookCoachActionChip: {
     backgroundColor: colors.cream,
     borderColor: colors.border,
-    borderRadius: 999,
+    borderRadius: 8,
     borderWidth: 1,
     minHeight: 38,
     paddingHorizontal: 11,
@@ -2412,7 +2434,7 @@ const styles = StyleSheet.create({
     color: colors.onCoral,
   },
   cookCoachTip: {
-    borderRadius: 18,
+    borderRadius: 8,
     marginTop: 10,
     padding: 13,
   },
@@ -2537,11 +2559,8 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   completionCard: {
-    ...surfaces.card,
     alignItems: 'center',
-    backgroundColor: colors.cardWarm,
-    borderRadius: 8,
-    padding: 16,
+    paddingHorizontal: 4,
   },
   completionCelebration: {
     alignItems: 'center',
@@ -2567,7 +2586,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   completionImage: {
-    aspectRatio: 1.9,
+    aspectRatio: 1.55,
     backgroundColor: colors.cream,
     borderRadius: 8,
     width: '100%',
@@ -2580,6 +2599,7 @@ const styles = StyleSheet.create({
     lineHeight: 27,
     marginTop: 10,
     textAlign: 'center',
+    width: '100%',
   },
   completionBody: {
     color: colors.muted,
@@ -3143,5 +3163,11 @@ function cleanDisplayText(value: string) {
     .replace(new RegExp(`\\b${lowercaseTypo}\\b`, 'g'), 'american')
     .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
     .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
+    .trim();
+}
+
+function cleanRecipeTitle(value: string) {
+  return cleanDisplayText(value)
+    .replace(/\s+(?:inspired[-\s]?by)(?:\s+(?:recipe|version))?$/i, '')
     .trim();
 }

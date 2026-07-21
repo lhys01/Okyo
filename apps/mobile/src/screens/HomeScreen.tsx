@@ -11,7 +11,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedGradientBackground } from '../components/AnimatedGradientBackground';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { PressableScale, ProgressFill, RewardToast } from '../components/OkyoUI';
@@ -216,7 +215,6 @@ export function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <AnimatedGradientBackground />
       <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={styles.kicker}>{homeMoment.greeting}</Text>
@@ -614,6 +612,8 @@ const styles = StyleSheet.create({
   },
   title: {
     ...typography.display,
+    fontSize: 34,
+    lineHeight: 41,
     maxWidth: 330,
   },
   headerBody: {
@@ -623,7 +623,6 @@ const styles = StyleSheet.create({
   },
   scanEntryCard: {
     ...surfaces.card,
-    borderRadius: radius.hero,
     marginTop: 22,
     overflow: 'hidden',
     padding: 18,
@@ -644,10 +643,10 @@ const styles = StyleSheet.create({
   scanEntryTitle: {
     color: colors.charcoal,
     fontFamily: fontFamilies.display,
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 34,
+    lineHeight: 30,
     marginTop: 4,
   },
   scanEntryBody: {
@@ -660,7 +659,7 @@ const styles = StyleSheet.create({
   scanEntryMascotGlow: {
     alignItems: 'center',
     backgroundColor: colors.coralSoft,
-    borderRadius: 999,
+    borderRadius: 8,
     height: 104,
     justifyContent: 'center',
     width: 104,
@@ -672,7 +671,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.coral,
     borderColor: 'rgba(255, 255, 255, 0.64)',
-    borderRadius: 999,
+    borderRadius: 12,
     borderWidth: 1,
     flexDirection: 'row',
     gap: 9,
@@ -700,7 +699,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.cardWarm,
     borderColor: colors.border,
-    borderRadius: 999,
+    borderRadius: 8,
     borderWidth: 1,
     flex: 1,
     flexDirection: 'row',
@@ -727,7 +726,7 @@ const styles = StyleSheet.create({
   dailyKikoWrap: {
     alignItems: 'center',
     backgroundColor: colors.greenSoft,
-    borderRadius: 999,
+    borderRadius: 8,
     height: 70,
     justifyContent: 'center',
     width: 70,

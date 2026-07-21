@@ -105,8 +105,8 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
   };
 
   return (
-    <View pointerEvents="box-none" style={[styles.tabBarRoot, { height: 96 + bottomInset }]}>
-      <View style={[styles.tabBarPill, { bottom: bottomInset + 8 }]}>
+    <View pointerEvents="box-none" style={[styles.tabBarRoot, { height: 78 + bottomInset }]}>
+      <View style={[styles.tabBarPill, { bottom: bottomInset + 4 }]}>
         <BlurView intensity={55} pointerEvents="none" style={styles.tabBarBlur} tint="light" />
         <View style={styles.tabRow}>
           {visibleTabOrder.map((routeName) => {
@@ -164,7 +164,7 @@ export function MainTabs() {
         return <FloatingTabBar {...props} />;
       }}
       screenOptions={{
-        animation: 'shift',
+        animation: 'fade',
         headerShown: false,
         sceneStyle: { backgroundColor: colors.background },
         tabBarAllowFontScaling: false,
@@ -211,25 +211,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.glassFill,
     borderColor: colors.glassStroke,
-    borderRadius: 34,
+    borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
-    height: 76,
+    height: 62,
     justifyContent: 'center',
-    left: 14,
+    left: 18,
     overflow: 'visible',
     paddingHorizontal: 8,
     position: 'absolute',
-    right: 14,
+    right: 18,
     shadowColor: '#3a2d1d',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.12,
-    shadowRadius: 24,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 5,
   },
   // Glass layer behind the tab row. On Android BlurView falls back to a
   // translucent fill, which still reads correctly against the ivory canvas.
   tabBarBlur: {
-    borderRadius: 34,
+    borderRadius: 18,
     bottom: 0,
     left: 0,
     overflow: 'hidden',
@@ -245,11 +245,11 @@ const styles = StyleSheet.create({
   },
   tab: {
     alignItems: 'center',
-    borderRadius: 22,
+    borderRadius: 10,
     flex: 1,
     gap: 4,
     justifyContent: 'center',
-    minHeight: 56,
+    minHeight: 50,
     minWidth: 0,
     paddingHorizontal: 2,
     paddingTop: 2,

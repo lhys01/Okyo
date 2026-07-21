@@ -7,7 +7,6 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { AnimatedGradientBackground } from '../components/AnimatedGradientBackground';
 import { KikoMascot } from '../components/KikoMascot';
 import { GlowNode } from '../components/motifs';
 import type { RootStackParamList } from '../navigation/types';
@@ -35,13 +34,16 @@ export function AnalysisLoadingScreen() {
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const scanImageUri = getRealScanImageUri(selectedScanImage);
-  const [elapsedSeconds, setElapsedSeconds] = useState(devQaScreen === 'analysis-timeout' ? timeoutSeconds : 0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(getQaElapsedSeconds());
   const [showTimeout, setShowTimeout] = useState(devQaScreen === 'analysis-timeout');
   const didNavigate = useRef(false);
   const didTrackCompletion = useRef(false);
 
   useEffect(() => {
     uiLog('AnalysisLoadingScreen', 'enter');
+    if (hasQaElapsedOverride()) {
+      return undefined;
+    }
     const ticker = setInterval(() => setElapsedSeconds((current) => current + 1), 1000);
     return () => clearInterval(ticker);
   }, []);
@@ -109,10 +111,10 @@ export function AnalysisLoadingScreen() {
   };
 
   const longWait = elapsedSeconds >= longWaitSeconds;
+  const waitCopy = getAnalysisWaitCopy(elapsedSeconds, showTimeout);
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <AnimatedGradientBackground />
       <ScrollView
         contentContainerStyle={[styles.screenContent, { paddingBottom: 32 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
@@ -127,7 +129,7 @@ export function AnalysisLoadingScreen() {
           >
             <NavArrowLeft color={colors.charcoal} height={23} strokeWidth={2.25} width={23} />
           </Pressable>
-          <Text style={styles.topTitle}>Analyzing</Text>
+          <Text maxFontSizeMultiplier={1.3} style={styles.topTitle}>Analyzing</Text>
           <View style={styles.topSpacer} />
         </View>
 
@@ -137,7 +139,7 @@ export function AnalysisLoadingScreen() {
           ) : (
             <View style={styles.imageFallback}>
               <Camera color={colors.coral} height={34} strokeWidth={2} width={34} />
-              <Text style={styles.imageFallbackText}>Your food idea is with Kiko</Text>
+              <Text maxFontSizeMultiplier={1.5} style={styles.imageFallbackText}>Your food idea is with Kiko</Text>
             </View>
           )}
           <View pointerEvents="none" style={styles.imageWash} />
@@ -146,24 +148,14 @@ export function AnalysisLoadingScreen() {
           </View>
           <View style={styles.receivedBadge}>
             <CheckCircle color={colors.green} height={18} strokeWidth={2.3} width={18} />
-            <Text style={styles.receivedText}>Photo received</Text>
+            <Text maxFontSizeMultiplier={1.3} style={styles.receivedText}>Photo received</Text>
           </View>
         </View>
 
         <View style={styles.copyBlock}>
-          <Text style={styles.kicker}>{showTimeout ? 'Still safe with us' : 'Kiko is on it'}</Text>
-          <Text style={styles.title}>
-            {showTimeout
-              ? 'This is taking longer than usual.'
-              : longWait
-                ? 'Still working on your homemade version.'
-                : 'Finding a recipe worth cooking.'}
-          </Text>
-          <Text style={styles.subtitle}>
-            {showTimeout
-              ? 'Okyo did not receive a trusted answer in time. No result was invented, and you can try another photo.'
-              : 'Okyo is identifying the dish and building one inspired-by recipe. We will only reveal it when the request finishes.'}
-          </Text>
+          <Text maxFontSizeMultiplier={1.35} style={styles.kicker}>{waitCopy.kicker}</Text>
+          <Text maxFontSizeMultiplier={1.25} style={styles.title}>{waitCopy.title}</Text>
+          <Text maxFontSizeMultiplier={1.5} style={styles.subtitle}>{waitCopy.body}</Text>
         </View>
 
         <View accessibilityLabel="Analysis stages" accessibilityRole="summary" style={styles.stagePanel}>
@@ -176,7 +168,7 @@ export function AnalysisLoadingScreen() {
           <View style={styles.stageDivider} />
           <StageRow
             icon={<Clock color={colors.coral} height={20} strokeWidth={2.3} width={20} />}
-            label="Dish + recipe analysis"
+            label={waitCopy.stageLabel}
           >
             <GlowNode label={showTimeout ? 'Paused' : 'Working'} state={showTimeout ? 'pending' : 'active'} tone="pink" />
           </StageRow>
@@ -190,7 +182,7 @@ export function AnalysisLoadingScreen() {
         </View>
 
         {longWait && !showTimeout ? (
-          <Text style={styles.longWaitText}>Clear photos sometimes need a little extra time. You can leave safely at any point.</Text>
+          <Text maxFontSizeMultiplier={1.5} style={styles.longWaitText}>Clear photos sometimes need a little extra time. You can leave safely at any point.</Text>
         ) : null}
 
         <View style={styles.actions}>
@@ -202,14 +194,14 @@ export function AnalysisLoadingScreen() {
                 style={({ pressed }) => [styles.primaryAction, pressed ? styles.primaryPressed : null]}
               >
                 <Camera color={colors.onCoral} height={21} strokeWidth={2.3} width={21} />
-                <Text style={styles.primaryActionText}>Try another photo</Text>
+                <Text maxFontSizeMultiplier={1.35} style={styles.primaryActionText}>Try another photo</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 onPress={keepWaiting}
                 style={({ pressed }) => [styles.secondaryAction, pressed ? styles.pressed : null]}
               >
-                <Text style={styles.secondaryActionText}>Keep waiting</Text>
+                <Text maxFontSizeMultiplier={1.35} style={styles.secondaryActionText}>Keep waiting</Text>
               </Pressable>
             </>
           ) : (
@@ -218,7 +210,7 @@ export function AnalysisLoadingScreen() {
               onPress={leaveAnalysis}
               style={({ pressed }) => [styles.secondaryAction, pressed ? styles.pressed : null]}
             >
-              <Text style={styles.secondaryActionText}>Cancel</Text>
+              <Text maxFontSizeMultiplier={1.35} style={styles.secondaryActionText}>Cancel</Text>
             </Pressable>
           )}
         </View>
@@ -227,11 +219,46 @@ export function AnalysisLoadingScreen() {
   );
 }
 
+function getQaElapsedSeconds() {
+  if (devQaScreen === 'analysis-timeout') return timeoutSeconds;
+  if (!__DEV__) return 0;
+  const value = Number(process.env.EXPO_PUBLIC_OKYO_QA_ANALYSIS_SECONDS);
+  return Number.isFinite(value) ? Math.max(0, Math.min(timeoutSeconds, value)) : 0;
+}
+
+function hasQaElapsedOverride() {
+  return __DEV__ && Number.isFinite(Number(process.env.EXPO_PUBLIC_OKYO_QA_ANALYSIS_SECONDS));
+}
+
+function getAnalysisWaitCopy(elapsedSeconds: number, showTimeout: boolean) {
+  if (showTimeout) {
+    return {
+      kicker: 'Still safe with us',
+      title: 'This is taking longer than usual.',
+      body: 'Okyo did not receive a trusted answer in time. No result was invented, and you can try another photo.',
+      stageLabel: 'Analysis paused',
+    };
+  }
+  if (elapsedSeconds >= 50) {
+    return { kicker: 'Final check', title: 'Making sure this is worth showing.', body: 'Okyo is checking that the dish and cooking plan agree before revealing anything.', stageLabel: 'Result trust review' };
+  }
+  if (elapsedSeconds >= 30) {
+    return { kicker: 'Checking the plan', title: 'Making the recipe cookable.', body: 'Ingredients, steps, and timing are being checked together. No guessed result will appear early.', stageLabel: 'Cookability check' };
+  }
+  if (elapsedSeconds >= 15) {
+    return { kicker: 'Shaping the recipe', title: 'Turning the dish into clear steps.', body: 'Kiko is organizing the visible ingredients into one practical inspired-by recipe.', stageLabel: 'Recipe structure' };
+  }
+  if (elapsedSeconds >= 5) {
+    return { kicker: 'Looking closer', title: 'Matching the dish and ingredients.', body: 'Okyo is comparing the visible food with a recipe direction that can be cooked at home.', stageLabel: 'Dish matching' };
+  }
+  return { kicker: 'Kiko is on it', title: 'Reading the plate.', body: 'Okyo is looking at the visible food first, then it will build one inspired-by recipe.', stageLabel: 'Food analysis' };
+}
+
 function StageRow({ children, icon, label }: { children: ReactNode; icon: ReactNode; label: string }) {
   return (
     <View style={styles.stageRow}>
       <View style={styles.stageIcon}>{icon}</View>
-      <Text style={styles.stageLabel}>{label}</Text>
+      <Text maxFontSizeMultiplier={1.35} style={styles.stageLabel}>{label}</Text>
       {children}
     </View>
   );
@@ -301,18 +328,12 @@ const styles = StyleSheet.create({
   },
   kikoStage: {
     alignItems: 'center',
-    backgroundColor: colors.cardWarm,
-    borderColor: colors.card,
-    borderRadius: 24,
-    borderWidth: 2,
     bottom: 14,
     height: 122,
     justifyContent: 'center',
-    overflow: 'hidden',
     position: 'absolute',
     right: 14,
     width: 104,
-    ...shadows.soft,
   },
   receivedBadge: {
     alignItems: 'center',
