@@ -8,6 +8,7 @@ import {
   CheckCircle,
   NavArrowLeft,
   OpenBook,
+  Leaf,
   PlusCircle,
   Settings,
   ShareAndroid,
@@ -40,6 +41,7 @@ import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '..
 import { isUsableScan } from '../utils/scanDecision';
 import { logMobileScreenReveal } from '../utils/scanTelemetry';
 import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
+import { getRecipeFoodContext } from '../utils/recipeFoodContext';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'ResultSummaryScreen'>;
@@ -144,6 +146,10 @@ export function ResultSummaryScreen() {
     source: isDemoScan ? 'savedRecipe' : 'scan',
     skillLevel: selectedRecipe?.difficulty,
   });
+  const foodContext = useMemo(
+    () => selectedRecipe ? getRecipeFoodContext(selectedRecipe) : null,
+    [selectedRecipe],
+  );
 
   useEffect(() => {
     setDishNameOverride('');
@@ -515,18 +521,19 @@ export function ResultSummaryScreen() {
       />
 
       <View style={styles.headerSection}>
-        <Text style={styles.kicker}>
+        <Text maxFontSizeMultiplier={1.35} style={styles.kicker}>
           {isUncertainResult ? 'Okyo made a best guess' : 'Okyo understood your food'}
         </Text>
         <Text
           adjustsFontSizeToFit
+          maxFontSizeMultiplier={1.35}
           minimumFontScale={0.82}
           numberOfLines={2}
           style={styles.title}
         >
           {displayDishName || 'Scanned dish'}
         </Text>
-        <Text style={styles.subtitle}>{displaySubtitle}</Text>
+        <Text maxFontSizeMultiplier={1.5} style={styles.subtitle}>{displaySubtitle}</Text>
         <View style={styles.metaChipRow}>
           {selectedRecipe.servings ? (
             <View style={styles.metaChip}>
@@ -556,6 +563,18 @@ export function ResultSummaryScreen() {
         ) : null}
         {bestGuessNote ? (
           <Text style={styles.bestGuessNote}>{bestGuessNote}</Text>
+        ) : null}
+        {foodContext ? (
+          <View accessibilityLabel={`Ingredient context. ${foodContext.summary}`} style={styles.foodContextRow}>
+            <Leaf color={colors.green} height={20} strokeWidth={2.1} width={20} />
+            <View style={styles.foodContextCopy}>
+              <Text style={styles.foodContextTitle}>Ingredient context</Text>
+              <Text style={styles.foodContextText}>{foodContext.summary}</Text>
+              {foodContext.allergens.length > 0 ? (
+                <Text style={styles.foodContextNote}>Check for: {foodContext.allergens.join(', ')}</Text>
+              ) : null}
+            </View>
+          </View>
         ) : null}
       </View>
 
@@ -782,6 +801,7 @@ function ResultFrame({ children, onScanAgain, onSettings, rewardToast }: ResultF
           <View pointerEvents="none" style={styles.topTitleWrap}>
             <Text
               adjustsFontSizeToFit
+              maxFontSizeMultiplier={1.35}
               minimumFontScale={0.82}
               numberOfLines={1}
               style={styles.topTitle}
@@ -1254,6 +1274,35 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     lineHeight: 22,
     marginTop: 12,
+  },
+  foodContextRow: {
+    alignItems: 'flex-start',
+    backgroundColor: colors.greenSoft,
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 10,
+    padding: 12,
+    width: '100%',
+  },
+  foodContextCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  foodContextTitle: {
+    color: colors.charcoal,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  foodContextText: {
+    color: colors.body,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  foodContextNote: {
+    color: colors.body,
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 16,
   },
   foodImageCard: {
     alignItems: 'center',

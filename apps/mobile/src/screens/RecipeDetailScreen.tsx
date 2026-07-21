@@ -71,6 +71,7 @@ import type { RecipeAdaptationPlan } from '../api/recipeAdaptationClient';
 import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 import { devQaScreen } from '../utils/devQa';
+import { getRecipeFoodContext } from '../utils/recipeFoodContext';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 type RecipeDetailNavigation = CompositeNavigationProp<
@@ -176,6 +177,7 @@ export function RecipeDetailScreen() {
   const flavorNotes = getFlavorNotes(recipe, spicePairings);
   const whyBullets = getWhyBullets(recipe, totalTime);
   const strategyNote = getStrategyNote(recipe);
+  const foodContext = useMemo(() => recipe ? getRecipeFoodContext(recipe) : null, [recipe]);
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
   const qualityReport = useRecipeQualityReport(recipe, {
@@ -488,6 +490,19 @@ export function RecipeDetailScreen() {
                   ))}
                 </View>
               ))}
+              {foodContext ? (
+                <View style={styles.nutritionContext}>
+                  <View style={styles.nutritionContextHeader}>
+                    <Leaf color={colors.green} height={19} strokeWidth={2.1} width={19} />
+                    <Text style={styles.nutritionContextTitle}>Nutrition context</Text>
+                  </View>
+                  <Text style={styles.nutritionContextText}>{foodContext.summary}</Text>
+                  {foodContext.allergens.length > 0 ? (
+                    <Text style={styles.nutritionContextAllergens}>Allergens to check: {foodContext.allergens.join(', ')}</Text>
+                  ) : null}
+                  <Text style={styles.nutritionContextDisclaimer}>{foodContext.disclaimer}</Text>
+                </View>
+              ) : null}
             </View>
 
             {whyBullets.length > 0 ? (
@@ -1753,6 +1768,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     textAlign: 'right',
+  },
+  nutritionContext: {
+    backgroundColor: colors.greenSoft,
+    borderRadius: 8,
+    gap: 5,
+    padding: 12,
+  },
+  nutritionContextHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 7,
+  },
+  nutritionContextTitle: {
+    color: colors.charcoal,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  nutritionContextText: {
+    color: colors.body,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  nutritionContextAllergens: {
+    color: colors.charcoal,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 17,
+  },
+  nutritionContextDisclaimer: {
+    color: colors.muted,
+    fontSize: 11,
+    lineHeight: 16,
   },
   ingredientAvatar: {
     alignItems: 'center',

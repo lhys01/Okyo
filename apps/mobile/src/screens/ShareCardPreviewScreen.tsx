@@ -15,7 +15,7 @@ import {
   TaskList,
 } from 'iconoir-react-native';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, Image, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -37,6 +37,7 @@ import { useOkyoStore } from '../state/useOkyoStore';
 import { getRecipeImageUrl } from '../utils/recipeImages';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
+import { getShareStatusCopy, type ShareLifecycle } from '../utils/shareLifecycle';
 
 type ShareCardRoute = RouteProp<RootStackParamList, 'ShareCardPreviewScreen'>;
 type ShareCardNavigation = NativeStackNavigationProp<RootStackParamList, 'ShareCardPreviewScreen'>;
@@ -136,6 +137,7 @@ export function ShareCardPreviewScreen() {
   const [shareRewardVisible, setShareRewardVisible] = useState(false);
   const [shareRewardLabel, setShareRewardLabel] = useState('Share moment ready +20 XP');
   const [shareTemplate, setShareTemplate] = useState<ShareTemplate>(() => getQaShareTemplate());
+  const [shareState, setShareState] = useState<ShareLifecycle>(() => getQaShareState());
   const shareRewardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -193,6 +195,7 @@ export function ShareCardPreviewScreen() {
   };
 
   const shareCard = async () => {
+    setShareState('preparing');
     try {
       uiLog('ShareCardPreviewScreen', 'share_tapped', { cardType, dishName: cardData.dishName, shareTemplate });
       track(analyticsEvents.SHARE_TAPPED, {
@@ -208,6 +211,7 @@ export function ShareCardPreviewScreen() {
         const willAwardShareXp = !awardedXpEvents.includes(shareEventId);
         awardXPOnce(shareEventId, 20);
         showShareReward(willAwardShareXp ? 'Share moment ready +20 XP' : 'Share moment ready');
+        setShareState('shared');
         track(analyticsEvents.SHARE_COMPLETED, {
           cardType,
           dishName: cardData.dishName,
@@ -221,6 +225,7 @@ export function ShareCardPreviewScreen() {
 
       const result = await Share.share({ message: cardData.caption, title: 'Okyo share card' });
       if (result.action !== Share.sharedAction) {
+        setShareState('cancelled');
         return;
       }
 
@@ -228,6 +233,7 @@ export function ShareCardPreviewScreen() {
       const willAwardShareXp = !awardedXpEvents.includes(shareEventId);
       awardXPOnce(shareEventId, 20);
       showShareReward(willAwardShareXp ? 'Share moment ready +20 XP' : 'Share moment ready');
+      setShareState('shared');
       track(analyticsEvents.SHARE_COMPLETED, {
         cardType,
         dishName: cardData.dishName,
@@ -237,7 +243,7 @@ export function ShareCardPreviewScreen() {
         shareTemplate,
       });
     } catch {
-      Alert.alert('Share unavailable', 'This device could not open the native share sheet.');
+      setShareState('failed');
     }
   };
 
@@ -272,9 +278,10 @@ export function ShareCardPreviewScreen() {
     try {
       uiLog('ShareCardPreviewScreen', 'copy_caption', { cardType, shareTemplate });
       await Clipboard.setStringAsync(cardData.caption);
+      setShareState('copied');
       showShareReward('Caption copied');
     } catch {
-      Alert.alert('Copy unavailable', 'The caption could not be copied on this device.');
+      setShareState('failed');
     }
   };
 
@@ -319,7 +326,10 @@ export function ShareCardPreviewScreen() {
         <Text style={styles.previewBody}>Pick the story that fits this remake.</Text>
       </View>
 
-      <ShareTemplatePicker selected={shareTemplate} onSelect={setShareTemplate} />
+      <ShareTemplatePicker selected={shareTemplate} onSelect={(template) => {
+        setShareTemplate(template);
+        setShareState('ready');
+      }} />
 
       <View style={styles.cardShell}>
         <View ref={cardRef} collapsable={false} style={styles.shareCard}>
@@ -333,9 +343,11 @@ export function ShareCardPreviewScreen() {
         </View>
       </View>
 
+      <ShareStatus state={shareState} />
+
       <View style={styles.actions}>
-        <PrimaryAction icon={<ShareAndroid color={colors.onCoral} height={21} strokeWidth={2.2} width={21} />} label="Share Image" onPress={shareCard} />
-        <SecondaryAction icon={<ClipboardCheck color={colors.coral} height={20} strokeWidth={2.2} width={20} />} label="Copy Caption" onPress={copyCaption} />
+        <PrimaryAction disabled={shareState === 'preparing'} icon={shareState === 'preparing' ? <ActivityIndicator color={colors.onCoral} /> : <ShareAndroid color={colors.onCoral} height={21} strokeWidth={2.2} width={21} />} label={shareState === 'failed' ? 'Try Sharing Again' : 'Share Image'} onPress={shareCard} />
+        <SecondaryAction disabled={shareState === 'preparing'} icon={<ClipboardCheck color={colors.coral} height={20} strokeWidth={2.2} width={20} />} label="Copy Caption" onPress={copyCaption} />
       </View>
       <RewardToast label={shareRewardLabel} tone={shareRewardLabel.includes('XP') ? 'xp' : 'save'} visible={shareRewardVisible} />
     </ShareFrame>
@@ -557,11 +569,26 @@ function ShareStat({ stat }: { stat: ShareStatData }) {
   );
 }
 
-function PrimaryAction({ icon, label, onPress }: { icon: ReactNode; label: string; onPress: () => void }) {
+function ShareStatus({ state }: { state: ShareLifecycle }) {
+  const copy = getShareStatusCopy(state);
+  return (
+    <View accessibilityLiveRegion="polite" accessibilityRole="text" style={[styles.shareStatus, state === 'failed' ? styles.shareStatusFailed : null]}>
+      {state === 'preparing' ? <ActivityIndicator color={colors.coral} size="small" /> : null}
+      <View style={styles.shareStatusCopy}>
+        <Text style={styles.shareStatusTitle}>{copy.title}</Text>
+        <Text style={styles.shareStatusBody}>{copy.body}</Text>
+      </View>
+    </View>
+  );
+}
+
+function PrimaryAction({ disabled = false, icon, label, onPress }: { disabled?: boolean; icon: ReactNode; label: string; onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
-      style={({ pressed }) => [styles.primaryAction, pressed ? styles.pressed : null]}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      style={({ pressed }) => [styles.primaryAction, disabled ? styles.disabled : null, pressed ? styles.pressed : null]}
       onPress={onPress}
     >
       {icon}
@@ -570,11 +597,13 @@ function PrimaryAction({ icon, label, onPress }: { icon: ReactNode; label: strin
   );
 }
 
-function SecondaryAction({ icon, label, onPress }: { icon: ReactNode; label: string; onPress: () => void }) {
+function SecondaryAction({ disabled = false, icon, label, onPress }: { disabled?: boolean; icon: ReactNode; label: string; onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
-      style={({ pressed }) => [styles.secondaryAction, pressed ? styles.pressed : null]}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      style={({ pressed }) => [styles.secondaryAction, disabled ? styles.disabled : null, pressed ? styles.pressed : null]}
       onPress={onPress}
     >
       {icon}
@@ -597,6 +626,14 @@ function getQaShareTemplate(): ShareTemplate {
 
   const value = process.env.EXPO_PUBLIC_OKYO_QA_SHARE_TEMPLATE;
   return value === 'savings' || value === 'recipe' ? value : 'remake';
+}
+
+function getQaShareState(): ShareLifecycle {
+  if (!__DEV__) return 'ready';
+  const value = process.env.EXPO_PUBLIC_OKYO_QA_SHARE_STATE;
+  return value === 'preparing' || value === 'shared' || value === 'copied' || value === 'cancelled' || value === 'failed'
+    ? value
+    : 'ready';
 }
 
 function buildCaption(data: Omit<ShareCardData, 'caption'>, hasUserPrice: boolean) {
@@ -831,6 +868,35 @@ const styles = StyleSheet.create({
   },
   cardShell: {
     alignItems: 'center',
+  },
+  shareStatus: {
+    alignItems: 'center',
+    backgroundColor: colors.greenSoft,
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  shareStatusFailed: {
+    backgroundColor: colors.coralSoft,
+  },
+  shareStatusCopy: {
+    flex: 1,
+    gap: 1,
+  },
+  shareStatusTitle: {
+    color: colors.charcoal,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  shareStatusBody: {
+    color: colors.body,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  disabled: {
+    opacity: 0.55,
   },
   shareCard: {
     backgroundColor: colors.cardWarm,

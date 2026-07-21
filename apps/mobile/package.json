@@ -46,7 +46,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test:auth": "node --import tsx --test src/auth/*.test.ts src/api/authenticatedFetch.test.ts",
-    "test:kiko-art": "node --import tsx --test src/utils/kikoRecipeArt.test.ts"
+    "test:kiko-art": "node --import tsx --test src/utils/kikoRecipeArt.test.ts",
+    "test:redesign": "node --import tsx --test src/utils/recipeFoodContext.test.ts src/utils/shareLifecycle.test.ts"
   },
   "private": true
 }
