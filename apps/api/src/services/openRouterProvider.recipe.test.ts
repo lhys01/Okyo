@@ -264,13 +264,8 @@ test('recipe repair rejects a changed response when the final recipe is still in
   initial.dishName = 'Unresolved Repair Pasta';
   initial.title = 'Unresolved Repair Pasta';
   initial.ingredients = ['8 oz rigatoni', '1 cup tomato sauce', '1 tbsp olive oil', '1/2 cup cream', '1/4 cup parmesan'];
-  initial.steps[1] = buildStep(2, {
-    step: 'Cook until done.',
-  });
+  initial.steps = initial.steps.slice(0, 3);
   const repaired = structuredClone(initial);
-  repaired.steps[1] = buildStep(2, {
-    step: 'Cook until done in the skillet.',
-  });
 
   globalThis.fetch = async () => {
     calls += 1;
@@ -285,9 +280,85 @@ test('recipe repair rejects a changed response when the final recipe is still in
       }),
       (error: unknown) => error instanceof OpenRouterProviderError &&
         error.failure.reason === 'openrouter_invalid_schema' &&
-        /vague_step/.test(error.failure.openRouterErrorMessage ?? ''),
+        /too_few_steps/.test(error.failure.openRouterErrorMessage ?? ''),
     );
     assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('deterministic repair preserves Shrimp Fettuccine Alfredo ingredients without a model repair call', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const initial = {
+    ...buildValidRecipe(8),
+    description: 'A creamy inspired-by restaurant pasta with shrimp.',
+  };
+  initial.dishName = 'Shrimp Fettuccine Alfredo';
+  initial.title = 'Shrimp Fettuccine Alfredo';
+  initial.ingredients = [
+    '8 oz fettuccine pasta',
+    '12 oz shrimp, peeled and deveined',
+    '2 tbsp unsalted butter',
+    '1 tbsp olive oil',
+    '3 cloves garlic, minced',
+    '1 cup heavy cream',
+    '1/2 cup grated parmesan cheese',
+    '1/2 tsp kosher salt',
+    '1/4 tsp black pepper',
+    '2 tbsp chopped parsley',
+  ];
+  initial.steps = [
+    buildStep(1, { title: 'Boil Pasta', step: 'Boil fettuccine pasta in salted water for 10 minutes until al dente.', ingredients: ['fettuccine pasta', 'salt', 'water'], tools: ['large pot'] }),
+    buildStep(2, { title: 'Season Shrimp', step: 'Pat shrimp dry and season with salt and black pepper for 1 minute.', ingredients: ['shrimp', 'salt', 'black pepper'], tools: ['paper towels', 'bowl'] }),
+    buildStep(3, { title: 'Sear Shrimp', step: 'Sear shrimp in olive oil for 3 minutes until pink and just firm.', ingredients: ['shrimp', 'olive oil'], tools: ['skillet'] }),
+    buildStep(4, { title: 'Melt Butter', step: 'Melt butter with garlic for 1 minute until fragrant.', ingredients: ['butter', 'garlic'], tools: ['skillet'] }),
+    buildStep(5, { title: 'Build Sauce', step: 'Simmer heavy cream for 3 minutes until lightly thickened.', ingredients: ['heavy cream'], tools: ['skillet'] }),
+    buildStep(6, { title: 'Add Cheese', step: 'Whisk parmesan cheese into the cream for 1 minute until smooth.', ingredients: ['parmesan cheese', 'heavy cream'], tools: ['whisk'] }),
+    buildStep(7, { title: 'Toss Pasta', step: 'Toss fettuccine pasta and shrimp in Alfredo sauce for 2 minutes until coated.', ingredients: ['fettuccine pasta', 'shrimp', 'heavy cream', 'parmesan cheese'], tools: ['tongs'] }),
+    buildStep(8, { title: 'Finish Bowl', step: 'Top with parsley and black pepper, then serve hot.', ingredients: ['parsley', 'black pepper'], tools: ['serving bowl'] }),
+  ];
+  initial.steps[6] = buildStep(7, {
+    title: 'Toss Pasta',
+    step: 'Cook until done.',
+    ingredients: ['fettuccine pasta', 'shrimp', 'heavy cream', 'parmesan cheese'],
+    tools: ['tongs'],
+  });
+
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(initial);
+  };
+  try {
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({
+        dishName: 'Shrimp Fettuccine Alfredo',
+        broadDishCategory: 'pasta/noodles',
+        visibleIngredients: ['fettuccine pasta', 'shrimp', 'cream sauce'],
+        likelyIngredients: ['butter', 'garlic', 'parmesan cheese', 'salt', 'black pepper', 'parsley'],
+        visibleComponents: {
+          protein: 'shrimp',
+          sauce: 'Alfredo sauce',
+          baseStarch: 'fettuccine pasta',
+          vegetables: '',
+          toppingsGarnish: 'parsley',
+          cookingMethod: 'boiled pasta and sauteed shrimp',
+        },
+      }),
+      config: testConfig,
+      mode: 'Restaurant Copy',
+    });
+
+    assert.equal(calls, 1);
+    assert.ok(output.ingredients.length >= initial.ingredients.length);
+    for (const expected of ['fettuccine', 'shrimp', 'butter', 'olive oil', 'garlic', 'heavy cream', 'parmesan', 'salt', 'black pepper']) {
+      assert.ok(
+        output.ingredients.some((ingredient) => ingredient.toLowerCase().includes(expected)),
+        `missing ${expected}`,
+      );
+    }
+    assert.deepEqual(validateRecipeStructure(output), []);
   } finally {
     globalThis.fetch = originalFetch;
   }
