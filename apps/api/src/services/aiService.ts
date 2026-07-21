@@ -191,6 +191,7 @@ export const ingredientCostEstimateSchema = z.object({
 export type FoodImageAnalysis = z.infer<typeof foodImageAnalysisSchema>;
 export type GeneratedRecipeOutput = z.infer<typeof generatedRecipeOutputSchema> & {
   recipe?: Recipe;
+  warnings?: string[];
 };
 export type IngredientCostEstimate = z.infer<typeof ingredientCostEstimateSchema>;
 
@@ -4389,6 +4390,27 @@ function extractGeneratedComponents(recipe: Recipe): string[] {
     .filter((c): c is string => Boolean(c));
 }
 
+export type PlatterComponentImportance = 'primary' | 'secondary';
+
+export type PlatterCoverageComponent = {
+  name: string;
+  importance: PlatterComponentImportance;
+  confidence: number;
+  covered: boolean;
+};
+
+export type PlatterCoverageAssessment = {
+  coveragePercent: number;
+  primaryCoveragePercent: number;
+  missingComponents: string[];
+  missingPrimaryComponents: string[];
+  missingSecondaryComponents: string[];
+  warningIssues: string[];
+  fatalIssues: string[];
+  selectedRepairMode: 'component_coverage' | 'none';
+  components: PlatterCoverageComponent[];
+};
+
 function computeCoverage(
   detected: DetectedComponent[],
   generated: string[],
@@ -4399,6 +4421,111 @@ function computeCoverage(
     coveragePercent: Math.round((1 - missing.length / detected.length) * 100),
     missingComponents: missing.map((d) => d.name),
   };
+}
+
+export function assessPlatterCoverage(
+  analysis: FoodImageAnalysis,
+  generated: string[],
+): PlatterCoverageAssessment {
+  const detected = analysis.detectedComponents ?? [];
+  if (detected.length === 0) {
+    return {
+      coveragePercent: 100,
+      primaryCoveragePercent: 100,
+      missingComponents: [],
+      missingPrimaryComponents: [],
+      missingSecondaryComponents: [],
+      warningIssues: [],
+      fatalIssues: [],
+      selectedRepairMode: 'none',
+      components: [],
+    };
+  }
+
+  const components = detected.map((component) => {
+    const importance = getPlatterComponentImportance(component, analysis);
+    return {
+      name: component.name,
+      importance,
+      confidence: component.confidence,
+      covered: isComponentCovered(component.name, generated),
+    };
+  });
+  const primaryComponents = components.filter((component) => component.importance === 'primary');
+  const missingComponents = components.filter((component) => !component.covered);
+  const missingPrimaryComponents = missingComponents
+    .filter((component) => component.importance === 'primary')
+    .map((component) => component.name);
+  const missingSecondaryComponents = missingComponents
+    .filter((component) => component.importance === 'secondary')
+    .map((component) => component.name);
+  const coveragePercent = Math.round((1 - missingComponents.length / components.length) * 100);
+  const primaryCoveragePercent = primaryComponents.length === 0
+    ? 100
+    : Math.round((1 - missingPrimaryComponents.length / primaryComponents.length) * 100);
+  const warningIssues = missingSecondaryComponents.length > 0 || coveragePercent < 90
+    ? ['platter_coverage_below_90']
+    : [];
+  const fatalIssues = missingPrimaryComponents.length > 0
+    ? ['primary_platter_component_missing']
+    : [];
+
+  return {
+    coveragePercent,
+    primaryCoveragePercent,
+    missingComponents: missingComponents.map((component) => component.name),
+    missingPrimaryComponents,
+    missingSecondaryComponents,
+    warningIssues,
+    fatalIssues,
+    selectedRepairMode: missingPrimaryComponents.length > 0 ? 'component_coverage' : 'none',
+    components,
+  };
+}
+
+function getPlatterComponentImportance(
+  component: DetectedComponent,
+  analysis: FoodImageAnalysis,
+): PlatterComponentImportance {
+  if (component.confidence < 0.7 || isSecondaryPlatterComponent(component.name, analysis)) {
+    return 'secondary';
+  }
+
+  const primaryHints = [
+    analysis.visibleComponents.protein,
+    analysis.visibleComponents.baseStarch,
+    analysis.dishName,
+    analysis.broadDishCategory,
+  ].filter(Boolean);
+
+  if (primaryHints.some((hint) => isComponentCovered(component.name, [hint]))) {
+    return 'primary';
+  }
+
+  const name = normalizeComponentText(component.name);
+  if (/\b(chicken|beef|steak|pork|bacon|turkey|lamb|duck|fish|salmon|tuna|shrimp|prawn|crab|lobster|tofu|egg|eggs|paneer|rice|noodle|noodles|pasta|bun|bread|tortilla|roll|maki|nigiri|sashimi|dumpling|wonton)\b/.test(name)) {
+    return 'primary';
+  }
+
+  return 'secondary';
+}
+
+function isSecondaryPlatterComponent(name: string, analysis: FoodImageAnalysis) {
+  const normalized = normalizeComponentText(name);
+  const garnishText = normalizeComponentText([
+    analysis.visibleComponents.sauce,
+    analysis.visibleComponents.toppingsGarnish,
+    analysis.visibleComponents.vegetables,
+  ].join(' '));
+  if (garnishText && isComponentCovered(name, [garnishText])) {
+    return true;
+  }
+
+  return /\b(garnish|herb|herbs|scallion|scallions|green onion|sesame|cilantro|parsley|basil|mint|lime|lemon|sauce|mayo|aioli|dip|dressing|condiment|wasabi|ginger|pickle|pickled|slaw|microgreen|microgreens|sprout|sprouts|side|edamame|cucumber|radish|carrot|lettuce|greens?)\b/.test(normalized);
+}
+
+function normalizeComponentText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 // A detected component is "covered" by a generated group when either:
@@ -4472,9 +4599,10 @@ async function ensureComponentCoverage(
 
   const recipe = result.recipe!;
   const generated = extractGeneratedComponents(recipe);
-  const { coveragePercent, missingComponents } = computeCoverage(detected, generated);
+  const assessment = assessPlatterCoverage(analysis, generated);
+  const { coveragePercent, missingComponents, missingPrimaryComponents, missingSecondaryComponents } = assessment;
 
-  const repairNeeded = coveragePercent < 90 && missingComponents.length > 0;
+  const repairNeeded = missingPrimaryComponents.length > 0;
   let repairAddedComponents = 0;
   let repairedRecipe = recipe;
 
@@ -4482,13 +4610,13 @@ async function ensureComponentCoverage(
     console.log('[component-coverage] repair triggered', {
       dish: analysis.dishName,
       coveragePercent,
-      missing: missingComponents,
+      missing: missingPrimaryComponents,
     });
     try {
       const repairOutput = await callComponentRepairWithOpenRouter({
         analysis,
         config,
-        missingComponents,
+        missingComponents: missingPrimaryComponents,
         existingIngredientGroups: recipe.ingredientGroups ?? [],
       });
       repairedRecipe = mergeRepairIntoRecipe(recipe, repairOutput, analysis);
@@ -4511,7 +4639,8 @@ async function ensureComponentCoverage(
 
   // Re-measure coverage on the final recipe so analytics reflect actual outcome.
   const finalGenerated = extractGeneratedComponents(repairedRecipe);
-  const { coveragePercent: finalCoveragePercent } = computeCoverage(detected, finalGenerated);
+  const finalAssessment = assessPlatterCoverage(analysis, finalGenerated);
+  const finalCoveragePercent = finalAssessment.coveragePercent;
 
   void recordPlatterCoverage({
     dish: analysis.dishName,
@@ -4528,7 +4657,38 @@ async function ensureComponentCoverage(
     repairSucceeded: repairNeeded && finalCoveragePercent > coveragePercent,
   });
 
-  return repairNeeded && repairAddedComponents > 0
-    ? { ...result, recipe: repairedRecipe }
-    : result;
+  if (repairNeeded && finalAssessment.missingPrimaryComponents.length > 0) {
+    throw new Error(`PRIMARY_COMPONENT_COVERAGE_FAILED: ${finalAssessment.missingPrimaryComponents.join(', ')}`);
+  }
+
+  const warnings = finalAssessment.warningIssues.length > 0
+    ? [
+        `platter_coverage_below_90: ${missingSecondaryComponents.length > 0
+          ? `Non-critical platter details not fully represented (${missingSecondaryComponents.join(', ')}).`
+          : 'Platter component coverage is imperfect, but primary components are covered.'}`,
+      ]
+    : [];
+  const finalRecipe = warnings.length > 0
+    ? {
+        ...repairedRecipe,
+        confidenceNote: appendCoverageWarning(repairedRecipe.confidenceNote, warnings[0]),
+      }
+    : repairedRecipe;
+
+  if (repairNeeded && repairAddedComponents > 0 || warnings.length > 0) {
+    return {
+      ...result,
+      recipe: finalRecipe,
+      ...(warnings.length > 0 ? { warnings: [...(result.warnings ?? []), ...warnings] } : {}),
+    };
+  }
+
+  return result;
+}
+
+function appendCoverageWarning(confidenceNote: string, warning: string) {
+  if (confidenceNote.includes('platter_coverage_below_90')) {
+    return confidenceNote;
+  }
+  return `${confidenceNote} Coverage note: ${warning}`;
 }

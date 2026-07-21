@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { generateRecipeFromDish, normalizeVisionOutput, type FoodImageAnalysis } from './aiService.js';
+import { assessPlatterCoverage, generateRecipeFromDish, normalizeVisionOutput, type FoodImageAnalysis } from './aiService.js';
 
 function recipeAnalysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAnalysis {
   return {
@@ -48,6 +48,52 @@ function recipeProviderResponse(recipe: unknown): Promise<Response> {
     status: 200,
     headers: { 'content-type': 'application/json' },
   }));
+}
+
+function withRecipeEnv<T>(run: () => Promise<T>): Promise<T> {
+  const originalAiEnabled = process.env.AI_ENABLED;
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  const originalMaxTokens = process.env.AI_MAX_OUTPUT_TOKENS;
+  process.env.AI_ENABLED = 'true';
+  process.env.OPENROUTER_API_KEY = 'sk-test';
+  process.env.AI_MAX_OUTPUT_TOKENS = '4096';
+
+  return run().finally(() => {
+    if (originalAiEnabled === undefined) delete process.env.AI_ENABLED;
+    else process.env.AI_ENABLED = originalAiEnabled;
+    if (originalApiKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalApiKey;
+    if (originalMaxTokens === undefined) delete process.env.AI_MAX_OUTPUT_TOKENS;
+    else process.env.AI_MAX_OUTPUT_TOKENS = originalMaxTokens;
+  });
+}
+
+function buildProviderRecipe(overrides: Record<string, unknown> = {}) {
+  return {
+    dishName: 'Test Platter',
+    title: 'Test Platter',
+    description: 'A compact restaurant-style platter.',
+    ingredients: ['1 lb chicken thighs', '2 cups cooked rice', '2 tbsp soy sauce', '1 tbsp vegetable oil', '1 tsp kosher salt', '1 scallion'],
+    equipment: ['skillet', 'cutting board'],
+    steps: [
+      { stepNumber: 1, phase: 1, title: 'Prep Ingredients', step: 'Slice 1 scallion and pat 1 lb chicken dry for 2 minutes.', ingredients: ['scallion', 'chicken'], tools: ['knife'] },
+      { stepNumber: 2, phase: 2, title: 'Heat Skillet', step: 'Heat 1 tbsp oil in a skillet for 2 minutes until shimmering.', ingredients: ['vegetable oil'], tools: ['skillet'] },
+      { stepNumber: 3, phase: 3, title: 'Cook Chicken', step: 'Cook chicken for 8 minutes until browned and 165°F / 74°C inside.', ingredients: ['chicken'], tools: ['skillet'] },
+      { stepNumber: 4, phase: 3, title: 'Warm Rice', step: 'Warm 2 cups rice for 3 minutes until steaming.', ingredients: ['rice'], tools: ['saucepan'] },
+      { stepNumber: 5, phase: 4, title: 'Sauce Plate', step: 'Toss chicken with 2 tbsp soy sauce for 1 minute until glossy.', ingredients: ['chicken', 'soy sauce'], tools: ['spoon'] },
+      { stepNumber: 6, phase: 6, title: 'Serve Plate', step: 'Plate chicken and rice together while hot.', ingredients: ['chicken', 'rice'], tools: ['plate'] },
+    ],
+    prepTime: '10 minutes',
+    cookTime: '15 minutes',
+    totalTime: '25 minutes',
+    servings: 2,
+    skillLevel: 'Easy',
+    avoidMistake: 'Do not crowd the skillet.',
+    substitutions: [],
+    storageAndReheating: 'Refrigerate leftovers up to 3 days.',
+    spicePairings: [],
+    ...overrides,
+  };
 }
 
 test('normalizes dim cluttered restaurant food into an uncertain food result', () => {
@@ -438,6 +484,215 @@ test('keeps truly blurry or blocked images too unclear when no food evidence exi
   assert.equal(analysis.isFoodImage, false);
   assert.equal(analysis.scanState, 'too_unclear');
   assert.equal(analysis.rejectionReason, 'Please try a clearer food photo.');
+});
+
+test('warns instead of failing when General Tso chicken and rice cover primary components but garnish is absent', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  const analysis = recipeAnalysis({
+    dishName: "General Tso's Chicken With Rice",
+    broadDishCategory: 'mixed platter',
+    visibleIngredients: ['crispy chicken pieces', 'white rice', 'orange chili sauce', 'sesame seeds', 'scallions'],
+    likelyIngredients: ['chicken', 'rice', 'soy sauce', 'sugar'],
+    visibleComponents: {
+      protein: 'crispy chicken pieces',
+      sauce: 'orange chili sauce',
+      baseStarch: 'white rice',
+      vegetables: '',
+      toppingsGarnish: 'sesame seeds and scallions',
+      cookingMethod: 'fried and sauced',
+    },
+    detectedComponents: [
+      { name: 'Crispy Chicken Pieces', confidence: 0.86 },
+      { name: 'White Rice', confidence: 0.86 },
+      { name: 'Orange Chili Sauce', confidence: 0.86 },
+      { name: 'Sesame Seeds', confidence: 0.86 },
+      { name: 'Scallions', confidence: 0.86 },
+    ],
+  });
+  const recipe = buildProviderRecipe({
+    dishName: "General Tso's Chicken With Rice",
+    title: "General Tso's Chicken With Rice",
+    ingredientGroups: [
+      { component: 'Crispy Chicken Pieces', items: ['1 lb chicken thighs', '1 tbsp vegetable oil'] },
+      { component: 'White Rice', items: ['2 cups cooked white rice'] },
+      { component: 'Orange Chili Sauce', items: ['2 tbsp soy sauce', '1 tbsp sugar'] },
+    ],
+  });
+
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return recipeProviderResponse(recipe);
+  };
+
+  try {
+    await withRecipeEnv(async () => {
+      const output = await generateRecipeFromDish({ analysis, mode: 'Restaurant Copy' });
+      assert.equal(fetchCalls, 1);
+      assert.ok(output.recipe);
+      assert.deepEqual(output.warnings?.map((warning) => warning.split(':')[0]), ['platter_coverage_below_90']);
+      assert.match(output.recipe.confidenceNote, /platter_coverage_below_90/);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('warns instead of failing when sushi platter core sushi is covered but presentation details are absent', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  const analysis = recipeAnalysis({
+    dishName: 'Sushi Platter',
+    cuisine: 'Japanese',
+    broadDishCategory: 'mixed platter',
+    visibleIngredients: ['salmon nigiri', 'tuna nigiri', 'california roll pieces', 'soy sauce', 'wasabi', 'pickled ginger', 'edamame'],
+    likelyIngredients: ['sushi rice', 'nori', 'salmon', 'tuna'],
+    visibleComponents: {
+      protein: 'salmon and tuna',
+      sauce: 'soy sauce',
+      baseStarch: 'sushi rice',
+      vegetables: 'edamame',
+      toppingsGarnish: 'wasabi and pickled ginger',
+      cookingMethod: 'assembled sushi',
+    },
+    detectedComponents: [
+      { name: 'Salmon Nigiri', confidence: 0.84 },
+      { name: 'Tuna Nigiri', confidence: 0.84 },
+      { name: 'California Roll Pieces', confidence: 0.84 },
+      { name: 'Soy Sauce', confidence: 0.84 },
+      { name: 'Wasabi', confidence: 0.84 },
+      { name: 'Pickled Ginger', confidence: 0.84 },
+      { name: 'Edamame', confidence: 0.84 },
+    ],
+  });
+  const recipe = buildProviderRecipe({
+    dishName: 'Sushi Platter',
+    title: 'Sushi Platter',
+    ingredients: ['2 cups sushi rice', '4 oz salmon', '4 oz tuna', '4 nori sheets', '1 avocado', '1 cucumber'],
+    ingredientGroups: [
+      { component: 'Salmon Nigiri', items: ['2 cups sushi rice', '4 oz salmon'] },
+      { component: 'Tuna Nigiri', items: ['2 cups sushi rice', '4 oz tuna'] },
+      { component: 'California Roll Pieces', items: ['4 nori sheets', '1 avocado', '1 cucumber'] },
+      { component: 'Soy Sauce', items: ['2 tbsp soy sauce'] },
+    ],
+  });
+
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return recipeProviderResponse(recipe);
+  };
+
+  try {
+    await withRecipeEnv(async () => {
+      const output = await generateRecipeFromDish({ analysis, mode: 'Restaurant Copy' });
+      assert.equal(fetchCalls, 1);
+      assert.ok(output.recipe);
+      assert.deepEqual(output.warnings?.map((warning) => warning.split(':')[0]), ['platter_coverage_below_90']);
+      assert.match(output.recipe.confidenceNote, /platter_coverage_below_90/);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('targets repair when a primary platter protein is missing', async () => {
+  const originalFetch = globalThis.fetch;
+  const responses = [
+    buildProviderRecipe({
+      dishName: "General Tso's Chicken With Rice",
+      title: "General Tso's Chicken With Rice",
+      ingredientGroups: [
+        { component: 'White Rice', items: ['2 cups cooked white rice'] },
+        { component: 'Orange Chili Sauce', items: ['2 tbsp soy sauce', '1 tbsp sugar'] },
+      ],
+    }),
+    {
+      ingredientGroups: [
+        { component: 'Crispy Chicken Pieces', items: ['1 lb chicken thighs', '1/2 cup cornstarch', '1 tbsp vegetable oil'] },
+      ],
+      ingredients: ['1 lb chicken thighs', '1/2 cup cornstarch'],
+      steps: [
+        { stepNumber: 1, phase: 3, title: 'Cook Chicken', step: 'Cook chicken for 8 minutes until browned and 165°F / 74°C inside.', ingredients: ['chicken'], tools: ['skillet'] },
+      ],
+    },
+  ];
+  let fetchCalls = 0;
+  const analysis = recipeAnalysis({
+    dishName: "General Tso's Chicken With Rice",
+    broadDishCategory: 'mixed platter',
+    visibleIngredients: ['crispy chicken pieces', 'white rice', 'orange chili sauce'],
+    likelyIngredients: ['chicken', 'rice', 'soy sauce'],
+    visibleComponents: {
+      protein: 'crispy chicken pieces',
+      sauce: 'orange chili sauce',
+      baseStarch: 'white rice',
+      vegetables: '',
+      toppingsGarnish: '',
+      cookingMethod: 'fried and sauced',
+    },
+    detectedComponents: [
+      { name: 'Crispy Chicken Pieces', confidence: 0.88 },
+      { name: 'White Rice', confidence: 0.88 },
+      { name: 'Orange Chili Sauce', confidence: 0.88 },
+    ],
+  });
+
+  globalThis.fetch = async () => recipeProviderResponse(responses[fetchCalls++]);
+
+  try {
+    await withRecipeEnv(async () => {
+      const output = await generateRecipeFromDish({ analysis, mode: 'Restaurant Copy' });
+      assert.equal(fetchCalls, 2);
+      assert.ok(output.recipe?.ingredientGroups?.some((group) => group.component === 'Crispy Chicken Pieces'));
+      assert.equal(output.warnings, undefined);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('classifies non-critical platter misses as warnings and primary misses as repairable fatal issues', () => {
+  const secondaryAssessment = assessPlatterCoverage(recipeAnalysis({
+    dishName: 'Sushi Platter',
+    broadDishCategory: 'mixed platter',
+    visibleComponents: {
+      protein: 'salmon and tuna',
+      sauce: 'soy sauce',
+      baseStarch: 'sushi rice',
+      vegetables: 'edamame',
+      toppingsGarnish: 'wasabi and pickled ginger',
+      cookingMethod: 'assembled sushi',
+    },
+    detectedComponents: [
+      { name: 'Salmon Nigiri', confidence: 0.84 },
+      { name: 'Tuna Nigiri', confidence: 0.84 },
+      { name: 'Wasabi', confidence: 0.84 },
+    ],
+  }), ['Salmon Nigiri', 'Tuna Nigiri']);
+
+  assert.deepEqual(secondaryAssessment.fatalIssues, []);
+  assert.deepEqual(secondaryAssessment.warningIssues, ['platter_coverage_below_90']);
+  assert.equal(secondaryAssessment.selectedRepairMode, 'none');
+
+  const primaryAssessment = assessPlatterCoverage(recipeAnalysis({
+    dishName: "General Tso's Chicken With Rice",
+    broadDishCategory: 'mixed platter',
+    visibleComponents: {
+      protein: 'crispy chicken pieces',
+      sauce: 'orange chili sauce',
+      baseStarch: 'white rice',
+      vegetables: '',
+      toppingsGarnish: '',
+      cookingMethod: 'fried and sauced',
+    },
+    detectedComponents: [
+      { name: 'Crispy Chicken Pieces', confidence: 0.88 },
+      { name: 'White Rice', confidence: 0.88 },
+    ],
+  }), ['White Rice']);
+
+  assert.deepEqual(primaryAssessment.fatalIssues, ['primary_platter_component_missing']);
+  assert.equal(primaryAssessment.selectedRepairMode, 'component_coverage');
 });
 
 test('app-facing recipe conversion does not leave unsafe chicken temperatures behind', async () => {
