@@ -663,6 +663,7 @@ export async function generateRecipeWithOpenRouter(input: {
   // tools. One targeted repair pass; if it still fails, throw rather than
   // fabricate. aiService routes the throw to the honest scan-failure UX.
   firstOutput = await enforceRecipeStructure(input, firstOutput);
+  firstOutput = normalizeRecipeOutputForValidation(firstOutput, input.analysis);
 
   // Strip fields the model generates despite prompt bans — deterministic, no
   // prompt-compliance required.
@@ -680,7 +681,7 @@ export async function generateRecipeWithOpenRouter(input: {
   // One focused repair pass, then keep whichever output is cleaner (and still
   // structurally valid). The deterministic sanitizer in aiService is the final
   // safety net after this.
-  const issues = getRecipeQualityIssues(firstOutput, isDrink);
+  const issues = getRecipeQualityIssues(firstOutput, isDrink, input.analysis);
   if (issues.length === 0) {
     return storeRecipeCache(cacheKey, firstOutput, input.analysis.dishName);
   }
@@ -699,21 +700,27 @@ export async function generateRecipeWithOpenRouter(input: {
       input.config.maxOutputTokens,
       'recipe_quality_repair',
     );
-    const repairedIssues = getRecipeQualityIssues(repaired, isDrink);
-    const repairedStructure = validateRecipeStructure(repaired);
-    const usedRepair = repairedStructure.length === 0 && repairedIssues.length < issues.length;
+    const normalizedRepair = normalizeRecipeOutputForValidation(repaired, input.analysis);
+    const repairedIssues = getRecipeQualityIssues(normalizedRepair, isDrink, input.analysis);
+    const repairedStructure = validateRecipeStructure(normalizedRepair);
+    const usedRepair = repairedStructure.length === 0 && repairedIssues.length === 0;
     logOpenRouterDebug('openrouter_recipe_quality_repair_result', {
       beforeIssues: issues,
       afterIssues: repairedIssues,
       repairedStructureIssues: repairedStructure,
       usedRepair,
     });
-    return storeRecipeCache(cacheKey, usedRepair ? repaired : firstOutput, input.analysis.dishName);
+    if (!usedRepair) {
+      throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
+        openRouterErrorMessage: `Recipe remained invalid after repair: ${[...repairedStructure, ...repairedIssues].join(', ')}`,
+      });
+    }
+    return storeRecipeCache(cacheKey, normalizedRepair, input.analysis.dishName);
   } catch (repairError) {
     logOpenRouterDebug('openrouter_recipe_quality_repair_failed', {
       reason: repairError instanceof OpenRouterProviderError ? repairError.failure.reason : 'unknown',
     });
-    return storeRecipeCache(cacheKey, firstOutput, input.analysis.dishName);
+    throw repairError;
   }
 }
 
@@ -723,6 +730,7 @@ async function enforceRecipeStructure(
   input: { analysis: FoodImageAnalysis; config: AiConfig },
   output: OpenRouterRecipeOutput,
 ): Promise<OpenRouterRecipeOutput> {
+  output = normalizeRecipeOutputForValidation(output, input.analysis);
   const issues = validateRecipeStructure(output);
   if (issues.length === 0) {
     return output;
@@ -741,13 +749,14 @@ async function enforceRecipeStructure(
     input.config.maxOutputTokens,
     'recipe_structure_repair',
   );
-  const repairedIssues = validateRecipeStructure(repaired);
+  const normalizedRepair = normalizeRecipeOutputForValidation(repaired, input.analysis);
+  const repairedIssues = validateRecipeStructure(normalizedRepair);
   if (repairedIssues.length > 0) {
     throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
       openRouterErrorMessage: `Recipe steps were structurally invalid after repair: ${repairedIssues.join(', ')}`,
     });
   }
-  return repaired;
+  return normalizedRepair;
 }
 
 // Strict structural validation of the single recipe. Returns issue codes (empty
@@ -775,6 +784,8 @@ export function validateRecipeStructure(output: OpenRouterRecipeOutput): string[
     const instruction = (step.step || step.instruction || step.text || '').trim();
     if (!instruction) issues.push('step_missing_instruction');
     if (!(step.title || '').trim()) issues.push('step_missing_title');
+    if (!nonEmpty(step.ingredients) && !nonEmpty(step.ingredientsUsed)) issues.push('step_missing_ingredients');
+    if (!nonEmpty(step.tools) && !nonEmpty(step.toolsUsed)) issues.push('step_missing_tools');
   }
 
   const numbers = steps.map((step) =>
@@ -821,13 +832,22 @@ async function callRecipeStage(
 
 // Detects recipe output that is too vague to cook from. Returns a list of issue
 // codes (empty = good enough). Drives the one-shot repair retry above.
-function getRecipeQualityIssues(output: OpenRouterRecipeOutput, isDrink: boolean): string[] {
+function getRecipeQualityIssues(output: OpenRouterRecipeOutput, isDrink: boolean, analysis?: FoodImageAnalysis): string[] {
   const issues: string[] = [];
   const ingredients = (Array.isArray(output.ingredients) ? output.ingredients : [])
     .map((value) => (typeof value === 'string' ? value : '').trim())
     .filter(Boolean);
   const stepTexts = (Array.isArray(output.steps) ? output.steps : [])
-    .map((value) => (typeof value === 'string' ? value : (value?.step || value?.instruction || value?.text || '')).trim())
+    .map((value) => {
+      if (typeof value === 'string') return value.trim();
+      return [
+        value?.step,
+        value?.instruction,
+        value?.text,
+        value?.doneWhen,
+        value?.safetyNote,
+      ].filter((text): text is string => typeof text === 'string' && text.trim().length > 0).join(' ').trim();
+    })
     .filter(Boolean);
   const allText = `${output.title ?? ''} ${output.description ?? ''} ${ingredients.join(' ')} ${stepTexts.join(' ')}`.toLowerCase();
 
@@ -854,6 +874,9 @@ function getRecipeQualityIssues(output: OpenRouterRecipeOutput, isDrink: boolean
   if (isDrink && stepTexts.some((step) => /\b(oven|skillet|saut[eé]|bake|roast|sear|pan-fry|°f|°c|internal temp)\b/i.test(step))) {
     issues.push('drink_uses_cooking_language');
   }
+  if (analysis && hasUnsafePoultryTemperature(stepTexts, analysis, ingredients)) {
+    issues.push('unsafe_temperature_poultry');
+  }
 
   return issues;
 }
@@ -867,6 +890,182 @@ function hasIngredientAmount(value: string): boolean {
     return true;
   }
   return /\b(a|an|one|two|three|four|half|pinch|dash|handful|to taste|some)\b/.test(text);
+}
+
+function normalizeRecipeOutputForValidation(
+  output: OpenRouterRecipeOutput,
+  analysis: FoodImageAnalysis,
+): OpenRouterRecipeOutput {
+  const stepTexts = (Array.isArray(output.steps) ? output.steps : []).map(getProviderStepText);
+  const ingredients = addMissingWaterIngredient(normalizeProviderIngredientList(output.ingredients), stepTexts);
+
+  return {
+    ...output,
+    ingredients,
+    steps: (Array.isArray(output.steps) ? output.steps : []).map((rawStep) => normalizeProviderStepForValidation(
+      rawStep,
+      analysis,
+      ingredients,
+    )),
+  };
+}
+
+function normalizeProviderStepForValidation(
+  rawStep: OpenRouterRecipeOutput['steps'][number],
+  analysis: FoodImageAnalysis,
+  ingredients: string[],
+): OpenRouterRecipeOutput['steps'][number] {
+  if (typeof rawStep === 'string') {
+    return correctPoultrySafetyTemperaturesInText(rawStep, analysis, ingredients);
+  }
+
+  const instruction = correctPoultrySafetyTemperaturesInText(getProviderStepText(rawStep), analysis, ingredients);
+  const normalizedIngredients = Array.isArray(rawStep.ingredients)
+    ? rawStep.ingredients.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : [];
+  const stepIngredients = stepGenuinelyRequiresWater(instruction) &&
+    !normalizedIngredients.some((value) => ingredientNameMatches(value, 'water'))
+    ? [...normalizedIngredients, 'water']
+    : normalizedIngredients;
+
+  return {
+    ...rawStep,
+    step: rawStep.step ? instruction : rawStep.step,
+    instruction: rawStep.instruction
+      ? correctPoultrySafetyTemperaturesInText(rawStep.instruction, analysis, ingredients)
+      : rawStep.instruction,
+    text: rawStep.text
+      ? correctPoultrySafetyTemperaturesInText(rawStep.text, analysis, ingredients)
+      : rawStep.text,
+    ingredients: stepIngredients,
+    doneWhen: rawStep.doneWhen
+      ? correctPoultrySafetyTemperaturesInText(rawStep.doneWhen, analysis, ingredients)
+      : rawStep.doneWhen,
+    safetyNote: rawStep.safetyNote
+      ? correctPoultrySafetyTemperaturesInText(rawStep.safetyNote, analysis, ingredients)
+      : rawStep.safetyNote,
+  };
+}
+
+function getProviderStepText(rawStep: OpenRouterRecipeOutput['steps'][number] | undefined): string {
+  if (typeof rawStep === 'string') {
+    return rawStep;
+  }
+  if (!rawStep || typeof rawStep !== 'object') {
+    return '';
+  }
+  return rawStep.step || rawStep.instruction || rawStep.text || '';
+}
+
+function normalizeProviderIngredientList(ingredients: string[]): string[] {
+  return ingredients
+    .map((ingredient) => (typeof ingredient === 'string' ? ingredient.trim() : ''))
+    .filter(Boolean);
+}
+
+function addMissingWaterIngredient(ingredients: string[], stepTexts: string[]): string[] {
+  if (ingredients.some((ingredient) => ingredientNameMatches(ingredient, 'water'))) {
+    return ingredients;
+  }
+
+  const waterIngredient = inferWaterIngredient(stepTexts);
+  return waterIngredient ? [...ingredients, waterIngredient] : ingredients;
+}
+
+function inferWaterIngredient(stepTexts: string[]): string | undefined {
+  const text = stepTexts.join(' ');
+  if (!containsIngredientMention(text.toLowerCase(), 'water')) {
+    return undefined;
+  }
+
+  const quantified = text.match(
+    /\b((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|a)\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|ml|milliliters?|l|liters?)?)\s+(?:cold\s+|warm\s+|hot\s+|boiling\s+)?(?:pasta\s+)?water\b/i,
+  );
+  if (quantified?.[1]) {
+    return `${quantified[1].trim()} water`;
+  }
+
+  if (/\b(?:bring|boil|cook|simmer)\b[\s\S]*\bwater\b/i.test(text) ||
+    /\bwater\b[\s\S]*\b(?:boil|simmer|cook|reserve)\b/i.test(text)) {
+    return '8 cups water';
+  }
+
+  if (/\b(?:splash|loosen|thin)\b[\s\S]*\bwater\b/i.test(text) ||
+    /\bwater\b[\s\S]*\b(?:loosen|thin)\b/i.test(text)) {
+    return '2 tbsp water';
+  }
+
+  return undefined;
+}
+
+function stepGenuinelyRequiresWater(stepText: string): boolean {
+  return containsIngredientMention(stepText.toLowerCase(), 'water') &&
+    (/\b(?:bring|boil|cook|simmer|reserve|add|stir|splash|loosen|thin)\b[\s\S]*\bwater\b/i.test(stepText) ||
+      /\bwater\b[\s\S]*\b(?:boil|simmer|cook|reserve|loosen|thin)\b/i.test(stepText));
+}
+
+function containsIngredientMention(text: string, ingredient: string): boolean {
+  return new RegExp(`\\b${ingredient.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text);
+}
+
+function ingredientNameMatches(value: string, name: string): boolean {
+  return containsIngredientMention(value.toLowerCase(), name);
+}
+
+function correctPoultrySafetyTemperaturesInText(
+  text: string,
+  analysis: FoodImageAnalysis,
+  ingredients: string[],
+): string {
+  if (!isPoultryRecipe(analysis, ingredients) || !text.trim()) {
+    return text;
+  }
+  return text.replace(/\b(\d{2,3})\s*°?\s*([fc])\b/gi, (match, rawValue: string, rawUnit: string, offset: number) => {
+    if (!isUnsafePoultryTemperature(Number(rawValue), rawUnit) ||
+      !isInternalTemperatureContext(text, offset)) {
+      return match;
+    }
+    return rawUnit.toLowerCase() === 'f' ? '165°F' : '74°C';
+  });
+}
+
+function hasUnsafePoultryTemperature(
+  texts: string[],
+  analysis: FoodImageAnalysis,
+  ingredients: string[],
+): boolean {
+  if (!isPoultryRecipe(analysis, ingredients)) {
+    return false;
+  }
+  return texts.some((text) => {
+    for (const match of text.matchAll(/\b(\d{2,3})\s*°?\s*([fc])\b/gi)) {
+      if (isUnsafePoultryTemperature(Number(match[1]), match[2]) &&
+        isInternalTemperatureContext(text, match.index ?? 0)) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+function isPoultryRecipe(analysis: FoodImageAnalysis, ingredients: string[]): boolean {
+  const text = `${analysis.dishName} ${analysis.broadDishCategory} ${ingredients.join(' ')}`.toLowerCase();
+  return /\b(chicken|poultry|turkey|duck)\b/.test(text);
+}
+
+function isUnsafePoultryTemperature(value: number, unit: string): boolean {
+  const normalizedUnit = unit.toLowerCase();
+  if (normalizedUnit === 'f') return value >= 90 && value < 165;
+  if (normalizedUnit === 'c') return value >= 45 && value < 74;
+  return false;
+}
+
+function isInternalTemperatureContext(text: string, index: number): boolean {
+  const before = text.slice(Math.max(0, index - 70), index);
+  const after = text.slice(index, Math.min(text.length, index + 70));
+  return /\b(?:internal|inside|thermometer|thickest part|center|centre|reaches?|temperature|cook(?:ed)?\s+(?:to|until))\b/i.test(
+    `${before} ${after}`,
+  );
 }
 
 function getRecipeRepairPrompt(
