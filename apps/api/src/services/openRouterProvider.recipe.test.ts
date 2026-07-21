@@ -5,8 +5,10 @@ import type { AiConfig } from '../config/aiConfig.js';
 import type { FoodImageAnalysis } from './aiService.js';
 import {
   generateRecipeWithOpenRouter,
+  normalizeRecipeProviderOutputShape,
   openRouterRecipeOutputSchema,
   OpenRouterProviderError,
+  recipeArrayFieldDefinitions,
   validateRecipeStructure,
 } from './openRouterProvider.js';
 
@@ -88,6 +90,50 @@ function providerResponse(recipe: unknown): Promise<Response> {
     status: 200,
     headers: { 'content-type': 'application/json' },
   }));
+}
+
+function collectZodArrayPaths(schema: unknown, path = ''): string[] {
+  const node = unwrapZod(schema);
+  const def = (node as { _def?: Record<string, unknown> })._def;
+  if (!def) return [];
+  const typeName = def.typeName;
+
+  if (typeName === 'ZodArray') {
+    const child = def.type;
+    return [
+      path,
+      ...collectZodArrayPaths(child, path),
+    ].filter(Boolean);
+  }
+
+  if (typeName === 'ZodObject') {
+    const rawShape = def.shape;
+    const shape = typeof rawShape === 'function' ? rawShape() as Record<string, unknown> : rawShape as Record<string, unknown>;
+    return Object.entries(shape).flatMap(([key, child]) => collectZodArrayPaths(child, path ? `${path}.${key}` : key));
+  }
+
+  if (typeName === 'ZodUnion') {
+    const options = Array.isArray(def.options) ? def.options : [];
+    const optionTypes = options.map((option) => (unwrapZod(option) as { _def?: { typeName?: unknown } })._def?.typeName);
+    if (optionTypes.includes('ZodString') && optionTypes.includes('ZodArray')) {
+      return [];
+    }
+    return [...new Set(options.flatMap((option) => collectZodArrayPaths(option, path)))];
+  }
+
+  return [];
+}
+
+function unwrapZod(schema: unknown): unknown {
+  let current = schema;
+  for (let i = 0; i < 8; i += 1) {
+    const def = (current as { _def?: Record<string, unknown> })._def;
+    if (!def) return current;
+    const next = def.innerType ?? def.schema;
+    if (!next) return current;
+    current = next;
+  }
+  return current;
 }
 
 test('accepts a single structured recipe with the canonical step contract', () => {
@@ -255,6 +301,147 @@ test('recipe generation corrects unsafe poultry internal temperatures', async ()
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('recipe provider output normalization recovers generic string and object array shapes', async () => {
+  const cases: Array<{
+    name: string;
+    analysis: Partial<FoodImageAnalysis>;
+    mutate: (recipe: ReturnType<typeof buildValidRecipe>) => Record<string, unknown>;
+    assertOutput: (output: Awaited<ReturnType<typeof generateRecipeWithOpenRouter>>) => void;
+  }> = [
+    {
+      name: 'Sushi Platter substitutions string',
+      analysis: { dishName: 'Sushi Platter', broadDishCategory: 'mixed platter' },
+      mutate: (recipe) => ({
+        ...recipe,
+        dishName: 'Sushi Platter',
+        title: 'Sushi Platter',
+        substitutions: 'Use cooked shrimp instead of raw fish.',
+      }),
+      assertOutput: (output) => {
+        assert.deepEqual(output.substitutions, ['Use cooked shrimp instead of raw fish.']);
+      },
+    },
+    {
+      name: 'Pasta equipment string',
+      analysis: { dishName: 'Tomato Pasta', broadDishCategory: 'pasta/noodles' },
+      mutate: (recipe) => ({
+        ...recipe,
+        dishName: 'Tomato Pasta',
+        title: 'Tomato Pasta',
+        equipment: 'large pot, skillet, tongs',
+      }),
+      assertOutput: (output) => {
+        assert.deepEqual(output.equipment, ['large pot', 'skillet', 'tongs']);
+      },
+    },
+    {
+      name: 'Soup step tools string',
+      analysis: { dishName: 'Tomato Soup', broadDishCategory: 'soup/stew' },
+      mutate: (recipe) => ({
+        ...recipe,
+        dishName: 'Tomato Soup',
+        title: 'Tomato Soup',
+        steps: recipe.steps.map((step, index) => index === 0 ? { ...step, tools: 'pot, ladle' } : step),
+      }),
+      assertOutput: (output) => {
+        const firstStep = output.steps[0];
+        assert.deepEqual(typeof firstStep === 'object' && firstStep.tools, ['pot', 'ladle']);
+      },
+    },
+    {
+      name: 'Dessert spice pairings newline text',
+      analysis: { dishName: 'Chocolate Cake', broadDishCategory: 'dessert' },
+      mutate: (recipe) => ({
+        ...recipe,
+        dishName: 'Chocolate Cake',
+        title: 'Chocolate Cake',
+        spicePairings: 'cinnamon\nespresso powder\ncinnamon\n',
+      }),
+      assertOutput: (output) => {
+        assert.deepEqual(output.spicePairings, ['cinnamon', 'espresso powder']);
+      },
+    },
+    {
+      name: 'Sandwich ingredientGroups singleton object',
+      analysis: { dishName: 'Club Sandwich', broadDishCategory: 'mixed platter' },
+      mutate: (recipe) => ({
+        ...recipe,
+        dishName: 'Club Sandwich',
+        title: 'Club Sandwich',
+        ingredientGroups: { component: 'sandwich', items: '2 slices bread\n3 oz turkey\n2 leaves lettuce' },
+      }),
+      assertOutput: (output) => {
+        assert.equal(output.ingredientGroups.length, 1);
+        assert.deepEqual(output.ingredientGroups[0].items, ['2 slices bread', '3 oz turkey', '2 leaves lettuce']);
+      },
+    },
+    {
+      name: 'General plated meal step ingredients string',
+      analysis: { dishName: 'Grilled Chicken Plate', broadDishCategory: 'grilled meat' },
+      mutate: (recipe) => ({
+        ...recipe,
+        dishName: 'Grilled Chicken Plate',
+        title: 'Grilled Chicken Plate',
+        steps: recipe.steps.map((step, index) => index === 1 ? { ...step, ingredients: 'olive oil, tomato sauce' } : step),
+      }),
+      assertOutput: (output) => {
+        const secondStep = output.steps[1];
+        assert.deepEqual(typeof secondStep === 'object' && secondStep.ingredients, ['olive oil', 'tomato sauce']);
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return providerResponse(testCase.mutate(buildValidRecipe(6)));
+    };
+    try {
+      const output = await generateRecipeWithOpenRouter({
+        analysis: analysis(testCase.analysis),
+        config: testConfig,
+        mode: 'Restaurant Copy',
+      });
+
+      assert.equal(calls, 1, testCase.name);
+      assert.deepEqual(validateRecipeStructure(output), [], testCase.name);
+      testCase.assertOutput(output);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
+
+test('drink steps singleton object normalizes before strict content validation', () => {
+  const normalized = normalizeRecipeProviderOutputShape({
+    ...buildValidRecipe(6),
+    dishName: 'Berry Smoothie',
+    title: 'Berry Smoothie',
+    steps: buildStep(1, {
+      title: 'Blend Smoothie',
+      step: 'Blend berries and milk for 1 minute until smooth.',
+      ingredients: 'berries, milk',
+      tools: 'blender',
+    }),
+  });
+
+  const parsed = openRouterRecipeOutputSchema.parse(normalized);
+  assert.equal(parsed.steps.length, 1);
+  assert.deepEqual(typeof parsed.steps[0] === 'object' && parsed.steps[0].ingredients, ['berries', 'milk']);
+  assert.deepEqual(typeof parsed.steps[0] === 'object' && parsed.steps[0].tools, ['blender']);
+  assert.deepEqual(validateRecipeStructure(parsed), ['too_few_steps']);
+});
+
+test('all recipe schema array fields are covered by the shared normalizer map', () => {
+  const schemaArrayPaths = collectZodArrayPaths(openRouterRecipeOutputSchema)
+    .filter((path) => !path.includes('*'));
+  const normalizedPaths = recipeArrayFieldDefinitions.map((definition) => definition.path).sort();
+
+  assert.deepEqual(schemaArrayPaths.sort(), normalizedPaths);
 });
 
 test('recipe repair rejects a changed response when the final recipe is still invalid', async () => {

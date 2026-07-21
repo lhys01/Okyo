@@ -94,6 +94,7 @@ export type OpenRouterRequestMetrics = {
   providerCallCount: number;
   deterministicRepairMs: number;
   combinedRepairMs: number;
+  normalizationMs: number;
   stages: string[];
 };
 
@@ -104,6 +105,7 @@ export async function runWithOpenRouterMetrics<T>(fn: () => Promise<T>): Promise
     providerCallCount: 0,
     deterministicRepairMs: 0,
     combinedRepairMs: 0,
+    normalizationMs: 0,
     stages: [],
   }, fn);
 }
@@ -112,7 +114,7 @@ export function getOpenRouterMetrics(): OpenRouterRequestMetrics {
   const metrics = openRouterMetricsStorage.getStore();
   return metrics
     ? { ...metrics, stages: [...metrics.stages] }
-    : { providerCallCount: 0, deterministicRepairMs: 0, combinedRepairMs: 0, stages: [] };
+    : { providerCallCount: 0, deterministicRepairMs: 0, combinedRepairMs: 0, normalizationMs: 0, stages: [] };
 }
 
 function recordOpenRouterCall(stage: string | undefined) {
@@ -132,6 +134,12 @@ function addCombinedRepairMs(durationMs: number) {
   const metrics = openRouterMetricsStorage.getStore();
   if (!metrics) return;
   metrics.combinedRepairMs += durationMs;
+}
+
+function addNormalizationMs(durationMs: number) {
+  const metrics = openRouterMetricsStorage.getStore();
+  if (!metrics) return;
+  metrics.normalizationMs += durationMs;
 }
 
 export const openRouterVisionOutputSchema = z.object({
@@ -304,6 +312,161 @@ export const openRouterRecipeOutputSchema = recipeVariantSchema.extend({
 export type OpenRouterVisionOutput = z.input<typeof openRouterVisionOutputSchema>;
 export type OpenRouterRecipeOutput = z.infer<typeof openRouterRecipeOutputSchema>;
 export type OpenRouterRecipeVariant = z.infer<typeof recipeVariantSchema>;
+
+type RecipeArrayFieldDefinition = {
+  path: string;
+  kind: 'string[]' | 'object[]';
+  commaSafe?: 'shortText' | 'amountedIngredients';
+};
+
+export const recipeArrayFieldDefinitions = [
+  { path: 'equipment', kind: 'string[]', commaSafe: 'shortText' },
+  { path: 'ingredients', kind: 'string[]', commaSafe: 'amountedIngredients' },
+  { path: 'substitutions', kind: 'string[]' },
+  { path: 'spicePairings', kind: 'string[]' },
+  { path: 'ingredientGroups', kind: 'object[]' },
+  { path: 'ingredientGroups.items', kind: 'string[]', commaSafe: 'amountedIngredients' },
+  { path: 'steps', kind: 'object[]' },
+  { path: 'steps.ingredients', kind: 'string[]', commaSafe: 'shortText' },
+  { path: 'steps.tools', kind: 'string[]', commaSafe: 'shortText' },
+  { path: 'steps.creates', kind: 'string[]', commaSafe: 'shortText' },
+  { path: 'steps.requires', kind: 'string[]', commaSafe: 'shortText' },
+  { path: 'steps.ingredientsUsed', kind: 'string[]', commaSafe: 'shortText' },
+  { path: 'steps.toolsUsed', kind: 'string[]', commaSafe: 'shortText' },
+  { path: 'groceryItems', kind: 'object[]' },
+  { path: 'cookingTerms', kind: 'object[]' },
+] as const satisfies readonly RecipeArrayFieldDefinition[];
+
+export const normalizedRecipeStringArrayFields = recipeArrayFieldDefinitions
+  .filter((definition) => definition.kind === 'string[]')
+  .map((definition) => definition.path);
+
+const recipeArrayFieldDefinitionMap = new Map<string, RecipeArrayFieldDefinition>(
+  recipeArrayFieldDefinitions.map((definition) => [definition.path, definition]),
+);
+
+export function normalizeRecipeProviderOutputShape(value: unknown): unknown {
+  return normalizeRecipeNode(value, '');
+}
+
+function normalizeRecipeNode(value: unknown, path: string): unknown {
+  const definition = recipeArrayFieldDefinitionMap.get(path);
+  if (definition?.kind === 'string[]') {
+    return normalizeStringArrayValue(value, definition);
+  }
+  if (definition?.kind === 'object[]') {
+    return normalizeObjectArrayValue(value, path);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeRecipeNode(item, path));
+  }
+
+  const record = getRecord(value);
+  if (!record) {
+    return value;
+  }
+
+  return normalizeRecipeRecordChildren(record, path);
+}
+
+function normalizeRecipeRecordChildren(record: SafeRecord, path: string): SafeRecord {
+  const normalized: SafeRecord = { ...record };
+  for (const [key, childValue] of Object.entries(record)) {
+    const childPath = path ? `${path}.${key}` : key;
+    normalized[key] = normalizeRecipeNode(childValue, childPath);
+  }
+  return normalized;
+}
+
+function normalizeObjectArrayValue(value: unknown, path: string): unknown[] {
+  const values = Array.isArray(value)
+    ? value
+    : getRecord(value)
+      ? [value]
+      : [];
+
+  return values
+    .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+    .map((item) => normalizeRecipeRecordChildren(item as SafeRecord, path));
+}
+
+function normalizeStringArrayValue(value: unknown, definition: RecipeArrayFieldDefinition): unknown[] {
+  const rawItems = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? splitListLikeString(value, definition)
+      : [];
+
+  const seen = new Set<string>();
+  const normalized: unknown[] = [];
+  for (const item of rawItems) {
+    if (typeof item !== 'string') {
+      normalized.push(item);
+      continue;
+    }
+    const cleaned = item.replace(/^[\s\-*•‣▪]+/, '').trim();
+    if (!cleaned) {
+      continue;
+    }
+    const key = cleaned.toLocaleLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    normalized.push(cleaned);
+  }
+  return normalized;
+}
+
+function splitListLikeString(value: string, definition: RecipeArrayFieldDefinition): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const lineItems = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:[-*•‣▪]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean);
+  if (lineItems.length > 1) {
+    return lineItems;
+  }
+
+  const bulletItems = trimmed
+    .split(/\s+[•‣▪]\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (bulletItems.length > 1) {
+    return bulletItems;
+  }
+
+  if (definition.commaSafe && isClearlyCommaSeparatedList(trimmed, definition.commaSafe)) {
+    return trimmed.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+
+  return [trimmed];
+}
+
+function isClearlyCommaSeparatedList(value: string, mode: NonNullable<RecipeArrayFieldDefinition['commaSafe']>): boolean {
+  if (!value.includes(',')) {
+    return false;
+  }
+
+  const parts = value.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2 || parts.some((part) => /[.!?;:]/.test(part))) {
+    return false;
+  }
+
+  if (mode === 'amountedIngredients') {
+    return parts.every((part) => hasIngredientAmount(part));
+  }
+
+  return parts.every((part) => {
+    const words = part.split(/\s+/).filter(Boolean);
+    return words.length > 0 && words.length <= 5 && !/\b(?:and|or|but|because|until|while|when|with)\b/i.test(part);
+  });
+}
 
 type OpenRouterContentPart =
   | { type: 'text'; text: string }
@@ -715,26 +878,29 @@ export async function generateRecipeWithOpenRouter(input: {
   ].join(' '));
 
   let firstOutput: OpenRouterRecipeOutput;
+  let usedRecipeRetry = false;
   try {
     firstOutput = await callRecipeStage(input, recipePrompt, input.config.maxOutputTokens, 'recipe');
   } catch (firstError) {
     const shouldRetry = firstError instanceof OpenRouterProviderError &&
-      retryReasons.includes(firstError.failure.reason);
+      retryReasons.includes(firstError.failure.reason) &&
+      getOpenRouterMetrics().providerCallCount < 3;
 
     if (!shouldRetry) {
       throw firstError;
     }
+    usedRecipeRetry = true;
 
     logOpenRouterDebug('openrouter_recipe_retry', {
       firstReason: firstError.failure.reason,
       firstErrorMessage: firstError.failure.openRouterErrorMessage,
       model: input.config.openRouterTextModel,
       retryPrompt: 'compact',
-      retryMaxTokens: 1024,
+      retryMaxTokens: 900,
     });
 
     await waitMs(3500);
-    firstOutput = await callRecipeStage(input, getCompactRecipeRetryPrompt(input.analysis), 1024, 'recipe_retry');
+    firstOutput = await callRecipeStage(input, getCompactRecipeRetryPrompt(input.analysis), 900, 'recipe_retry');
   }
 
   const deterministicStartedAt = Date.now();
@@ -756,6 +922,19 @@ export async function generateRecipeWithOpenRouter(input: {
   const issues = getRecipeValidationIssues(firstOutput, isDrink, input.analysis);
   if (issues.length === 0) {
     return storeRecipeCache(cacheKey, firstOutput, input.analysis.dishName);
+  }
+
+  if (usedRecipeRetry || getOpenRouterMetrics().providerCallCount >= 3) {
+    logOpenRouterDebug('openrouter_recipe_combined_check', {
+      dishName: input.analysis.dishName,
+      issues,
+      deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
+      willModelRepair: false,
+      reason: usedRecipeRetry ? 'retry_already_used' : 'provider_call_cap',
+    });
+    throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
+      openRouterErrorMessage: `Recipe remained invalid after retry/deterministic cleanup: ${issues.join(', ')}`,
+    });
   }
 
   logOpenRouterDebug('openrouter_recipe_combined_check', {
@@ -1252,7 +1431,11 @@ async function callRecipeStage(
     getRecipeModelChain(input.config),
   );
 
-  const output = openRouterRecipeOutputSchema.safeParse(json);
+  const normalizationStartedAt = Date.now();
+  const normalizedJson = normalizeRecipeProviderOutputShape(json);
+  addNormalizationMs(Date.now() - normalizationStartedAt);
+
+  const output = openRouterRecipeOutputSchema.safeParse(normalizedJson);
   if (!output.success) {
     throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
       openRouterErrorMessage: getSchemaErrorMessage(output.error),
@@ -1714,6 +1897,9 @@ async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string
   let lastError: unknown = new Error('recipe_model_chain_empty');
   let failoverCount = 0;
   for (let i = 0; i < models.length; i++) {
+    if (base.stage !== 'vision' && getOpenRouterMetrics().providerCallCount >= 3) {
+      throw lastError;
+    }
     const model = models[i];
     logOpenRouterDebug('recipe_model_attempt', { model, attempt: i + 1, stage: base.stage });
     try {
@@ -1877,7 +2063,7 @@ function getRecipePrompt(
   // Explicit component list for platter prompts. Enumerating each detected component
   // eliminates the component-coverage repair call in the common case.
   const platterComponentNames = isPlatter
-    ? (analysis.detectedComponents ?? []).map((c) => c.name).filter(Boolean).slice(0, 12)
+    ? (analysis.detectedComponents ?? []).map((c) => c.name).filter(Boolean).slice(0, 8)
     : [];
 
   return [
@@ -1888,8 +2074,8 @@ function getRecipePrompt(
     `Recipe fields: dishName, title, description, ingredients, equipment, steps, avoidMistake, substitutions, storageAndReheating, spicePairings, prepTime, cookTime, totalTime, servings, skillLevel${isPlatter ? ', ingredientGroups' : ''}.`,
     isPlatter
       ? platterComponentNames.length > 0
-        ? `REQUIRED COMPONENTS — generate exactly one ingredientGroup per item listed (2-6 ingredients each with exact amounts): ${platterComponentNames.map((c, i) => `${i + 1}. ${c}`).join(', ')}. ingredientGroups shape: [{"component":"<name>","items":["2 cups sushi rice",...]},...]  Steps: 1-3 per component grouped by component, phases 1-5.`
-        : 'ingredientGroups: [{component:"<name>",items:["exact amount ingredient",...]},...] — one per distinct visible component. Cover every component. 24 ingredients and 24 steps; group steps by component.'
+        ? `REQUIRED COMPONENTS — generate exactly one ingredientGroup per item listed (2-4 ingredients each with exact amounts): ${platterComponentNames.map((c, i) => `${i + 1}. ${c}`).join(', ')}. ingredientGroups shape: [{"component":"<name>","items":["2 cups rice",...]},...] Steps: 1-2 concise steps per component.`
+        : 'ingredientGroups: [{component:"<name>",items:["exact amount ingredient",...]},...] — one per distinct visible component. Cover the main components with 8-16 ingredients and 8-12 concise steps total.'
       : 'Do NOT include ingredientGroups — omit it entirely.',
     'Limits: ingredient count MUST match complexity — plain/whole foods 1-4, simple snacks/assembly 3-7, full cooked dishes 8-16. Steps: 2-4 for plain whole foods (fruit, boiled egg, toast), 6-8 for assembly, 8-12 for full cooked dishes. Substitutions max 3, equipment max 5, spicePairings max 2. Drinks: 6-8 steps.',
     'BANNED WORDING (never use, anywhere): "main ingredient", standalone "protein"/"vegetables"/"sauce"/"seasoning"/"toppings", "cook until done", "prepare the ingredients", "mix everything", "season to taste" with no amount. Always name the actual food.',
@@ -1902,8 +2088,8 @@ function getRecipePrompt(
     'SIMPLE FOODS: Plain fruit (watermelon cubes, berries, grapes, banana, sliced melon) = the fruit itself only. Do NOT add feta, mint, honey, nuts, granola, yogurt, dressing, or any chef addition unless clearly visible in the scan or named in the title. Watermelon cubes → ["4 cups watermelon, cubed"], optionally ["1 lime", "1/4 tsp Tajín or salt"]. Never create a salad from a plain fruit scan. Same rule for plain boiled eggs and plain toast.',
     'Ingredients: STRINGS ONLY — ["2 large eggs", "1 tbsp olive oil"]. Each element is a plain string starting with an exact amount. Never output ingredient objects.',
     'COOKING PHASES: 1=Prep, 2=Setup, 3=Cook, 4=Assembly, 5=Finish, 6=Serve. Phases MUST NOT decrease. Phase 6 = ONLY the final serve/plate action — garnish, fresh herbs, and cheese are phase 5.',
-    'Steps: copy this EXACT shape — {"stepNumber":1,"phase":1,"title":"Mince Garlic","step":"Finely mince 4 garlic cloves on a cutting board until 1mm pieces, about 30 seconds.","ingredients":["garlic"],"tools":["chef knife","cutting board"]}',
-    'Every step requires all 6 keys: stepNumber (integer, starts 1, sequential +1 per step), phase (integer 1-6), title (2-4 word action phrase), step (≤25 words, real amount+time+visual cue), ingredients (names-used-this-step array, never empty), tools (never empty). No other keys.',
+    'Steps shape: {"stepNumber":1,"phase":1,"title":"Mince Garlic","step":"Mince 4 garlic cloves into 1mm pieces, about 30 seconds.","ingredients":["garlic"],"tools":["chef knife","cutting board"]}',
+    'Every step requires only those 6 keys. stepNumber starts 1 and increments by 1. step ≤22 words with amount, time, and visual cue. ingredients/tools are non-empty arrays.',
     'Never write vague steps. Say exactly what to do, the time, and a visual/textural cue.',
     isDrink
       ? 'DRINK: title must say smoothie/latte/shake/juice. Steps: measure, blend or brew, taste, adjust, pour, garnish. No oven, no meat temperatures.'
