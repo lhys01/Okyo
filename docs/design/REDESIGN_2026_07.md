@@ -97,6 +97,8 @@ Completed in this pass:
   onboarding, Home, analysis/timeout, result/failure, recipe, guided cooking,
   completion, Grocery populated/empty, Saved populated/empty, Settings, and all
   three share templates.
+- Dynamic Type at `accessibility-extra-large`; the initial test exposed onboarding
+  headline/CTA clipping, which was corrected and recaptured.
 - Simulator video plus extracted frames for the timed analysis copy changes.
 
 Environment limits: no Android SDK/emulator was installed, so Android was covered

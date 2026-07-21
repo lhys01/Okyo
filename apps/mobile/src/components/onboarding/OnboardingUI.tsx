@@ -364,12 +364,12 @@ export function OnboardingStatefulButton({
         ) : resolvedState === 'success' ? (
           <View style={styles.buttonSuccessContent}>
             <Check color={isPrimary ? colors.onCoral : onboardingColors.primary} height={18} strokeWidth={2.8} width={18} />
-            <Text style={[styles.buttonText, isPrimary ? styles.buttonTextPrimary : styles.buttonTextSecondary]}>
+            <Text maxFontSizeMultiplier={1.2} style={[styles.buttonText, isPrimary ? styles.buttonTextPrimary : styles.buttonTextSecondary]}>
               {stateLabel ?? 'DONE'}
             </Text>
           </View>
         ) : (
-          <Text style={[styles.buttonText, isPrimary ? styles.buttonTextPrimary : styles.buttonTextSecondary]}>
+          <Text maxFontSizeMultiplier={1.2} style={[styles.buttonText, isPrimary ? styles.buttonTextPrimary : styles.buttonTextSecondary]}>
             {stateLabel ?? label}
           </Text>
         )}
@@ -500,8 +500,8 @@ export function OnboardingHeroScreen({ onContinue, progress }: OnboardingHeroScr
             },
           ]}
         >
-          <Text style={heroStyles.headline}>Turn any meal into{'\n'}a recipe.</Text>
-          <Text style={heroStyles.sub}>
+          <Text maxFontSizeMultiplier={1.1} style={heroStyles.headline}>Turn any meal into a recipe.</Text>
+          <Text maxFontSizeMultiplier={1.5} style={heroStyles.sub}>
             Snap a restaurant dish and Kiko will help shape an inspired-by recipe, grocery list, and calm cooking guide.
           </Text>
 
@@ -527,7 +527,7 @@ function ProofPill({ icon, label }: { icon: ReactNode; label: string }) {
   return (
     <View style={heroStyles.proofPill}>
       {icon}
-      <Text style={heroStyles.proofLabel}>{label}</Text>
+      <Text maxFontSizeMultiplier={1.2} style={heroStyles.proofLabel}>{label}</Text>
     </View>
   );
 }
