@@ -1,7 +1,54 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeVisionOutput } from './aiService.js';
+import { generateRecipeFromDish, normalizeVisionOutput, type FoodImageAnalysis } from './aiService.js';
+
+function recipeAnalysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAnalysis {
+  return {
+    candidateScanId: `scan-${Math.random().toString(36).slice(2)}`,
+    aiSource: 'openrouter_ai',
+    dishName: 'Lemon Chicken',
+    cuisine: 'Restaurant-style',
+    restaurantStyle: 'Restaurant-style',
+    scanState: 'clear_food',
+    broadDishCategory: 'grilled poultry',
+    confidence: 0.82,
+    confidenceReason: 'Test fixture.',
+    isFoodImage: true,
+    isRestaurantMeal: true,
+    visibleIngredients: ['chicken', 'lemon'],
+    likelyIngredients: ['olive oil', 'salt'],
+    possibleDishNames: [],
+    visibleComponents: {
+      protein: 'chicken',
+      sauce: '',
+      baseStarch: '',
+      vegetables: '',
+      toppingsGarnish: 'lemon',
+      cookingMethod: 'seared',
+    },
+    restaurantPriceEstimate: 18,
+    homemadeCostEstimate: 7,
+    matchScore: 8,
+    difficulty: 'Easy',
+    modes: ['Restaurant Copy', 'Budget', 'Healthy'],
+    notes: [],
+    detectedComponents: [],
+    ...overrides,
+  };
+}
+
+function recipeProviderResponse(recipe: unknown): Promise<Response> {
+  return Promise.resolve(new Response(JSON.stringify({
+    choices: [{
+      finish_reason: 'stop',
+      message: { content: JSON.stringify(recipe) },
+    }],
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  }));
+}
 
 test('normalizes dim cluttered restaurant food into an uncertain food result', () => {
   const analysis = normalizeVisionOutput({
@@ -61,7 +108,7 @@ test('does not invent restaurant price when a photo has no visible price', () =>
   assert.equal(analysis.homemadeCostEstimate, 8);
 });
 
-test('keeps broad possible dish names for uncertain food', () => {
+test('keeps non-generic possible dish names for uncertain food', () => {
   const analysis = normalizeVisionOutput({
     dishName: 'charred grill plate',
     possibleDishNames: ['mixed restaurant plate', 'grilled meat plate', 'loaded sandwich'],
@@ -88,8 +135,8 @@ test('keeps broad possible dish names for uncertain food', () => {
 
   assert.deepEqual(analysis.possibleDishNames.slice(0, 3), [
     'Charred Grill Plate',
-    'Mixed Restaurant Plate',
     'Grilled Meat Plate',
+    'Loaded Sandwich',
   ]);
 });
 
@@ -391,4 +438,68 @@ test('keeps truly blurry or blocked images too unclear when no food evidence exi
   assert.equal(analysis.isFoodImage, false);
   assert.equal(analysis.scanState, 'too_unclear');
   assert.equal(analysis.rejectionReason, 'Please try a clearer food photo.');
+});
+
+test('app-facing recipe conversion does not leave unsafe chicken temperatures behind', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalAiEnabled = process.env.AI_ENABLED;
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  const originalMaxTokens = process.env.AI_MAX_OUTPUT_TOKENS;
+  process.env.AI_ENABLED = 'true';
+  process.env.OPENROUTER_API_KEY = 'sk-test';
+  process.env.AI_MAX_OUTPUT_TOKENS = '4096';
+
+  const recipe = {
+    dishName: 'Lemon Chicken',
+    title: 'Lemon Chicken',
+    description: 'Simple restaurant-style lemon chicken.',
+    ingredients: ['1 lb chicken breasts', '1 tbsp olive oil', '1/2 tsp salt', '1 lemon', '1 garlic clove'],
+    equipment: ['skillet', 'instant-read thermometer'],
+    steps: [
+      { stepNumber: 1, phase: 1, title: 'Pat Chicken', step: 'Pat the chicken dry for 1 minute.', ingredients: ['chicken'], tools: ['paper towels'] },
+      { stepNumber: 2, phase: 2, title: 'Heat Oil', step: 'Heat olive oil in a skillet for 2 minutes until shimmering.', ingredients: ['olive oil'], tools: ['skillet'] },
+      { stepNumber: 3, phase: 2, title: 'Season Chicken', step: 'Season chicken with salt and garlic for 1 minute.', ingredients: ['chicken', 'salt', 'garlic'], tools: ['bowl'] },
+      {
+        stepNumber: 4,
+        phase: 3,
+        title: 'Cook Chicken',
+        step: 'Cook chicken for 6 minutes until it reaches 145°F / 63°C in the center.',
+        ingredients: ['chicken'],
+        tools: ['skillet', 'instant-read thermometer'],
+        safetyNote: 'Chicken should reach 145°F / 63°C inside.',
+      },
+      { stepNumber: 5, phase: 5, title: 'Add Lemon', step: 'Squeeze lemon over chicken for 30 seconds until glossy.', ingredients: ['lemon', 'chicken'], tools: ['tongs'] },
+      { stepNumber: 6, phase: 6, title: 'Rest Chicken', step: 'Rest chicken for 5 minutes before slicing.', ingredients: ['chicken'], tools: ['plate'] },
+    ],
+    prepTime: '10 minutes',
+    cookTime: '15 minutes',
+    totalTime: '25 minutes',
+    servings: 2,
+    skillLevel: 'Easy',
+    avoidMistake: 'Do not overcook the chicken.',
+    substitutions: [],
+    storageAndReheating: 'Refrigerate leftovers up to 3 days.',
+    spicePairings: [],
+  };
+
+  globalThis.fetch = async () => recipeProviderResponse(recipe);
+  try {
+    const output = await generateRecipeFromDish({
+      analysis: recipeAnalysis(),
+      mode: 'Restaurant Copy',
+    });
+    const text = JSON.stringify(output.recipe);
+
+    assert.match(text, /165°F/);
+    assert.match(text, /74°C/);
+    assert.doesNotMatch(text, /145°F|63°C/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalAiEnabled === undefined) delete process.env.AI_ENABLED;
+    else process.env.AI_ENABLED = originalAiEnabled;
+    if (originalApiKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalApiKey;
+    if (originalMaxTokens === undefined) delete process.env.AI_MAX_OUTPUT_TOKENS;
+    else process.env.AI_MAX_OUTPUT_TOKENS = originalMaxTokens;
+  }
 });
