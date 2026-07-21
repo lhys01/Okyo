@@ -24,11 +24,9 @@ import { KikoMascot } from '../components/KikoMascot';
 import { RewardToast } from '../components/OkyoUI';
 import { colors, shadows } from '../theme/okyoTheme';
 import {
-  defaultRestaurantPack,
   defaultScanResult,
   getSafeRecipeForMode,
   getSafeRecipeMode,
-  mockRestaurantPacks,
   type Difficulty,
   type Recipe,
   type RecipeMode,
@@ -42,6 +40,7 @@ import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 type ShareCardRoute = RouteProp<RootStackParamList, 'ShareCardPreviewScreen'>;
 type ShareCardNavigation = NativeStackNavigationProp<RootStackParamList, 'ShareCardPreviewScreen'>;
+type ShareTemplate = 'remake' | 'savings' | 'recipe';
 type ShareCardData = {
   cardType: ShareCardType;
   dishName: string;
@@ -67,7 +66,6 @@ export function ShareCardPreviewScreen() {
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const userRestaurantPrice = useOkyoStore((state) => state.userRestaurantPrice);
@@ -78,18 +76,8 @@ export function ShareCardPreviewScreen() {
   const routeRecipe = scanContext?.recipe ?? null;
   const recipe = getShareRecipe(selectedMode, latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, routeRecipe, isDemoScan);
   const scanResult = scanContext?.scanResult ?? latestScanResult ?? (isDemoScan ? defaultScanResult : null);
-  const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
-  const latestChallenge = safeCompletedChallenges[safeCompletedChallenges.length - 1];
-  const selectedPack =
-    mockRestaurantPacks.find((restaurantPack) => restaurantPack.id === route.params?.packId) ??
-    defaultRestaurantPack;
-  const packDish =
-    selectedPack.dishes.find((dish) => dish.id === route.params?.dishId) ??
-    selectedPack.dishes[0];
   const cardRecipe = recipe ?? getSafeRecipeForMode(selectedMode);
-  const fallbackScanResult = scanResult ?? defaultScanResult;
   const hasScanShareContext = Boolean(
-    cardType !== 'scan_result' ||
     recipe ||
     (scanResult && (scanContext?.recipe || latestScanRecipe)) ||
     isDemoScan,
@@ -124,84 +112,22 @@ export function ShareCardPreviewScreen() {
         imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
         homemadeImageUri: getHomemadeImageUri(cardRecipe),
       },
-      challenge_result: {
-        cardType: 'challenge_result',
-        eyebrow: 'Challenge complete',
-        dishName: latestChallenge?.recipeTitle ?? fallbackScanResult.dishName,
-        restaurantPrice: fallbackScanResult.restaurantPrice,
-        homemadeCost: cardRecipe.estimatedHomemadeCost,
-        estimatedSavings: latestChallenge?.moneySaved ?? cardRecipe.estimatedSavings,
-        selectedMode: latestChallenge?.mode ?? selectedMode,
-        recipe: cardRecipe,
-        scanResult: fallbackScanResult,
-        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
-        homemadeImageUri: getHomemadeImageUri(cardRecipe),
-      },
-      ranking: {
-        cardType: 'ranking',
-        eyebrow: 'Cooking win',
-        dishName: fallbackScanResult.dishName,
-        restaurantPrice: fallbackScanResult.restaurantPrice,
-        homemadeCost: cardRecipe.estimatedHomemadeCost,
-        estimatedSavings: cardRecipe.estimatedSavings,
-        selectedMode,
-        recipe: cardRecipe,
-        scanResult: fallbackScanResult,
-        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
-        homemadeImageUri: getHomemadeImageUri(cardRecipe),
-      },
-      badge: {
-        cardType: 'badge',
-        eyebrow: 'Saved at home',
-        dishName: fallbackScanResult.dishName,
-        restaurantPrice: fallbackScanResult.restaurantPrice,
-        homemadeCost: cardRecipe.estimatedHomemadeCost,
-        estimatedSavings: cardRecipe.estimatedSavings,
-        selectedMode,
-        recipe: cardRecipe,
-        scanResult: fallbackScanResult,
-        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
-        homemadeImageUri: getHomemadeImageUri(cardRecipe),
-      },
-      restaurant_pack: {
-        cardType: 'restaurant_pack',
-        eyebrow: selectedPack.name,
-        dishName: packDish?.dishName ?? selectedPack.name,
-        restaurantPrice: packDish?.restaurantPrice ?? 0,
-        homemadeCost: packDish?.homemadeCost ?? 0,
-        estimatedSavings: packDish?.estimatedSavings ?? 0,
-        selectedMode: packDish?.difficulty ?? 'Pack',
-        recipe: cardRecipe,
-        scanResult: fallbackScanResult,
-        imageUri: (!shareImage?.placeholder && shareImage?.uri) ? shareImage.uri : getRecipeImageUri(cardRecipe),
-        homemadeImageUri: getHomemadeImageUri(cardRecipe),
-      },
     };
     const nextData = dataByType[cardType];
 
     return {
       ...nextData,
-      caption: buildCaption(nextData, cardType === 'scan_result' ? hasUserPrice : true),
+      caption: buildCaption(nextData, hasUserPrice),
     };
   }, [
     cardRecipe,
     cardType,
-    fallbackScanResult,
     hasUserPrice,
     isDemoScan,
     userRestaurantPrice,
-    latestChallenge?.mode,
-    latestChallenge?.moneySaved,
-    latestChallenge?.recipeTitle,
-    packDish?.difficulty,
-    packDish?.dishName,
-    packDish?.estimatedSavings,
-    packDish?.homemadeCost,
-    packDish?.restaurantPrice,
     recipe,
     scanResult,
     selectedMode,
-    selectedPack.name,
     shareImage?.uri,
   ]);
   const shareStats = useMemo(() => getShareStats(cardData.recipe), [cardData.recipe]);
@@ -209,6 +135,7 @@ export function ShareCardPreviewScreen() {
   const cardRef = useRef<View | null>(null);
   const [shareRewardVisible, setShareRewardVisible] = useState(false);
   const [shareRewardLabel, setShareRewardLabel] = useState('Share moment ready +20 XP');
+  const [shareTemplate, setShareTemplate] = useState<ShareTemplate>(() => getQaShareTemplate());
   const shareRewardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -232,10 +159,9 @@ export function ShareCardPreviewScreen() {
       dishName: cardData.dishName,
       mode: cardData.selectedMode,
       savings: cardData.estimatedSavings,
-      packName: cardType === 'restaurant_pack' ? selectedPack.name : undefined,
       screen: 'ShareCardPreviewScreen',
     });
-  }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, cardType, missingScanResult, selectedPack.name]);
+  }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, cardType, missingScanResult]);
 
   useEffect(() => {
     const imageUri = cardData.imageUri ?? null;
@@ -263,21 +189,22 @@ export function ShareCardPreviewScreen() {
       return;
     }
 
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
   const shareCard = async () => {
     try {
-      uiLog('ShareCardPreviewScreen', 'share_tapped', { cardType, dishName: cardData.dishName });
+      uiLog('ShareCardPreviewScreen', 'share_tapped', { cardType, dishName: cardData.dishName, shareTemplate });
       track(analyticsEvents.SHARE_TAPPED, {
         cardType,
         dishName: cardData.dishName,
         savings: cardData.estimatedSavings,
+        shareTemplate,
         screen: 'ShareCardPreviewScreen',
       });
       const didShareImage = await shareImageCard();
       if (didShareImage) {
-        const shareEventId = `share-card-${cardType}-${selectedMode}`;
+        const shareEventId = `share-card-${cardType}-${selectedMode}-${shareTemplate}`;
         const willAwardShareXp = !awardedXpEvents.includes(shareEventId);
         awardXPOnce(shareEventId, 20);
         showShareReward(willAwardShareXp ? 'Share moment ready +20 XP' : 'Share moment ready');
@@ -287,6 +214,7 @@ export function ShareCardPreviewScreen() {
           savings: cardData.estimatedSavings,
           screen: 'ShareCardPreviewScreen',
           source: 'image',
+          shareTemplate,
         });
         return;
       }
@@ -296,7 +224,7 @@ export function ShareCardPreviewScreen() {
         return;
       }
 
-      const shareEventId = `share-card-${cardType}-${selectedMode}`;
+      const shareEventId = `share-card-${cardType}-${selectedMode}-${shareTemplate}`;
       const willAwardShareXp = !awardedXpEvents.includes(shareEventId);
       awardXPOnce(shareEventId, 20);
       showShareReward(willAwardShareXp ? 'Share moment ready +20 XP' : 'Share moment ready');
@@ -306,6 +234,7 @@ export function ShareCardPreviewScreen() {
         savings: cardData.estimatedSavings,
         screen: 'ShareCardPreviewScreen',
         source: 'caption',
+        shareTemplate,
       });
     } catch {
       Alert.alert('Share unavailable', 'This device could not open the native share sheet.');
@@ -341,7 +270,7 @@ export function ShareCardPreviewScreen() {
 
   const copyCaption = async () => {
     try {
-      uiLog('ShareCardPreviewScreen', 'copy_caption', { cardType });
+      uiLog('ShareCardPreviewScreen', 'copy_caption', { cardType, shareTemplate });
       await Clipboard.setStringAsync(cardData.caption);
       showShareReward('Caption copied');
     } catch {
@@ -374,7 +303,7 @@ export function ShareCardPreviewScreen() {
           <Text style={styles.emptyBody}>
             Okyo needs a completed food scan and recipe before it can build a share card.
           </Text>
-          <PrimaryAction icon={<Camera color={colors.onCoral} height={20} strokeWidth={2.2} width={20} />} label="Start a scan" onPress={() => navigation.navigate('MainTabs', { screen: 'ScanScreen' })} />
+          <PrimaryAction icon={<Camera color={colors.onCoral} height={20} strokeWidth={2.2} width={20} />} label="Start a scan" onPress={() => navigation.navigate('MainTabs', { screen: 'HomeScreen' })} />
         </View>
       </ShareFrame>
     );
@@ -387,79 +316,22 @@ export function ShareCardPreviewScreen() {
       <View style={styles.previewIntro}>
         <Text style={styles.previewKicker}>{cardData.eyebrow}</Text>
         <Text style={styles.previewTitle}>Share preview</Text>
-        <Text style={styles.previewBody}>A post-ready card built from this Okyo recipe and your scan data.</Text>
+        <Text style={styles.previewBody}>Pick the story that fits this remake.</Text>
       </View>
+
+      <ShareTemplatePicker selected={shareTemplate} onSelect={setShareTemplate} />
 
       <View style={styles.cardShell}>
         <View ref={cardRef} collapsable={false} style={styles.shareCard}>
-          <Text adjustsFontSizeToFit minimumFontScale={0.62} numberOfLines={2} style={styles.cardTitle}>
-            {cleanDisplayText(cardData.dishName)}
-          </Text>
-          <View style={styles.remadeRow}>
-            <View style={styles.remadeLine} />
-            <Text style={styles.remadeText}>
-              {cardType === 'scan_result' && !hasUserPrice ? 'from photo to home recipe' : 'remade at home'}
-            </Text>
-            <View style={styles.remadeLine} />
-          </View>
-
-          <PhotoBlock
-            dishName={cardData.dishName}
-            imageUri={cardData.imageUri}
-            homemadeImageUri={cardData.homemadeImageUri}
+          <ShareTemplateCard
+            cardData={cardData}
+            hasUserPrice={hasUserPrice}
+            isDemoScan={isDemoScan}
+            shareStats={shareStats}
+            template={shareTemplate}
           />
-
-          <View style={styles.transformPill}>
-            <Text style={styles.transformText}>Restaurant</Text>
-            <ArrowRight color={colors.coral} height={24} strokeWidth={2.4} width={24} />
-            <Text style={styles.transformText}>Homemade</Text>
-          </View>
-
-          <View style={styles.statGrid}>
-            {shareStats.map((stat) => (
-              <ShareStat key={stat.label} stat={stat} />
-            ))}
-          </View>
-
-          <View style={styles.cardFooter}>
-            <Text style={styles.cardFooterText}>Made with <Text style={styles.okyoText}>Okyo</Text></Text>
-            <View style={styles.footerBadge}>
-              <Spark color={colors.coral} height={20} strokeWidth={2} width={20} />
-            </View>
-          </View>
         </View>
       </View>
-
-      {cardType === 'scan_result' && !hasUserPrice ? (
-        <View style={styles.priceSummary}>
-          <View style={styles.priceColumn}>
-            <Text style={styles.priceLabel}>Home estimate</Text>
-            <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
-          </View>
-          <View style={styles.priceColumn}>
-            <Text style={styles.priceLabel}>Ready in</Text>
-            <Text style={styles.priceValue}>
-              {getTotalTime(cardData.recipe) > 0 ? formatDuration(getTotalTime(cardData.recipe)) : 'Flexible'}
-            </Text>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.priceSummary}>
-          <View style={styles.priceColumn}>
-            <Text style={styles.priceLabel}>{isDemoScan ? 'Restaurant (example)' : 'Restaurant'}</Text>
-            <Text style={styles.priceValue}>{formatCurrency(cardData.restaurantPrice)}</Text>
-          </View>
-          <ArrowRight color={colors.green} height={22} strokeWidth={2.4} width={22} />
-          <View style={styles.priceColumn}>
-            <Text style={styles.priceLabel}>Home</Text>
-            <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
-          </View>
-          <View style={styles.savingsPill}>
-            <Text style={styles.savingsPillLabel}>Saved</Text>
-            <Text style={styles.savingsPillValue}>{formatCurrency(cardData.estimatedSavings)}</Text>
-          </View>
-        </View>
-      )}
 
       <View style={styles.actions}>
         <PrimaryAction icon={<ShareAndroid color={colors.onCoral} height={21} strokeWidth={2.2} width={21} />} label="Share Image" onPress={shareCard} />
@@ -467,6 +339,144 @@ export function ShareCardPreviewScreen() {
       </View>
       <RewardToast label={shareRewardLabel} tone={shareRewardLabel.includes('XP') ? 'xp' : 'save'} visible={shareRewardVisible} />
     </ShareFrame>
+  );
+}
+
+function ShareTemplatePicker({
+  selected,
+  onSelect,
+}: {
+  selected: ShareTemplate;
+  onSelect: (template: ShareTemplate) => void;
+}) {
+  const options: { label: string; value: ShareTemplate }[] = [
+    { label: 'Remake', value: 'remake' },
+    { label: 'Savings', value: 'savings' },
+    { label: 'Recipe', value: 'recipe' },
+  ];
+
+  return (
+    <View accessibilityRole="tablist" style={styles.templatePicker}>
+      {options.map((option) => {
+        const isSelected = selected === option.value;
+        return (
+          <Pressable
+            key={option.value}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isSelected }}
+            style={({ pressed }) => [
+              styles.templateOption,
+              isSelected ? styles.templateOptionSelected : null,
+              pressed ? styles.pressed : null,
+            ]}
+            onPress={() => onSelect(option.value)}
+          >
+            <Text style={[styles.templateOptionText, isSelected ? styles.templateOptionTextSelected : null]}>
+              {option.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function ShareTemplateCard({
+  cardData,
+  hasUserPrice,
+  isDemoScan,
+  shareStats,
+  template,
+}: {
+  cardData: ShareCardData;
+  hasUserPrice: boolean;
+  isDemoScan: boolean;
+  shareStats: ShareStatData[];
+  template: ShareTemplate;
+}) {
+  const title = cleanDisplayText(cardData.dishName);
+  const ingredients = getTopIngredients(cardData.recipe);
+
+  if (template === 'savings') {
+    return (
+      <>
+        <Text style={styles.cardEyebrow}>A small delicious win</Text>
+        <Text adjustsFontSizeToFit minimumFontScale={0.68} numberOfLines={2} style={styles.cardTitle}>
+          {hasUserPrice ? `About ${formatCurrency(cardData.estimatedSavings)} kept in my pocket` : `${formatCurrency(cardData.homemadeCost)} home estimate`}
+        </Text>
+        <PhotoBlock dishName={cardData.dishName} imageUri={cardData.imageUri} homemadeImageUri={cardData.homemadeImageUri} />
+        <View style={styles.costStory}>
+          {hasUserPrice ? (
+            <>
+              <CostPoint label={isDemoScan ? 'Restaurant example' : 'Restaurant'} value={formatCurrency(cardData.restaurantPrice)} />
+              <ArrowRight color={colors.green} height={22} strokeWidth={2.4} width={22} />
+              <CostPoint label="At home" value={formatCurrency(cardData.homemadeCost)} />
+            </>
+          ) : (
+            <>
+              <CostPoint label="At home" value={formatCurrency(cardData.homemadeCost)} />
+              <CostPoint label="Ready in" value={formatDuration(getTotalTime(cardData.recipe))} />
+            </>
+          )}
+        </View>
+        <ShareCardFooter label="Remade with" />
+      </>
+    );
+  }
+
+  if (template === 'recipe') {
+    return (
+      <>
+        <Text style={styles.cardEyebrow}>Cook this next</Text>
+        <Text adjustsFontSizeToFit minimumFontScale={0.62} numberOfLines={2} style={styles.cardTitle}>{title}</Text>
+        <PhotoBlock dishName={cardData.dishName} imageUri={cardData.imageUri} homemadeImageUri={cardData.homemadeImageUri} />
+        <View style={styles.recipeMetaRow}>
+          {shareStats.slice(0, 2).map((stat) => <ShareStat key={stat.label} stat={stat} />)}
+        </View>
+        <View style={styles.ingredientLine}>
+          <Text style={styles.ingredientLabel}>Start with</Text>
+          <Text numberOfLines={2} style={styles.ingredientText}>{ingredients.join('  •  ') || 'A few everyday ingredients'}</Text>
+        </View>
+        <ShareCardFooter label="Recipe made with" />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Text style={styles.cardEyebrow}>{hasUserPrice ? 'Restaurant to home' : 'Photo to home recipe'}</Text>
+      <Text adjustsFontSizeToFit minimumFontScale={0.62} numberOfLines={2} style={styles.cardTitle}>{title}</Text>
+      <PhotoBlock dishName={cardData.dishName} imageUri={cardData.imageUri} homemadeImageUri={cardData.homemadeImageUri} />
+      <View style={styles.transformRow}>
+        <Text style={styles.transformText}>Restaurant-style</Text>
+        <ArrowRight color={colors.coral} height={22} strokeWidth={2.4} width={22} />
+        <Text style={styles.transformText}>Made at home</Text>
+      </View>
+      <View style={styles.statGrid}>
+        {shareStats.map((stat) => <ShareStat key={stat.label} stat={stat} />)}
+      </View>
+      <ShareCardFooter label="Remade with" />
+    </>
+  );
+}
+
+function CostPoint({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.costPoint}>
+      <Text numberOfLines={1} style={styles.costLabel}>{label}</Text>
+      <Text style={styles.costValue}>{value}</Text>
+    </View>
+  );
+}
+
+function ShareCardFooter({ label }: { label: string }) {
+  return (
+    <View style={styles.cardFooter}>
+      <Text style={styles.cardFooterText}>{label} <Text style={styles.okyoText}>Okyo</Text></Text>
+      <View style={styles.footerBadge}>
+        <Spark color={colors.coral} height={19} strokeWidth={2} width={19} />
+      </View>
+    </View>
   );
 }
 
@@ -574,10 +584,19 @@ function SecondaryAction({ icon, label, onPress }: { icon: ReactNode; label: str
 }
 
 function getSafeCardType(cardType: unknown): ShareCardType {
-  const cardTypes: ShareCardType[] = ['scan_result', 'challenge_result', 'ranking', 'badge', 'restaurant_pack'];
+  const cardTypes: ShareCardType[] = ['scan_result'];
   return typeof cardType === 'string' && cardTypes.includes(cardType as ShareCardType)
     ? cardType as ShareCardType
     : 'scan_result';
+}
+
+function getQaShareTemplate(): ShareTemplate {
+  if (!__DEV__) {
+    return 'remake';
+  }
+
+  const value = process.env.EXPO_PUBLIC_OKYO_QA_SHARE_TEMPLATE;
+  return value === 'savings' || value === 'recipe' ? value : 'remake';
 }
 
 function buildCaption(data: Omit<ShareCardData, 'caption'>, hasUserPrice: boolean) {
@@ -635,11 +654,18 @@ function getShareStats(recipe: Recipe): ShareStatData[] {
       icon: <TaskList color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
     {
-      label: 'Difficulty',
+      label: 'Skill',
       value: difficultyLabel,
       icon: <Crown color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
     },
   ];
+}
+
+function getTopIngredients(recipe: Recipe) {
+  return recipe.ingredients
+    .map((ingredient) => ingredient.name.trim())
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 function getEstimatedRestaurantPrice(recipe: Recipe | null) {
@@ -778,16 +804,50 @@ const styles = StyleSheet.create({
     maxWidth: 300,
     textAlign: 'center',
   },
+  templatePicker: {
+    backgroundColor: colors.card,
+    borderRadius: 8,
+    flexDirection: 'row',
+    padding: 4,
+  },
+  templateOption: {
+    alignItems: 'center',
+    borderRadius: 6,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 38,
+    paddingHorizontal: 8,
+  },
+  templateOptionSelected: {
+    backgroundColor: colors.coralSoft,
+  },
+  templateOptionText: {
+    color: colors.body,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  templateOptionTextSelected: {
+    color: colors.coralDark,
+  },
   cardShell: {
     alignItems: 'center',
   },
   shareCard: {
     backgroundColor: colors.cardWarm,
-    borderRadius: 24,
+    borderRadius: 8,
     maxWidth: 326,
     padding: 14,
     width: '100%',
     ...shadows.hero,
+  },
+  cardEyebrow: {
+    color: colors.coralDark,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    marginBottom: 5,
+    textAlign: 'center',
+    textTransform: 'uppercase',
   },
   cardTitle: {
     color: colors.charcoal,
@@ -820,7 +880,7 @@ const styles = StyleSheet.create({
   },
   comparisonBlock: {
     aspectRatio: 1.82,
-    borderRadius: 18,
+    borderRadius: 8,
     flexDirection: 'row',
     marginTop: 12,
     overflow: 'hidden',
@@ -838,7 +898,7 @@ const styles = StyleSheet.create({
   singlePhotoBlock: {
     aspectRatio: 1.82,
     backgroundColor: colors.cream,
-    borderRadius: 18,
+    borderRadius: 8,
     marginTop: 12,
     overflow: 'hidden',
   },
@@ -850,7 +910,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     aspectRatio: 1.82,
     backgroundColor: '#fff1df',
-    borderRadius: 18,
+    borderRadius: 8,
     justifyContent: 'center',
     marginTop: 12,
     padding: 14,
@@ -878,26 +938,28 @@ const styles = StyleSheet.create({
     minHeight: 38,
     paddingHorizontal: 12,
   },
+  transformRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    marginTop: 10,
+  },
   transformText: {
     color: '#59634d',
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
   statGrid: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 7,
-    marginTop: 12,
+    marginTop: 10,
   },
   shareStat: {
-    backgroundColor: '#fffaf3',
-    borderRadius: 14,
-    flexBasis: '48%',
-    flexGrow: 1,
-    minHeight: 74,
-    padding: 8,
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 4,
   },
   shareStatTop: {
     alignItems: 'center',
@@ -907,10 +969,10 @@ const styles = StyleSheet.create({
   shareStatIcon: {
     alignItems: 'center',
     backgroundColor: '#fff0dd',
-    borderRadius: 999,
-    height: 32,
+    borderRadius: 8,
+    height: 30,
     justifyContent: 'center',
-    width: 32,
+    width: 30,
   },
   shareStatTextGroup: {
     flex: 1,
@@ -920,7 +982,6 @@ const styles = StyleSheet.create({
     color: '#68725d',
     fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 0.3,
     textTransform: 'uppercase',
   },
   shareStatValue: {
@@ -933,7 +994,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 14,
+    marginTop: 12,
   },
   cardFooterText: {
     color: colors.body,
@@ -947,10 +1008,57 @@ const styles = StyleSheet.create({
   footerBadge: {
     alignItems: 'center',
     backgroundColor: '#fff1df',
-    borderRadius: 999,
-    height: 34,
+    borderRadius: 8,
+    height: 30,
     justifyContent: 'center',
-    width: 34,
+    width: 30,
+  },
+  costStory: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  costPoint: {
+    flex: 1,
+    minWidth: 0,
+  },
+  costLabel: {
+    color: colors.body,
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  costValue: {
+    color: colors.charcoal,
+    fontSize: 20,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  recipeMetaRow: {
+    flexDirection: 'row',
+    gap: 18,
+    marginTop: 10,
+  },
+  ingredientLine: {
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: 9,
+    paddingTop: 9,
+  },
+  ingredientLabel: {
+    color: colors.coralDark,
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  ingredientText: {
+    color: colors.charcoal,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+    marginTop: 3,
   },
   priceSummary: {
     alignItems: 'center',

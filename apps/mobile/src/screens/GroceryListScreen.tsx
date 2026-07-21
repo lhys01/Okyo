@@ -11,6 +11,7 @@ import {
   PasteClipboard,
   ShareAndroid,
   Spark,
+  Trash,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -56,6 +57,10 @@ type GroceryListNavigation = BottomTabNavigationProp<MainTabParamList, 'GroceryL
 type GroceryItem = GroceryListItem & {
   id: string;
 };
+type MergedGroceryItem = GroceryItem & {
+  quantities: string[];
+  sources: Array<{ id: string; title: string }>;
+};
 type GroceryTab = 'buy' | 'pantry';
 
 const categoryOrder: GroceryCategory[] = [
@@ -76,7 +81,7 @@ const produceNames = ['lettuce', 'tomato', 'onion', 'pickle', 'spinach', 'kale',
 const proteinNames = ['ground beef', 'patty', 'patties', 'turkey', 'beef', 'chicken', 'falafel', 'shrimp', 'tofu', 'pork', 'veggie burger'];
 const breadNames = ['bun', 'buns', 'bread', 'roll', 'rolls', 'dough', 'crust', 'flatbread'];
 const sauceNames = ['mayo', 'mayonnaise', 'ketchup', 'mustard', 'sauce', 'condiment', 'dressing', 'gochujang', 'soy sauce', 'harissa', 'hummus', 'oil', 'vinegar'];
-const noodleGrainNames = ['pasta', 'rigatoni', 'spaghetti', 'noodle', 'noodles', 'rice', 'grain', 'grains', 'quinoa'];
+const noodleGrainNames = ['pasta', 'rigatoni', 'spaghetti', 'noodle', 'noodles', 'rice', 'grain', 'grains', 'quinoa', 'oat'];
 const garnishNames = ['cilantro', 'parsley', 'sesame', 'lime', 'lemon', 'herb', 'herbs'];
 const pantryNames = ['tomato paste', 'crushed tomato', 'canned tomato', 'biscuit mix', 'flour', 'sugar', 'broth'];
 
@@ -90,6 +95,7 @@ export function GroceryListScreen() {
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const removeSavedRecipe = useOkyoStore((state) => state.removeSavedRecipe);
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
@@ -115,6 +121,18 @@ export function GroceryListScreen() {
     () => (Array.isArray(savedRecipes) ? savedRecipes.filter((savedRecipe) => savedRecipe?.id && savedRecipe?.title).slice().reverse() : []),
     [savedRecipes],
   );
+  const mergedGroceryItems = useMemo(
+    () => buildMergedGroceryItems(savedGroceryRecipes),
+    [savedGroceryRecipes],
+  );
+  const mergedBuyItems = useMemo(
+    () => mergedGroceryItems.filter((item) => !isPantryItem(item)),
+    [mergedGroceryItems],
+  );
+  const mergedPantryItems = useMemo(
+    () => mergedGroceryItems.filter(isPantryItem),
+    [mergedGroceryItems],
+  );
   const [checkedItemIds, setCheckedItemIds] = useState<string[]>([]);
   const [expandedRecipeIds, setExpandedRecipeIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<GroceryTab>('buy');
@@ -129,6 +147,9 @@ export function GroceryListScreen() {
   const pantryItems = smartSummary.probablyHave;
   const visibleItems = activeTab === 'buy' ? smartSummary.needToBuy : smartSummary.probablyHave;
   const allVisibleChecked = visibleItems.length > 0 && visibleItems.every((item) => checkedItemIds.includes(item.id));
+  const hubVisibleItems = activeTab === 'buy' ? mergedBuyItems : mergedPantryItems;
+  const allHubVisibleChecked = hubVisibleItems.length > 0 && hubVisibleItems.every((item) => checkedItemIds.includes(item.id));
+  const allHubBuyChecked = mergedBuyItems.length > 0 && mergedBuyItems.every((item) => checkedItemIds.includes(item.id));
 
   useEffect(() => {
     if (didTrackView.current) {
@@ -279,33 +300,133 @@ export function GroceryListScreen() {
     }
   };
 
+  const markAllHubVisible = () => {
+    const visibleIds = hubVisibleItems.map((item) => item.id);
+    setCheckedItemIds((currentIds) => allHubVisibleChecked
+      ? currentIds.filter((id) => !visibleIds.includes(id))
+      : Array.from(new Set([...currentIds, ...visibleIds])));
+  };
+
+  const copyMergedList = async () => {
+    try {
+      await Clipboard.setStringAsync(buildMergedGroceryListText(mergedGroceryItems));
+      showExportToast('Grocery list copied');
+    } catch {
+      Alert.alert('Copy unavailable', 'The grocery list could not be copied on this device.');
+    }
+  };
+
+  const shareMergedList = async () => {
+    try {
+      const result = await Share.share({
+        message: buildMergedGroceryListText(mergedGroceryItems),
+        title: 'Okyo Grocery List',
+      });
+      if (result.action === Share.sharedAction) {
+        showExportToast('Grocery list shared');
+      }
+    } catch {
+      Alert.alert('Share unavailable', 'The grocery list could not be shared on this device.');
+    }
+  };
+
+  const confirmRemoveSource = (savedRecipe: Recipe) => {
+    Alert.alert(
+      'Remove this recipe?',
+      `${cleanDisplayText(savedRecipe.title)} will leave Saved and its ingredients will leave this list.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: () => removeSavedRecipe(savedRecipe.id) },
+      ],
+    );
+  };
+
   if (!hasRecipeContext) {
     return (
-      <ScreenFrame onBack={() => navigation.navigate('HomeScreen')} showBack={false} title="Grocery">
-        <Text style={styles.savedHubIntro}>
-          Saved recipes become grocery lists here, ready when you are.
-        </Text>
+      <ScreenFrame
+        onBack={() => navigation.navigate('HomeScreen')}
+        rewardToast={<RewardToast label={exportToastLabel} tone="save" visible={exportToastVisible} />}
+        showBack={false}
+        title="Grocery"
+      >
 
         {savedGroceryRecipes.length > 0 ? (
-          <View style={styles.savedRecipeList}>
-            {savedGroceryRecipes.map((savedRecipe) => {
-              const savedItems = buildItems(savedRecipe);
-              const isExpanded = expandedRecipeIds.includes(savedRecipe.id);
+          <>
+            <View style={styles.hubSummary}>
+              <View style={styles.hubMascotStage}>
+                <KikoMascot pose="groceryList" size={72} />
+              </View>
+              <View style={styles.hubSummaryCopy}>
+                <Text style={styles.hubSummaryTitle}>One list, ready to shop</Text>
+                <Text style={styles.hubSummaryBody}>
+                  {mergedGroceryItems.length} unique items from {savedGroceryRecipes.length} saved recipes
+                </Text>
+              </View>
+              <View style={styles.hubExportActions}>
+                <Pressable accessibilityLabel="Copy grocery list" accessibilityRole="button" onPress={copyMergedList} style={styles.hubIconButton}>
+                  <PasteClipboard color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />
+                </Pressable>
+                <Pressable accessibilityLabel="Share grocery list" accessibilityRole="button" onPress={shareMergedList} style={styles.hubIconButton}>
+                  <ShareAndroid color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />
+                </Pressable>
+              </View>
+            </View>
 
-              return (
-                <SavedRecipeGroceryCard
-                  key={savedRecipe.id}
-                  checkedItemIds={checkedItemIds}
-                  isExpanded={isExpanded}
-                  items={savedItems}
-                  onOpenRecipe={() => openSavedRecipe(savedRecipe)}
-                  onToggle={() => toggleSavedRecipe(savedRecipe.id)}
-                  onToggleItem={toggleItem}
-                  recipe={savedRecipe}
-                />
-              );
-            })}
-          </View>
+            <View style={styles.tabRow}>
+              <ListTab count={mergedBuyItems.length} isSelected={activeTab === 'buy'} label="To buy" onPress={() => setActiveTab('buy')} />
+              <ListTab count={mergedPantryItems.length} isSelected={activeTab === 'pantry'} label="Pantry check" onPress={() => setActiveTab('pantry')} />
+            </View>
+
+            <View style={styles.controlsRow}>
+              <Pressable accessibilityRole="button" onPress={markAllHubVisible} style={styles.controlButton}>
+                <View style={[styles.smallCheckbox, allHubVisibleChecked ? styles.smallCheckboxChecked : null]}>
+                  {allHubVisibleChecked ? <Check color={colors.onCoral} height={13} strokeWidth={2.6} width={13} /> : null}
+                </View>
+                <Text style={styles.controlText}>{allHubVisibleChecked ? 'Unmark all' : 'Mark all'}</Text>
+              </Pressable>
+              {checkedItemIds.length > 0 ? (
+                <Pressable accessibilityRole="button" onPress={() => setCheckedItemIds([])} style={styles.controlButton}>
+                  <Text style={styles.clearChecksText}>Clear checks</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            {getGroupedItems(hubVisibleItems).map((group) => (
+              <MergedGrocerySection
+                key={group.category}
+                category={group.category}
+                checkedItemIds={checkedItemIds}
+                items={group.items as MergedGroceryItem[]}
+                onToggleItem={toggleItem}
+              />
+            ))}
+
+            {allHubBuyChecked ? (
+              <View style={styles.hubComplete}>
+                <KikoMascot animated="success" pose="celebrating" size={92} />
+                <View style={styles.hubSummaryCopy}>
+                  <Text style={styles.hubSummaryTitle}>Shopping list complete</Text>
+                  <Text style={styles.hubSummaryBody}>Everything marked to buy is in the cart.</Text>
+                </View>
+              </View>
+            ) : null}
+
+            <View style={styles.sourceSection}>
+              <Text style={styles.sourceSectionTitle}>Recipe sources</Text>
+              {savedGroceryRecipes.map((savedRecipe) => (
+                <View key={savedRecipe.id} style={styles.sourceRow}>
+                  <FoodImage imageStatus={getRecipeImageStatus(savedRecipe)} imageUrl={getRecipeImageUrl(savedRecipe)} style={styles.sourceImage} />
+                  <Pressable accessibilityRole="button" onPress={() => openSavedRecipe(savedRecipe)} style={styles.sourceRecipeButton}>
+                    <Text numberOfLines={2} style={styles.sourceRecipeTitle}>{cleanDisplayText(savedRecipe.title)}</Text>
+                    <Text style={styles.sourceRecipeMeta}>{buildItems(savedRecipe).length} items</Text>
+                  </Pressable>
+                  <Pressable accessibilityLabel={`Remove ${cleanDisplayText(savedRecipe.title)}`} accessibilityRole="button" onPress={() => confirmRemoveSource(savedRecipe)} style={styles.sourceDeleteButton}>
+                    <Trash color={colors.danger} height={19} strokeWidth={2} width={19} />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          </>
         ) : (
           <View style={styles.savedEmptyCard}>
             <KikoMascot animated="idle" pose="groceryList" size={100} style={styles.savedEmptyMascot} />
@@ -313,6 +434,11 @@ export function GroceryListScreen() {
             <Text style={styles.savedEmptyBody}>
               When you save a scan or idea, Okyo will collect its ingredients here.
             </Text>
+            <PrimaryAction
+              icon={<Spark color={colors.onCoral} height={20} strokeWidth={2.2} width={20} />}
+              label="Scan a meal"
+              onPress={() => navigation.navigate('HomeScreen')}
+            />
           </View>
         )}
       </ScreenFrame>
@@ -399,6 +525,56 @@ export function GroceryListScreen() {
 
       <PrimaryAction icon={<PasteClipboard color={colors.onCoral} height={20} strokeWidth={2.15} width={20} />} label="Copy List" onPress={copyList} />
     </ScreenFrame>
+  );
+}
+
+function MergedGrocerySection({
+  category,
+  checkedItemIds,
+  items,
+  onToggleItem,
+}: {
+  category: GroceryCategory;
+  checkedItemIds: string[];
+  items: MergedGroceryItem[];
+  onToggleItem: (itemId: string) => void;
+}) {
+  return (
+    <View style={styles.mergedSection}>
+      <View style={styles.smartSectionHeader}>
+        <View style={styles.mergedCategoryTitle}>
+          <CategoryIcon category={category} />
+          <Text style={styles.smartSectionTitle}>{getCategoryLabel(category, items)}</Text>
+        </View>
+        <Text style={styles.smartSectionCount}>{items.length}</Text>
+      </View>
+      {items.map((item, index) => {
+        const isChecked = checkedItemIds.includes(item.id);
+        const quantity = item.quantities.join(' + ');
+        const sourceLabel = item.sources.length === 1
+          ? cleanDisplayText(item.sources[0].title)
+          : `${item.sources.length} recipes`;
+
+        return (
+          <Pressable
+            key={item.id}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: isChecked }}
+            onPress={() => onToggleItem(item.id)}
+            style={({ pressed }) => [styles.mergedItemRow, index === items.length - 1 ? styles.itemRowLast : null, pressed ? styles.pressed : null]}
+          >
+            <View style={[styles.checkbox, isChecked ? styles.checkboxChecked : null]}>
+              {isChecked ? <Check color={colors.onCoral} height={14} strokeWidth={2.6} width={14} /> : null}
+            </View>
+            <View style={styles.smartItemCopy}>
+              <Text style={[styles.itemText, isChecked ? styles.itemTextChecked : null]}>{cleanDisplayText(item.name)}</Text>
+              <Text numberOfLines={1} style={styles.smartItemReason}>For {sourceLabel}</Text>
+            </View>
+            {quantity ? <Text numberOfLines={2} style={styles.mergedQuantity}>{quantity}</Text> : null}
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -742,9 +918,6 @@ function getCategory(item: Pick<RecipeIngredient, 'name' | 'pantryItem'> & { pan
   if (proteinNames.some((keyword) => name.includes(keyword))) {
     return 'Protein';
   }
-  if (breadNames.some((keyword) => name.includes(keyword))) {
-    return 'Bakery / Bread';
-  }
   if (dairyNames.some((keyword) => name.includes(keyword))) {
     return 'Dairy';
   }
@@ -753,6 +926,9 @@ function getCategory(item: Pick<RecipeIngredient, 'name' | 'pantryItem'> & { pan
   }
   if (noodleGrainNames.some((keyword) => name.includes(keyword))) {
     return 'Noodles / Grains';
+  }
+  if (breadNames.some((keyword) => new RegExp(`\\b${keyword}\\b`).test(name))) {
+    return 'Bakery / Bread';
   }
   if (garnishNames.some((keyword) => name.includes(keyword))) {
     return 'Garnish';
@@ -786,6 +962,66 @@ function buildItems(recipe: Recipe, allowIngredientFallback = true): GroceryItem
   }
 
   return recipeIngredients.flatMap((ingredient) => toFallbackGroceryItems(recipe.id, ingredient));
+}
+
+function buildMergedGroceryItems(recipes: Recipe[]): MergedGroceryItem[] {
+  const merged = new Map<string, MergedGroceryItem>();
+
+  recipes.forEach((recipe) => {
+    buildItems(recipe).forEach((item) => {
+      const key = normalizeGroceryName(item.name);
+      const quantity = getShoppingQuantity(item);
+      const current = merged.get(key);
+
+      if (!current) {
+        merged.set(key, {
+          ...item,
+          id: `saved-hub-${key}`,
+          quantities: quantity ? [quantity] : [],
+          sources: [{ id: recipe.id, title: recipe.title }],
+        });
+        return;
+      }
+
+      if (quantity && !current.quantities.includes(quantity)) {
+        current.quantities.push(quantity);
+      }
+      if (!current.sources.some((source) => source.id === recipe.id)) {
+        current.sources.push({ id: recipe.id, title: recipe.title });
+      }
+      if (!isPantryItem(item)) {
+        current.category = item.category;
+        current.pantryItem = false;
+        current.pantryStaple = false;
+      }
+    });
+  });
+
+  return Array.from(merged.values()).sort((a, b) => {
+    const categoryDifference = categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category);
+    return categoryDifference || a.name.localeCompare(b.name);
+  });
+}
+
+function buildMergedGroceryListText(items: MergedGroceryItem[]) {
+  const grouped = getGroupedItems(items).map((group) => [
+    getCategoryLabel(group.category, group.items),
+    ...group.items.map((item) => {
+      const mergedItem = item as MergedGroceryItem;
+      const quantity = mergedItem.quantities.join(' + ');
+      return `- ${quantity ? `${quantity} ` : ''}${cleanDisplayText(item.name)}`;
+    }),
+  ].join('\n'));
+
+  return ['Okyo Grocery List', ...grouped].join('\n\n');
+}
+
+function normalizeGroceryName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '');
 }
 
 function buildListText(recipe: Recipe, items: GroceryItem[]) {
@@ -1067,6 +1303,146 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginTop: 4,
     textAlign: 'center',
+  },
+  hubSummary: {
+    alignItems: 'center',
+    borderBottomColor: colors.borderStrong,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+    paddingBottom: 18,
+  },
+  hubMascotStage: {
+    alignItems: 'center',
+    backgroundColor: colors.coralSoft,
+    borderRadius: 8,
+    height: 74,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    width: 74,
+  },
+  hubSummaryCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  hubSummaryTitle: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 17,
+    fontWeight: '800',
+    lineHeight: 22,
+  },
+  hubSummaryBody: {
+    color: colors.body,
+    fontFamily: fontFamilies.body,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  hubExportActions: {
+    gap: 6,
+  },
+  hubIconButton: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  clearChecksText: {
+    color: colors.coralDark,
+    fontFamily: fontFamilies.bold,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  mergedSection: {
+    marginTop: 22,
+  },
+  mergedCategoryTitle: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 9,
+  },
+  mergedItemRow: {
+    alignItems: 'center',
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    minHeight: 66,
+    paddingVertical: 10,
+  },
+  mergedQuantity: {
+    color: colors.body,
+    fontFamily: fontFamilies.bold,
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
+    fontWeight: '700',
+    lineHeight: 17,
+    maxWidth: 112,
+    textAlign: 'right',
+  },
+  hubComplete: {
+    alignItems: 'center',
+    backgroundColor: colors.greenSoft,
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 22,
+    overflow: 'hidden',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  sourceSection: {
+    marginTop: 34,
+  },
+  sourceSectionTitle: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  sourceRow: {
+    alignItems: 'center',
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    minHeight: 70,
+    paddingVertical: 9,
+  },
+  sourceImage: {
+    borderRadius: 8,
+    height: 50,
+    width: 50,
+  },
+  sourceRecipeButton: {
+    flex: 1,
+    minWidth: 0,
+  },
+  sourceRecipeTitle: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.bold,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 19,
+  },
+  sourceRecipeMeta: {
+    color: colors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 12,
+    marginTop: 3,
+  },
+  sourceDeleteButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
   savedRecipeList: {
     gap: 14,

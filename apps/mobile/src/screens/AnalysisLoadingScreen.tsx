@@ -1,30 +1,27 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Camera, Sparks } from 'iconoir-react-native';
-import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Camera, CheckCircle, Clock, NavArrowLeft } from 'iconoir-react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { AnimatedGradientBackground } from '../components/AnimatedGradientBackground';
 import { KikoMascot } from '../components/KikoMascot';
-import { ProgressFill } from '../components/OkyoUI';
-import { colors, fontFamilies, radius, shadows, spacing, surfaces, typography } from '../theme/okyoTheme';
+import { GlowNode } from '../components/motifs';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { colors, fontFamilies, radius, shadows, spacing, typography } from '../theme/okyoTheme';
 import { getRealScanImageUri } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
+import { devQaScreen } from '../utils/devQa';
 
 type AnalysisNavigation = NativeStackNavigationProp<RootStackParamList, 'AnalysisLoadingScreen'>;
 type AnalysisRoute = RouteProp<RootStackParamList, 'AnalysisLoadingScreen'>;
 
-const loadingSteps = [
-  'Reading your plate',
-  'Finding the best guess',
-  'Building your recipe',
-  'Checking the details',
-  'Almost ready',
-];
+const longWaitSeconds = 12;
+const timeoutSeconds = 70;
 
 export function AnalysisLoadingScreen() {
   const navigation = useNavigation<AnalysisNavigation>();
@@ -38,20 +35,22 @@ export function AnalysisLoadingScreen() {
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const scanImageUri = getRealScanImageUri(selectedScanImage);
-  const [pulseIndex, setPulseIndex] = useState(0);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(devQaScreen === 'analysis-timeout' ? timeoutSeconds : 0);
+  const [showTimeout, setShowTimeout] = useState(devQaScreen === 'analysis-timeout');
   const didNavigate = useRef(false);
   const didTrackCompletion = useRef(false);
 
   useEffect(() => {
     uiLog('AnalysisLoadingScreen', 'enter');
-    const pulse = setInterval(() => {
-      setPulseIndex((currentIndex) => Math.min(currentIndex + 1, loadingSteps.length - 1));
-      setElapsedSeconds((currentSeconds) => currentSeconds + 1);
-    }, 1000);
-
-    return () => clearInterval(pulse);
+    const ticker = setInterval(() => setElapsedSeconds((current) => current + 1), 1000);
+    return () => clearInterval(ticker);
   }, []);
+
+  useEffect(() => {
+    if (latestScanStatus === 'pending' && elapsedSeconds >= timeoutSeconds) {
+      setShowTimeout(true);
+    }
+  }, [elapsedSeconds, latestScanStatus]);
 
   useEffect(() => {
     if (didTrackCompletion.current || latestScanStatus === 'pending' || !latestScanStatus) {
@@ -89,113 +88,152 @@ export function AnalysisLoadingScreen() {
     }
 
     didNavigate.current = true;
-    uiLog('AnalysisLoadingScreen', 'navigate_result', { status: latestScanStatus });
-    navigation.navigate('ResultSummaryScreen', {
+    uiLog('AnalysisLoadingScreen', 'replace_with_result', { status: latestScanStatus });
+    navigation.replace('ResultSummaryScreen', {
       scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined,
     });
   }, [latestScanStatus, navigation, route.params?.scanSessionId, scanSessionId]);
 
-  // Safety net: the scan store always receives a terminal write (the API client
-  // times out at 60s), but if anything ever hangs past that, move the user on
-  // instead of stranding them on the loading screen.
-  useEffect(() => {
-    const safetyFallback = setTimeout(() => {
-      if (didNavigate.current) {
-        return;
-      }
-
-      didNavigate.current = true;
-      uiLog('AnalysisLoadingScreen', 'navigate_result_safety_fallback');
-      navigation.navigate('ResultSummaryScreen', { scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined });
-    }, 90_000);
-
-    return () => clearTimeout(safetyFallback);
-  }, [navigation, route.params?.scanSessionId, scanSessionId]);
-
-  const goBackToScan = () => {
+  const leaveAnalysis = () => {
     didNavigate.current = true;
     clearLatestScan({
       reason: 'user_aborted_scan_from_loading',
-      source: 'AnalysisLoadingScreen.goBackToScan',
+      source: 'AnalysisLoadingScreen.leaveAnalysis',
     });
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
+
+  const keepWaiting = () => {
+    setElapsedSeconds(longWaitSeconds);
+    setShowTimeout(false);
+  };
+
+  const longWait = elapsedSeconds >= longWaitSeconds;
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <AnimatedGradientBackground />
       <ScrollView
-        contentContainerStyle={[styles.screenContent, { paddingBottom: 220 + insets.bottom }]}
+        contentContainerStyle={[styles.screenContent, { paddingBottom: 32 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.topBar}>
-          <View pointerEvents="none" style={styles.topTitleWrap}>
-            <Text style={styles.topTitle}>Analyzing</Text>
-          </View>
+          <Pressable
+            accessibilityLabel="Cancel analysis"
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={leaveAnalysis}
+            style={({ pressed }) => [styles.backButton, pressed ? styles.pressed : null]}
+          >
+            <NavArrowLeft color={colors.charcoal} height={23} strokeWidth={2.25} width={23} />
+          </Pressable>
+          <Text style={styles.topTitle}>Analyzing</Text>
+          <View style={styles.topSpacer} />
         </View>
 
-        <View style={styles.hero}>
-          <KikoMascot animated="thinking" pose="scanning" size={150} style={styles.heroMascot} />
+        <View style={styles.imageStage}>
           {scanImageUri ? (
-            <View style={styles.scanImageWrap}>
-              <Image
-                resizeMode="cover"
-                source={{ uri: scanImageUri }}
-                style={styles.scanImageThumb}
-              />
-              <Text style={styles.scanImageCaption}>Your photo · analyzing</Text>
+            <Image source={{ uri: scanImageUri }} resizeMode="cover" style={styles.scanImage} />
+          ) : (
+            <View style={styles.imageFallback}>
+              <Camera color={colors.coral} height={34} strokeWidth={2} width={34} />
+              <Text style={styles.imageFallbackText}>Your food idea is with Kiko</Text>
             </View>
-          ) : null}
-          <Text style={styles.kicker}>Scanning</Text>
-          <Text style={styles.title}>Kiko is reading your plate…</Text>
-          <Text style={styles.subtitle}>
-            Finding the homemade version. This can take a few seconds, and Okyo only shows a result it trusts.
-          </Text>
-          {elapsedSeconds >= 8 ? (
-            <Text style={styles.stillWorkingText}>
-              Still working on the photo. Clear food and drink scans can take a little longer.
-            </Text>
-          ) : null}
-        </View>
-
-        <View style={styles.progressCardWrap}>
-          <ProgressFill
-            progress={(pulseIndex + 1) / loadingSteps.length}
-            style={styles.analysisProgressFill}
-          />
-          <View style={styles.progressCard} accessibilityRole="progressbar">
-            {loadingSteps.map((step, index) => {
-              const isActive = index === pulseIndex;
-              const isDone = index < pulseIndex;
-
-              return (
-                <View key={step} style={[styles.stepRow, isActive ? styles.stepRowActive : null]}>
-                  {isActive ? (
-                    <ActivityIndicator color={colors.coral} size="small" />
-                  ) : (
-                    <Sparks
-                      color={isDone ? colors.coral : colors.creamDeep}
-                      height={20}
-                      strokeWidth={2.1}
-                      width={20}
-                    />
-                  )}
-                  <Text style={[styles.stepText, isActive ? styles.stepTextActive : null]}>{step}</Text>
-                </View>
-              );
-            })}
+          )}
+          <View pointerEvents="none" style={styles.imageWash} />
+          <View style={styles.kikoStage}>
+            <KikoMascot animated="thinking" pose="thinking" size={118} />
+          </View>
+          <View style={styles.receivedBadge}>
+            <CheckCircle color={colors.green} height={18} strokeWidth={2.3} width={18} />
+            <Text style={styles.receivedText}>Photo received</Text>
           </View>
         </View>
 
-        <Pressable
-          accessibilityRole="button"
-          onPress={goBackToScan}
-          style={({ pressed }) => [styles.backButton, pressed ? styles.pressed : null]}
-        >
-          <Camera color={colors.body} height={25} strokeWidth={2.25} width={25} />
-          <Text style={styles.backButtonText}>Back to scan</Text>
-        </Pressable>
+        <View style={styles.copyBlock}>
+          <Text style={styles.kicker}>{showTimeout ? 'Still safe with us' : 'Kiko is on it'}</Text>
+          <Text style={styles.title}>
+            {showTimeout
+              ? 'This is taking longer than usual.'
+              : longWait
+                ? 'Still working on your homemade version.'
+                : 'Finding a recipe worth cooking.'}
+          </Text>
+          <Text style={styles.subtitle}>
+            {showTimeout
+              ? 'Okyo did not receive a trusted answer in time. No result was invented, and you can try another photo.'
+              : 'Okyo is identifying the dish and building one inspired-by recipe. We will only reveal it when the request finishes.'}
+          </Text>
+        </View>
+
+        <View accessibilityLabel="Analysis stages" accessibilityRole="summary" style={styles.stagePanel}>
+          <StageRow
+            icon={<CheckCircle color={colors.green} height={20} strokeWidth={2.3} width={20} />}
+            label="Photo ready"
+          >
+            <GlowNode label="Received" state="done" tone="mint" />
+          </StageRow>
+          <View style={styles.stageDivider} />
+          <StageRow
+            icon={<Clock color={colors.coral} height={20} strokeWidth={2.3} width={20} />}
+            label="Dish + recipe analysis"
+          >
+            <GlowNode label={showTimeout ? 'Paused' : 'Working'} state={showTimeout ? 'pending' : 'active'} tone="pink" />
+          </StageRow>
+          <View style={styles.stageDivider} />
+          <StageRow
+            icon={<CheckCircle color={colors.muted} height={20} strokeWidth={2.1} width={20} />}
+            label="Result trust check"
+          >
+            <GlowNode label="Next" state="pending" tone="blue" />
+          </StageRow>
+        </View>
+
+        {longWait && !showTimeout ? (
+          <Text style={styles.longWaitText}>Clear photos sometimes need a little extra time. You can leave safely at any point.</Text>
+        ) : null}
+
+        <View style={styles.actions}>
+          {showTimeout ? (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                onPress={leaveAnalysis}
+                style={({ pressed }) => [styles.primaryAction, pressed ? styles.primaryPressed : null]}
+              >
+                <Camera color={colors.onCoral} height={21} strokeWidth={2.3} width={21} />
+                <Text style={styles.primaryActionText}>Try another photo</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={keepWaiting}
+                style={({ pressed }) => [styles.secondaryAction, pressed ? styles.pressed : null]}
+              >
+                <Text style={styles.secondaryActionText}>Keep waiting</Text>
+              </Pressable>
+            </>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={leaveAnalysis}
+              style={({ pressed }) => [styles.secondaryAction, pressed ? styles.pressed : null]}
+            >
+              <Text style={styles.secondaryActionText}>Cancel</Text>
+            </Pressable>
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function StageRow({ children, icon, label }: { children: ReactNode; icon: ReactNode; label: string }) {
+  return (
+    <View style={styles.stageRow}>
+      <View style={styles.stageIcon}>{icon}</View>
+      <Text style={styles.stageLabel}>{label}</Text>
+      {children}
+    </View>
   );
 }
 
@@ -206,139 +244,196 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     flexGrow: 1,
-    paddingHorizontal: 22,
+    paddingHorizontal: 20,
   },
   topBar: {
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.xs,
-    minHeight: 64,
-    position: 'relative',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: 60,
   },
-  topTitleWrap: {
+  backButton: {
     alignItems: 'center',
-    bottom: 0,
+    backgroundColor: colors.card,
+    borderRadius: 999,
+    height: 44,
     justifyContent: 'center',
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
+    width: 44,
+    ...shadows.soft,
   },
   topTitle: {
-    color: colors.charcoal,
-    fontFamily: fontFamilies.display,
-    fontSize: 21,
-    fontWeight: '800',
-    textAlign: 'center',
+    ...typography.title,
+    fontSize: 20,
+    lineHeight: 26,
   },
-  hero: {
-    alignItems: 'flex-start',
-    marginTop: 72,
+  topSpacer: {
+    width: 44,
   },
-  heroMascot: {
-    alignSelf: 'center',
-    marginBottom: 18,
+  imageStage: {
+    aspectRatio: 1.28,
+    backgroundColor: colors.cardWarm,
+    borderRadius: radius.hero,
+    marginTop: 12,
+    minHeight: 252,
+    overflow: 'hidden',
+    position: 'relative',
+    ...shadows.hero,
   },
-  scanImageWrap: {
+  scanImage: {
+    height: '100%',
+    width: '100%',
+  },
+  imageFallback: {
     alignItems: 'center',
-    alignSelf: 'center',
-    marginBottom: 22,
-    marginTop: -8,
+    flex: 1,
+    gap: 10,
+    justifyContent: 'center',
+    paddingBottom: 46,
   },
-  scanImageThumb: {
+  imageFallbackText: {
+    color: colors.body,
+    fontFamily: fontFamilies.bold,
+    fontSize: 14,
+  },
+  imageWash: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,253,248,0.16)',
+  },
+  kikoStage: {
+    alignItems: 'center',
+    backgroundColor: colors.cardWarm,
     borderColor: colors.card,
-    borderRadius: radius.card,
-    borderWidth: 3,
-    height: 104,
+    borderRadius: 24,
+    borderWidth: 2,
+    bottom: 14,
+    height: 122,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'absolute',
+    right: 14,
     width: 104,
-    ...shadows.card,
+    ...shadows.soft,
   },
-  scanImageCaption: {
-    color: colors.muted,
-    fontSize: 12,
+  receivedBadge: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 7,
+    left: 14,
+    minHeight: 40,
+    paddingHorizontal: 12,
+    position: 'absolute',
+    top: 14,
+    ...shadows.soft,
+  },
+  receivedText: {
+    color: colors.green,
+    fontFamily: fontFamilies.bold,
+    fontSize: 13,
     fontWeight: '700',
-    marginTop: 8,
-    textAlign: 'center',
+  },
+  copyBlock: {
+    marginTop: spacing.lg,
   },
   kicker: {
     ...typography.label,
     color: colors.coralDark,
-    fontSize: 14,
-    marginBottom: 12,
+    fontSize: 13,
   },
   title: {
     ...typography.hero,
-    fontSize: 32,
-    lineHeight: 39,
+    fontSize: 31,
+    lineHeight: 38,
+    marginTop: 8,
   },
   subtitle: {
     ...typography.body,
-    fontSize: 17,
-    lineHeight: 25,
-    marginTop: 16,
+    fontSize: 15,
+    lineHeight: 23,
+    marginTop: 10,
   },
-  stillWorkingText: {
-    color: colors.muted,
+  stagePanel: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    marginTop: 20,
+    paddingHorizontal: 14,
+    ...shadows.card,
+  },
+  stageRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    minHeight: 62,
+  },
+  stageIcon: {
+    alignItems: 'center',
+    height: 24,
+    justifyContent: 'center',
+    width: 24,
+  },
+  stageLabel: {
+    color: colors.charcoal,
+    flex: 1,
+    fontFamily: fontFamilies.bold,
     fontSize: 14,
     fontWeight: '700',
-    lineHeight: 21,
-    marginTop: 14,
-  },
-  progressCardWrap: {
-    marginTop: 40,
-  },
-  analysisProgressFill: {
-    marginBottom: 12,
-  },
-  progressCard: {
-    ...surfaces.card,
-    gap: 4,
-    padding: spacing.sm,
-  },
-  stepRow: {
-    alignItems: 'center',
-    borderRadius: 14,
-    flexDirection: 'row',
-    gap: 12,
-    minHeight: 48,
-    paddingHorizontal: 12,
-  },
-  stepRowActive: {
-    backgroundColor: colors.cream,
-  },
-  stepText: {
-    color: colors.muted,
-    flex: 1,
-    fontSize: 15,
-    fontWeight: '800',
-    lineHeight: 20,
     minWidth: 0,
   },
-  stepTextActive: {
-    color: colors.charcoal,
+  stageDivider: {
+    backgroundColor: colors.border,
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 34,
   },
-  backButton: {
+  longWaitText: {
+    color: colors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  actions: {
+    gap: 10,
+    marginTop: 18,
+  },
+  primaryAction: {
     alignItems: 'center',
-    alignSelf: 'center',
-    backgroundColor: colors.card,
-    borderColor: colors.borderStrong,
+    backgroundColor: colors.coral,
     borderRadius: 999,
-    borderWidth: 1.5,
     flexDirection: 'row',
-    gap: 14,
+    gap: 10,
     justifyContent: 'center',
-    marginTop: 38,
-    minHeight: 56,
-    paddingHorizontal: 36,
-    ...shadows.soft,
+    minHeight: 58,
+    paddingHorizontal: 22,
+    ...shadows.cta,
   },
-  backButtonText: {
-    color: colors.charcoal,
+  primaryActionText: {
+    color: colors.onCoral,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '800',
   },
+  secondaryAction: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 28,
+  },
+  secondaryActionText: {
+    color: colors.body,
+    fontFamily: fontFamilies.bold,
+    fontSize: 15,
+    fontWeight: '700',
+  },
   pressed: {
+    opacity: 0.78,
+    transform: [{ scale: 0.98 }],
+  },
+  primaryPressed: {
     opacity: 0.9,
     transform: [{ scale: 0.98 }],
   },

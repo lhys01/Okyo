@@ -26,14 +26,20 @@ import { checkImageFileExists, getStorageLocation } from '../utils/imageValidati
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 type LibraryNavigation = NativeStackNavigationProp<RootStackParamList>;
-type LibraryFilter = 'recent' | 'restaurant' | 'budget' | 'lighter' | 'fast';
+type LibraryFilter = 'all' | 'restaurant' | 'budget' | 'lighter' | 'fast';
+type LibrarySort = 'newest' | 'name' | 'fastest';
 
 const filters: Array<{ id: LibraryFilter; label: string }> = [
-  { id: 'recent', label: 'Recent' },
+  { id: 'all', label: 'All' },
   { id: 'restaurant', label: 'Restaurant Style' },
   { id: 'budget', label: 'Budget' },
   { id: 'lighter', label: 'Lighter' },
   { id: 'fast', label: 'Fast meals' },
+];
+const sortOptions: Array<{ id: LibrarySort; label: string }> = [
+  { id: 'newest', label: 'Newest' },
+  { id: 'name', label: 'A-Z' },
+  { id: 'fastest', label: 'Fastest' },
 ];
 
 const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
@@ -45,14 +51,15 @@ export function LibraryScreen() {
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<LibraryFilter>('recent');
+  const [activeFilter, setActiveFilter] = useState<LibraryFilter>('all');
+  const [activeSort, setActiveSort] = useState<LibrarySort>('newest');
   const didTrackMalformedData = useRef(false);
 
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [];
   const malformedRecipeCount = Array.isArray(savedRecipes)
     ? savedRecipes.filter((recipe) => !recipe?.id || !recipe?.title).length
     : 0;
-  const sortedRecipes = useMemo(() => sortSavedRecipes(safeSavedRecipes), [safeSavedRecipes]);
+  const sortedRecipes = useMemo(() => sortSavedRecipes(safeSavedRecipes, activeSort), [activeSort, safeSavedRecipes]);
   const filteredRecipes = useMemo(
     () => filterRecipes(sortedRecipes, activeFilter, searchQuery),
     [activeFilter, searchQuery, sortedRecipes],
@@ -120,7 +127,7 @@ export function LibraryScreen() {
 
   const goToScan = () => {
     uiLog('LibraryScreen', 'empty_scan_cta');
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
   const confirmRemove = (recipe: Recipe) => {
@@ -144,7 +151,7 @@ export function LibraryScreen() {
   if (safeSavedRecipes.length === 0) {
     return (
       <LibraryFrame>
-        <TopBar title="Plan" />
+        <TopBar title="Saved" />
         <View style={styles.emptyCard}>
           <KikoMascot animated="idle" pose="wave" size={118} style={styles.emptyMascot} />
           <Text style={styles.emptyTitle}>Saved meals worth remaking will live here.</Text>
@@ -159,19 +166,12 @@ export function LibraryScreen() {
 
   return (
     <LibraryFrame>
-      <TopBar title="Plan" />
+      <TopBar title="Saved" />
 
       <View style={styles.heroCard}>
-        <View style={styles.heroCopy}>
-          <Text style={styles.heroKicker}>Recipe shelf</Text>
-          <Text style={styles.heroTitle}>
-            Saved meals worth <Text style={styles.heroAccent}>remaking</Text>
-          </Text>
-          <Text style={styles.heroBody}>
-            Your favorite restaurant-style recipes, ready for an easy dinner repeat.
-          </Text>
-        </View>
-        <Text style={styles.heroSummary}>{safeSavedRecipes.length} saved · {formatCurrency(totalHomemadeEstimate)} home est.</Text>
+        <Text style={styles.heroKicker}>{safeSavedRecipes.length} saved · {formatCurrency(totalHomemadeEstimate)} home est.</Text>
+        <Text style={styles.heroTitle}>Recipes worth remaking</Text>
+        <Text style={styles.heroBody}>Your scan-inspired meals, ready for another dinner.</Text>
       </View>
 
       <View style={styles.searchRow}>
@@ -191,7 +191,24 @@ export function LibraryScreen() {
         </View>
       </View>
 
-      <View style={styles.filterList}>
+      <View style={styles.sortControl}>
+        {sortOptions.map((option) => {
+          const selected = activeSort === option.id;
+          return (
+            <Pressable
+              key={option.id}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => setActiveSort(option.id)}
+              style={[styles.sortOption, selected ? styles.sortOptionSelected : null]}
+            >
+              <Text style={[styles.sortText, selected ? styles.sortTextSelected : null]}>{option.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <ScrollView contentContainerStyle={styles.filterList} horizontal showsHorizontalScrollIndicator={false}>
         {filters.map((filter) => {
           const selected = activeFilter === filter.id;
 
@@ -213,7 +230,7 @@ export function LibraryScreen() {
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
 
       <View style={styles.recipeList}>
         {filteredRecipes.length > 0 ? (
@@ -370,14 +387,21 @@ function filterRecipes(recipes: Recipe[], activeFilter: LibraryFilter, searchQue
         return recipe.mode === 'Healthy';
       case 'fast':
         return getTotalTime(recipe) <= 30;
-      case 'recent':
+      case 'all':
       default:
         return true;
     }
   });
 }
 
-function sortSavedRecipes(recipes: Recipe[]) {
+function sortSavedRecipes(recipes: Recipe[], sort: LibrarySort) {
+  if (sort === 'name') {
+    return recipes.slice().sort((a, b) => a.title.localeCompare(b.title));
+  }
+  if (sort === 'fastest') {
+    return recipes.slice().sort((a, b) => getTotalTime(a) - getTotalTime(b));
+  }
+
   return recipes.slice().sort((a, b) => {
     const aTime = getSavedTime(a);
     const bTime = getSavedTime(b);
@@ -458,15 +482,12 @@ const styles = StyleSheet.create({
     width: 48,
   },
   heroCard: {
-    ...surfaces.card,
-    minHeight: 142,
-    padding: 16,
+    borderBottomColor: colors.borderStrong,
+    borderBottomWidth: 1,
+    paddingBottom: 16,
+    paddingTop: 4,
   },
   heroCopy: {},
-  heroSummary: {
-    ...typography.caption,
-    marginTop: 8,
-  },
   heroKicker: {
     ...typography.label,
     color: colors.coralDark,
@@ -477,19 +498,16 @@ const styles = StyleSheet.create({
   heroTitle: {
     color: colors.charcoal,
     fontFamily: fontFamilies.display,
-    fontSize: 23,
+    fontSize: 25,
     fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 29,
-  },
-  heroAccent: {
-    color: colors.coral,
+    lineHeight: 31,
   },
   heroBody: {
     color: colors.body,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
-    lineHeight: 17,
+    lineHeight: 19,
     marginTop: 6,
   },
   searchRow: {
@@ -520,8 +538,35 @@ const styles = StyleSheet.create({
   },
   filterList: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
+    paddingRight: 24,
+  },
+  sortControl: {
+    backgroundColor: colors.creamDeep,
+    borderRadius: 8,
+    flexDirection: 'row',
+    padding: 3,
+  },
+  sortOption: {
+    alignItems: 'center',
+    borderRadius: 6,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 36,
+  },
+  sortOptionSelected: {
+    backgroundColor: colors.card,
+    ...shadows.soft,
+  },
+  sortText: {
+    color: colors.body,
+    fontFamily: fontFamilies.bold,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  sortTextSelected: {
+    color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
   },
   filterChip: {
     alignItems: 'center',

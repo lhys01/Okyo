@@ -1,4 +1,5 @@
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { CompositeNavigationProp } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -31,7 +32,7 @@ import { authenticatedFetch } from '../api/authenticatedClient';
 import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
-import { KikoRecipeStepArt } from '../components/KikoRecipeStepArt';
+import { SparkleBurst } from '../components/motifs';
 import { PressableScale, ProgressFill, RewardToast } from '../components/OkyoUI';
 import { RecipeQualityCard } from '../components/RecipeQualityCard';
 import { colors, fontFamilies, ingredientAvatar, layout, radius, shadows, surfaces } from '../theme/okyoTheme';
@@ -65,12 +66,11 @@ import {
   type RecipeAdaptationOption,
 } from '../utils/makeItMine';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
-// Design-first asset (see apps/mobile/assets/art/guided-cooking/README.md).
-const celebrationArt = require('../../assets/art/guided-cooking/celebration-warm.png');
 import { useRecipeAdaptationPlan } from '../utils/useRecipeAdaptationPlan';
 import type { RecipeAdaptationPlan } from '../api/recipeAdaptationClient';
 import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
+import { devQaScreen } from '../utils/devQa';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 type RecipeDetailNavigation = CompositeNavigationProp<
@@ -277,7 +277,7 @@ export function RecipeDetailScreen() {
       return;
     }
 
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
   const saveSelectedRecipe = () => {
@@ -371,7 +371,7 @@ export function RecipeDetailScreen() {
             Okyo needs a completed recipe before it can show cooking steps or groceries for this scan.
           </Text>
           <View style={styles.issueActions}>
-            <PrimaryAction label="Try another photo" onPress={() => navigation.navigate('MainTabs', { screen: 'ScanScreen' })} />
+            <PrimaryAction label="Try another photo" onPress={() => navigation.navigate('MainTabs', { screen: 'HomeScreen' })} />
             <SecondaryAction label="Back" onPress={goBack} />
           </View>
         </View>
@@ -605,7 +605,7 @@ export function RecipeStepsScreen() {
   const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
   const recipeImageStatus = getRecipeImageStatus(recipe);
   const [activeStepIndex, setActiveStepIndex] = useState(0);
-  const [showCompletion, setShowCompletion] = useState(false);
+  const [showCompletion, setShowCompletion] = useState(devQaScreen === 'completion');
   const [stepToastVisible, setStepToastVisible] = useState(false);
   const [saveToastVisible, setSaveToastVisible] = useState(false);
   const [saveToastLabel, setSaveToastLabel] = useState('Saved to your library');
@@ -624,7 +624,11 @@ export function RecipeStepsScreen() {
   const [activeTimerId, setActiveTimerId] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [timerStatus, setTimerStatus] = useState<StepTimerStatus>('idle');
+  const [timerEndsAt, setTimerEndsAt] = useState<number | null>(null);
+  const [hasRestoredSession, setHasRestoredSession] = useState(false);
+  const isRestoringSession = useRef(false);
   const activeTimer = coachHelp.timers.find((timer) => timer.id === activeTimerId) ?? coachHelp.timers[0] ?? null;
+  const cookingSessionKey = recipe ? `okyo-cooking-session:${recipe.id}` : null;
 
   useEffect(() => {
     uiLog('RecipeStepsScreen', 'enter', { routeMode, selectedMode });
@@ -665,9 +669,72 @@ export function RecipeStepsScreen() {
   }, [activeStepIndex, guidedSteps.length]);
 
   useEffect(() => {
+    if (!cookingSessionKey || devQaScreen === 'steps' || devQaScreen === 'completion') {
+      setHasRestoredSession(true);
+      return;
+    }
+
+    let mounted = true;
+    void AsyncStorage.getItem(cookingSessionKey)
+      .then((storedSession) => {
+        if (!mounted || !storedSession) {
+          return;
+        }
+
+        const session = JSON.parse(storedSession) as {
+          activeStepIndex?: number;
+          activeTimerId?: string | null;
+          remainingSeconds?: number;
+          timerEndsAt?: number | null;
+          timerStatus?: StepTimerStatus;
+        };
+        isRestoringSession.current = true;
+        setActiveStepIndex(Math.max(0, Math.min(guidedSteps.length - 1, session.activeStepIndex ?? 0)));
+        setActiveTimerId(session.activeTimerId ?? null);
+        const restoredRemaining = session.timerStatus === 'running' && session.timerEndsAt
+          ? Math.max(0, Math.ceil((session.timerEndsAt - Date.now()) / 1000))
+          : Math.max(0, session.remainingSeconds ?? 0);
+        setRemainingSeconds(restoredRemaining);
+        setTimerEndsAt(restoredRemaining > 0 && session.timerStatus === 'running' ? session.timerEndsAt ?? null : null);
+        setTimerStatus(restoredRemaining === 0 && session.timerStatus === 'running'
+          ? 'finished'
+          : session.timerStatus ?? 'idle');
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (mounted) {
+          setHasRestoredSession(true);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [cookingSessionKey, guidedSteps.length]);
+
+  useEffect(() => {
+    if (!cookingSessionKey || !hasRestoredSession || showCompletion) {
+      return;
+    }
+
+    void AsyncStorage.setItem(cookingSessionKey, JSON.stringify({
+      activeStepIndex,
+      activeTimerId,
+      remainingSeconds,
+      timerEndsAt,
+      timerStatus,
+    })).catch(() => undefined);
+  }, [activeStepIndex, activeTimerId, cookingSessionKey, hasRestoredSession, remainingSeconds, showCompletion, timerEndsAt, timerStatus]);
+
+  useEffect(() => {
+    if (isRestoringSession.current) {
+      isRestoringSession.current = false;
+      return;
+    }
     setSelectedRescueAction(null);
     setActiveTimerId(null);
     setRemainingSeconds(0);
+    setTimerEndsAt(null);
     setTimerStatus('idle');
   }, [coachHelp.stepId]);
 
@@ -678,16 +745,20 @@ export function RecipeStepsScreen() {
 
     const interval = setInterval(() => {
       setRemainingSeconds((currentSeconds) => {
-        if (currentSeconds <= 1) {
+        const nextSeconds = timerEndsAt
+          ? Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000))
+          : currentSeconds - 1;
+        if (nextSeconds <= 0) {
           setTimerStatus('finished');
+          setTimerEndsAt(null);
           return 0;
         }
-        return currentSeconds - 1;
+        return nextSeconds;
       });
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [timerStatus]);
+  }, [timerEndsAt, timerStatus]);
 
   useEffect(() => () => {
     if (stepToastTimer.current) {
@@ -780,6 +851,9 @@ export function RecipeStepsScreen() {
       }
       cookingRewardTimer.current = setTimeout(() => setCookingRewardVisible(false), 1800);
       setShowCompletion(true);
+      if (cookingSessionKey) {
+        void AsyncStorage.removeItem(cookingSessionKey).catch(() => undefined);
+      }
       return;
     }
 
@@ -798,21 +872,25 @@ export function RecipeStepsScreen() {
   const startTimer = (timer: CookCoachTimer) => {
     setActiveTimerId(timer.id);
     setRemainingSeconds(timer.seconds);
+    setTimerEndsAt(Date.now() + timer.seconds * 1000);
     setTimerStatus('running');
   };
 
   const pauseTimer = () => {
+    setTimerEndsAt(null);
     setTimerStatus('paused');
   };
 
   const resumeTimer = () => {
     if (remainingSeconds > 0) {
+      setTimerEndsAt(Date.now() + remainingSeconds * 1000);
       setTimerStatus('running');
     }
   };
 
   const resetTimer = () => {
     setRemainingSeconds(activeTimer?.seconds ?? 0);
+    setTimerEndsAt(null);
     setTimerStatus('idle');
   };
 
@@ -827,7 +905,7 @@ export function RecipeStepsScreen() {
           </Text>
           <View style={styles.issueActions}>
             <PrimaryAction label="Back to Recipe" onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })} />
-            <SecondaryAction label="Try another photo" onPress={() => navigation.navigate('ScanScreen')} />
+            <SecondaryAction label="Try another photo" onPress={() => navigation.navigate('HomeScreen')} />
           </View>
         </View>
       </ScreenFrame>
@@ -853,7 +931,10 @@ export function RecipeStepsScreen() {
 
           <ScrollView contentContainerStyle={styles.completionScrollContent} showsVerticalScrollIndicator={false}>
             <View style={styles.completionCard}>
-              <Image resizeMode="contain" source={celebrationArt} style={styles.completionArt} />
+              <View style={styles.completionCelebration}>
+                <SparkleBurst size={138} visible />
+                <KikoMascot animated="celebrate" pose="celebrating" size={96} style={styles.completionHeroMascot} />
+              </View>
               <Text style={styles.completionEyebrow}>You made it.</Text>
               <FoodImage
                 fallbackLabel="Recipe image"
@@ -862,8 +943,9 @@ export function RecipeStepsScreen() {
                 showFallbackLabel
                 style={styles.completionImage}
               />
-              <KikoMascot animated="celebrate" pose="celebrating" size={80} style={styles.completionMascot} />
-              <Text numberOfLines={2} style={styles.completionTitle}>{displayTitle}</Text>
+              <Text numberOfLines={2} style={styles.completionTitle}>
+                {displayTitle.replace(/\s+inspired-by$/i, '')}
+              </Text>
               <Text style={styles.completionBody}>
                 Nice work. Let it rest if the recipe calls for it, taste once more, then enjoy your Okyo version.
               </Text>
@@ -938,10 +1020,6 @@ export function RecipeStepsScreen() {
               >
                 {activeStep.title}
               </Text>
-              <KikoRecipeStepArt
-                key={activeStep.stepNumber}
-                stepText={`${activeStep.title}. ${activeStep.instruction}`}
-              />
               <Text style={styles.guidedInstruction}>{activeStep.instruction}</Text>
 
               {activeTimer ? (
@@ -2041,15 +2119,15 @@ const styles = StyleSheet.create({
   },
   guidedStepCard: {
     ...surfaces.card,
-    borderRadius: radius.hero,
+    borderRadius: 8,
     flex: 1,
     marginTop: 14,
     overflow: 'hidden',
   },
   guidedStepCardContent: {
     flexGrow: 1,
-    padding: 22,
-    paddingBottom: 26,
+    padding: 18,
+    paddingBottom: 22,
   },
   guidedStepTopRow: {
     alignItems: 'center',
@@ -2086,22 +2164,22 @@ const styles = StyleSheet.create({
   guidedStepTitle: {
     color: colors.charcoal,
     fontFamily: fontFamilies.display,
-    fontSize: 27,
+    fontSize: 25,
     fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 34,
+    lineHeight: 31,
   },
   guidedInstruction: {
     color: colors.charcoal,
     fontFamily: fontFamilies.body,
     fontSize: 18,
     lineHeight: 27,
-    marginTop: 14,
+    marginTop: 8,
   },
   stepTimerCard: {
     backgroundColor: colors.cream,
     borderColor: colors.border,
-    borderRadius: 20,
+    borderRadius: 8,
     borderWidth: 1,
     marginTop: 18,
     padding: 14,
@@ -2370,6 +2448,7 @@ const styles = StyleSheet.create({
   guidedControlArea: {
     gap: 12,
     marginTop: 12,
+    paddingBottom: 6,
   },
   guidedNavRow: {
     flexDirection: 'row',
@@ -2379,7 +2458,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.cream,
     borderColor: colors.borderStrong,
-    borderRadius: 22,
+    borderRadius: 8,
     borderWidth: 1,
     flex: 1,
     justifyContent: 'center',
@@ -2414,13 +2493,18 @@ const styles = StyleSheet.create({
     ...surfaces.card,
     alignItems: 'center',
     backgroundColor: colors.cardWarm,
-    borderRadius: radius.hero,
-    padding: 22,
+    borderRadius: 8,
+    padding: 16,
   },
-  completionArt: {
-    height: 64,
-    marginBottom: 4,
-    width: '100%',
+  completionCelebration: {
+    alignItems: 'center',
+    height: 108,
+    justifyContent: 'center',
+    position: 'relative',
+    width: 160,
+  },
+  completionHeroMascot: {
+    position: 'absolute',
   },
   completionScrollContent: {
     flexGrow: 1,
@@ -2430,35 +2514,32 @@ const styles = StyleSheet.create({
   completionEyebrow: {
     color: colors.coral,
     fontFamily: fontFamilies.display,
-    fontSize: 34,
+    fontSize: 28,
     fontWeight: '900',
     letterSpacing: 0,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   completionImage: {
-    aspectRatio: 1.22,
+    aspectRatio: 1.9,
     backgroundColor: colors.cream,
-    borderRadius: 26,
+    borderRadius: 8,
     width: '100%',
-  },
-  completionMascot: {
-    marginTop: -24,
   },
   completionTitle: {
     color: colors.charcoal,
     fontFamily: fontFamilies.display,
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: '800',
-    lineHeight: 33,
-    marginTop: 2,
+    lineHeight: 27,
+    marginTop: 10,
     textAlign: 'center',
   },
   completionBody: {
     color: colors.muted,
     fontFamily: fontFamilies.body,
-    fontSize: 17,
-    lineHeight: 25,
-    marginTop: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 6,
     textAlign: 'center',
   },
   simpleTopBar: {
@@ -2741,6 +2822,20 @@ function getStepCopy(step: DisplayRecipeStep, index: number) {
 // Extracts a 2-word title from an instruction string by taking the first two
 // non-article words. Used as a fallback when the AI didn't supply a title.
 function deriveTitleFromInstruction(instruction: string): string {
+  const normalized = instruction.toLowerCase();
+  const commonTitles: Array<[RegExp, string]> = [
+    [/bring .*water .*boil|bring .*to a boil/, 'Boil the pasta water'],
+    [/reserve .*pasta water/, 'Reserve pasta water'],
+    [/tomato paste.*red pepper|warm .*oil.*skillet/, 'Bloom the sauce'],
+    [/lower .*heat.*cream|stir .*cream/, 'Make it creamy'],
+    [/add .*pasta.*parmesan|toss .*pasta/, 'Toss until glossy'],
+    [/^taste|season .*taste/, 'Taste and finish'],
+  ];
+  const commonTitle = commonTitles.find(([pattern]) => pattern.test(normalized))?.[1];
+  if (commonTitle) {
+    return commonTitle;
+  }
+
   const SKIP = new Set(['a', 'an', 'the', 'and', 'or', 'to', 'in', 'on', 'at', 'of', 'up', 'with', 'then', 'into', 'your', 'both', 'until', 'all', 'its', 'by', 'for', 'from']);
   const words = instruction.replace(/[.,!?;:]+/g, ' ').split(/\s+/).slice(0, 12);
   const key = words

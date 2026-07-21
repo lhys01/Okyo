@@ -160,7 +160,7 @@ export function FoodIdeaScreen() {
   };
 
   const openPhotoScan = () => {
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
   return (

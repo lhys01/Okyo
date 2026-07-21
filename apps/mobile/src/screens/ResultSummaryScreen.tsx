@@ -6,7 +6,6 @@ import {
   Camera,
   Cart,
   CheckCircle,
-  MagicWand,
   NavArrowLeft,
   OpenBook,
   PlusCircle,
@@ -23,6 +22,7 @@ import { attachRealScanImage } from '../utils/savedRecipeImage';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 import { PrimaryButton, RewardToast } from '../components/OkyoUI';
+import { FoodImage } from '../components/FoodImage';
 import { RecipeQualityCard } from '../components/RecipeQualityCard';
 import { colors, fontFamilies, radius, shadows, surfaces } from '../theme/okyoTheme';
 import {
@@ -36,7 +36,7 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { getRealScanImageUri } from '../utils/recipeImages';
+import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { isUsableScan } from '../utils/scanDecision';
 import { logMobileScreenReveal } from '../utils/scanTelemetry';
 import { useRecipeQualityReport } from '../utils/useRecipeQualityReport';
@@ -102,8 +102,8 @@ export function ResultSummaryScreen() {
   const [restaurantPriceInput, setRestaurantPriceInput] = useState('');
   const [saveToastVisible, setSaveToastVisible] = useState(false);
   const [saveToastLabel, setSaveToastLabel] = useState('Saved to your library');
-  const [reduceMotion, setReduceMotion] = useState(false);
-  const revealAnim = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState<boolean | null>(null);
+  const revealAnim = useRef(new Animated.Value(1)).current;
   const saveNavigationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstScanEventId = `first-scan-${scanResult?.id ?? 'missing-scan'}`;
   const isScanFailure = latestScanStatus === 'rejected' || latestScanStatus === 'failed';
@@ -168,17 +168,12 @@ export function ResultSummaryScreen() {
   }, []);
 
   useEffect(() => {
-    revealAnim.setValue(0);
-    if (reduceMotion) {
-      Animated.timing(revealAnim, {
-        duration: 120,
-        easing: Easing.out(Easing.quad),
-        toValue: 1,
-        useNativeDriver: true,
-      }).start();
+    if (reduceMotion === null || reduceMotion) {
+      revealAnim.setValue(1);
       return;
     }
 
+    revealAnim.setValue(0);
     Animated.timing(revealAnim, {
       duration: 560,
       easing: Easing.out(Easing.cubic),
@@ -388,7 +383,7 @@ export function ResultSummaryScreen() {
       reason: 'user_tapped_scan_again',
       source: 'ResultSummaryScreen.goToScan',
     });
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
   const goBackToScanTab = () => {
@@ -396,11 +391,11 @@ export function ResultSummaryScreen() {
       reason: 'user_tapped_back_to_scan',
       source: 'ResultSummaryScreen.goBackToScanTab',
     });
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
   const openSettings = () => {
-    navigation.navigate('SettingsScreen');
+    navigation.navigate('MainTabs', { screen: 'SettingsScreen' });
   };
 
   const openRecipeTools = () => {
@@ -505,7 +500,7 @@ export function ResultSummaryScreen() {
             {
               translateY: revealAnim.interpolate({
                 inputRange: [0, 1],
-                outputRange: [reduceMotion ? 0 : 18, 0],
+                outputRange: [reduceMotion === true ? 0 : 18, 0],
               }),
             },
           ],
@@ -513,7 +508,9 @@ export function ResultSummaryScreen() {
       >
       <FoodImageCard
         dishName={displayDishName || 'Scanned dish'}
+        imageStatus={getRecipeImageStatus(selectedRecipe)}
         imageUri={selectedScanImageUri ?? undefined}
+        imageUrl={getRecipeImageUrl(selectedRecipe)}
         isDemoScan={isDemoScan}
       />
 
@@ -560,6 +557,30 @@ export function ResultSummaryScreen() {
         {bestGuessNote ? (
           <Text style={styles.bestGuessNote}>{bestGuessNote}</Text>
         ) : null}
+      </View>
+
+      <View style={styles.actions}>
+        <ResultPrimaryButton onPress={openRecipeTools}>
+          <OpenBook color={colors.onCoral} height={25} strokeWidth={2.15} width={25} />
+          <Text style={styles.resultPrimaryButtonText}>View recipe</Text>
+        </ResultPrimaryButton>
+        <View style={styles.secondaryRow}>
+          <ActionButton
+            icon={<ShareAndroid color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
+            label="Share"
+            onPress={openShareDupe}
+          />
+          <ActionButton
+            icon={<Bookmark color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
+            label="Save"
+            onPress={saveSelectedRecipe}
+          />
+          <ActionButton
+            icon={<Cart color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
+            label="Groceries"
+            onPress={() => navigation.navigate('MainTabs', { screen: 'GroceryListScreen', params: { mode: selectedMode } })}
+          />
+        </View>
       </View>
 
       {shouldPinDevResultSummaryQa && qualityReport ? <RecipeQualityCard compact report={qualityReport} /> : null}
@@ -711,32 +732,6 @@ export function ResultSummaryScreen() {
         )}
       </View>
 
-      <View style={styles.actions}>
-        <ResultPrimaryButton onPress={openRecipeTools}>
-          <OpenBook color={colors.onCoral} height={25} strokeWidth={2.15} width={25} />
-          <Text style={styles.resultPrimaryButtonText}>View recipe</Text>
-        </ResultPrimaryButton>
-        <View style={styles.secondaryRow}>
-          <ActionButton
-            icon={<ShareAndroid color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
-            label="Share"
-            onPress={openShareDupe}
-          />
-          <ActionButton
-            icon={<Bookmark color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
-            label="Save recipe"
-            onPress={saveSelectedRecipe}
-          />
-          <ActionButton
-            icon={<Cart color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
-            label="Groceries"
-            onPress={() => navigation.navigate('MainTabs', { screen: 'GroceryListScreen', params: { mode: selectedMode } })}
-          />
-        </View>
-      </View>
-
-      <NextWithOkyoCard onOpenRecipe={openRecipeTools} />
-
       <View style={styles.matchCard}>
         <View style={styles.matchTopRow}>
           <View style={styles.modeBadge}>
@@ -783,14 +778,6 @@ function ResultFrame({ children, onScanAgain, onSettings, rewardToast }: ResultF
             style={({ pressed }) => [styles.scanAgainButton, pressed ? styles.pressed : null]}
           >
             <NavArrowLeft color={colors.coral} height={21} strokeWidth={2.35} width={21} />
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.82}
-              numberOfLines={1}
-              style={styles.scanAgainText}
-            >
-              Scan again
-            </Text>
           </Pressable>
           <View pointerEvents="none" style={styles.topTitleWrap}>
             <Text
@@ -820,15 +807,30 @@ function ResultFrame({ children, onScanAgain, onSettings, rewardToast }: ResultF
 
 type FoodImageCardProps = {
   dishName: string;
+  imageStatus?: string | null;
   imageUri?: string;
+  imageUrl?: string | null;
   isDemoScan: boolean;
 };
 
-function FoodImageCard({ dishName, imageUri, isDemoScan }: FoodImageCardProps) {
+function FoodImageCard({ dishName, imageStatus, imageUri, imageUrl, isDemoScan }: FoodImageCardProps) {
   if (imageUri) {
     return (
       <View style={styles.foodImageCard}>
         <Image source={{ uri: imageUri }} resizeMode="cover" style={styles.foodImage} />
+      </View>
+    );
+  }
+
+  if (imageUrl) {
+    return (
+      <View style={styles.foodImageCard}>
+        <FoodImage
+          fallbackLabel={dishName}
+          imageStatus={imageStatus}
+          imageUrl={imageUrl}
+          style={styles.foodImage}
+        />
       </View>
     );
   }
@@ -900,66 +902,6 @@ function ResultPrimaryButton({ children, onPress }: ResultPrimaryButtonProps) {
     >
       {children}
     </Pressable>
-  );
-}
-
-type NextWithOkyoCardProps = {
-  onOpenRecipe: () => void;
-};
-
-const nextWithOkyoItems = [
-  {
-    title: 'Check this recipe',
-    body: 'Spot tricky steps before you cook.',
-  },
-  {
-    title: 'Make it fit me',
-    body: 'Adjust the plan from the recipe view.',
-  },
-  {
-    title: 'Build groceries',
-    body: 'Turn ingredients into a smarter list.',
-  },
-  {
-    title: 'Cook with guidance',
-    body: 'Use step-by-step help when you start.',
-  },
-];
-
-function NextWithOkyoCard({ onOpenRecipe }: NextWithOkyoCardProps) {
-  return (
-    <View style={styles.nextCard}>
-      <View style={styles.nextHeaderRow}>
-        <View style={styles.nextIconBubble}>
-          <MagicWand color={colors.coral} height={21} strokeWidth={2.2} width={21} />
-        </View>
-        <View style={styles.nextHeaderCopy}>
-          <Text style={styles.nextKicker}>What Okyo can do next</Text>
-          <Text style={styles.nextTitle}>Open the recipe to check, adapt, shop, or cook.</Text>
-        </View>
-      </View>
-
-      <View style={styles.nextGrid}>
-        {nextWithOkyoItems.map((item) => (
-          <View key={item.title} style={styles.nextItem}>
-            <View style={styles.nextDot} />
-            <View style={styles.nextItemCopy}>
-              <Text style={styles.nextItemTitle}>{item.title}</Text>
-              <Text style={styles.nextItemBody}>{item.body}</Text>
-            </View>
-          </View>
-        ))}
-      </View>
-
-      <Pressable
-        accessibilityRole="button"
-        onPress={onOpenRecipe}
-        style={({ pressed }) => [styles.nextLinkButton, pressed ? styles.pressed : null]}
-      >
-        <Text style={styles.nextLinkText}>Open recipe tools</Text>
-        <ArrowRight color={colors.coral} height={19} strokeWidth={2.35} width={19} />
-      </Pressable>
-    </View>
   );
 }
 
@@ -1212,22 +1154,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.card,
     borderRadius: 999,
-    flexDirection: 'row',
-    gap: 5,
+    height: 44,
+    justifyContent: 'center',
     left: 0,
-    maxWidth: 118,
-    minHeight: 44,
-    paddingHorizontal: 11,
     position: 'absolute',
     top: 8,
+    width: 44,
     zIndex: 2,
-  },
-  scanAgainText: {
-    color: colors.coral,
-    flexShrink: 1,
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
-    fontWeight: '700',
   },
   topTitleWrap: {
     alignItems: 'center',
@@ -1258,8 +1191,8 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   headerSection: {
-    marginBottom: 22,
-    marginTop: 26,
+    marginBottom: 14,
+    marginTop: 18,
     minWidth: 0,
   },
   kicker: {
@@ -1273,10 +1206,10 @@ const styles = StyleSheet.create({
   title: {
     color: colors.charcoal,
     fontFamily: fontFamilies.display,
-    fontSize: 42,
+    fontSize: 36,
     fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 47,
+    lineHeight: 41,
     minWidth: 0,
   },
   failureHeadline: {
@@ -1291,10 +1224,10 @@ const styles = StyleSheet.create({
   subtitle: {
     color: colors.muted,
     fontFamily: fontFamilies.body,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '400',
-    lineHeight: 27,
-    marginTop: 10,
+    lineHeight: 24,
+    marginTop: 8,
     minWidth: 0,
   },
   matchPill: {
@@ -1324,12 +1257,12 @@ const styles = StyleSheet.create({
   },
   foodImageCard: {
     alignItems: 'center',
-    aspectRatio: 0.96,
+    aspectRatio: 1.28,
     backgroundColor: colors.cream,
     borderRadius: radius.hero,
     justifyContent: 'center',
-    maxHeight: 390,
-    minHeight: 318,
+    maxHeight: 310,
+    minHeight: 250,
     overflow: 'hidden',
     width: '100%',
   },
@@ -1749,8 +1682,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   actions: {
-    gap: 14,
-    marginTop: 22,
+    gap: 10,
+    marginTop: 4,
   },
   secondaryRow: {
     flexDirection: 'row',
