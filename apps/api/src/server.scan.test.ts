@@ -93,6 +93,18 @@ function openRouterResponse(content: unknown): Promise<Response> {
   }));
 }
 
+function openRouterRawResponse(content: string, finishReason: string): Promise<Response> {
+  return Promise.resolve(new Response(JSON.stringify({
+    choices: [{
+      finish_reason: finishReason,
+      message: { content },
+    }],
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  }));
+}
+
 async function postScan(body: unknown) {
   const { app } = await import('./server.js');
   const server = app.listen(0);
@@ -164,6 +176,106 @@ test('POST /v1/scans uses deterministic recovery with only vision and recipe pro
     assert.equal(timing?.providerCallCount, 2);
     assert.equal(timing?.combinedRepairMs, 0);
     assert.equal(typeof timing?.deterministicRepairMs, 'number');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('POST /v1/scans normalizes recoverable malformed recipe output without retry', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const logs: unknown[][] = [];
+  const recipe = {
+    ...completeShrimpRecipe(),
+    dishName: 'Generic Rice Bowl',
+    title: 'Generic Rice Bowl',
+    equipment: 'large pot, skillet',
+    substitutions: 'Use tofu instead of shrimp.',
+    spicePairings: 'sesame seeds\nchili flakes',
+    steps: completeShrimpRecipe().steps.map((step, index) => index === 0
+      ? { ...step, ingredients: 'fettuccine pasta, salt, water', tools: 'large pot' }
+      : step),
+  };
+  const analysis = {
+    ...shrimpAnalysis(),
+    dishName: 'Generic Rice Bowl',
+    broadDishCategory: 'rice bowl',
+    visibleIngredients: ['rice', 'shrimp', 'sauce'],
+  };
+  const responses = [analysis, recipe];
+  let calls = 0;
+
+  globalThis.fetch = async () => openRouterResponse(responses[calls++]);
+  console.log = (...args: unknown[]) => { logs.push(args); };
+  try {
+    const response = await postScan({
+      source: 'photos',
+      mode: 'Restaurant Copy',
+      image: {
+        dataUrl: 'data:image/png;base64,CCCC',
+        mimeType: 'image/png',
+        dataUrlSizeBytes: 26,
+      },
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body.ok, true);
+    assert.equal(calls, 2);
+    const logText = logs.map((entry) => entry.map((value) => typeof value === 'string' ? value : JSON.stringify(value)).join(' ')).join('\n');
+    assert.doesNotMatch(logText, /recipe_retry|recipe_structure_repair|recipe_quality_repair|recipe_combined_repair/);
+    const timing = logs.find((entry) => entry[0] === '[scan_timing]')?.[1] as { providerCallCount?: number; normalizationMs?: number } | undefined;
+    assert.equal(timing?.providerCallCount, 2);
+    assert.equal(typeof timing?.normalizationMs, 'number');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('POST /v1/scans retries truncated JSON once then normalizes malformed retry output', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const logs: unknown[][] = [];
+  const retryRecipe = {
+    ...completeShrimpRecipe(),
+    dishName: 'Generic Noodle Bowl',
+    title: 'Generic Noodle Bowl',
+    substitutions: 'Use tofu instead of shrimp.',
+  };
+  const analysis = {
+    ...shrimpAnalysis(),
+    dishName: 'Generic Noodle Bowl',
+    broadDishCategory: 'pasta/noodles',
+  };
+  let calls = 0;
+
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) return openRouterResponse(analysis);
+    if (calls === 2) return openRouterRawResponse('{"dishName":"Generic Noodle Bowl","title":"Generic Noodle Bowl","ingredients":[', 'length');
+    return openRouterResponse(retryRecipe);
+  };
+  console.log = (...args: unknown[]) => { logs.push(args); };
+  try {
+    const response = await postScan({
+      source: 'photos',
+      mode: 'Restaurant Copy',
+      image: {
+        dataUrl: 'data:image/png;base64,DDDD',
+        mimeType: 'image/png',
+        dataUrlSizeBytes: 26,
+      },
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body.ok, true);
+    assert.equal(calls, 3);
+    const logText = logs.map((entry) => entry.map((value) => typeof value === 'string' ? value : JSON.stringify(value)).join(' ')).join('\n');
+    assert.match(logText, /recipe_retry/);
+    assert.doesNotMatch(logText, /recipe_structure_repair|recipe_quality_repair|recipe_combined_repair/);
+    const timing = logs.find((entry) => entry[0] === '[scan_timing]')?.[1] as { providerCallCount?: number } | undefined;
+    assert.equal(timing?.providerCallCount, 3);
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;

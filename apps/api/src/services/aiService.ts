@@ -577,6 +577,7 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
       providerCallCount: getOpenRouterMetrics().providerCallCount,
       deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
       combinedRepairMs: getOpenRouterMetrics().combinedRepairMs,
+      normalizationMs: getOpenRouterMetrics().normalizationMs,
       totalMs: Date.now() - scanStartedAt,
       rejected: rejection.rejectionType,
     });
@@ -684,6 +685,7 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
       providerCallCount: getOpenRouterMetrics().providerCallCount,
       deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
       combinedRepairMs: getOpenRouterMetrics().combinedRepairMs,
+      normalizationMs: getOpenRouterMetrics().normalizationMs,
       totalMs: Date.now() - scanStartedAt,
     });
 
@@ -698,6 +700,7 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
       providerCallCount: getOpenRouterMetrics().providerCallCount,
       deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
       combinedRepairMs: getOpenRouterMetrics().combinedRepairMs,
+      normalizationMs: getOpenRouterMetrics().normalizationMs,
       totalMs: Date.now() - scanStartedAt,
       failed: true,
     });
