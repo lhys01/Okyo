@@ -24,7 +24,8 @@
     },
     "plugins": [
       "expo-sharing",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-font"
     ]
   }
 }
