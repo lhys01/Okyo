@@ -17,7 +17,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { FoodImage } from '../FoodImage';
 import { KikoMascot, type KikoMascotPose } from '../KikoMascot';
 import { colors, fontFamilies, shadows } from '../../theme/okyoTheme';
 
@@ -622,9 +621,7 @@ function OnboardingScanLoadingScreen({ progress, userImageUri }: { progress: num
 type OnboardingFirstResultScreenProps = {
   confidence?: number;
   difficulty?: string;
-  imageStatus?: string | null;
   imageUri?: string | null;
-  imageUrl?: string | null;
   onContinue: () => void;
   recipeDescription?: string;
   recipeTitle: string;
@@ -635,9 +632,7 @@ type OnboardingFirstResultScreenProps = {
 export function OnboardingFirstResultScreen({
   confidence,
   difficulty,
-  imageStatus,
   imageUri,
-  imageUrl,
   onContinue,
   recipeDescription,
   recipeTitle,
@@ -713,12 +708,9 @@ export function OnboardingFirstResultScreen({
           {imageUri ? (
             <Image source={{ uri: imageUri }} resizeMode="cover" style={styles.resultImage} />
           ) : (
-            <FoodImage
-              fallbackLabel="Recipe image"
-              imageStatus={imageStatus}
-              imageUrl={imageUrl}
-              style={styles.resultImage}
-            />
+            <View style={[styles.resultImage, styles.resultImageMissing]}>
+              <KikoMascot pose="thinking" size={86} />
+            </View>
           )}
           {/* Savings badge overlay */}
           <Animated.View
@@ -1416,6 +1408,11 @@ const styles = StyleSheet.create({
   resultImage: {
     height: '100%',
     width: '100%',
+  },
+  resultImageMissing: {
+    alignItems: 'center',
+    backgroundColor: onboardingColors.primarySoft,
+    justifyContent: 'center',
   },
   savingsBadge: {
     alignItems: 'center',

@@ -24,6 +24,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { analyticsEvents, track } from '../analytics/track';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
+import { canUseScanStateForRoute } from '../utils/onboardingScanGuards';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 import { KikoMascot } from '../components/KikoMascot';
 import {
@@ -74,17 +75,28 @@ export function ResultSummaryScreen() {
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const routeScanSessionId = route.params?.scanSessionId;
-  const stateSource = latestScanSession ? 'latest_scan_session' : 'legacy_latest_scan_fields';
-  const latestScanResult = latestScanSession?.latestScanResult ?? storedLatestScanResult;
-  const latestScanStatus = latestScanSession?.latestScanStatus ?? storedLatestScanStatus;
-  const latestScanFailure = latestScanSession?.latestScanFailure ?? storedLatestScanFailure;
-  const latestScanRecipe = latestScanSession?.latestScanRecipe ?? storedLatestScanRecipe;
+  const canUseStoredScanState = canUseScanStateForRoute(
+    routeScanSessionId,
+    scanSessionId,
+    latestScanSession?.scanSessionId,
+  );
+  const stateSource = !canUseStoredScanState
+    ? 'route_session_mismatch'
+    : latestScanSession
+      ? 'latest_scan_session'
+      : 'legacy_latest_scan_fields';
+  const latestScanResult = canUseStoredScanState ? latestScanSession?.latestScanResult ?? storedLatestScanResult : null;
+  const latestScanStatus = canUseStoredScanState ? latestScanSession?.latestScanStatus ?? storedLatestScanStatus : null;
+  const latestScanFailure = canUseStoredScanState ? latestScanSession?.latestScanFailure ?? storedLatestScanFailure : null;
+  const latestScanRecipe = canUseStoredScanState ? latestScanSession?.latestScanRecipe ?? storedLatestScanRecipe : null;
   // Single canonical recipe. The view mode (Restaurant/Budget/Healthy) is a lens,
   // not a separate recipe — kept as a 1-element list for the view selectors/tabs.
   const latestScanRecipes = latestScanRecipe ? [latestScanRecipe] : [];
-  const selectedScanImage = latestScanSession?.selectedScanImage ?? storedSelectedScanImage;
+  const selectedScanImage = canUseStoredScanState ? latestScanSession?.selectedScanImage ?? storedSelectedScanImage : null;
   const selectedScanImageUri = getRealScanImageUri(selectedScanImage);
-  const latestAiDebugMetadata = latestScanSession?.latestAiDebugMetadata ?? storedLatestAiDebugMetadata;
+  const latestAiDebugMetadata = canUseStoredScanState
+    ? latestScanSession?.latestAiDebugMetadata ?? storedLatestAiDebugMetadata
+    : null;
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
   const hasSuccessfulScanSession = latestScanStatus === 'success' && Boolean(scanResult);

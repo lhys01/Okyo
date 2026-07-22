@@ -232,7 +232,7 @@ export function ScanScreen() {
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: false,
         base64: false,
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 1,
       });
 
@@ -262,7 +262,7 @@ export function ScanScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: false,
         base64: false,
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 1,
       });
 

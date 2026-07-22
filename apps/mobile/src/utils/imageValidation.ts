@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
 
 export type ImageStorageLocation = 'documents' | 'cache' | 'remote' | 'none' | 'unknown';
 
@@ -18,7 +18,7 @@ export async function checkImageFileExists(uri: string | null | undefined): Prom
     return false;
   }
   try {
-    const info = await FileSystem.getInfoAsync(uri);
+    const info = new File(uri).info();
     return info.exists;
   } catch {
     return false;
