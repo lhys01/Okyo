@@ -34,6 +34,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "tsx": "^4.23.0",
     "typescript": "~5.9.2"
   },
   "scripts": {
@@ -41,7 +42,9 @@
     "sim": "expo start -c --host lan --port 8082",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts"
   },
   "private": true
 }

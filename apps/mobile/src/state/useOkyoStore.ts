@@ -12,6 +12,7 @@ import {
   type RecipeMode,
   type ScanResult,
 } from '../mocks';
+import { onboardingPersistence } from './onboardingPersistence';
 
 export type OnboardingGoal =
   | 'Save money'
@@ -106,6 +107,7 @@ type OkyoState = {
   awardedXpEvents: string[];
   leaderboardEntries: LeaderboardEntry[];
   completeOnboarding: () => void;
+  setOnboardingCompletionFromStorage: (completed: boolean) => void;
   resetOnboarding: () => void;
   setGoal: (goal: OnboardingGoal) => void;
   setWeeklyGoal: (goal: OnboardingWeeklyGoal) => void;
@@ -169,8 +171,14 @@ export const useOkyoStore = create<OkyoState>()(
       recentBadgeUnlock: null,
       awardedXpEvents: [],
       leaderboardEntries: mockLeaderboardEntries,
-      completeOnboarding: () => set({ hasCompletedOnboarding: true, hasSeenOnboarding: true }),
-      resetOnboarding: () =>
+      completeOnboarding: () => {
+        set({ hasCompletedOnboarding: true, hasSeenOnboarding: true });
+        onboardingPersistence.writeCompleted().catch((error: unknown) => {
+          logDev('okyo_onboarding_completion_persist_failed', { error: String(error) });
+        });
+      },
+      setOnboardingCompletionFromStorage: (completed) => set({ hasCompletedOnboarding: completed }),
+      resetOnboarding: () => {
         set({
           hasCompletedOnboarding: false,
           hasSeenOnboarding: false,
@@ -180,7 +188,11 @@ export const useOkyoStore = create<OkyoState>()(
           firstOnboardingScanCompleted: false,
           firstOnboardingResultSeen: false,
           paywallShown: false,
-        }),
+        });
+        onboardingPersistence.resetCompleted().catch((error: unknown) => {
+          logDev('okyo_onboarding_completion_reset_failed', { error: String(error) });
+        });
+      },
       setGoal: (goal) => set({ onboardingGoal: goal }),
       setWeeklyGoal: (goal) => set({ weeklyGoal: goal, hasSeenOnboarding: true }),
       setMealRoutinePreference: (preference) => set({ mealRoutinePreference: preference }),
@@ -407,8 +419,8 @@ export const useOkyoStore = create<OkyoState>()(
     {
       name: 'okyo-local-state',
       storage: createJSONStorage(() => AsyncStorage),
+      migrate: migratePersistedOkyoState,
       partialize: (state) => ({
-        hasCompletedOnboarding: state.hasCompletedOnboarding,
         hasSeenOnboarding: state.hasSeenOnboarding,
         onboardingGoal: state.onboardingGoal,
         weeklyGoal: state.weeklyGoal,
@@ -439,6 +451,19 @@ export const useOkyoStore = create<OkyoState>()(
     },
   ),
 );
+
+function migratePersistedOkyoState(persistedState: unknown) {
+  if (!persistedState || typeof persistedState !== 'object' || Array.isArray(persistedState)) {
+    return {};
+  }
+
+  const {
+    hasCompletedOnboarding: _legacyOnboardingCompleted,
+    ...stateWithoutLegacyOnboardingCompletion
+  } = persistedState as Record<string, unknown>;
+
+  return stateWithoutLegacyOnboardingCompletion;
+}
 
 function createLatestScanSession(scanSession: LatestScanSessionWrite): LatestScanSession {
   const realScanImageUri = getRealScanImageUri(scanSession.selectedScanImage);

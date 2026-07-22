@@ -42,6 +42,7 @@ export type MainTabParamList = {
   ScanScreen: undefined;
   LibraryScreen: undefined;
   ProfileScreen: undefined;
+  SettingsScreen: undefined;
   RecipeDetailScreen: { mode?: RecipeMode } | undefined;
   RecipeStepsScreen: { mode?: RecipeMode } | undefined;
   GroceryListScreen: { mode?: RecipeMode } | undefined;

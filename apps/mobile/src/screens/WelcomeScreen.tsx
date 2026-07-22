@@ -1,5 +1,3 @@
-import { CommonActions, useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -25,7 +23,6 @@ import {
   type Recipe,
   type RecipeMode,
 } from '../mocks';
-import type { RootStackParamList } from '../navigation/types';
 import {
   useOkyoStore,
   type LatestScanFailure,
@@ -36,8 +33,6 @@ import { scheduleOkyoDailyReminder } from '../utils/notifications';
 import { hasFoodEvidence, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
 import { copyToDocuments } from '../utils/scanImageStorage';
 import { uiLog } from '../utils/uiDebug';
-
-type WelcomeNavigation = NativeStackNavigationProp<RootStackParamList, 'WelcomeScreen'>;
 
 type OnboardingScreenKey =
   | 'splash'
@@ -76,7 +71,6 @@ const weeklyGoalOptions: WeeklyGoalOption[] = [
 ];
 
 export function WelcomeScreen() {
-  const navigation = useNavigation<WelcomeNavigation>();
   const [screenKey, setScreenKey] = useState<OnboardingScreenKey>('splash');
   const [scanError, setScanError] = useState<string | null>(null);
   const [isScanSubmitting, setIsScanSubmitting] = useState(false);
@@ -402,19 +396,6 @@ export function WelcomeScreen() {
     if (notificationChoice === 'remind_me') {
       scheduleOkyoDailyReminder();
     }
-    navigation.dispatch(
-      CommonActions.reset({
-        index: 0,
-        routes: [
-          {
-            name: 'MainTabs',
-            params: latestScanRecipe
-              ? { screen: 'RecipeDetailScreen', params: { mode: getSafeRecipeMode(latestScanRecipe.mode) } }
-              : { screen: 'ScanScreen' },
-          },
-        ],
-      }),
-    );
   };
 
   // ── Screen rendering ────────────────────────────────────────────────────────

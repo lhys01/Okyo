@@ -7,9 +7,10 @@ import {
   Cart,
   Compass,
   HomeSimple,
+  Settings,
   User,
 } from 'iconoir-react-native';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, fontFamilies } from '../components/OkyoUI';
@@ -20,6 +21,7 @@ import { ProfileScreen } from '../screens/ProfileScreen';
 import { RecipeDetailScreen, RecipeStepsScreen } from '../screens/RecipeDetailScreen';
 import { RestaurantPacksScreen } from '../screens/RestaurantPacksScreen';
 import { ScanScreen } from '../screens/ScanScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import type { MainTabParamList } from './types';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -30,8 +32,9 @@ const tabLabels: Record<MainTabRouteName, string> = {
   HomeScreen: 'Home',
   RestaurantPacksScreen: 'Discover',
   ScanScreen: 'Scan',
-  LibraryScreen: 'Plan',
+  LibraryScreen: 'Saved',
   ProfileScreen: 'Profile',
+  SettingsScreen: 'Settings',
   RecipeDetailScreen: 'Recipe',
   RecipeStepsScreen: 'Steps',
   GroceryListScreen: 'Grocery',
@@ -41,7 +44,7 @@ const visibleTabOrder: MainTabRouteName[] = [
   'HomeScreen',
   'GroceryListScreen',
   'LibraryScreen',
-  'ProfileScreen',
+  'SettingsScreen',
 ];
 
 function TabIcon({ color, focused, routeName }: { color: string; focused: boolean; routeName: MainTabRouteName }) {
@@ -59,6 +62,8 @@ function TabIcon({ color, focused, routeName }: { color: string; focused: boolea
       return <Book color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'ProfileScreen':
       return <User color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
+    case 'SettingsScreen':
+      return <Settings color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'ScanScreen':
     default:
       return <Camera color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
@@ -150,43 +155,14 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
     );
   };
 
-  const scanRoute = routesByName.ScanScreen;
-  const scanFocused = focusedRoute?.key === scanRoute?.key;
-
   return (
     <View pointerEvents="box-none" style={[styles.tabBarRoot, { height: 122 + bottomInset }]}>
       <View style={[styles.tabBarPill, { bottom: bottomInset + 8 }]}>
         <BlurView intensity={34} pointerEvents="none" style={styles.tabBarBlur} tint="light" />
         <View style={styles.sideTabRow}>
-          {visibleTabOrder.slice(0, 2).map(renderSideTab)}
-          <View pointerEvents="none" style={styles.scanGap} />
-          {visibleTabOrder.slice(2).map(renderSideTab)}
+          {visibleTabOrder.map(renderSideTab)}
         </View>
       </View>
-
-      {scanRoute ? (
-        <Pressable
-          accessibilityLabel={descriptors[scanRoute.key]?.options.tabBarAccessibilityLabel}
-          accessibilityRole="button"
-          accessibilityState={scanFocused ? { selected: true } : undefined}
-          hitSlop={10}
-          style={({ pressed }) => [
-            styles.scanTab,
-            { bottom: bottomInset + 20 },
-            pressed ? styles.scanTabPressed : null,
-          ]}
-          testID={descriptors[scanRoute.key]?.options.tabBarButtonTestID}
-          onLongPress={() => onLongPress('ScanScreen')}
-          onPress={() => navigateToTab('ScanScreen')}
-        >
-          <View style={styles.scanCircle}>
-            <TabIcon color="#fffdf8" focused routeName="ScanScreen" />
-          </View>
-          <Text style={[styles.scanLabel, scanFocused ? styles.scanLabelActive : styles.scanLabelInactive]}>
-            {tabLabels.ScanScreen}
-          </Text>
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -214,8 +190,9 @@ export function MainTabs() {
       <Tab.Screen name="HomeScreen" component={HomeScreen} options={{ title: 'Home' }} />
       <Tab.Screen name="RestaurantPacksScreen" component={RestaurantPacksScreen} options={{ title: 'Discover' }} />
       <Tab.Screen name="ScanScreen" component={ScanScreen} options={{ title: 'Scan' }} />
-      <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Plan' }} />
+      <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Saved' }} />
       <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />
+      <Tab.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
       <Tab.Screen name="RecipeDetailScreen" component={RecipeDetailScreen} options={{ title: 'Recipe' }} />
       <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps', tabBarStyle: { display: 'none' } }} />
       <Tab.Screen name="GroceryListScreen" component={GroceryListScreen} options={{ title: 'Grocery' }} />
@@ -290,49 +267,6 @@ const styles = StyleSheet.create({
   sideLabelActive: {
     color: colors.charcoal,
     fontWeight: '700',
-  },
-  scanGap: {
-    width: 76,
-  },
-  scanTab: {
-    alignItems: 'center',
-    alignSelf: 'center',
-    position: 'absolute',
-    width: 92,
-    zIndex: 2,
-  },
-  scanTabPressed: {
-    transform: [{ scale: 0.96 }],
-  },
-  scanCircle: {
-    alignItems: 'center',
-    backgroundColor: colors.coral,
-    borderColor: 'rgba(255, 255, 255, 0.92)',
-    borderRadius: 40,
-    borderWidth: 4,
-    height: 76,
-    justifyContent: 'center',
-    shadowColor: '#c2401f',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: Platform.OS === 'ios' ? 0.26 : 0.32,
-    shadowRadius: 16,
-    width: 76,
-    elevation: 14,
-  },
-  scanLabel: {
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
-    includeFontPadding: false,
-    lineHeight: 15,
-    marginTop: 6,
-    textAlign: 'center',
-  },
-  scanLabelActive: {
-    color: colors.coral,
-  },
-  scanLabelInactive: {
-    color: inactiveGray,
   },
   tabPressed: {
     opacity: 0.7,
