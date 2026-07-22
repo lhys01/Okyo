@@ -28,7 +28,7 @@ import {
   type LatestScanFailure,
   type OnboardingWeeklyGoal,
 } from '../state/useOkyoStore';
-import { fontFamilies, shadows } from '../theme/okyoTheme';
+import { colors, fontFamilies, shadows } from '../theme/okyoTheme';
 import { scheduleOkyoDailyReminder } from '../utils/notifications';
 import { hasFoodEvidence, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
 import { copyToDocuments } from '../utils/scanImageStorage';
@@ -941,7 +941,7 @@ function noop() {
 const styles = StyleSheet.create({
   splash: {
     alignItems: 'center',
-    backgroundColor: onboardingColors.primary,
+    backgroundColor: onboardingColors.background,
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 24,
@@ -951,7 +951,9 @@ const styles = StyleSheet.create({
   },
   splashMascot: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
+    backgroundColor: onboardingColors.primarySoft,
+    borderColor: 'rgba(255,139,174,0.28)',
+    borderWidth: 1,
     borderRadius: 44,
     height: 190,
     justifyContent: 'center',
@@ -959,20 +961,21 @@ const styles = StyleSheet.create({
     ...shadows.hero,
   },
   splashWordmark: {
-    color: '#fffdf8',
+    color: onboardingColors.charcoal,
     fontFamily: fontFamilies.display,
     fontSize: 58,
     fontWeight: '800',
-    letterSpacing: 0,
+    letterSpacing: -1.16,
     lineHeight: 64,
     marginTop: 22,
     textTransform: 'lowercase',
   },
   splashTagline: {
-    color: '#fff3eb',
+    color: onboardingColors.gray,
     fontFamily: fontFamilies.bold,
     fontSize: 18,
     fontWeight: '700',
+    letterSpacing: -0.36,
     marginTop: 8,
     textAlign: 'center',
   },
@@ -997,7 +1000,7 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   goalCardSelected: {
-    backgroundColor: '#FFF0E6',
+    backgroundColor: onboardingColors.primarySoft,
     borderColor: onboardingColors.primary,
   },
   goalFrequency: {
@@ -1020,17 +1023,17 @@ const styles = StyleSheet.create({
   },
   // Reminder — iOS permission dialog
   iosDialog: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: onboardingColors.card,
     borderRadius: 14,
     overflow: 'hidden',
-    shadowColor: '#000',
+    shadowColor: colors.softCharcoal,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.18,
     shadowRadius: 24,
     elevation: 8,
   },
   iosDialogTitle: {
-    color: '#1C1C1E',
+    color: onboardingColors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 17,
     fontWeight: '700',
@@ -1041,7 +1044,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   iosDialogBody: {
-    color: '#3C3C43',
+    color: onboardingColors.gray,
     fontFamily: fontFamilies.body,
     fontSize: 13,
     lineHeight: 18,
@@ -1051,18 +1054,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   iosDialogDivider: {
-    backgroundColor: 'rgba(60,60,67,0.29)',
+    backgroundColor: 'rgba(199,179,255,0.32)',
     height: StyleSheet.hairlineWidth,
   },
   iosDialogButtons: {
     flexDirection: 'row',
   },
   iosDialogButtonDivider: {
-    backgroundColor: 'rgba(60,60,67,0.29)',
+    backgroundColor: 'rgba(199,179,255,0.32)',
     width: StyleSheet.hairlineWidth,
   },
   iosDialogButton: {
-    color: '#007AFF',
+    color: onboardingColors.sky,
     flex: 1,
     fontFamily: fontFamilies.body,
     fontSize: 17,
