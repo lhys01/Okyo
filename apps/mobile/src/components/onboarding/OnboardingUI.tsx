@@ -17,24 +17,28 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { foodAssets } from '../../../assets/food';
 import { FoodImage } from '../FoodImage';
 import { KikoMascot, type KikoMascotPose } from '../KikoMascot';
-import { fontFamilies, shadows } from '../../theme/okyoTheme';
+import { colors, fontFamilies, shadows } from '../../theme/okyoTheme';
 
 export const onboardingColors = {
-  background: '#FFF8F1',
-  card: '#FFFFFF',
-  primary: '#FF6A1A',
-  primaryDark: '#E84F1A',
-  primarySoft: '#FFE3D2',
-  green: '#46B35E',
-  greenDeep: '#187A44',
-  greenSoft: '#E6F6EA',
-  charcoal: '#1A1A1A',
-  gray: '#746D64',
-  border: '#E8DCCB',
-  yellow: '#FFF2C7',
+  background: colors.stoneCream,
+  card: colors.card,
+  primary: colors.sunsetPink,
+  primaryDark: colors.coralDark,
+  primarySoft: colors.coralSoft,
+  green: colors.green,
+  greenDeep: colors.green,
+  greenSoft: colors.greenSoft,
+  charcoal: colors.softCharcoal,
+  gray: colors.body,
+  muted: colors.muted,
+  border: colors.border,
+  cream: colors.stoneCream,
+  yellow: colors.sunnyYellow,
+  mint: colors.mintGreen,
+  sky: colors.skyBlue,
+  lavender: colors.lavender,
 };
 
 export type OnboardingOption = {
@@ -284,7 +288,7 @@ export function OnboardingOptionCard({ delay = 0, onPress, option, selected }: O
           <Text style={styles.optionDetail}>{option.detail}</Text>
         </View>
         <View style={[styles.optionCheck, selected ? styles.optionCheckSelected : null]}>
-          {selected ? <Check color="#fffdf8" height={17} strokeWidth={2.8} width={17} /> : null}
+          {selected ? <Check color={onboardingColors.card} height={17} strokeWidth={2.8} width={17} /> : null}
         </View>
       </Pressable>
     </Animated.View>
@@ -334,10 +338,10 @@ export function OnboardingStatefulButton({
         ]}
       >
         {resolvedState === 'loading' ? (
-          <ActivityIndicator color={isPrimary ? '#fffdf8' : onboardingColors.primary} />
+          <ActivityIndicator color={isPrimary ? onboardingColors.card : onboardingColors.primary} />
         ) : resolvedState === 'success' ? (
           <View style={styles.buttonSuccessContent}>
-            <Check color={isPrimary ? '#fffdf8' : onboardingColors.primary} height={18} strokeWidth={2.8} width={18} />
+            <Check color={isPrimary ? onboardingColors.card : onboardingColors.primary} height={18} strokeWidth={2.8} width={18} />
             <Text style={[styles.buttonText, isPrimary ? styles.buttonTextPrimary : styles.buttonTextSecondary]}>
               {stateLabel ?? 'DONE'}
             </Text>
@@ -364,13 +368,11 @@ export function OnboardingScanCard({ errorMessage, onTakePhoto, onUpload }: Onbo
   return (
     <View style={styles.scanCard}>
       <View style={styles.scanFrame}>
-        {/* Mini food preview strip */}
-        <View style={styles.scanFoodStrip}>
-          <Image source={foodAssets.burger} style={styles.scanFoodThumb} resizeMode="cover" />
-          <Image source={foodAssets.pasta} style={styles.scanFoodThumb} resizeMode="cover" />
-          <Image source={foodAssets.bowl} style={styles.scanFoodThumb} resizeMode="cover" />
+        <View style={styles.scanPastelPanel}>
+          <View style={styles.scanHintPill}>
+            <Text style={styles.scanHintText}>Scan a meal</Text>
+          </View>
         </View>
-        <View style={styles.scanOverlay} />
         <View style={styles.scanKikoWrapper}>
           <KikoMascot pose="scanning" size={110} style={styles.scanKiko} />
         </View>
@@ -429,20 +431,20 @@ export function OnboardingHeroScreen({ onContinue, progress }: OnboardingHeroScr
     <SafeAreaView edges={['top', 'bottom']} style={styles.shell}>
       <OnboardingProgressHeader canGoBack={false} onBack={noop} progress={progress} />
       <ScrollView contentContainerStyle={heroStyles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Hero food image */}
         <Animated.View style={[heroStyles.imageCard, { transform: [{ scale: imageScale }] }]}>
-          <Image source={foodAssets.burger} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
-          <View style={heroStyles.imageGradient} />
-          {/* Food variety strip at bottom of image */}
-          <View style={heroStyles.foodThumbs}>
-            <View style={heroStyles.foodThumbItem}>
-              <Image source={foodAssets.pasta} style={heroStyles.foodThumbImage} resizeMode="cover" />
+          <View style={heroStyles.heroPastelTop} />
+          <View style={heroStyles.heroMascotStage}>
+            <KikoMascot pose="happy" size={156} />
+          </View>
+          <View style={heroStyles.heroBrandStrip}>
+            <View style={[heroStyles.heroBrandChip, heroStyles.heroBrandChipPink]}>
+              <Text style={heroStyles.heroBrandChipText}>recipe</Text>
             </View>
-            <View style={heroStyles.foodThumbItem}>
-              <Image source={foodAssets.salad} style={heroStyles.foodThumbImage} resizeMode="cover" />
+            <View style={[heroStyles.heroBrandChip, heroStyles.heroBrandChipMint]}>
+              <Text style={heroStyles.heroBrandChipText}>groceries</Text>
             </View>
-            <View style={heroStyles.foodThumbItem}>
-              <Image source={foodAssets.dessert} style={heroStyles.foodThumbImage} resizeMode="cover" />
+            <View style={[heroStyles.heroBrandChip, heroStyles.heroBrandChipSky]}>
+              <Text style={heroStyles.heroBrandChipText}>savings</Text>
             </View>
           </View>
         </Animated.View>
@@ -841,7 +843,7 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
             <Text style={styles.priceFineprint}>Billed as $49.99/year</Text>
             <View style={[styles.planCheck, selectedPlan === 'annual' ? styles.planCheckSelected : null]}>
               {selectedPlan === 'annual' ? (
-                <Check color="#fffdf8" height={13} strokeWidth={3} width={13} />
+                <Check color={onboardingColors.card} height={13} strokeWidth={3} width={13} />
               ) : null}
             </View>
           </Pressable>
@@ -860,7 +862,7 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
             <Text style={styles.priceFineprint}>No commitment</Text>
             <View style={[styles.planCheck, selectedPlan === 'weekly' ? styles.planCheckSelected : null]}>
               {selectedPlan === 'weekly' ? (
-                <Check color="#fffdf8" height={13} strokeWidth={3} width={13} />
+                <Check color={onboardingColors.card} height={13} strokeWidth={3} width={13} />
               ) : null}
             </View>
           </Pressable>
@@ -878,7 +880,7 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
           {PAYWALL_PERKS.map((perk) => (
             <View key={perk.label} style={styles.paywallPerk}>
               <View style={styles.paywallCheck}>
-                <Check color="#fffdf8" height={13} strokeWidth={3} width={13} />
+                <Check color={onboardingColors.card} height={13} strokeWidth={3} width={13} />
               </View>
               <View style={styles.paywallPerkCopy}>
                 <Text style={styles.paywallPerkLabel}>{perk.label}</Text>
@@ -985,7 +987,7 @@ const styles = StyleSheet.create({
     opacity: 0,
   },
   progressTrack: {
-    backgroundColor: '#EBDDCB',
+    backgroundColor: 'rgba(199,179,255,0.24)',
     borderRadius: 999,
     flex: 1,
     height: 9,
@@ -1029,7 +1031,7 @@ const styles = StyleSheet.create({
   },
   bubble: {
     backgroundColor: onboardingColors.card,
-    borderColor: 'rgba(232, 220, 203, 0.82)',
+    borderColor: 'rgba(199,179,255,0.34)',
     borderRadius: 30,
     borderTopLeftRadius: 20,
     borderWidth: 1,
@@ -1041,8 +1043,8 @@ const styles = StyleSheet.create({
   },
   bubbleTail: {
     backgroundColor: onboardingColors.card,
-    borderBottomColor: 'rgba(232, 220, 203, 0.82)',
-    borderLeftColor: 'rgba(232, 220, 203, 0.82)',
+    borderBottomColor: 'rgba(199,179,255,0.34)',
+    borderLeftColor: 'rgba(199,179,255,0.34)',
     borderRightColor: 'transparent',
     borderTopColor: 'transparent',
     borderWidth: 1,
@@ -1058,7 +1060,7 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.display,
     fontSize: 27,
     fontWeight: '800',
-    letterSpacing: 0,
+    letterSpacing: -0.54,
     lineHeight: 32,
   },
 
@@ -1080,7 +1082,7 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   optionCardSelected: {
-    backgroundColor: '#FFF0E6',
+    backgroundColor: onboardingColors.primarySoft,
     borderColor: onboardingColors.primary,
   },
   optionCopy: {
@@ -1106,7 +1108,7 @@ const styles = StyleSheet.create({
   },
   optionCheck: {
     alignItems: 'center',
-    borderColor: '#D8CBB9',
+    borderColor: 'rgba(199,179,255,0.48)',
     borderRadius: 999,
     borderWidth: 1.5,
     height: 28,
@@ -1150,12 +1152,12 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.extraBold,
     fontSize: 16,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: -0.16,
     textAlign: 'center',
     textTransform: 'uppercase',
   },
   buttonTextPrimary: {
-    color: '#fffdf8',
+    color: onboardingColors.card,
   },
   buttonTextSecondary: {
     color: onboardingColors.primary,
@@ -1171,7 +1173,7 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   scanFrame: {
-    backgroundColor: onboardingColors.card,
+    backgroundColor: onboardingColors.primarySoft,
     borderColor: onboardingColors.border,
     borderRadius: 34,
     borderWidth: 1,
@@ -1180,21 +1182,28 @@ const styles = StyleSheet.create({
     position: 'relative',
     ...shadows.hero,
   },
-  scanFoodStrip: {
-    bottom: 0,
-    flexDirection: 'row',
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
-  scanFoodThumb: {
-    flex: 1,
-    height: '100%',
-  },
-  scanOverlay: {
+  scanPastelPanel: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,248,241,0.88)',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,139,174,0.12)',
+    justifyContent: 'flex-start',
+    paddingTop: 22,
+  },
+  scanHintPill: {
+    backgroundColor: onboardingColors.card,
+    borderColor: 'rgba(199,179,255,0.34)',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  scanHintText: {
+    color: onboardingColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: -0.13,
+    textTransform: 'uppercase',
   },
   scanKikoWrapper: {
     alignItems: 'center',
@@ -1208,7 +1217,7 @@ const styles = StyleSheet.create({
   },
   scanTarget: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
+    backgroundColor: onboardingColors.card,
     borderColor: onboardingColors.border,
     borderRadius: 22,
     borderWidth: 1,
@@ -1241,7 +1250,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   errorCard: {
-    backgroundColor: '#FDE7E0',
+    backgroundColor: 'rgba(255,139,174,0.16)',
     borderRadius: 22,
     padding: 16,
   },
@@ -1267,7 +1276,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
   },
   loadingPlanLabel: {
-    color: '#A89080',
+    color: onboardingColors.primaryDark,
     fontFamily: fontFamilies.extraBold,
     fontSize: 14,
     fontWeight: '800',
@@ -1317,7 +1326,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.06)',
   },
   loadingKikoCorner: {
-    backgroundColor: '#fffdf8',
+    backgroundColor: onboardingColors.card,
     borderColor: onboardingColors.border,
     borderRadius: 40,
     borderWidth: 1,
@@ -1346,7 +1355,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   loadingBar: {
-    backgroundColor: '#EBDDCB',
+    backgroundColor: 'rgba(129,199,255,0.24)',
     borderRadius: 999,
     height: 10,
     marginTop: 32,
@@ -1420,14 +1429,14 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   savingsBadgeAmount: {
-    color: '#fffdf8',
+    color: onboardingColors.card,
     fontFamily: fontFamilies.display,
     fontSize: 20,
     fontWeight: '800',
     lineHeight: 24,
   },
   savingsBadgeLabel: {
-    color: 'rgba(255,253,248,0.82)',
+    color: 'rgba(255,255,255,0.84)',
     fontFamily: fontFamilies.bold,
     fontSize: 11,
     fontWeight: '700',
@@ -1436,7 +1445,7 @@ const styles = StyleSheet.create({
   },
   resultCard: {
     backgroundColor: onboardingColors.card,
-    borderColor: 'rgba(232, 220, 203, 0.82)',
+    borderColor: 'rgba(199,179,255,0.34)',
     borderRadius: 30,
     borderWidth: 1,
     padding: 20,
@@ -1463,7 +1472,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   metricPill: {
-    backgroundColor: '#FFF4EC',
+    backgroundColor: 'rgba(143,227,198,0.22)',
     borderRadius: 18,
     flex: 1,
     minWidth: '30%',
@@ -1518,7 +1527,7 @@ const styles = StyleSheet.create({
   },
   socialProof: {
     alignItems: 'center',
-    backgroundColor: '#FFF4EC',
+    backgroundColor: 'rgba(255,139,174,0.14)',
     borderRadius: 999,
     marginBottom: 18,
     paddingHorizontal: 18,
@@ -1547,7 +1556,7 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   priceCardFeatured: {
-    backgroundColor: '#FFF0E6',
+    backgroundColor: onboardingColors.primarySoft,
     borderColor: onboardingColors.primary,
     borderWidth: 2,
   },
@@ -1589,7 +1598,7 @@ const styles = StyleSheet.create({
   },
   planCheck: {
     alignItems: 'center',
-    borderColor: '#D8CBB9',
+    borderColor: 'rgba(199,179,255,0.48)',
     borderRadius: 999,
     borderWidth: 1.5,
     height: 22,
@@ -1703,6 +1712,9 @@ const heroStyles = StyleSheet.create({
     paddingBottom: 12,
   },
   imageCard: {
+    backgroundColor: onboardingColors.primarySoft,
+    borderColor: 'rgba(199,179,255,0.34)',
+    borderWidth: 1,
     height: 280,
     marginHorizontal: 16,
     marginTop: 6,
@@ -1711,28 +1723,57 @@ const heroStyles = StyleSheet.create({
     position: 'relative',
     ...shadows.hero,
   },
-  imageGradient: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(26,20,12,0.12)',
+  heroPastelTop: {
+    backgroundColor: 'rgba(129,199,255,0.32)',
+    height: 92,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
   },
-  foodThumbs: {
-    bottom: 16,
+  heroMascotStage: {
+    alignItems: 'center',
+    bottom: 72,
+    justifyContent: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 34,
+  },
+  heroBrandStrip: {
+    bottom: 18,
     flexDirection: 'row',
     gap: 8,
     left: 16,
     position: 'absolute',
+    right: 16,
   },
-  foodThumbItem: {
-    borderColor: 'rgba(255,255,255,0.6)',
-    borderRadius: 14,
-    borderWidth: 1.5,
-    height: 56,
-    overflow: 'hidden',
-    width: 56,
+  heroBrandChip: {
+    alignItems: 'center',
+    borderColor: 'rgba(255,255,255,0.72)',
+    borderRadius: 999,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 42,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
   },
-  foodThumbImage: {
-    height: '100%',
-    width: '100%',
+  heroBrandChipPink: {
+    backgroundColor: onboardingColors.primary,
+  },
+  heroBrandChipMint: {
+    backgroundColor: onboardingColors.mint,
+  },
+  heroBrandChipSky: {
+    backgroundColor: onboardingColors.sky,
+  },
+  heroBrandChipText: {
+    color: onboardingColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: -0.12,
+    textTransform: 'uppercase',
   },
   content: {
     paddingHorizontal: 24,
