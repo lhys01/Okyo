@@ -188,6 +188,7 @@ export const useOkyoStore = create<OkyoState>()(
           firstOnboardingScanCompleted: false,
           firstOnboardingResultSeen: false,
           paywallShown: false,
+          ...getClearedLatestScanState(),
         });
         onboardingPersistence.resetCompleted().catch((error: unknown) => {
           logDev('okyo_onboarding_completion_reset_failed', { error: String(error) });
