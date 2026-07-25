@@ -29,10 +29,23 @@ import {
   type OnboardingWeeklyGoal,
 } from '../state/useOkyoStore';
 import { colors, fontFamilies, shadows } from '../theme/okyoTheme';
-import { scheduleOkyoDailyReminder } from '../utils/notifications';
 import { hasFoodEvidence, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
+import { checkImageFileExists } from '../utils/imageValidation';
+import {
+  getMissingOnboardingImageError,
+  getNextOnboardingPlanScreen,
+  getOnboardingResponseImage,
+  getOnboardingResultFallbackScreen,
+  getOnboardingScanStartDecision,
+  getOnboardingUploadUri,
+  isCurrentOnboardingScanSession,
+  shouldKeepOnboardingScanLoading,
+} from '../utils/onboardingScanGuards';
 import { copyToDocuments } from '../utils/scanImageStorage';
-import { uiLog } from '../utils/uiDebug';
+import { isPurchaseProviderAvailable } from '../utils/purchaseAvailability';
+import { imageTraceLog, uiLog } from '../utils/uiDebug';
+
+const purchasesAvailable = isPurchaseProviderAvailable();
 
 type OnboardingScreenKey =
   | 'splash'
@@ -74,24 +87,48 @@ export function WelcomeScreen() {
   const [screenKey, setScreenKey] = useState<OnboardingScreenKey>('splash');
   const [scanError, setScanError] = useState<string | null>(null);
   const [isScanSubmitting, setIsScanSubmitting] = useState(false);
+  const [loadingImageUri, setLoadingImageUri] = useState<string | null>(null);
   const [selectedWeeklyGoal, setSelectedWeeklyGoal] = useState<string | null>(null);
   const didTrackStart = useRef(false);
+  const isScanSubmittingRef = useRef(false);
+  const loadingScanSessionIdRef = useRef<string | null>(null);
   const splashOpacity = useRef(new Animated.Value(0)).current;
   const selectedMode = useOkyoStore((state) => state.selectedMode);
+  const activeScanSessionId = useOkyoStore((state) => state.scanSessionId);
+  const activeScanStatus = useOkyoStore((state) => state.latestScanStatus);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const completeOnboarding = useOkyoStore((state) => state.completeOnboarding);
   const beginLatestScanSession = useOkyoStore((state) => state.beginLatestScanSession);
   const writeLatestScanSession = useOkyoStore((state) => state.writeLatestScanSession);
+  const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setWeeklyGoal = useOkyoStore((state) => state.setWeeklyGoal);
-  const notificationChoice = useOkyoStore((state) => state.notificationChoice);
   const setNotificationChoice = useOkyoStore((state) => state.setNotificationChoice);
   const markFirstOnboardingScanCompleted = useOkyoStore((state) => state.markFirstOnboardingScanCompleted);
   const markFirstOnboardingResultSeen = useOkyoStore((state) => state.markFirstOnboardingResultSeen);
   const markPaywallShown = useOkyoStore((state) => state.markPaywallShown);
+  const completeOnboarding = useOkyoStore((state) => state.completeOnboarding);
+  const setPremium = useOkyoStore((state) => state.setPremium);
   const resultRecipe = latestScanRecipe;
+
+  const transitionScreen = (nextScreen: OnboardingScreenKey, reason: string) => {
+    setScreenKey((previousScreen) => {
+      if (previousScreen === nextScreen) {
+        return previousScreen;
+      }
+      const activeScan = useOkyoStore.getState();
+      imageTraceLog('WelcomeScreen', {
+        stage: 'screen_transition',
+        previousScreen,
+        nextScreen,
+        reason,
+        activeScanSessionId: activeScan.scanSessionId,
+        activeScanStatus: activeScan.latestScanStatus,
+      });
+      return nextScreen;
+    });
+  };
 
   useEffect(() => {
     if (didTrackStart.current) {
@@ -99,9 +136,13 @@ export function WelcomeScreen() {
     }
 
     didTrackStart.current = true;
+    clearLatestScan({
+      reason: 'onboarding_started',
+      source: 'WelcomeScreen.enter_onboarding_flow',
+    });
     uiLog('WelcomeScreen', 'enter_onboarding_flow');
     track(analyticsEvents.ONBOARDING_START, { screen: 'WelcomeScreen' });
-  }, []);
+  }, [clearLatestScan]);
 
   useEffect(() => {
     if (screenKey !== 'splash') {
@@ -123,22 +164,32 @@ export function WelcomeScreen() {
         useNativeDriver: true,
       }),
     ]).start(() => {
-      setScreenKey('hero');
+      transitionScreen('hero', 'splash_completed');
     });
   }, [screenKey, splashOpacity]);
 
-  // Auto-advance from the "Building Your Plan" loading screen to scan after 2.5s
+  // The plan loader is a pre-scan step. It must always finish at the scan step;
+  // selected image state belongs to the scan request that follows it.
   useEffect(() => {
-    if (screenKey !== 'loading' || selectedScanImage?.uri) {
+    if (screenKey !== 'loading') {
+      return;
+    }
+
+    if (shouldKeepOnboardingScanLoading({
+      screenKey,
+      loadingScanSessionId: loadingScanSessionIdRef.current,
+      activeScanSessionId,
+      activeScanStatus,
+    })) {
       return;
     }
 
     const timer = setTimeout(() => {
-      setScreenKey('scan');
+      transitionScreen('scan', 'plan_loading_timer_completed');
     }, 2500);
 
     return () => clearTimeout(timer);
-  }, [screenKey, selectedScanImage?.uri]);
+  }, [activeScanSessionId, activeScanStatus, screenKey]);
 
   const progress = useMemo(() => {
     const index = progressSteps.indexOf(screenKey);
@@ -157,17 +208,22 @@ export function WelcomeScreen() {
 
     // Skip the 'loading' (Building Your Plan) step when navigating back from scan
     if (screenKey === 'scan') {
-      setScreenKey('reminder');
+      transitionScreen('reminder', 'back_from_scan');
       return;
     }
 
-    setScreenKey(progressSteps[currentIndex - 1]);
+    transitionScreen(progressSteps[currentIndex - 1], 'back_navigation');
   };
 
   const advance = () => {
+    if (screenKey === 'weeklyGoal' || screenKey === 'reminder' || screenKey === 'loading') {
+      transitionScreen(getNextOnboardingPlanScreen(screenKey), 'onboarding_step_advanced');
+      return;
+    }
+
     const currentIndex = progressSteps.indexOf(screenKey);
     if (currentIndex >= 0 && currentIndex < progressSteps.length - 1) {
-      setScreenKey(progressSteps[currentIndex + 1]);
+      transitionScreen(progressSteps[currentIndex + 1], 'onboarding_step_advanced');
     }
   };
 
@@ -187,6 +243,12 @@ export function WelcomeScreen() {
   };
 
   const takePhoto = async () => {
+    if (isScanSubmittingRef.current) {
+      return;
+    }
+    isScanSubmittingRef.current = true;
+    setScanError(null);
+    imageTraceLog('WelcomeScreen', { stage: 'lock_acquired', source: 'camera' });
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
@@ -200,60 +262,112 @@ export function WelcomeScreen() {
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: false,
         base64: false,
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 1,
       });
 
       if (result.canceled || result.assets.length === 0) {
+        imageTraceLog('WelcomeScreen', { stage: 'picker_canceled', source: 'camera' });
         return;
       }
 
+      imageTraceLog('WelcomeScreen', { stage: 'picker_asset_received', source: 'camera', asset: getAssetLogSummary(result.assets[0]) });
       await startOnboardingScan('camera', await getImageMetadata(result.assets[0], 'camera'));
     } catch (error) {
+      const friendlyMessage = getOnboardingImageErrorMessage(error, 'Camera unavailable.');
+      imageTraceLog('WelcomeScreen', { stage: 'caught_error', source: 'camera', error: serializeError(error) });
       track(analyticsEvents.RESULT_ERROR, {
-        errorMessage: error instanceof Error ? error.message : 'Camera unavailable.',
+        errorMessage: friendlyMessage,
         screen: 'WelcomeScreen',
         source: 'camera',
       });
-      Alert.alert('Camera unavailable', 'Use Upload from Photos instead.');
+      if (isOnboardingImageUnavailableError(error)) {
+        transitionScreen('scan', 'camera_error');
+        setScanError(friendlyMessage);
+      } else {
+        transitionScreen('scan', 'camera_error');
+        setScanError(friendlyMessage);
+      }
+    } finally {
+      isScanSubmittingRef.current = false;
+      imageTraceLog('WelcomeScreen', { stage: 'lock_released', source: 'camera' });
     }
   };
 
   const uploadFromPhotos = async () => {
+    if (isScanSubmittingRef.current) {
+      return;
+    }
+    isScanSubmittingRef.current = true;
+    setScanError(null);
+    imageTraceLog('WelcomeScreen', { stage: 'lock_acquired', source: 'photos' });
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: false,
         base64: false,
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 1,
       });
 
       if (result.canceled || result.assets.length === 0) {
+        imageTraceLog('WelcomeScreen', { stage: 'picker_canceled', source: 'photos' });
         return;
       }
 
+      imageTraceLog('WelcomeScreen', { stage: 'picker_asset_received', source: 'photos', asset: getAssetLogSummary(result.assets[0]) });
       await startOnboardingScan('photos', await getImageMetadata(result.assets[0], 'photos'));
     } catch (error) {
+      const friendlyMessage = getOnboardingImageErrorMessage(error, 'Image picker failed.');
+      imageTraceLog('WelcomeScreen', { stage: 'caught_error', source: 'photos', error: serializeError(error) });
       track(analyticsEvents.RESULT_ERROR, {
-        errorMessage: error instanceof Error ? error.message : 'Image picker failed.',
+        errorMessage: friendlyMessage,
         screen: 'WelcomeScreen',
         source: 'photos',
       });
-      Alert.alert('Photo upload unavailable', 'Okyo could not open your photo library. Try again.');
+      if (isOnboardingImageUnavailableError(error)) {
+        transitionScreen('scan', 'photos_error');
+        setScanError(friendlyMessage);
+      } else {
+        transitionScreen('scan', 'photos_error');
+        setScanError(friendlyMessage);
+      }
+    } finally {
+      isScanSubmittingRef.current = false;
+      imageTraceLog('WelcomeScreen', { stage: 'lock_released', source: 'photos' });
     }
   };
 
-  const startOnboardingScan = async (source: ScanSource, image?: ScanImageMetadata) => {
-    if (isScanSubmitting) {
+  const startOnboardingScan = async (source: ScanSource, image: ScanImageMetadata | null | undefined) => {
+    const startDecision = getOnboardingScanStartDecision(isScanSubmitting, image);
+    if (!startDecision.canStart) {
+      if (startDecision.reason !== 'scan_already_submitting') {
+        transitionScreen('scan', 'missing_onboarding_image');
+        setScanError(getMissingOnboardingImageError());
+      }
+      return;
+    }
+
+    const processedImage = startDecision.image;
+    imageTraceLog('WelcomeScreen', { stage: 'copyToDocuments_started', source, uri: processedImage.uri });
+    let preparedImage = processedImage;
+    try {
+      const persistedImage = await copyToDocuments(processedImage);
+      imageTraceLog('WelcomeScreen', { stage: 'persisted_uri', source, uri: persistedImage.uri });
+      const persistedExists = await checkImageFileExists(persistedImage.uri);
+      imageTraceLog('WelcomeScreen', { stage: 'persisted_file_existence_result', source, uri: persistedImage.uri, exists: persistedExists });
+      preparedImage = !persistedExists && persistedImage.uri !== processedImage.uri ? processedImage : persistedImage;
+      imageTraceLog('WelcomeScreen', { stage: 'prepared_uri', source, uri: preparedImage.uri });
+    } catch (error) {
+      imageTraceLog('WelcomeScreen', { stage: 'local_preparation_failed', source, error: serializeError(error) });
+      transitionScreen('scan', 'local_image_preparation_failed');
+      setScanError(error instanceof Error ? error.message : getMissingOnboardingImageError());
       return;
     }
 
     const scanSessionId = createScanSessionId(source);
-    const persistedImage = (image && !image.placeholder) ? await copyToDocuments(image) : image;
-    const previewImage = getPreviewImageMetadata(persistedImage);
+    const previewImage = getPreviewImageMetadata(preparedImage);
     setIsScanSubmitting(true);
     setScanError(null);
-    setScreenKey('loading');
     track(analyticsEvents.SCAN_STARTED, { screen: 'WelcomeScreen', source });
     beginLatestScanSession({
       scanSessionId,
@@ -263,28 +377,39 @@ export function WelcomeScreen() {
       latestScanRecipe: null,
       selectedScanImage: previewImage,
       latestAiDebugMetadata: null,
+      mealDescription: null,
       source,
       reason: 'WelcomeScreen.startOnboardingScan',
     });
+    setLoadingImageUri(previewImage?.uri ?? null);
+    loadingScanSessionIdRef.current = scanSessionId;
+    imageTraceLog('WelcomeScreen', { stage: 'scan_session_created', source, scanSessionId, uri: preparedImage.uri });
+    transitionScreen('loading', 'scan_session_created');
+    imageTraceLog('WelcomeScreen', { stage: 'loading_started', source, scanSessionId });
 
     try {
-      const result = await createMockScan({ image, mode: selectedMode, source });
+      imageTraceLog('WelcomeScreen', { stage: 'createMockScan_called', source, scanSessionId, uri: preparedImage.uri });
+      const result = await createMockScan({ image: preparedImage, mode: selectedMode, source });
+      imageTraceLog('WelcomeScreen', { stage: 'request_succeeded', source, scanSessionId });
       if (!isActiveScanSession(scanSessionId)) {
         return;
       }
 
       const handled = handleScanResult({
-        fallbackImage: persistedImage,
+        selectedImage: preparedImage,
         result,
         scanSessionId,
         source,
       });
 
       if (!handled) {
-        setScreenKey('scan');
+        loadingScanSessionIdRef.current = null;
+        setLoadingImageUri(null);
+        transitionScreen('scan', 'scan_result_unusable');
         setScanError(getScanFailureReason(result));
       }
     } catch (error) {
+      imageTraceLog('WelcomeScreen', { stage: 'request_failed', source, scanSessionId, error: serializeError(error) });
       if (!isActiveScanSession(scanSessionId)) {
         return;
       }
@@ -307,23 +432,28 @@ export function WelcomeScreen() {
           fallbackReason: 'mobile_api_unavailable',
           confidence: 0,
         },
+        mealDescription: null,
         source,
         reason: 'WelcomeScreen.api_error',
       });
-      setScreenKey('scan');
+      loadingScanSessionIdRef.current = null;
+      setLoadingImageUri(null);
+      transitionScreen('scan', 'scan_request_failed');
       setScanError(failureReason);
     } finally {
-      setIsScanSubmitting(false);
+      if (isActiveScanSession(scanSessionId)) {
+        setIsScanSubmitting(false);
+      }
     }
   };
 
   const handleScanResult = ({
-    fallbackImage,
+    selectedImage,
     result,
     scanSessionId,
     source,
   }: {
-    fallbackImage?: ScanImageMetadata;
+    selectedImage: ScanImageMetadata;
     result: CreateScanResult;
     scanSessionId: string;
     source: ScanSource;
@@ -331,11 +461,12 @@ export function WelcomeScreen() {
     const status = result.status ?? 'success';
     const recipes = getScanRecipes(result);
     const selectedRecipe = getScanRecipeForMode(recipes, selectedMode, result.recipe);
-    const responseImage = getPreviewImageMetadata(result.image ?? fallbackImage);
+    const responseImage = getPreviewImageMetadata(getOnboardingResponseImage(selectedImage, result));
     const aiDebugMetadata = getAiDebugMetadata(result);
     const canRevealResult = Boolean(
       result.scan &&
       selectedRecipe &&
+      hasCompleteOnboardingRecipe(selectedRecipe) &&
       isUsableScan({
         recipes,
         result,
@@ -355,12 +486,15 @@ export function WelcomeScreen() {
         latestScanRecipe: selectedRecipe,
         selectedScanImage: responseImage,
         latestAiDebugMetadata: aiDebugMetadata,
+        mealDescription: null,
         source,
         reason: 'WelcomeScreen.api_success',
       });
       markFirstOnboardingScanCompleted();
       markFirstOnboardingResultSeen();
-      setScreenKey('firstResult');
+      loadingScanSessionIdRef.current = null;
+      setLoadingImageUri(null);
+      transitionScreen('firstResult', 'scan_request_succeeded');
       return true;
     }
 
@@ -378,6 +512,7 @@ export function WelcomeScreen() {
       latestScanRecipe: null,
       selectedScanImage: responseImage,
       latestAiDebugMetadata: aiDebugMetadata,
+      mealDescription: null,
       source,
       reason: 'WelcomeScreen.api_failure',
     });
@@ -386,16 +521,37 @@ export function WelcomeScreen() {
 
   const showPaywall = () => {
     markPaywallShown();
-    setScreenKey('paywall');
+    transitionScreen('paywall', 'first_result_continue');
   };
 
-  const finishOnboarding = () => {
-    markPaywallShown();
-    track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'WelcomeScreen' });
-    completeOnboarding();
-    if (notificationChoice === 'remind_me') {
-      scheduleOkyoDailyReminder();
+  // Real purchase path: only reachable when purchasesAvailable is true (never
+  // in this build). Premium is only ever granted after a confirmed provider
+  // entitlement — never optimistically, and never on cancel/error.
+  const requestPurchase = (_plan: 'annual' | 'weekly') => {
+    if (!purchasesAvailable) {
+      return;
     }
+    // No purchase provider is wired into this build, so there is nothing to
+    // call here yet. When one is connected, this becomes: start the native
+    // purchase flow, and only on a confirmed successful entitlement call
+    // setPremium(true) and completeOnboarding() — cancellation or an error
+    // must leave the user non-premium with onboarding still in progress.
+  };
+
+  const restorePurchases = () => {
+    Alert.alert(
+      'Purchases aren’t active yet',
+      'Restore Purchases is not connected in this build, so Okyo could not confirm an entitlement.',
+    );
+  };
+
+  // Honest fallback when no purchase provider is connected: complete
+  // onboarding, persist that completion, and continue as a non-premium user.
+  // Never grants premium, never charges, never claims a trial started.
+  const continueWithoutPurchase = () => {
+    track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'WelcomeScreen', premium: false });
+    setPremium(false);
+    completeOnboarding();
   };
 
   // ── Screen rendering ────────────────────────────────────────────────────────
@@ -411,34 +567,56 @@ export function WelcomeScreen() {
   if (screenKey === 'loading') {
     return (
       <OnboardingLoadingScreen
+        hasValidatedRecipe={Boolean(latestScanRecipe) && activeScanStatus === 'success'}
         progress={progress}
-        userImageUri={selectedScanImage?.uri}
+        scanSessionId={activeScanSessionId}
+        scanStatus={activeScanStatus}
+        userImageUri={loadingImageUri ?? selectedScanImage?.uri}
       />
     );
   }
 
-  if (screenKey === 'firstResult' && resultRecipe) {
+  if (screenKey === 'firstResult' && resultRecipe && selectedScanImage?.uri) {
     return (
       <OnboardingFirstResultScreen
-        confidence={latestScanResult?.confidence}
-        difficulty={resultRecipe.difficulty}
-        imageStatus={resultRecipe.imageStatus}
-        imageUri={selectedScanImage?.uri}
-        imageUrl={resultRecipe.imageUrl}
-        recipeDescription={resultRecipe.description}
+        imageUri={selectedScanImage.uri}
         recipeTitle={getFirstResultTitle(latestScanResult?.dishName, resultRecipe.title)}
-        savingsText={getSavingsText(latestScanResult, resultRecipe)}
-        timeText={getTimeText(resultRecipe)}
+        recipe={resultRecipe}
         onContinue={showPaywall}
       />
+    );
+  }
+
+  if (screenKey === 'firstResult') {
+    const fallbackScreen = getOnboardingResultFallbackScreen();
+    return (
+      <OnboardingScreenShell
+        canGoBack={false}
+        footer={getFooter(fallbackScreen, {
+          selectedWeeklyGoal,
+          onCommitWeeklyGoal: commitWeeklyGoal,
+          onRemindMe: remindMe,
+          onSkipReminder: skipReminder,
+        })}
+        progress={progress}
+      >
+        <ScanIntroScreen
+          errorMessage="Okyo could not load that recipe result. Choose the photo again to retry."
+          isSubmitting={isScanSubmitting}
+          onTakePhoto={takePhoto}
+          onUpload={uploadFromPhotos}
+        />
+      </OnboardingScreenShell>
     );
   }
 
   if (screenKey === 'paywall') {
     return (
       <OnboardingPaywallScreen
-        onContinue={finishOnboarding}
-        onRestore={() => Alert.alert('Restore Purchases', 'Purchases are not active in this build yet.')}
+        onContinueWithoutPurchase={continueWithoutPurchase}
+        onPurchase={requestPurchase}
+        onRestore={restorePurchases}
+        purchasesAvailable={purchasesAvailable}
       />
     );
   }
@@ -647,7 +825,7 @@ function ScanIntroScreen({
     <View style={styles.screenBlock}>
       <KikoSpeechBubble
         pose="scanning"
-        text="Now show me what you're craving 👀"
+        text="Now show me what you're craving."
       />
       <OnboardingScanCard
         errorMessage={errorMessage}
@@ -734,7 +912,17 @@ function getAiDebugMetadata(result: CreateScanResult): AiDebugMetadata | null {
 }
 
 async function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: ScanSource): Promise<ScanImageMetadata> {
+  imageTraceLog('WelcomeScreen', { stage: 'original_uri', source, uri: asset.uri });
+  const originalExists = await checkImageFileExists(asset.uri);
+  imageTraceLog('WelcomeScreen', { stage: 'original_file_existence_result', source, uri: asset.uri, exists: originalExists });
+  imageTraceLog('WelcomeScreen', { stage: 'image_processing_started', source, uri: asset.uri });
   const processed = await getProcessedImage(asset);
+  const processedUri = getOnboardingUploadUri(processed.uri, asset.uri);
+  const processedExists = await checkImageFileExists(processedUri);
+  imageTraceLog('WelcomeScreen', { stage: 'processed_uri', source, uri: processedUri, exists: processedExists, conversionError: processed.conversionError });
+  if (!processed.uri || processed.conversionError === 'image_processing_failed') {
+    throw new OnboardingImageUnavailableError();
+  }
   const dataUrl = getImageDataUrl(processed.base64, processed.mimeType);
   const dataUrlSizeBytes = dataUrl ? dataUrl.length : undefined;
   const shouldSendDataUrl = Boolean(dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes);
@@ -748,7 +936,7 @@ async function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: Sca
     dataUrl: shouldSendDataUrl ? dataUrl : undefined,
     dataUrlSizeBytes,
     source,
-    uri: processed.uri ?? asset.uri,
+    uri: processedUri,
     width: processed.width ?? asset.width,
     conversionError: shouldSendDataUrl
       ? undefined
@@ -801,7 +989,8 @@ async function getProcessedImage(asset: ImagePicker.ImagePickerAsset) {
       if (dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes) {
         return latestResult;
       }
-    } catch (_error) {
+    } catch (error) {
+      imageTraceLog('WelcomeScreen', { stage: 'image_processing_attempt_failed', error: serializeError(error), maxWidth: attempt.maxWidth, compress: attempt.compress });
       latestResult = {
         height: asset.height,
         mimeType: asset.mimeType ?? getMimeTypeFromFileName(asset.fileName) ?? 'image/jpeg',
@@ -862,6 +1051,14 @@ function getPreviewImageMetadata(image: ScanImageMetadata | undefined): ScanImag
   return previewImage;
 }
 
+function getAssetLogSummary(asset: ImagePicker.ImagePickerAsset) {
+  return { uri: asset.uri, width: asset.width, height: asset.height, mimeType: asset.mimeType, fileName: asset.fileName, fileSize: asset.fileSize };
+}
+
+function serializeError(error: unknown) {
+  return { name: error instanceof Error ? error.name : typeof error, message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined };
+}
+
 function getScanFailureReason(result: CreateScanResult) {
   if (
     result.fallbackReason === 'image_not_available_to_ai' ||
@@ -908,20 +1105,17 @@ function getFirstResultTitle(dishName: string | undefined, recipeTitle: string) 
   return recipeTitle;
 }
 
-function getSavingsText(scanResult: { estimatedSavings: number; restaurantPrice: number } | null, recipe: Recipe) {
-  const estimatedSavings = scanResult?.estimatedSavings ?? recipe.estimatedSavings;
-  const restaurantPrice = scanResult?.restaurantPrice ?? 0;
-
-  if (restaurantPrice > 0 && estimatedSavings > 0) {
-    return `$${estimatedSavings.toFixed(2)}`;
-  }
-
-  return `$${recipe.estimatedHomemadeCost.toFixed(2)}`;
-}
-
-function getTimeText(recipe: Recipe) {
-  const totalTime = recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes;
-  return `${totalTime} min`;
+function hasCompleteOnboardingRecipe(recipe: Recipe | null | undefined) {
+  return Boolean(
+    recipe?.title?.trim() &&
+    recipe.description?.trim() &&
+    Array.isArray(recipe.ingredients) &&
+    recipe.ingredients.length > 0 &&
+    recipe.ingredients.every((ingredient) => ingredient.name?.trim() && ingredient.quantity?.trim()) &&
+    Array.isArray(recipe.steps) &&
+    recipe.steps.length > 0 &&
+    recipe.steps.every((step) => step?.trim()),
+  );
 }
 
 function createScanSessionId(source: ScanSource) {
@@ -929,11 +1123,30 @@ function createScanSessionId(source: ScanSource) {
 }
 
 function isActiveScanSession(scanSessionId: string) {
-  return useOkyoStore.getState().scanSessionId === scanSessionId;
+  return isCurrentOnboardingScanSession(useOkyoStore.getState().scanSessionId, scanSessionId);
 }
 
 function noop() {
   // Keeps scan actions inert while a scan request is already in flight.
+}
+
+class OnboardingImageUnavailableError extends Error {
+  constructor() {
+    super(getMissingOnboardingImageError());
+    this.name = 'OnboardingImageUnavailableError';
+  }
+}
+
+function isOnboardingImageUnavailableError(error: unknown) {
+  return error instanceof OnboardingImageUnavailableError;
+}
+
+function getOnboardingImageErrorMessage(error: unknown, fallback: string) {
+  return isOnboardingImageUnavailableError(error)
+    ? getMissingOnboardingImageError()
+    : error instanceof Error
+      ? error.message
+      : fallback;
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────

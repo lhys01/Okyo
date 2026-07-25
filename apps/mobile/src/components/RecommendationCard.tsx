@@ -39,9 +39,14 @@ export function RecommendationCard({ recipe, onPress }: RecommendationCardProps)
 
 const styles = StyleSheet.create({
   card: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
     borderRadius: radius.card,
+    minHeight: 278,
     overflow: 'hidden',
     width: '48%',
+    ...shadows.card,
   },
   art: {
     alignItems: 'center',
@@ -65,6 +70,7 @@ const styles = StyleSheet.create({
   },
   body: {
     gap: 4,
+    flex: 1,
     padding: 12,
   },
   title: {

@@ -18,7 +18,6 @@ export type ShareScanContext = {
 export type RootStackParamList = {
   WelcomeScreen: undefined;
   GoalScreen: undefined;
-  ScanScreen: undefined;
   AnalysisLoadingScreen: { scanSessionId?: string } | undefined;
   ResultSummaryScreen: { scanSessionId?: string } | undefined;
   ShareCardPreviewScreen:
@@ -33,13 +32,13 @@ export type RootStackParamList = {
   SettingsScreen: undefined;
   RecommendationCategoryScreen: { category?: string } | undefined;
   KitchenLetterScreen: undefined;
+  DescribeMealScreen: { initialDescription?: string } | undefined;
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
 };
 
 export type MainTabParamList = {
   HomeScreen: undefined;
   RestaurantPacksScreen: undefined;
-  ScanScreen: undefined;
   LibraryScreen: undefined;
   ProfileScreen: undefined;
   SettingsScreen: undefined;

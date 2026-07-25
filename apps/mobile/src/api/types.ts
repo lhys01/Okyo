@@ -16,7 +16,7 @@ export type ApiResponse<T> =
       };
     };
 
-export type ScanSource = 'camera' | 'photos' | 'mock';
+export type ScanSource = 'camera' | 'photos' | 'description' | 'mock';
 
 export type AiSource = 'openrouter_ai' | 'mock_ai' | 'fallback_ai';
 export type ScanStatus = 'success' | 'partial' | 'rejected' | 'failed';
@@ -49,6 +49,13 @@ export type CreateScanRequest = {
   source: ScanSource;
   mode?: RecipeMode;
   image?: ScanImageMetadata;
+  mealDescription?: string;
+};
+
+export type CorrectRecipeRequest = {
+  correctionNote: string;
+  dishNameOverride?: string;
+  mode?: RecipeMode;
 };
 
 export type CreateScanResult = {

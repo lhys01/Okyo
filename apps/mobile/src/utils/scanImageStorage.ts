@@ -16,7 +16,8 @@ export async function copyToDocuments(image: ScanImageMetadata): Promise<ScanIma
     const permanentUri = `${dir}scan-${Date.now()}.${ext}`;
     await FileSystem.copyAsync({ from: image.uri, to: permanentUri });
     return { ...image, uri: permanentUri };
-  } catch {
+  } catch (error) {
+    if (__DEV__) console.warn('[Okyo ImageTrace]', { stage: 'copyToDocuments_failed_fallback_to_processed_uri', uri: image.uri, error: String(error) });
     return image;
   }
 }

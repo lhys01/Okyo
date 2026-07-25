@@ -120,7 +120,7 @@ export function SavingsDashboardScreen() {
 
   const goToScan = () => {
     uiLog('SavingsDashboardScreen', 'scan_another_craving');
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
   // Savings is pushed from Home/Profile with its native header hidden, so it

@@ -25,6 +25,7 @@ export type {
   RecipeIngredientGroup,
   RecipeMode,
   RecipeStep,
+  NutritionEstimate,
   RestaurantPack,
   RestaurantPackDish,
   ScanResult,

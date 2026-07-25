@@ -7,6 +7,7 @@ import { colors } from '../components/OkyoUI';
 import { AnalysisLoadingScreen } from '../screens/AnalysisLoadingScreen';
 import { ChallengeCompleteScreen } from '../screens/ChallengeCompleteScreen';
 import { DupeChallengeScreen } from '../screens/DupeChallengeScreen';
+import { DescribeMealScreen } from '../screens/DescribeMealScreen';
 import { GoalScreen } from '../screens/GoalScreen';
 import { PaywallScreen } from '../screens/PaywallScreen';
 import { RestaurantPackDetailScreen } from '../screens/RestaurantPackDetailScreen';
@@ -15,7 +16,6 @@ import { KitchenLetterScreen } from '../screens/KitchenLetterScreen';
 import { RankingsScreen } from '../screens/RankingsScreen';
 import { RecommendationCategoryScreen } from '../screens/RecommendationCategoryScreen';
 import { SavingsDashboardScreen } from '../screens/SavingsDashboardScreen';
-import { ScanScreen } from '../screens/ScanScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
@@ -121,7 +121,7 @@ export function AppNavigator() {
     }}
   >
       <Stack.Screen name="GoalScreen" component={GoalScreen} options={{ title: 'Goal' }} />
-      <Stack.Screen name="ScanScreen" component={ScanScreen} options={{ headerShown: false, title: 'Scan' }} />
+      <Stack.Screen name="DescribeMealScreen" component={DescribeMealScreen} options={{ headerShown: false, title: 'Describe a meal' }} />
       <Stack.Screen
         name="AnalysisLoadingScreen"
         component={AnalysisLoadingScreen}

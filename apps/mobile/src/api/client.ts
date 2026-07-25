@@ -1,8 +1,23 @@
 import { OKYO_API_BASE_URL, OKYO_API_TIMEOUT_MS, OKYO_DEV_MODEL_OVERRIDE } from './config';
-import type { ApiResponse, CreateScanRequest, CreateScanResult } from './types';
+import type { ApiResponse, CorrectRecipeRequest, CreateScanRequest, CreateScanResult } from './types';
 
 export async function createMockScan(request: CreateScanRequest): Promise<CreateScanResult> {
   return postJson<CreateScanResult>('/v1/scans', request);
+}
+
+export async function createTextRecipe(mealDescription: string, mode: CreateScanRequest['mode']): Promise<CreateScanResult> {
+  return postJson<CreateScanResult>('/v1/scans', {
+    mealDescription,
+    mode,
+    source: 'description',
+  });
+}
+
+// Regenerates a recipe from a user correction (wrong dish identified) without
+// retaking the photo. Reuses the same scan-result shape as createMockScan so
+// callers can treat the response identically.
+export async function correctScanRecipe(recipeId: string, request: CorrectRecipeRequest): Promise<CreateScanResult> {
+  return postJson<CreateScanResult>(`/v1/recipes/${encodeURIComponent(recipeId)}/correct`, request);
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {

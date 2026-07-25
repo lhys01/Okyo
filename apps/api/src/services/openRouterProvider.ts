@@ -300,6 +300,13 @@ const recipeVariantSchema = z.object({
   servings: z.union([z.number(), z.string()]).optional(),
   skillLevel: z.string().optional().default(''),
   difficulty: z.string().optional().default(''),
+  nutritionEstimate: z.object({
+    calories: z.number().finite().nonnegative().max(5000),
+    proteinGrams: z.number().finite().nonnegative().max(300),
+    carbohydratesGrams: z.number().finite().nonnegative().max(500),
+    fatGrams: z.number().finite().nonnegative().max(300),
+    fiberGrams: z.number().finite().nonnegative().max(150).optional(),
+  }).optional(),
 });
 
 // One scan -> one canonical recipe. The AI returns a single recipe object
@@ -1107,21 +1114,14 @@ function normalizeProviderStepsDeterministically(
   });
 }
 
-function repairStepInstructionText(text: string, ingredientRefs: string[]): string {
+export function repairStepInstructionText(text: string, ingredientRefs: string[]): string {
   const ingredients = formatIngredientReferences(ingredientRefs);
   const base = text.trim();
   if (!base || vagueStepPattern.test(base.toLowerCase())) {
-    return `Cook ${ingredients} for 5 minutes until hot, glossy, and cooked through.`;
+    return `Handle ${ingredients} as directed.`;
   }
 
-  let repaired = base;
-  if (!/\b\d+\s*(?:seconds?|minutes?|mins?|hours?|hrs?)\b/i.test(repaired)) {
-    repaired = repaired.replace(/[.!?]?\s*$/, ' for 2 minutes.');
-  }
-  if (!/\buntil\b|\bwhen\b|\blook(?:s)?\b|\bgolden\b|\btender\b|\bglossy\b|\bcrisp\b|\bhot\b|\bfragrant\b|\bopaque\b|\bpink\b/i.test(repaired)) {
-    repaired = repaired.replace(/[.!?]?\s*$/, ' until hot and evenly coated.');
-  }
-  return repaired;
+  return base;
 }
 
 function inferStepIngredientReferences(text: string, ingredients: string[]): string[] {
@@ -1691,7 +1691,7 @@ function getRecipeRepairPrompt(
     `Your previous recipe JSON for "${analysis.dishName}" had quality problems: ${issues.join(', ')}.`,
     'Rewrite it so a beginner can cook it with zero guessing. Return ONLY valid minified JSON, same single-recipe shape as before.',
     'Return exactly ONE recipe object: {"dishName":"...","title":"...", ...recipe fields..., "steps":[...]}. No modes, no variants, no "selectedMode".',
-    'Fix every problem: NEVER write "the main ingredient" or "main ingredient" — name the actual food. Every ingredient must start with an exact amount and a real grocery name. Every step must name real ingredients with amounts, a time, and a visual cue. No "cook until done", "prepare the ingredients", "season to taste", or "mix everything".',
+    'Fix every problem: NEVER write "the main ingredient" or "main ingredient" — name the actual food. Every ingredient must start with an exact amount and a real grocery name. Cooking steps should include grounded timing and a visual cue when they genuinely apply; prep, assembly, garnish, and serving steps must not invent durations. No "cook until done", "prepare the ingredients", "season to taste", or "mix everything".',
     'PHASE ORDER IS MANDATORY: Every step object MUST include "phase" (integer 1-6). Steps must be in phase order — 1 Preparation, 2 Setup, 3 Cooking, 4 Assembly, 5 Finishing, 6 Serving. Phase numbers must never decrease. Phase 6 Serving MUST be the final step and can NEVER appear before phase 3 Cooking.',
     'STEP CONTRACT IS MANDATORY: Every step object MUST include "stepNumber" (integer, starts at 1, strictly sequential, no gaps), "title" (2-4 word action phrase), "step" (one clear instruction sentence), "ingredients" (array of ingredient names used in this step — never empty), and "tools" (array of tool names used in this step — never empty, no duplicates).',
     'Keep 6-12 ingredients and 8-14 steps (6-8 for drinks or salads).',
@@ -1703,6 +1703,7 @@ function getRecipeRepairPrompt(
       likelyIngredients: analysis.likelyIngredients.slice(0, 8),
       visibleComponents: analysis.visibleComponents,
     })}`,
+    ...(analysis.mealDescription ? [`User meal description: ${JSON.stringify(analysis.mealDescription)}. Treat it as the source of truth for the dish concept; do not invent a different meal.`] : []),
   ].join('\n');
 }
 
@@ -1718,7 +1719,7 @@ function getCombinedRecipeRepairPrompt(
     'Fix all structural and quality problems in this single response. There will be no second repair pass.',
     'Every ingredient must start with an exact amount and real grocery name. Preserve core visible/likely ingredients unless truly unsafe or impossible.',
     'Every step object must include stepNumber, phase, title, step, ingredients, and tools. stepNumber starts at 1 and is sequential. ingredients/tools cannot be empty.',
-    'Every step sentence must include real ingredient names, a time, and a visible completion cue. Never write "cook until done", "season to taste", "prepare the ingredients", or "mix everything".',
+    'Every step sentence must include real ingredient names. Include a time or visible completion cue when it is grounded in the action; never invent timing for chopping, mixing, plating, garnish, or serving. Never write "cook until done", "season to taste", "prepare the ingredients", or "mix everything".',
     'Keep food safety strict: poultry internal temperature must be 165°F / 74°C, and do not weaken raw-fish or ingredient-closure requirements.',
     `Current recipe: ${JSON.stringify(badOutput)}`,
     `Food: ${JSON.stringify({
@@ -2071,7 +2072,8 @@ function getRecipePrompt(
     `The recipe MUST be a homemade version of "${analysis.dishName}" as scanned. Do not switch dishes or add alcohol.`,
     'Return ONLY valid minified JSON. No markdown, no prose, no reasoning, no extra text.',
     'Return exactly ONE recipe object starting with {. One recipe only — no modes, variants, or multiple recipes.',
-    `Recipe fields: dishName, title, description, ingredients, equipment, steps, avoidMistake, substitutions, storageAndReheating, spicePairings, prepTime, cookTime, totalTime, servings, skillLevel${isPlatter ? ', ingredientGroups' : ''}.`,
+    `Recipe fields: dishName, title, description, ingredients, equipment, steps, avoidMistake, substitutions, storageAndReheating, spicePairings, prepTime, cookTime, totalTime, servings, skillLevel, nutritionEstimate${isPlatter ? ', ingredientGroups' : ''}.`,
+    'nutritionEstimate is optional. When included, use cautious numeric per-serving estimates: calories, proteinGrams, carbohydratesGrams, fatGrams, and optional fiberGrams. Omit it when the description does not support a reasonable estimate.',
     isPlatter
       ? platterComponentNames.length > 0
         ? `REQUIRED COMPONENTS — generate exactly one ingredientGroup per item listed (2-4 ingredients each with exact amounts): ${platterComponentNames.map((c, i) => `${i + 1}. ${c}`).join(', ')}. ingredientGroups shape: [{"component":"<name>","items":["2 cups rice",...]},...] Steps: 1-2 concise steps per component.`
@@ -2084,12 +2086,12 @@ function getRecipePrompt(
     'MANGO STICKY RICE FORMAT: Ingredients MUST be exactly: sticky rice (glutinous), ripe mangoes, coconut milk (ONE can only — never both coconut milk AND coconut cream as separate items), sugar, salt. Optional: sesame seeds or toasted coconut flakes. MAX 7 ingredients total. Never list "coconut sauce" AND "coconut cream" as separate ingredients — they are the same thing. Never list "ripe mangoes" AND "diced mango" — pick one. Steps: soak/rinse rice → steam rice → warm coconut milk + sugar + salt → fold sauce into rice → slice mango → plate and drizzle. Max 7 steps.',
     'COOKABLE NOT VISIBLE: Do not list only the visible toppings. Infer the hidden essentials needed to actually cook a believable home version — cooking oil/fat, salt, seasoning, sauce COMPONENTS (not just "sauce"), and aromatics. Every recipe must be cookable from the ingredient list alone. Dumplings/wontons need wrapper-or-frozen-base + filling-or-shortcut + aromatics + sauce. Pick ONE coherent strategy: either a from-scratch version (wrappers + filling) OR a shortcut version (e.g. frozen dumplings) — never mix both.',
     'NO DUPLICATE INGREDIENTS: Each ingredient concept appears exactly once. soy sauce appears once with the total quantity for the whole recipe. RICE SEASONING: use either "seasoned rice vinegar" (1 ingredient) OR separate rice vinegar + sugar + salt (3 ingredients) — never both strategies in the same recipe.',
-    'STEP HYGIENE: Never create standalone steps titled "Combine Ingredients", "Heat Mixture", "Cool and Store", or "Gather Ingredients" — fold these into the adjacent cooking step. Storage notes belong in storageAndReheating, not in steps.',
+    'STEP HYGIENE: Never create standalone steps titled "Combine Ingredients", "Heat Mixture", "Cool and Store", or "Gather Ingredients" — fold these into the adjacent cooking step. Storage notes belong in storageAndReheating, not in steps. Never duplicate a step or append the same timing/completion phrase to unrelated steps. Serving and garnish steps should not contain fake durations.',
     'SIMPLE FOODS: Plain fruit (watermelon cubes, berries, grapes, banana, sliced melon) = the fruit itself only. Do NOT add feta, mint, honey, nuts, granola, yogurt, dressing, or any chef addition unless clearly visible in the scan or named in the title. Watermelon cubes → ["4 cups watermelon, cubed"], optionally ["1 lime", "1/4 tsp Tajín or salt"]. Never create a salad from a plain fruit scan. Same rule for plain boiled eggs and plain toast.',
     'Ingredients: STRINGS ONLY — ["2 large eggs", "1 tbsp olive oil"]. Each element is a plain string starting with an exact amount. Never output ingredient objects.',
     'COOKING PHASES: 1=Prep, 2=Setup, 3=Cook, 4=Assembly, 5=Finish, 6=Serve. Phases MUST NOT decrease. Phase 6 = ONLY the final serve/plate action — garnish, fresh herbs, and cheese are phase 5.',
     'Steps shape: {"stepNumber":1,"phase":1,"title":"Mince Garlic","step":"Mince 4 garlic cloves into 1mm pieces, about 30 seconds.","ingredients":["garlic"],"tools":["chef knife","cutting board"]}',
-    'Every step requires only those 6 keys. stepNumber starts 1 and increments by 1. step ≤22 words with amount, time, and visual cue. ingredients/tools are non-empty arrays.',
+    'Every step requires only those 6 keys. stepNumber starts 1 and increments by 1. step ≤22 words with amount and an action-appropriate timing or visual cue; do not invent timing for prep, assembly, garnish, or serving. ingredients/tools are non-empty arrays.',
     'Never write vague steps. Say exactly what to do, the time, and a visual/textural cue.',
     isDrink
       ? 'DRINK: title must say smoothie/latte/shake/juice. Steps: measure, blend or brew, taste, adjust, pour, garnish. No oven, no meat temperatures.'
@@ -2131,7 +2133,7 @@ function getRecipeStructureRepairPrompt(analysis: FoodImageAnalysis, issues: str
     `Your previous recipe JSON for "${analysis.dishName}" had structural problems: ${issues.join(', ')}.`,
     'Return ONLY valid minified JSON — ONE recipe object, no modes or variants.',
     'The "steps" field MUST be an array of 8-14 step OBJECTS (6-8 for drinks or salads). Copy this exact step shape: {"stepNumber":1,"phase":1,"title":"Prep Onion","step":"Finely dice 1 medium onion on a cutting board into 5mm pieces.","ingredients":["onion"],"tools":["chef knife","cutting board"]}',
-    'Every step object MUST include all 6 keys: "stepNumber" (integer — starts at 1, sequential, no gaps), "phase" (integer 1-6: 1=Prep,2=Setup,3=Cook,4=Assembly,5=Finish,6=Serve), "title" (2-4 word action phrase), "step" (one clear instruction with amount + time + visual cue), "ingredients" (non-empty array), "tools" (non-empty array).',
+    'Every step object MUST include all 6 keys: "stepNumber" (integer — starts at 1, sequential, no gaps), "phase" (integer 1-6: 1=Prep,2=Setup,3=Cook,4=Assembly,5=Finish,6=Serve), "title" (2-4 word action phrase), "step" (one clear instruction with amount and an action-appropriate time or visual cue; never invented timing), "ingredients" (non-empty array), "tools" (non-empty array).',
     'Never output a step as a plain string. Never leave ingredients or tools empty. Keep ingredients specific and tools real.',
     `Food: ${JSON.stringify({
       dishName: analysis.dishName,

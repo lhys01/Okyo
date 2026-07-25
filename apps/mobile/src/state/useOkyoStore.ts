@@ -58,6 +58,7 @@ export type LatestScanSession = {
   latestScanRecipe: Recipe | null;
   selectedScanImage: ScanImageMetadata | null;
   latestAiDebugMetadata: AiDebugMetadata | null;
+  mealDescription: string | null;
   source: ScanSource;
   updatedAt: string;
 };
@@ -95,6 +96,7 @@ type OkyoState = {
   latestScanRecipe: Recipe | null;
   selectedScanImage: ScanImageMetadata | null;
   latestAiDebugMetadata: AiDebugMetadata | null;
+  mealDescription: string | null;
   selectedMode: RecipeMode;
   savedRecipes: Recipe[];
   completedChallenges: CompletedChallenge[];
@@ -160,6 +162,7 @@ export const useOkyoStore = create<OkyoState>()(
       latestScanRecipe: null,
       selectedScanImage: null,
       latestAiDebugMetadata: null,
+      mealDescription: null,
       selectedMode: 'Restaurant Copy',
       savedRecipes: [],
       completedChallenges: [],
@@ -188,6 +191,7 @@ export const useOkyoStore = create<OkyoState>()(
           firstOnboardingScanCompleted: false,
           firstOnboardingResultSeen: false,
           paywallShown: false,
+          ...getClearedLatestScanState(),
         });
         onboardingPersistence.resetCompleted().catch((error: unknown) => {
           logDev('okyo_onboarding_completion_reset_failed', { error: String(error) });
@@ -437,6 +441,7 @@ export const useOkyoStore = create<OkyoState>()(
         latestScanRecipe: state.latestScanRecipe,
         selectedScanImage: state.selectedScanImage,
         latestAiDebugMetadata: state.latestAiDebugMetadata,
+        mealDescription: state.mealDescription,
         selectedMode: state.selectedMode,
         savedRecipes: state.savedRecipes,
         completedChallenges: state.completedChallenges,
@@ -515,6 +520,7 @@ function getLatestScanSessionState(latestScanSession: LatestScanSession) {
     latestScanRecipe: latestScanSession.latestScanRecipe,
     selectedScanImage: latestScanSession.selectedScanImage,
     latestAiDebugMetadata: latestScanSession.latestAiDebugMetadata,
+    mealDescription: latestScanSession.mealDescription,
   };
 }
 
@@ -528,6 +534,7 @@ function getClearedLatestScanState() {
     latestScanRecipe: null,
     selectedScanImage: null,
     latestAiDebugMetadata: null,
+    mealDescription: null,
   };
 }
 
