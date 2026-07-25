@@ -8,7 +8,7 @@ export type DetectedComponent = {
 
 export type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
-export type ScanSource = 'camera' | 'photos';
+export type ScanSource = 'camera' | 'photos' | 'description';
 
 export type ScanState =
   | 'clear_food'
@@ -162,6 +162,15 @@ export type Recipe = {
   spicePairings?: string[];
   cookingTerms?: CookingTerm[];
   isCompactRecipe?: boolean;
+  nutritionEstimate?: NutritionEstimate;
+};
+
+export type NutritionEstimate = {
+  calories: number;
+  proteinGrams: number;
+  carbohydratesGrams: number;
+  fatGrams: number;
+  fiberGrams?: number;
 };
 
 export type GroceryList = {

@@ -6,6 +6,13 @@ export type OnboardingScanStartDecision =
 
 export type OnboardingPlanScreen = 'weeklyGoal' | 'reminder' | 'loading' | 'scan';
 
+export type OnboardingScanLoadingState = {
+  activeScanSessionId: string | null | undefined;
+  activeScanStatus: string | null | undefined;
+  loadingScanSessionId: string | null | undefined;
+  screenKey: string;
+};
+
 export function getNextOnboardingPlanScreen(screen: OnboardingPlanScreen): OnboardingPlanScreen {
   if (screen === 'weeklyGoal') {
     return 'reminder';
@@ -64,6 +71,36 @@ export function isCurrentOnboardingScanSession(
   scanSessionId: string,
 ) {
   return activeScanSessionId === scanSessionId;
+}
+
+export function shouldKeepOnboardingScanLoading({
+  activeScanSessionId,
+  activeScanStatus,
+  loadingScanSessionId,
+  screenKey,
+}: OnboardingScanLoadingState) {
+  return (
+    screenKey === 'loading' &&
+    activeScanStatus === 'pending' &&
+    Boolean(loadingScanSessionId) &&
+    activeScanSessionId === loadingScanSessionId
+  );
+}
+
+export function getOnboardingScanResolutionScreen({
+  activeScanSessionId,
+  completedScanSessionId,
+  outcome,
+}: {
+  activeScanSessionId: string | null | undefined;
+  completedScanSessionId: string;
+  outcome: 'success' | 'failure';
+}) {
+  if (activeScanSessionId !== completedScanSessionId) {
+    return null;
+  }
+
+  return outcome === 'success' ? ('firstResult' as const) : ('scan' as const);
 }
 
 export function canUseScanStateForRoute(

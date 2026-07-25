@@ -272,7 +272,7 @@ export function ShareCardPreviewScreen() {
       return;
     }
 
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
   const shareCard = async () => {
@@ -362,7 +362,7 @@ export function ShareCardPreviewScreen() {
           <Text style={styles.emptyBody}>
             Okyo needs a completed food scan and recipe before it can build a share card.
           </Text>
-          <PrimaryAction icon={<Camera color="#fffdf8" height={20} strokeWidth={2.2} width={20} />} label="Start a scan" onPress={() => navigation.navigate('MainTabs', { screen: 'ScanScreen' })} />
+          <PrimaryAction icon={<Camera color="#fffdf8" height={20} strokeWidth={2.2} width={20} />} label="Scan another meal" onPress={() => navigation.navigate('MainTabs', { screen: 'HomeScreen' })} />
         </View>
       </ShareFrame>
     );

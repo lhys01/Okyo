@@ -170,6 +170,7 @@ export const foodImageAnalysisSchema = z.object({
     healthySubstitutions: z.record(z.string()).default({}),
     budgetSubstitutions: z.record(z.string()).default({}),
   }).optional(),
+  mealDescription: z.string().optional(),
 });
 
 export const generatedRecipeOutputSchema = z.object({
@@ -465,6 +466,136 @@ export function estimateIngredientCosts(input: EstimateIngredientCostsInput): In
 
 export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
   return runWithOpenRouterMetrics(() => createAiScanWithMetrics(input));
+}
+
+export async function createAiTextRecipe(input: { mealDescription: string; mode: RecipeMode; fableActive?: boolean }): Promise<AiScanSuccessResult> {
+  const config = getAiConfig({ fableActive: input.fableActive });
+  const dishName = input.mealDescription.trim().slice(0, 120);
+  // The recipe pipeline still consumes FoodImageAnalysis internally. This adapter
+  // is deliberately not exposed as photo metadata: the API response carries the
+  // explicit `description` source and the mobile result suppresses image signals.
+  const analysis = foodImageAnalysisSchema.parse({
+    candidateScanId: `text-${Date.now()}`,
+    aiSource: 'openrouter_ai', dishName, cuisine: 'home kitchen', restaurantStyle: 'home kitchen',
+    scanState: 'clear_food', broadDishCategory: 'meal described by user', confidence: 0.72,
+    confidenceReason: 'Based on the user description; ingredients and nutrition are estimates.',
+    isFoodImage: true, isRestaurantMeal: false, visibleIngredients: [], likelyIngredients: [], possibleDishNames: [dishName],
+    visibleComponents: {}, restaurantPriceEstimate: 0, homemadeCostEstimate: 0, matchScore: 7.2, difficulty: 'Easy', modes: [input.mode],
+    mealDescription: input.mealDescription.trim(),
+  });
+  const generated = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive });
+  if (!generated.recipe) throw new Error('RECIPE_MISSING: Recipe object was not generated');
+  const recipe = generated.recipe;
+  const scanId = `scan-text-${Date.now()}`;
+  const costEstimate = estimateIngredientCosts({ analysis, recipe });
+  const scan: ScanResult = {
+    id: scanId, dishName, bestGuessDishName: dishName, bestGuessNote: 'Based on your description; check the ingredients before cooking.',
+    possibleDishNames: [dishName], confidence: generated.confidence, difficulty: recipe.difficulty,
+    estimatedSavings: costEstimate.estimatedSavings, homemadeCost: costEstimate.homemadeCost, matchScore: 7.2, modes: [input.mode],
+    restaurantPrice: costEstimate.restaurantPrice, restaurantStyle: 'home kitchen', scanState: 'clear_food', recipeId: recipe.id,
+    groceryListId: `grocery-${recipe.id}`, shareCardId: `share-${scanId}`,
+  };
+  return {
+    status: 'success', scan, recipe, groceryList: getGroceryListForRecipe(recipe),
+    shareCard: { id: `share-${scanId}`, scanResultId: scanId, kind: 'scan-result', headline: recipe.title, subheadline: 'Made with Okyo', footer: 'Made with Okyo' },
+    note: 'AI-generated from your meal description. Ingredients, cost, and nutrition are estimates.',
+    ...createAiDebugMetadata(config, 'openrouter_ai', generated.confidence), scanState: 'clear_food', uploadedImage: false,
+  };
+}
+
+// Regenerates a recipe from a user correction (e.g. "these are lamb chops,
+// not chicken") without retaking the photo. Reuses the same
+// generateRecipeFromDish() pipeline as every other recipe path — this is
+// deliberately NOT a second AI architecture. The original photo is never
+// re-sent; the correction note is carried through FoodImageAnalysis.mealDescription,
+// the same field the openRouterProvider prompt already treats as "the source
+// of truth for the dish concept" (see generateRecipeWithOpenRouter's prompt
+// builder), so the corrected dish name and note genuinely drive new
+// ingredients/steps rather than only renaming the title client-side.
+export async function createAiRecipeCorrection(input: {
+  correctionNote: string;
+  dishNameOverride?: string;
+  fableActive?: boolean;
+  mode: RecipeMode;
+  recipeId: string;
+}): Promise<AiScanSuccessResult | null> {
+  const existingRecipe = getGeneratedRecipe(input.recipeId);
+  if (!existingRecipe) {
+    return null;
+  }
+
+  const config = getAiConfig({ fableActive: input.fableActive });
+  const correctedDishName = (input.dishNameOverride?.trim() || existingRecipe.title || 'Corrected dish').slice(0, 120);
+  const analysis = foodImageAnalysisSchema.parse({
+    candidateScanId: `correction-${Date.now()}`,
+    aiSource: 'openrouter_ai',
+    dishName: correctedDishName,
+    cuisine: 'home kitchen',
+    restaurantStyle: 'home kitchen',
+    scanState: 'clear_food',
+    broadDishCategory: 'user-corrected dish',
+    confidence: 0.7,
+    confidenceReason: 'Based on the user correction; ingredients and nutrition are estimates.',
+    isFoodImage: true,
+    isRestaurantMeal: false,
+    visibleIngredients: [],
+    likelyIngredients: existingRecipe.ingredients?.map((ingredient) => ingredient.name) ?? [],
+    possibleDishNames: [correctedDishName],
+    visibleComponents: {},
+    restaurantPriceEstimate: 0,
+    homemadeCostEstimate: 0,
+    matchScore: 7.2,
+    difficulty: existingRecipe.difficulty ?? 'Easy',
+    modes: [input.mode],
+    mealDescription: input.correctionNote.trim(),
+  });
+
+  const generated = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive });
+  if (!generated.recipe) {
+    throw new Error('RECIPE_MISSING: Correction did not produce a recipe');
+  }
+
+  const recipe = generated.recipe;
+  const scanId = `scan-correction-${Date.now()}`;
+  const costEstimate = estimateIngredientCosts({ analysis, recipe });
+  const scan: ScanResult = {
+    id: scanId,
+    dishName: correctedDishName,
+    bestGuessDishName: correctedDishName,
+    bestGuessNote: 'Updated from your correction.',
+    possibleDishNames: [correctedDishName],
+    confidence: generated.confidence,
+    difficulty: recipe.difficulty,
+    estimatedSavings: costEstimate.estimatedSavings,
+    homemadeCost: costEstimate.homemadeCost,
+    matchScore: 7.2,
+    modes: [input.mode],
+    restaurantPrice: costEstimate.restaurantPrice,
+    restaurantStyle: 'home kitchen',
+    scanState: 'clear_food',
+    recipeId: recipe.id,
+    groceryListId: `grocery-${recipe.id}`,
+    shareCardId: `share-${scanId}`,
+  };
+
+  return {
+    status: 'success',
+    scan,
+    recipe,
+    groceryList: getGroceryListForRecipe(recipe),
+    shareCard: {
+      id: `share-${scanId}`,
+      scanResultId: scanId,
+      kind: 'scan-result',
+      headline: recipe.title,
+      subheadline: 'Made with Okyo',
+      footer: 'Made with Okyo',
+    },
+    note: 'Recipe updated from your correction.',
+    ...createAiDebugMetadata(config, 'openrouter_ai', generated.confidence),
+    scanState: 'clear_food',
+    uploadedImage: false,
+  };
 }
 
 async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
@@ -806,6 +937,7 @@ function createRecipeFromVariant(
     spicePairings,
     cookingTerms,
     isCompactRecipe: isCompactRecipe || undefined,
+    nutritionEstimate: variant.nutritionEstimate,
   }, analysis);
 }
 

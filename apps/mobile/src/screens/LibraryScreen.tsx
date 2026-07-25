@@ -123,7 +123,7 @@ export function LibraryScreen() {
 
   const goToScan = () => {
     uiLog('LibraryScreen', 'empty_scan_cta');
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
   const confirmRemove = (recipe: Recipe) => {

@@ -8,10 +8,12 @@ import {
   getNextOnboardingPlanScreen,
   getOnboardingResponseImage,
   getOnboardingResultFallbackScreen,
+  getOnboardingScanResolutionScreen,
   getOnboardingScanStartDecision,
   getOnboardingUploadUri,
   getRealOnboardingImageUri,
   isCurrentOnboardingScanSession,
+  shouldKeepOnboardingScanLoading,
 } from './onboardingScanGuards';
 
 const selectedImage: ScanImageMetadata = {
@@ -86,6 +88,48 @@ test('rapid double tap does not create two scan requests', () => {
 test('scan writes only apply to the current onboarding session', () => {
   assert.equal(isCurrentOnboardingScanSession('scan-2', 'scan-1'), false);
   assert.equal(isCurrentOnboardingScanSession('scan-2', 'scan-2'), true);
+});
+
+test('pending scan keeps the dedicated loading screen visible', () => {
+  assert.equal(shouldKeepOnboardingScanLoading({
+    screenKey: 'loading',
+    loadingScanSessionId: 'scan-pending',
+    activeScanSessionId: 'scan-pending',
+    activeScanStatus: 'pending',
+  }), true);
+});
+
+test('local loading animation completion cannot return an active scan to scan entry', () => {
+  assert.equal(shouldKeepOnboardingScanLoading({
+    screenKey: 'loading',
+    loadingScanSessionId: 'scan-pending',
+    activeScanSessionId: 'scan-pending',
+    activeScanStatus: 'pending',
+  }), true);
+});
+
+test('current scan success resolves loading to the result screen', () => {
+  assert.equal(getOnboardingScanResolutionScreen({
+    activeScanSessionId: 'scan-success',
+    completedScanSessionId: 'scan-success',
+    outcome: 'success',
+  }), 'firstResult');
+});
+
+test('current scan failure resolves loading to the retry scan screen', () => {
+  assert.equal(getOnboardingScanResolutionScreen({
+    activeScanSessionId: 'scan-failure',
+    completedScanSessionId: 'scan-failure',
+    outcome: 'failure',
+  }), 'scan');
+});
+
+test('stale scan completion has no screen resolution', () => {
+  assert.equal(getOnboardingScanResolutionScreen({
+    activeScanSessionId: 'scan-new',
+    completedScanSessionId: 'scan-old',
+    outcome: 'success',
+  }), null);
 });
 
 test('cooking frequency follows the existing reminder then plan flow', () => {

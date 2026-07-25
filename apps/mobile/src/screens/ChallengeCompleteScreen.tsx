@@ -44,8 +44,8 @@ export function ChallengeCompleteScreen() {
         eyebrow="Challenge complete"
         title="No challenge result yet"
         body="Complete a Dupe Challenge to see your score and savings."
-        actionLabel="Start a Scan"
-        onAction={() => navigation.navigate('ScanScreen')}
+        actionLabel="Scan another meal"
+        onAction={() => navigation.navigate('MainTabs', { screen: 'HomeScreen' })}
       />
     );
   }

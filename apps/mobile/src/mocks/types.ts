@@ -145,6 +145,15 @@ export type Recipe = {
   spicePairings?: string[];
   cookingTerms?: CookingTerm[];
   isCompactRecipe?: boolean;
+  nutritionEstimate?: NutritionEstimate;
+};
+
+export type NutritionEstimate = {
+  calories: number;
+  proteinGrams: number;
+  carbohydratesGrams: number;
+  fatGrams: number;
+  fiberGrams?: number;
 };
 
 export type GroceryList = {

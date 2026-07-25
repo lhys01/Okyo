@@ -1,8 +1,9 @@
-import { Check, NavArrowLeft, Spark, Upload } from 'iconoir-react-native';
+import { Camera, Check, NavArrowLeft, OpenBook, PiggyBank, Spark, Upload } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AccessibilityInfo,
   Animated,
   Easing,
   Image,
@@ -17,8 +18,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import type { ScanStatus } from '../../api/types';
 import { KikoMascot, type KikoMascotPose } from '../KikoMascot';
+import type { Recipe } from '../../mocks';
 import { colors, fontFamilies, shadows } from '../../theme/okyoTheme';
+import { getConfiguredFreeTrialDays, getSubscriptionPricing } from '../../utils/purchaseAvailability';
+import { INITIAL_SCAN_PROGRESS_STATE, nextScanProgress, type ScanProgressState } from '../../utils/scanProgress';
 
 export const onboardingColors = {
   background: colors.stoneCream,
@@ -48,12 +53,11 @@ export type OnboardingOption = {
 
 // ─── Loading steps with personality ──────────────────────────────────────────
 
-const LOADING_STEPS: { message: string; pose: KikoMascotPose }[] = [
-  { message: 'Identifying your dish...', pose: 'scanning' },
-  { message: 'Found it! Building your recipe...', pose: 'happy' },
-  { message: 'Adding groceries to your list...', pose: 'groceryList' },
-  { message: 'Calculating your savings...', pose: 'recipe' },
-  { message: 'Almost ready for you...', pose: 'celebrating' },
+const LOADING_STEPS = [
+  'Kiko is studying your food',
+  'Identifying the dish',
+  'Matching ingredients',
+  'Building your recipe',
 ];
 
 // ─── Shell ────────────────────────────────────────────────────────────────────
@@ -465,52 +469,64 @@ export function OnboardingHeroScreen({ onContinue, progress }: OnboardingHeroScr
             },
           ]}
         >
-          <Text style={heroStyles.headline}>Turn any meal into{'\n'}a recipe. Instantly.</Text>
-          <Text style={heroStyles.sub}>
+          <Text allowFontScaling style={heroStyles.headline}>Turn any meal into{'\n'}a recipe. Instantly.</Text>
+          <Text allowFontScaling style={heroStyles.sub}>
             Snap any restaurant dish — Okyo builds you the recipe, grocery list, and step-by-step cooking guide.
           </Text>
 
-          {/* Proof row */}
+          {/* Proof row — three equal-width compact steps. Wraps onto a second
+              line on narrow/large-text devices instead of clipping. */}
           <View style={heroStyles.proofRow}>
-            <ProofPill emoji="📸" label="Snap it" />
-            <ProofArrow />
-            <ProofPill emoji="📋" label="Get recipe" />
-            <ProofArrow />
-            <ProofPill emoji="💰" label="Save money" />
+            <ProofPill icon={<Camera color={onboardingColors.primary} height={16} strokeWidth={2.3} width={16} />} label="Snap it" />
+            <ProofPill icon={<OpenBook color={onboardingColors.primary} height={16} strokeWidth={2.3} width={16} />} label="Get recipe" />
+            <ProofPill icon={<PiggyBank color={onboardingColors.primary} height={16} strokeWidth={2.3} width={16} />} label="Save money" />
           </View>
         </Animated.View>
       </ScrollView>
 
       <View style={styles.footer}>
-        <OnboardingStatefulButton label="Let's go  →" onPress={onContinue} />
+        <OnboardingStatefulButton label="Let's go" onPress={onContinue} />
       </View>
     </SafeAreaView>
   );
 }
 
-function ProofPill({ emoji, label }: { emoji: string; label: string }) {
+function ProofPill({ icon, label }: { icon: ReactNode; label: string }) {
   return (
     <View style={heroStyles.proofPill}>
-      <Text style={heroStyles.proofEmoji}>{emoji}</Text>
-      <Text style={heroStyles.proofLabel}>{label}</Text>
+      {icon}
+      <Text numberOfLines={1} style={heroStyles.proofLabel}>{label}</Text>
     </View>
   );
-}
-
-function ProofArrow() {
-  return <Text style={heroStyles.proofArrow}>›</Text>;
 }
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
 
 type OnboardingLoadingScreenProps = {
+  hasValidatedRecipe?: boolean;
   progress: number;
+  scanSessionId?: string | null;
+  scanStatus?: ScanStatus | 'pending' | null;
   userImageUri?: string | null;
 };
 
-export function OnboardingLoadingScreen({ progress, userImageUri }: OnboardingLoadingScreenProps) {
+export function OnboardingLoadingScreen({
+  hasValidatedRecipe = false,
+  progress,
+  scanSessionId = null,
+  scanStatus = null,
+  userImageUri,
+}: OnboardingLoadingScreenProps) {
   if (userImageUri) {
-    return <OnboardingScanLoadingScreen progress={progress} userImageUri={userImageUri} />;
+    return (
+      <OnboardingScanLoadingScreen
+        hasValidatedRecipe={hasValidatedRecipe}
+        progress={progress}
+        scanSessionId={scanSessionId}
+        scanStatus={scanStatus}
+        userImageUri={userImageUri}
+      />
+    );
   }
   return <OnboardingBuildingPlanScreen progress={progress} />;
 }
@@ -556,61 +572,167 @@ function OnboardingBuildingPlanScreen({ progress }: { progress: number }) {
   );
 }
 
-function OnboardingScanLoadingScreen({ progress, userImageUri }: { progress: number; userImageUri: string }) {
+const NO_ACTIVE_ONBOARDING_SCAN_SESSION = 'no-active-onboarding-scan-session';
+
+function OnboardingScanLoadingScreen({
+  hasValidatedRecipe,
+  progress,
+  scanSessionId,
+  scanStatus,
+  userImageUri,
+}: {
+  hasValidatedRecipe: boolean;
+  progress: number;
+  scanSessionId: string | null;
+  scanStatus: ScanStatus | 'pending' | null;
+  userImageUri: string;
+}) {
   const [stepIndex, setStepIndex] = useState(0);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const stepAnim = useRef(new Animated.Value(1)).current;
-  const barProgress = useRef(new Animated.Value(0)).current;
+  const scanLine = useRef(new Animated.Value(0)).current;
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  const activeScanSessionId = scanSessionId ?? NO_ACTIVE_ONBOARDING_SCAN_SESSION;
+  const scanProgressStateRef = useRef<ScanProgressState>(INITIAL_SCAN_PROGRESS_STATE);
+
+  // The photo must never move or remount for the life of a scan session — only
+  // the scan-line overlay animates. Freeze the first URI seen for a given
+  // session and keep rendering that frozen value even if the caller's
+  // userImageUri prop changes shape mid-flight (e.g. a response-echoed image)
+  // while this screen is still showing that session. Mirrors
+  // AnalysisLoadingScreen's frozenScanImageRef pattern.
+  const frozenScanImageRef = useRef<{ scanSessionId: string; uri: string } | null>(null);
+  if (frozenScanImageRef.current?.scanSessionId !== activeScanSessionId) {
+    frozenScanImageRef.current = { scanSessionId: activeScanSessionId, uri: userImageUri };
+  }
+  const stableUserImageUri = frozenScanImageRef.current.uri;
 
   useEffect(() => {
-    Animated.timing(barProgress, {
-      duration: 4500,
-      easing: Easing.out(Easing.exp),
-      toValue: 1,
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (mounted) {
+        setReduceMotion(enabled);
+      }
+    });
+
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      scanLine.stopAnimation();
+      return;
+    }
+
+    const scanLineAnimation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scanLine, { duration: 1800, easing: Easing.inOut(Easing.quad), toValue: 1, useNativeDriver: true }),
+        Animated.timing(scanLine, { duration: 0, toValue: 0, useNativeDriver: true }),
+      ]),
+    );
+    scanLineAnimation.start();
+    return () => {
+      scanLineAnimation.stop();
+    };
+  }, [reduceMotion, scanLine]);
+
+  // Progress bar fill is intentionally its own value, separate from the
+  // looping scan-line overlay above. It is monotonic and session-scoped via
+  // nextScanProgress — the same pure logic AnalysisLoadingScreen uses for the
+  // post-onboarding scan loading screen — so it starts at 0 for a new scan
+  // session, only grows, never loops, ignores unrelated re-renders (e.g. the
+  // rotating LOADING_STEPS message), stays below 100 while pending, freezes
+  // below 100 on failure, and reaches 100 only once a validated recipe lands.
+  useEffect(() => {
+    const isPending = scanStatus === 'pending' || scanStatus === null;
+    const nextState = nextScanProgress({
+      hasPreparedImage: true,
+      hasValidatedRecipe,
+      previous: scanProgressStateRef.current,
+      scanSessionId: activeScanSessionId,
+      status: scanStatus ?? 'pending',
+    });
+    const isNewSession = nextState.scanSessionId !== scanProgressStateRef.current.scanSessionId;
+    const previousValue = scanProgressStateRef.current.value;
+    scanProgressStateRef.current = nextState;
+
+    if (!isNewSession && nextState.value === previousValue) {
+      return;
+    }
+
+    if (isNewSession) {
+      progressAnim.setValue(0);
+    }
+
+    if (reduceMotion) {
+      progressAnim.setValue(nextState.value);
+      return;
+    }
+
+    const animation = Animated.timing(progressAnim, {
+      duration: isPending ? 12000 : 360,
+      easing: Easing.out(Easing.quad),
+      toValue: nextState.value,
       useNativeDriver: false,
-    }).start();
+    });
+    animation.start();
+    return () => {
+      animation.stop();
+    };
+  }, [activeScanSessionId, hasValidatedRecipe, progressAnim, reduceMotion, scanStatus]);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      return;
+    }
 
     const cycleStep = () => {
-      Animated.timing(stepAnim, { duration: 200, easing: Easing.in(Easing.quad), toValue: 0, useNativeDriver: true }).start(() => {
+      Animated.timing(stepAnim, { duration: 180, easing: Easing.in(Easing.quad), toValue: 0, useNativeDriver: true }).start(() => {
         setStepIndex((i) => (i + 1) % LOADING_STEPS.length);
-        Animated.timing(stepAnim, { duration: 280, easing: Easing.out(Easing.quad), toValue: 1, useNativeDriver: true }).start();
+        Animated.timing(stepAnim, { duration: 240, easing: Easing.out(Easing.quad), toValue: 1, useNativeDriver: true }).start();
       });
     };
 
-    const interval = setInterval(cycleStep, 1300);
+    const interval = setInterval(cycleStep, 1800);
     return () => clearInterval(interval);
-  }, [barProgress, stepAnim]);
+  }, [reduceMotion, stepAnim]);
 
-  const currentStep = LOADING_STEPS[stepIndex];
+  const currentStep = LOADING_STEPS[stepIndex] ?? LOADING_STEPS[0];
+  const scanLineTranslate = scanLine.interpolate({ inputRange: [0, 1], outputRange: [12, 214] });
 
   return (
     <OnboardingScreenShell canGoBack={false} progress={progress} scroll={false}>
       <View style={styles.loadingContent}>
-        <View style={styles.loadingUserImageStage}>
-          <Image source={{ uri: userImageUri }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+        <View style={[styles.loadingUserImageStage, { borderColor: onboardingColors.primary }]}>
+          <Image source={{ uri: stableUserImageUri }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
           <View style={styles.loadingUserImageOverlay} />
-          <Animated.View style={[styles.loadingKikoCorner, { opacity: stepAnim }]}>
-            <KikoMascot pose={currentStep.pose} size={68} />
-          </Animated.View>
+          {!reduceMotion ? <Animated.View style={[styles.loadingScanLine, { transform: [{ translateY: scanLineTranslate }] }]} /> : null}
         </View>
-        <Animated.Text style={[styles.loadingHeadline, { opacity: stepAnim }]}>
-          {currentStep.message}
-        </Animated.Text>
+        <View style={styles.loadingKikoRow}>
+          <KikoMascot pose="scanning" size={58} />
+          <Text style={styles.loadingKikoText}>Kiko is on it</Text>
+        </View>
+        <View style={styles.loadingHeadlineWrap}>
+          <Animated.Text numberOfLines={2} style={[styles.loadingHeadline, { opacity: stepAnim }]}>
+            {currentStep}
+          </Animated.Text>
+        </View>
         <Text style={styles.loadingBody}>
-          Building your homemade version with savings, groceries, and guided cooking steps.
+          Hang tight — Kiko is looking for the details that make this dish yours.
         </Text>
-        <View style={styles.loadingBar}>
+        <View accessibilityLabel="Scanning your food" accessibilityRole="progressbar" style={styles.loadingBar}>
           <Animated.View
             style={[
               styles.loadingBarFill,
-              {
-                width: barProgress.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: ['4%', '92%'],
-                }),
-              },
+              { width: progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) },
             ]}
           />
         </View>
+        <Text style={styles.loadingSupport}>This usually takes 10–25 seconds</Text>
       </View>
     </OnboardingScreenShell>
   );
@@ -619,25 +741,17 @@ function OnboardingScanLoadingScreen({ progress, userImageUri }: { progress: num
 // ─── First result screen ──────────────────────────────────────────────────────
 
 type OnboardingFirstResultScreenProps = {
-  confidence?: number;
-  difficulty?: string;
-  imageUri?: string | null;
+  imageUri: string;
   onContinue: () => void;
-  recipeDescription?: string;
+  recipe: Recipe;
   recipeTitle: string;
-  savingsText: string;
-  timeText: string;
 };
 
 export function OnboardingFirstResultScreen({
-  confidence,
-  difficulty,
   imageUri,
   onContinue,
-  recipeDescription,
+  recipe,
   recipeTitle,
-  savingsText,
-  timeText,
 }: OnboardingFirstResultScreenProps) {
   const introAnim = useRef(new Animated.Value(0)).current;
   const celebrateAnim = useRef(new Animated.Value(0)).current;
@@ -664,7 +778,7 @@ export function OnboardingFirstResultScreen({
   return (
     <OnboardingScreenShell
       canGoBack={false}
-      footer={<OnboardingStatefulButton label="See My Recipe  →" onPress={onContinue} />}
+      footer={<OnboardingStatefulButton label="Continue  →" onPress={onContinue} />}
       progress={0.87}
     >
       <Animated.View
@@ -703,47 +817,41 @@ export function OnboardingFirstResultScreen({
           <Text numberOfLines={3} style={styles.resultTitle}>{recipeTitle}</Text>
         </View>
 
-        {/* Food image with savings badge */}
+        {/* The user's selected photo stays attached to the generated recipe. */}
         <View style={styles.resultImageCard}>
-          {imageUri ? (
-            <Image source={{ uri: imageUri }} resizeMode="cover" style={styles.resultImage} />
-          ) : (
-            <View style={[styles.resultImage, styles.resultImageMissing]}>
-              <KikoMascot pose="thinking" size={86} />
-            </View>
-          )}
-          {/* Savings badge overlay */}
-          <Animated.View
-            style={[
-              styles.savingsBadge,
-              {
-                transform: [
-                  {
-                    scale: celebrateAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.5, 1],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <Text style={styles.savingsBadgeAmount}>{savingsText}</Text>
-            <Text style={styles.savingsBadgeLabel}>home cost</Text>
-          </Animated.View>
+          <Image source={{ uri: imageUri }} resizeMode="cover" style={styles.resultImage} />
         </View>
 
         <View style={styles.resultCard}>
-          <Text style={styles.resultPromise}>
-            A restaurant-style version you can make at home.
-          </Text>
-          <Text style={styles.resultDescription} numberOfLines={3}>
-            {recipeDescription ?? 'Okyo built a simple first recipe with groceries and guided steps.'}
-          </Text>
+          <Text style={styles.resultSectionTitle}>Your recipe</Text>
+          <Text style={styles.resultDescription}>{recipe.description}</Text>
           <View style={styles.metricGrid}>
-            <MetricPill label="Time" value={timeText} />
-            <MetricPill label="Difficulty" value={difficulty ?? 'Easy'} />
-            <MetricPill label="Confidence" value={formatConfidence(confidence)} />
+            <MetricPill label="Time" value={formatRecipeTime(recipe)} />
+            <MetricPill label="Difficulty" value={recipe.difficulty} />
+          </View>
+
+          <Text style={styles.resultSectionTitle}>Ingredients</Text>
+          <View style={styles.recipeList}>
+            {recipe.ingredients.map((ingredient) => (
+              <View key={`${ingredient.quantity}-${ingredient.name}`} style={styles.recipeListRow}>
+                <View style={styles.recipeBullet} />
+                <Text style={styles.recipeListText}>
+                  {ingredient.quantity} {ingredient.name}
+                </Text>
+              </View>
+            ))}
+          </View>
+
+          <Text style={styles.resultSectionTitle}>How to make it</Text>
+          <View style={styles.recipeSteps}>
+            {recipe.steps.map((step, index) => (
+              <View key={`${index}-${step}`} style={styles.recipeStepRow}>
+                <View style={styles.recipeStepNumber}>
+                  <Text style={styles.recipeStepNumberText}>{index + 1}</Text>
+                </View>
+                <Text style={styles.recipeListText}>{step}</Text>
+              </View>
+            ))}
           </View>
         </View>
       </Animated.View>
@@ -754,13 +862,23 @@ export function OnboardingFirstResultScreen({
 // ─── Paywall screen ───────────────────────────────────────────────────────────
 
 type OnboardingPaywallScreenProps = {
-  onContinue: () => void;
+  onContinueWithoutPurchase: () => void;
+  onPurchase: (plan: 'annual' | 'weekly') => void;
   onRestore: () => void;
+  purchasesAvailable: boolean;
 };
 
-export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPaywallScreenProps) {
+export function OnboardingPaywallScreen({
+  onContinueWithoutPurchase,
+  onPurchase,
+  onRestore,
+  purchasesAvailable,
+}: OnboardingPaywallScreenProps) {
   const [selectedPlan, setSelectedPlan] = useState<'annual' | 'weekly'>('annual');
   const introAnim = useRef(new Animated.Value(0)).current;
+  const annualPricing = getSubscriptionPricing('annual');
+  const weeklyPricing = getSubscriptionPricing('weekly');
+  const configuredTrialDays = getConfiguredFreeTrialDays();
 
   useEffect(() => {
     Animated.spring(introAnim, {
@@ -772,24 +890,38 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
     }).start();
   }, [introAnim]);
 
+  // Two cleanly separated footers: a real purchase CTA (only shown once a
+  // provider is actually connected) and an honest, non-blocking continuation
+  // for this build, which has none. Never show a purchase-looking button
+  // that would only alert — and never claim a trial length that isn't
+  // actually configured with a provider.
+  const footer = purchasesAvailable ? (
+    <View style={styles.paywallFooter}>
+      <OnboardingStatefulButton
+        label={configuredTrialDays ? `Start ${configuredTrialDays}-Day Free Trial` : 'Subscribe'}
+        onPress={() => onPurchase(selectedPlan)}
+      />
+      <Text style={styles.paywallTrialNote}>
+        {selectedPlan === 'annual'
+          ? `${annualPricing.secondary} • Cancel anytime`
+          : `${weeklyPricing.secondary} • Cancel anytime`}
+      </Text>
+      <Pressable accessibilityRole="button" onPress={onRestore} style={styles.restoreButton}>
+        <Text style={styles.restoreText}>Restore Purchases</Text>
+      </Pressable>
+    </View>
+  ) : (
+    <View style={styles.paywallFooter}>
+      <OnboardingStatefulButton label="Continue to Okyo" onPress={onContinueWithoutPurchase} />
+      <Text style={styles.paywallTrialNote}>Subscriptions aren't available in this build.</Text>
+      <Pressable accessibilityRole="button" onPress={onRestore} style={styles.restoreButton}>
+        <Text style={styles.restoreText}>Restore Purchases</Text>
+      </Pressable>
+    </View>
+  );
+
   return (
-    <OnboardingScreenShell
-      canGoBack={false}
-      footer={
-        <View style={styles.paywallFooter}>
-          <OnboardingStatefulButton label="Start 7-Day Free Trial  →" onPress={onContinue} />
-          <Text style={styles.paywallTrialNote}>
-            {selectedPlan === 'annual'
-              ? 'Then $49.99/year ($4.17/mo) • Cancel anytime'
-              : 'Then $4.99/week • Cancel anytime'}
-          </Text>
-          <Pressable accessibilityRole="button" onPress={onRestore} style={styles.restoreButton}>
-            <Text style={styles.restoreText}>Restore Purchases</Text>
-          </Pressable>
-        </View>
-      }
-      progress={1}
-    >
+    <OnboardingScreenShell canGoBack={false} footer={footer} progress={1}>
       <Animated.View
         style={{
           flex: 1,
@@ -807,7 +939,10 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
         {/* Hero */}
         <View style={styles.paywallHero}>
           <KikoMascot pose="celebrating" size={110} />
-          <Text style={styles.paywallEyebrow}>✓ Step 1 complete</Text>
+          <View style={styles.paywallEyebrowRow}>
+            <Check color={onboardingColors.green} height={14} strokeWidth={3} width={14} />
+            <Text style={styles.paywallEyebrow}>Step 1 complete</Text>
+          </View>
           <Text style={styles.paywallTitle}>You just got your first recipe free.</Text>
           <Text style={styles.paywallBody}>
             Keep scanning to recreate every meal you love — with grocery lists and savings tracking.
@@ -816,7 +951,7 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
 
         {/* Social proof */}
         <View style={styles.socialProof}>
-          <Text style={styles.socialProofText}>♥  Loved by 12,000+ home cooks</Text>
+          <Text style={styles.socialProofText}>Loved by 12,000+ home cooks</Text>
         </View>
 
         {/* Price plans */}
@@ -830,9 +965,8 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
             <View style={styles.priceBestBadge}>
               <Text style={styles.priceBestText}>BEST VALUE</Text>
             </View>
-            <Text style={styles.priceAmount}>$4.17</Text>
-            <Text style={styles.pricePeriod}>/ month</Text>
-            <Text style={styles.priceFineprint}>Billed as $49.99/year</Text>
+            <Text style={styles.priceAmount}>{annualPricing.primary}</Text>
+            <Text style={styles.priceFineprint}>{annualPricing.secondary}</Text>
             <View style={[styles.planCheck, selectedPlan === 'annual' ? styles.planCheckSelected : null]}>
               {selectedPlan === 'annual' ? (
                 <Check color={onboardingColors.card} height={13} strokeWidth={3} width={13} />
@@ -849,9 +983,8 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
             <View style={styles.priceBestBadge}>
               <Text style={[styles.priceBestText, { color: onboardingColors.gray }]}>FLEXIBLE</Text>
             </View>
-            <Text style={styles.priceAmount}>$4.99</Text>
-            <Text style={styles.pricePeriod}>/ week</Text>
-            <Text style={styles.priceFineprint}>No commitment</Text>
+            <Text style={styles.priceAmount}>{weeklyPricing.primary}</Text>
+            <Text style={styles.priceFineprint}>{weeklyPricing.secondary}</Text>
             <View style={[styles.planCheck, selectedPlan === 'weekly' ? styles.planCheckSelected : null]}>
               {selectedPlan === 'weekly' ? (
                 <Check color={onboardingColors.card} height={13} strokeWidth={3} width={13} />
@@ -863,7 +996,7 @@ export function OnboardingPaywallScreen({ onContinue, onRestore }: OnboardingPay
         {/* Savings callout */}
         {selectedPlan === 'annual' ? (
           <View style={styles.savingsCallout}>
-            <Text style={styles.savingsCalloutText}>💰  Annual plan saves 81% vs weekly</Text>
+            <Text style={styles.savingsCalloutText}>Annual plan saves 81% vs weekly</Text>
           </View>
         ) : null}
 
@@ -944,12 +1077,9 @@ function animateScale(value: Animated.Value, toValue: number) {
   }).start();
 }
 
-function formatConfidence(confidence: number | undefined) {
-  if (typeof confidence !== 'number' || !Number.isFinite(confidence)) {
-    return 'Good';
-  }
-
-  return `${Math.round(confidence * 100)}%`;
+function formatRecipeTime(recipe: Recipe) {
+  const totalTime = recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes;
+  return `${totalTime} min`;
 }
 
 function noop() {}
@@ -1307,26 +1437,48 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   loadingUserImageStage: {
+    backgroundColor: onboardingColors.primarySoft,
     borderRadius: 44,
+    borderWidth: 2,
     height: 230,
     overflow: 'hidden',
-    width: 230,
+    width: '100%',
+    maxWidth: 330,
     ...shadows.hero,
   },
   loadingUserImageOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.06)',
   },
-  loadingKikoCorner: {
-    backgroundColor: onboardingColors.card,
-    borderColor: onboardingColors.border,
-    borderRadius: 40,
-    borderWidth: 1,
-    bottom: -8,
-    padding: 6,
+  loadingScanLine: {
+    backgroundColor: onboardingColors.primary,
+    height: 3,
+    left: 14,
+    opacity: 0.92,
     position: 'absolute',
-    right: -8,
-    ...shadows.card,
+    right: 14,
+    shadowColor: onboardingColors.primary,
+    shadowOpacity: 0.55,
+    shadowRadius: 8,
+    top: 0,
+  },
+  loadingKikoRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  loadingKikoText: {
+    color: onboardingColors.gray,
+    fontFamily: fontFamilies.bold,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  loadingHeadlineWrap: {
+    height: 68,
+    justifyContent: 'center',
+    marginTop: 32,
+    width: '100%',
   },
   loadingHeadline: {
     color: onboardingColors.charcoal,
@@ -1334,7 +1486,6 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '800',
     lineHeight: 34,
-    marginTop: 32,
     textAlign: 'center',
   },
   loadingBody: {
@@ -1347,17 +1498,24 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   loadingBar: {
-    backgroundColor: 'rgba(129,199,255,0.24)',
+    backgroundColor: 'rgba(255,139,174,0.22)',
     borderRadius: 999,
-    height: 10,
+    height: 12,
     marginTop: 32,
     overflow: 'hidden',
-    width: '82%',
+    width: '88%',
   },
   loadingBarFill: {
     backgroundColor: onboardingColors.primary,
     borderRadius: 999,
     height: '100%',
+  },
+  loadingSupport: {
+    color: onboardingColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 13,
+    marginTop: 12,
+    textAlign: 'center',
   },
 
   // First result
@@ -1414,32 +1572,6 @@ const styles = StyleSheet.create({
     backgroundColor: onboardingColors.primarySoft,
     justifyContent: 'center',
   },
-  savingsBadge: {
-    alignItems: 'center',
-    backgroundColor: onboardingColors.primary,
-    borderRadius: 20,
-    bottom: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    position: 'absolute',
-    right: 14,
-    ...shadows.card,
-  },
-  savingsBadgeAmount: {
-    color: onboardingColors.card,
-    fontFamily: fontFamilies.display,
-    fontSize: 20,
-    fontWeight: '800',
-    lineHeight: 24,
-  },
-  savingsBadgeLabel: {
-    color: 'rgba(255,255,255,0.84)',
-    fontFamily: fontFamilies.bold,
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-  },
   resultCard: {
     backgroundColor: onboardingColors.card,
     borderColor: 'rgba(199,179,255,0.34)',
@@ -1448,12 +1580,13 @@ const styles = StyleSheet.create({
     padding: 20,
     ...shadows.card,
   },
-  resultPromise: {
+  resultSectionTitle: {
     color: onboardingColors.charcoal,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 21,
+    fontSize: 20,
     fontWeight: '800',
-    lineHeight: 27,
+    lineHeight: 26,
+    marginTop: 22,
   },
   resultDescription: {
     color: onboardingColors.gray,
@@ -1490,11 +1623,63 @@ const styles = StyleSheet.create({
     marginTop: 2,
     textTransform: 'uppercase',
   },
+  recipeList: {
+    gap: 10,
+    marginTop: 12,
+  },
+  recipeListRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  recipeBullet: {
+    backgroundColor: onboardingColors.primary,
+    borderRadius: 999,
+    height: 7,
+    marginTop: 8,
+    width: 7,
+  },
+  recipeListText: {
+    color: onboardingColors.charcoal,
+    flex: 1,
+    fontFamily: fontFamilies.body,
+    fontSize: 16,
+    lineHeight: 23,
+  },
+  recipeSteps: {
+    gap: 14,
+    marginTop: 12,
+  },
+  recipeStepRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  recipeStepNumber: {
+    alignItems: 'center',
+    backgroundColor: onboardingColors.primarySoft,
+    borderRadius: 999,
+    height: 26,
+    justifyContent: 'center',
+    width: 26,
+  },
+  recipeStepNumberText: {
+    color: onboardingColors.primaryDark,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 13,
+    fontWeight: '800',
+  },
 
   // Paywall
   paywallHero: {
     alignItems: 'center',
     marginBottom: 16,
+  },
+  paywallEyebrowRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 12,
   },
   paywallEyebrow: {
     color: onboardingColors.green,
@@ -1502,7 +1687,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.3,
-    marginTop: 12,
     textTransform: 'uppercase',
   },
   paywallTitle: {
@@ -1712,7 +1896,11 @@ const heroStyles = StyleSheet.create({
     backgroundColor: onboardingColors.primarySoft,
     borderColor: 'rgba(199,179,255,0.34)',
     borderWidth: 1,
-    height: 280,
+    // Responsive illustration: sized by aspect ratio against the available
+    // width instead of a rigid fixed height, so it scales down on SE-class
+    // phones and never forces the CTA off-screen.
+    aspectRatio: 1.55,
+    maxHeight: 240,
     marginHorizontal: 16,
     marginTop: 6,
     borderRadius: 34,
@@ -1773,29 +1961,31 @@ const heroStyles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   content: {
-    paddingHorizontal: 24,
-    paddingTop: 28,
+    paddingHorizontal: 20,
+    paddingTop: 20,
   },
   headline: {
     color: onboardingColors.charcoal,
     fontFamily: fontFamilies.display,
-    fontSize: 40,
+    fontSize: 30,
     fontWeight: '800',
-    letterSpacing: -0.5,
-    lineHeight: 46,
+    letterSpacing: -0.4,
+    lineHeight: 36,
   },
   sub: {
     color: onboardingColors.gray,
     fontFamily: fontFamilies.body,
-    fontSize: 18,
-    lineHeight: 27,
-    marginTop: 12,
+    fontSize: 16,
+    lineHeight: 22,
+    marginTop: 10,
   },
+  // Three equal-width compact steps. flexWrap means large-text/small-screen
+  // devices wrap to a second line instead of clipping past the right edge.
   proofRow: {
-    alignItems: 'center',
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
-    marginTop: 24,
+    marginTop: 18,
   },
   proofPill: {
     alignItems: 'center',
@@ -1803,25 +1993,21 @@ const heroStyles = StyleSheet.create({
     borderColor: onboardingColors.border,
     borderRadius: 999,
     borderWidth: 1,
+    flex: 1,
     flexDirection: 'row',
     gap: 6,
-    paddingHorizontal: 12,
+    justifyContent: 'center',
+    minHeight: 40,
+    minWidth: '30%',
+    paddingHorizontal: 10,
     paddingVertical: 8,
     ...shadows.card,
   },
-  proofEmoji: {
-    fontSize: 16,
-  },
   proofLabel: {
     color: onboardingColors.charcoal,
+    flexShrink: 1,
     fontFamily: fontFamilies.bold,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  proofArrow: {
-    color: onboardingColors.gray,
-    fontFamily: fontFamilies.bold,
-    fontSize: 20,
+    fontSize: 12,
     fontWeight: '700',
   },
 });

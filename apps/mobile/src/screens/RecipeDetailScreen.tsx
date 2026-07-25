@@ -50,6 +50,7 @@ import { useOkyoStore } from '../state/useOkyoStore';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { attachRealScanImage } from '../utils/savedRecipeImage';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { getNextGuidedCookingPreview } from '../utils/guidedCookingPreview';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
@@ -201,7 +202,7 @@ export function RecipeDetailScreen() {
       return;
     }
 
-    navigation.navigate('MainTabs', { screen: 'ScanScreen' });
+    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
   const chooseMode = (mode: RecipeMode) => {
@@ -297,7 +298,7 @@ export function RecipeDetailScreen() {
             Okyo needs a completed recipe before it can show cooking steps or groceries for this scan.
           </Text>
           <View style={styles.issueActions}>
-            <PrimaryAction label="Try another photo" onPress={() => navigation.navigate('MainTabs', { screen: 'ScanScreen' })} />
+            <PrimaryAction label="Scan Again" onPress={() => navigation.navigate('MainTabs', { screen: 'HomeScreen' })} />
             <SecondaryAction label="Back" onPress={goBack} />
           </View>
         </View>
@@ -514,6 +515,7 @@ export function RecipeStepsScreen() {
   const [activeStepIndex, setActiveStepIndex] = useState(0);
   const [showCompletion, setShowCompletion] = useState(false);
   const activeStep = guidedSteps[Math.min(activeStepIndex, Math.max(guidedSteps.length - 1, 0))];
+  const nextStepPreview = getNextGuidedCookingPreview(guidedSteps, activeStepIndex);
   const progress = guidedSteps.length > 0 ? ((activeStepIndex + 1) / guidedSteps.length) * 100 : 0;
 
   useEffect(() => {
@@ -630,7 +632,7 @@ export function RecipeStepsScreen() {
           </Text>
           <View style={styles.issueActions}>
             <PrimaryAction label="Back to Recipe" onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })} />
-            <SecondaryAction label="Try another photo" onPress={() => navigation.navigate('ScanScreen')} />
+            <SecondaryAction label="Scan Again" onPress={() => navigation.navigate('MainTabs', { screen: 'HomeScreen' })} />
           </View>
         </View>
       </ScreenFrame>
@@ -787,6 +789,16 @@ export function RecipeStepsScreen() {
         ) : null}
 
         <View style={styles.guidedControlArea}>
+          {nextStepPreview ? (
+            <View
+              accessibilityLabel={`Up next, ${nextStepPreview}.`}
+              accessible
+              style={styles.guidedNextPreview}
+            >
+              <Text style={styles.guidedNextPreviewLabel}>Up next</Text>
+              <Text numberOfLines={2} style={styles.guidedNextPreviewText}>{nextStepPreview}</Text>
+            </View>
+          ) : null}
           <View style={styles.guidedNavRow}>
             <Pressable
               accessibilityRole="button"
@@ -1733,6 +1745,25 @@ const styles = StyleSheet.create({
   guidedControlArea: {
     gap: 12,
     marginTop: 12,
+  },
+  guidedNextPreview: {
+    paddingHorizontal: 4,
+  },
+  guidedNextPreviewLabel: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
+  guidedNextPreviewText: {
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.bold,
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 21,
+    marginTop: 3,
   },
   guidedNavRow: {
     flexDirection: 'row',

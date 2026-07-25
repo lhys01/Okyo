@@ -1,16 +1,15 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import {
-  NavArrowRight,
-  Spark,
-} from 'iconoir-react-native';
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { NavArrowRight, Spark } from 'iconoir-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { useEffect, useMemo, useRef } from 'react';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { RecommendationCard } from '../components/RecommendationCard';
+import { ScanEntryOptions } from '../components/ScanEntryOptions';
 import { colors, typography } from '../components/OkyoUI';
 import { getMealTimeForHour, getRecommendationsForMealTime } from '../data/recommendedRecipes';
 import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
@@ -21,10 +20,11 @@ import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '..
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 import { useOpenRecommendation } from '../utils/useOpenRecommendation';
+import { preparePickedImage } from '../utils/scanImageProcessing';
+import { startScan } from '../utils/scanController';
+import { HOME_UPLOAD_TARGET_SCREEN, shouldStartPickedUpload } from '../utils/scanControllerUtils';
 
 type HomeNavigation = NativeStackNavigationProp<RootStackParamList>;
-
-const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 
 export function HomeScreen() {
   const navigation = useNavigation<HomeNavigation>();
@@ -32,12 +32,12 @@ export function HomeScreen() {
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
   const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
+  const uploadInFlight = useRef(false);
   const openRecommendation = useOpenRecommendation();
-  const homeMoment = useMemo(() => getHomeMoment(), []);
   const mealIdeas = useMemo(() => getRecommendationsForMealTime(getMealTimeForHour(new Date().getHours()), 4), []);
+  const greeting = useMemo(() => getCompactGreeting(new Date().getHours()), []);
 
   const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [];
   const recentRecipes = useMemo(() => safeSavedRecipes.slice().reverse().slice(0, 3), [safeSavedRecipes]);
@@ -48,7 +48,6 @@ export function HomeScreen() {
     getRealScanImageUri(latestScanSession?.selectedScanImage) ?? getRealScanImageUri(selectedScanImage),
   );
   const heroImageStatus = getRecipeImageStatus(heroRecipe);
-  const hasActivity = Boolean(heroRecipe || heroImageUri || safeSavedRecipes.length > 0 || weeklyScanCount > 0);
 
   const didTraceHero = useRef(false);
   useEffect(() => {
@@ -75,7 +74,67 @@ export function HomeScreen() {
 
   const openScan = () => {
     uiLog('HomeScreen', 'scan_cta');
-    navigation.navigate('ScanScreen');
+    void openCameraImmediately();
+  };
+
+  const openPhotosImmediately = async () => {
+    if (uploadInFlight.current) return;
+    uploadInFlight.current = true;
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        allowsEditing: false,
+        base64: false,
+        mediaTypes: ['images'],
+        quality: 1,
+      });
+      const assets = result.assets ?? [];
+      if (!shouldStartPickedUpload(result.canceled, assets.length) || !assets[0]) return;
+      const image = await preparePickedImage(assets[0], 'photos');
+      await startScan({
+        image, mode: useOkyoStore.getState().selectedMode,
+        navigateToAnalysis: (scanSessionId) => navigation.navigate(HOME_UPLOAD_TARGET_SCREEN, { scanSessionId }),
+        reason: 'Home.uploadPhoto', source: 'photos',
+      });
+    } catch {
+      Alert.alert('Photo upload unavailable', 'Okyo could not open your photo library. Try again.');
+    } finally {
+      uploadInFlight.current = false;
+    }
+  };
+
+  const openCameraImmediately = async () => {
+    if (uploadInFlight.current) return;
+    uploadInFlight.current = true;
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        uiLog('HomeScreen', 'camera_permission_denied');
+        Alert.alert(
+          'Camera permission needed',
+          'Okyo needs camera permission to take a food photo. You can allow camera access in Settings or use Upload instead.',
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false,
+        base64: false,
+        mediaTypes: ['images'],
+        quality: 1,
+      });
+      const assets = result.assets ?? [];
+      if (!shouldStartPickedUpload(result.canceled, assets.length) || !assets[0]) return;
+      const image = await preparePickedImage(assets[0], 'camera');
+      await startScan({
+        image, mode: useOkyoStore.getState().selectedMode,
+        navigateToAnalysis: (scanSessionId) => navigation.navigate(HOME_UPLOAD_TARGET_SCREEN, { scanSessionId }),
+        reason: 'Home.takePhoto', source: 'camera',
+      });
+    } catch {
+      Alert.alert('Camera unavailable', 'Okyo could not open the camera. Use Upload instead.');
+    } finally {
+      uploadInFlight.current = false;
+    }
   };
 
   const openPlan = () => {
@@ -106,9 +165,14 @@ export function HomeScreen() {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Text style={styles.kicker}>{homeMoment.greeting}</Text>
-          <Text style={styles.title}>{homeMoment.title}</Text>
+          <Text style={styles.kicker}>{greeting}</Text>
+          <Text style={styles.title}>What are we making today?</Text>
         </View>
+        <HomeScanSection
+          onOpenCamera={() => void openCameraImmediately()}
+          onOpenPhotos={openPhotosImmediately}
+          onDescribeMeal={() => navigation.navigate('DescribeMealScreen')}
+        />
 
         {heroRecipe || heroImageUri ? (
           <Pressable
@@ -124,14 +188,12 @@ export function HomeScreen() {
               style={styles.heroImage}
             />
             <View style={styles.heroCopy}>
-              <Text style={styles.heroEyebrow}>{hasActivity ? 'Today in Okyo' : 'Latest photo'}</Text>
+              <Text style={styles.heroEyebrow}>Recent recipe</Text>
               <Text numberOfLines={2} style={styles.heroTitle}>
                 {heroRecipe?.title ?? 'Latest scan'}
               </Text>
               <Text style={styles.heroBody}>
-                {heroRecipe
-                  ? `${heroRecipe.difficulty} · about ${formatCurrency(heroRecipe.estimatedHomemadeCost)} at home`
-                  : 'Your latest photo is here. Save a recipe and it becomes part of your cooking timeline.'}
+                {heroRecipe ? `${heroRecipe.totalTimeMinutes ?? heroRecipe.prepTimeMinutes + heroRecipe.cookTimeMinutes} min · ${heroRecipe.difficulty}` : 'Recipe'}
               </Text>
             </View>
           </Pressable>
@@ -197,9 +259,7 @@ export function HomeScreen() {
                 />
                 <View style={styles.timelineCopy}>
                   <Text numberOfLines={2} style={styles.timelineTitle}>{recipe.title}</Text>
-                  <Text style={styles.timelineMeta}>
-                    {recipe.mode} · saved about {formatCurrency(recipe.estimatedSavings)}
-                  </Text>
+                  <Text style={styles.timelineMeta}>{recipe.mode}</Text>
                 </View>
                 <NavArrowRight color={colors.muted} height={20} strokeWidth={2} width={20} />
               </Pressable>
@@ -225,43 +285,24 @@ export function HomeScreen() {
   );
 }
 
-type HomeMoment = {
-  greeting: string;
-  title: string;
-};
-
-function getHomeMoment(date = new Date()): HomeMoment {
-  const hour = date.getHours();
-
-  if (hour >= 22 || hour < 5) {
-    return {
-      greeting: getStablePhrase(['Still hungry?', 'Late-night kitchen?'], date),
-      title: getStablePhrase(['What should a late-night bite become?', 'What should this snack turn into?'], date),
-    };
-  }
-
-  if (hour < 11) {
-    return {
-      greeting: 'Good morning',
-      title: getStablePhrase(['What should breakfast become?', 'What should the morning bite become?'], date),
-    };
-  }
-
-  if (hour < 17) {
-    return {
-      greeting: 'Good afternoon',
-      title: getStablePhrase(['What should lunch become?', 'What should the midday craving become?'], date),
-    };
-  }
-
-  return {
-    greeting: 'Good evening',
-    title: getStablePhrase(['What should dinner become?', 'What should tonight become?'], date),
-  };
+function HomeScanSection({ onOpenCamera, onOpenPhotos, onDescribeMeal }: { onOpenCamera: () => void; onOpenPhotos: () => void; onDescribeMeal: () => void }) {
+  return (
+    <View style={styles.scanSection}>
+      <View style={styles.scanSectionHeader}>
+        <View style={styles.scanSectionCopy}>
+          <Text style={styles.scanSectionBody}>Take or upload a photo, or describe a meal.</Text>
+        </View>
+        <KikoMascot pose="scanning" size={52} />
+      </View>
+      <ScanEntryOptions compact onTakePhoto={onOpenCamera} onUpload={onOpenPhotos} onDescribeMeal={onDescribeMeal} />
+    </View>
+  );
 }
 
-function getStablePhrase(phrases: string[], date: Date) {
-  return phrases[(date.getDate() + date.getHours()) % phrases.length] ?? phrases[0];
+function getCompactGreeting(hour: number) {
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
 }
 
 const styles = StyleSheet.create({
@@ -274,21 +315,58 @@ const styles = StyleSheet.create({
     paddingBottom: 150,
   },
   header: {
-    marginTop: 8,
+    marginTop: 2,
+    paddingHorizontal: 2,
+  },
+  scanSection: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: 28,
+    borderWidth: 1,
+    marginTop: 16,
+    padding: 16,
+  },
+  scanSectionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  scanSectionCopy: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  scanSectionTitle: {
+    color: colors.charcoal,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  scanSectionBody: {
+    color: colors.body,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
   },
   kicker: {
     ...typography.caption,
     color: colors.muted,
-    marginBottom: 8,
+    fontSize: 13,
+    marginBottom: 3,
   },
   title: {
-    ...typography.display,
+    color: colors.charcoal,
+    fontSize: 26,
+    fontWeight: '800',
+    lineHeight: 32,
     maxWidth: 330,
   },
   heroCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
     borderRadius: radius.hero,
     marginTop: 26,
     overflow: 'hidden',
+    ...shadows.card,
   },
   heroImage: {
     aspectRatio: 1.15,
@@ -296,7 +374,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   heroCopy: {
-    padding: 22,
+    padding: 16,
   },
   heroEyebrow: {
     color: colors.coral,
@@ -310,8 +388,11 @@ const styles = StyleSheet.create({
     ...typography.title,
   },
   heroBody: {
-    ...typography.body,
-    marginTop: 8,
+    color: colors.muted,
+    fontFamily: typography.caption.fontFamily,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 5,
   },
   ideasSection: {
     marginTop: spacing.section,

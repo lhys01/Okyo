@@ -29,7 +29,6 @@ import {
   type OnboardingWeeklyGoal,
 } from '../state/useOkyoStore';
 import { colors, fontFamilies, shadows } from '../theme/okyoTheme';
-import { scheduleOkyoDailyReminder } from '../utils/notifications';
 import { hasFoodEvidence, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
 import { checkImageFileExists } from '../utils/imageValidation';
 import {
@@ -40,9 +39,13 @@ import {
   getOnboardingScanStartDecision,
   getOnboardingUploadUri,
   isCurrentOnboardingScanSession,
+  shouldKeepOnboardingScanLoading,
 } from '../utils/onboardingScanGuards';
 import { copyToDocuments } from '../utils/scanImageStorage';
+import { isPurchaseProviderAvailable } from '../utils/purchaseAvailability';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
+
+const purchasesAvailable = isPurchaseProviderAvailable();
 
 type OnboardingScreenKey =
   | 'splash'
@@ -84,26 +87,48 @@ export function WelcomeScreen() {
   const [screenKey, setScreenKey] = useState<OnboardingScreenKey>('splash');
   const [scanError, setScanError] = useState<string | null>(null);
   const [isScanSubmitting, setIsScanSubmitting] = useState(false);
+  const [loadingImageUri, setLoadingImageUri] = useState<string | null>(null);
   const [selectedWeeklyGoal, setSelectedWeeklyGoal] = useState<string | null>(null);
   const didTrackStart = useRef(false);
   const isScanSubmittingRef = useRef(false);
+  const loadingScanSessionIdRef = useRef<string | null>(null);
   const splashOpacity = useRef(new Animated.Value(0)).current;
   const selectedMode = useOkyoStore((state) => state.selectedMode);
+  const activeScanSessionId = useOkyoStore((state) => state.scanSessionId);
+  const activeScanStatus = useOkyoStore((state) => state.latestScanStatus);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
   const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const completeOnboarding = useOkyoStore((state) => state.completeOnboarding);
   const beginLatestScanSession = useOkyoStore((state) => state.beginLatestScanSession);
   const writeLatestScanSession = useOkyoStore((state) => state.writeLatestScanSession);
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setWeeklyGoal = useOkyoStore((state) => state.setWeeklyGoal);
-  const notificationChoice = useOkyoStore((state) => state.notificationChoice);
   const setNotificationChoice = useOkyoStore((state) => state.setNotificationChoice);
   const markFirstOnboardingScanCompleted = useOkyoStore((state) => state.markFirstOnboardingScanCompleted);
   const markFirstOnboardingResultSeen = useOkyoStore((state) => state.markFirstOnboardingResultSeen);
   const markPaywallShown = useOkyoStore((state) => state.markPaywallShown);
+  const completeOnboarding = useOkyoStore((state) => state.completeOnboarding);
+  const setPremium = useOkyoStore((state) => state.setPremium);
   const resultRecipe = latestScanRecipe;
+
+  const transitionScreen = (nextScreen: OnboardingScreenKey, reason: string) => {
+    setScreenKey((previousScreen) => {
+      if (previousScreen === nextScreen) {
+        return previousScreen;
+      }
+      const activeScan = useOkyoStore.getState();
+      imageTraceLog('WelcomeScreen', {
+        stage: 'screen_transition',
+        previousScreen,
+        nextScreen,
+        reason,
+        activeScanSessionId: activeScan.scanSessionId,
+        activeScanStatus: activeScan.latestScanStatus,
+      });
+      return nextScreen;
+    });
+  };
 
   useEffect(() => {
     if (didTrackStart.current) {
@@ -139,7 +164,7 @@ export function WelcomeScreen() {
         useNativeDriver: true,
       }),
     ]).start(() => {
-      setScreenKey('hero');
+      transitionScreen('hero', 'splash_completed');
     });
   }, [screenKey, splashOpacity]);
 
@@ -150,12 +175,21 @@ export function WelcomeScreen() {
       return;
     }
 
+    if (shouldKeepOnboardingScanLoading({
+      screenKey,
+      loadingScanSessionId: loadingScanSessionIdRef.current,
+      activeScanSessionId,
+      activeScanStatus,
+    })) {
+      return;
+    }
+
     const timer = setTimeout(() => {
-      setScreenKey('scan');
+      transitionScreen('scan', 'plan_loading_timer_completed');
     }, 2500);
 
     return () => clearTimeout(timer);
-  }, [screenKey]);
+  }, [activeScanSessionId, activeScanStatus, screenKey]);
 
   const progress = useMemo(() => {
     const index = progressSteps.indexOf(screenKey);
@@ -174,22 +208,22 @@ export function WelcomeScreen() {
 
     // Skip the 'loading' (Building Your Plan) step when navigating back from scan
     if (screenKey === 'scan') {
-      setScreenKey('reminder');
+      transitionScreen('reminder', 'back_from_scan');
       return;
     }
 
-    setScreenKey(progressSteps[currentIndex - 1]);
+    transitionScreen(progressSteps[currentIndex - 1], 'back_navigation');
   };
 
   const advance = () => {
     if (screenKey === 'weeklyGoal' || screenKey === 'reminder' || screenKey === 'loading') {
-      setScreenKey(getNextOnboardingPlanScreen(screenKey));
+      transitionScreen(getNextOnboardingPlanScreen(screenKey), 'onboarding_step_advanced');
       return;
     }
 
     const currentIndex = progressSteps.indexOf(screenKey);
     if (currentIndex >= 0 && currentIndex < progressSteps.length - 1) {
-      setScreenKey(progressSteps[currentIndex + 1]);
+      transitionScreen(progressSteps[currentIndex + 1], 'onboarding_step_advanced');
     }
   };
 
@@ -248,10 +282,10 @@ export function WelcomeScreen() {
         source: 'camera',
       });
       if (isOnboardingImageUnavailableError(error)) {
-        setScreenKey('scan');
+        transitionScreen('scan', 'camera_error');
         setScanError(friendlyMessage);
       } else {
-        setScreenKey('scan');
+        transitionScreen('scan', 'camera_error');
         setScanError(friendlyMessage);
       }
     } finally {
@@ -291,10 +325,10 @@ export function WelcomeScreen() {
         source: 'photos',
       });
       if (isOnboardingImageUnavailableError(error)) {
-        setScreenKey('scan');
+        transitionScreen('scan', 'photos_error');
         setScanError(friendlyMessage);
       } else {
-        setScreenKey('scan');
+        transitionScreen('scan', 'photos_error');
         setScanError(friendlyMessage);
       }
     } finally {
@@ -307,7 +341,7 @@ export function WelcomeScreen() {
     const startDecision = getOnboardingScanStartDecision(isScanSubmitting, image);
     if (!startDecision.canStart) {
       if (startDecision.reason !== 'scan_already_submitting') {
-        setScreenKey('scan');
+        transitionScreen('scan', 'missing_onboarding_image');
         setScanError(getMissingOnboardingImageError());
       }
       return;
@@ -325,7 +359,7 @@ export function WelcomeScreen() {
       imageTraceLog('WelcomeScreen', { stage: 'prepared_uri', source, uri: preparedImage.uri });
     } catch (error) {
       imageTraceLog('WelcomeScreen', { stage: 'local_preparation_failed', source, error: serializeError(error) });
-      setScreenKey('scan');
+      transitionScreen('scan', 'local_image_preparation_failed');
       setScanError(error instanceof Error ? error.message : getMissingOnboardingImageError());
       return;
     }
@@ -343,11 +377,14 @@ export function WelcomeScreen() {
       latestScanRecipe: null,
       selectedScanImage: previewImage,
       latestAiDebugMetadata: null,
+      mealDescription: null,
       source,
       reason: 'WelcomeScreen.startOnboardingScan',
     });
+    setLoadingImageUri(previewImage?.uri ?? null);
+    loadingScanSessionIdRef.current = scanSessionId;
     imageTraceLog('WelcomeScreen', { stage: 'scan_session_created', source, scanSessionId, uri: preparedImage.uri });
-    setScreenKey('loading');
+    transitionScreen('loading', 'scan_session_created');
     imageTraceLog('WelcomeScreen', { stage: 'loading_started', source, scanSessionId });
 
     try {
@@ -366,7 +403,9 @@ export function WelcomeScreen() {
       });
 
       if (!handled) {
-        setScreenKey('scan');
+        loadingScanSessionIdRef.current = null;
+        setLoadingImageUri(null);
+        transitionScreen('scan', 'scan_result_unusable');
         setScanError(getScanFailureReason(result));
       }
     } catch (error) {
@@ -393,13 +432,18 @@ export function WelcomeScreen() {
           fallbackReason: 'mobile_api_unavailable',
           confidence: 0,
         },
+        mealDescription: null,
         source,
         reason: 'WelcomeScreen.api_error',
       });
-      setScreenKey('scan');
+      loadingScanSessionIdRef.current = null;
+      setLoadingImageUri(null);
+      transitionScreen('scan', 'scan_request_failed');
       setScanError(failureReason);
     } finally {
-      setIsScanSubmitting(false);
+      if (isActiveScanSession(scanSessionId)) {
+        setIsScanSubmitting(false);
+      }
     }
   };
 
@@ -422,6 +466,7 @@ export function WelcomeScreen() {
     const canRevealResult = Boolean(
       result.scan &&
       selectedRecipe &&
+      hasCompleteOnboardingRecipe(selectedRecipe) &&
       isUsableScan({
         recipes,
         result,
@@ -441,12 +486,15 @@ export function WelcomeScreen() {
         latestScanRecipe: selectedRecipe,
         selectedScanImage: responseImage,
         latestAiDebugMetadata: aiDebugMetadata,
+        mealDescription: null,
         source,
         reason: 'WelcomeScreen.api_success',
       });
       markFirstOnboardingScanCompleted();
       markFirstOnboardingResultSeen();
-      setScreenKey('firstResult');
+      loadingScanSessionIdRef.current = null;
+      setLoadingImageUri(null);
+      transitionScreen('firstResult', 'scan_request_succeeded');
       return true;
     }
 
@@ -464,6 +512,7 @@ export function WelcomeScreen() {
       latestScanRecipe: null,
       selectedScanImage: responseImage,
       latestAiDebugMetadata: aiDebugMetadata,
+      mealDescription: null,
       source,
       reason: 'WelcomeScreen.api_failure',
     });
@@ -472,16 +521,37 @@ export function WelcomeScreen() {
 
   const showPaywall = () => {
     markPaywallShown();
-    setScreenKey('paywall');
+    transitionScreen('paywall', 'first_result_continue');
   };
 
-  const finishOnboarding = () => {
-    markPaywallShown();
-    track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'WelcomeScreen' });
-    completeOnboarding();
-    if (notificationChoice === 'remind_me') {
-      scheduleOkyoDailyReminder();
+  // Real purchase path: only reachable when purchasesAvailable is true (never
+  // in this build). Premium is only ever granted after a confirmed provider
+  // entitlement — never optimistically, and never on cancel/error.
+  const requestPurchase = (_plan: 'annual' | 'weekly') => {
+    if (!purchasesAvailable) {
+      return;
     }
+    // No purchase provider is wired into this build, so there is nothing to
+    // call here yet. When one is connected, this becomes: start the native
+    // purchase flow, and only on a confirmed successful entitlement call
+    // setPremium(true) and completeOnboarding() — cancellation or an error
+    // must leave the user non-premium with onboarding still in progress.
+  };
+
+  const restorePurchases = () => {
+    Alert.alert(
+      'Purchases aren’t active yet',
+      'Restore Purchases is not connected in this build, so Okyo could not confirm an entitlement.',
+    );
+  };
+
+  // Honest fallback when no purchase provider is connected: complete
+  // onboarding, persist that completion, and continue as a non-premium user.
+  // Never grants premium, never charges, never claims a trial started.
+  const continueWithoutPurchase = () => {
+    track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'WelcomeScreen', premium: false });
+    setPremium(false);
+    completeOnboarding();
   };
 
   // ── Screen rendering ────────────────────────────────────────────────────────
@@ -497,8 +567,11 @@ export function WelcomeScreen() {
   if (screenKey === 'loading') {
     return (
       <OnboardingLoadingScreen
+        hasValidatedRecipe={Boolean(latestScanRecipe) && activeScanStatus === 'success'}
         progress={progress}
-        userImageUri={selectedScanImage?.uri}
+        scanSessionId={activeScanSessionId}
+        scanStatus={activeScanStatus}
+        userImageUri={loadingImageUri ?? selectedScanImage?.uri}
       />
     );
   }
@@ -506,13 +579,9 @@ export function WelcomeScreen() {
   if (screenKey === 'firstResult' && resultRecipe && selectedScanImage?.uri) {
     return (
       <OnboardingFirstResultScreen
-        confidence={latestScanResult?.confidence}
-        difficulty={resultRecipe.difficulty}
-        imageUri={selectedScanImage?.uri}
-        recipeDescription={resultRecipe.description}
+        imageUri={selectedScanImage.uri}
         recipeTitle={getFirstResultTitle(latestScanResult?.dishName, resultRecipe.title)}
-        savingsText={getSavingsText(latestScanResult, resultRecipe)}
-        timeText={getTimeText(resultRecipe)}
+        recipe={resultRecipe}
         onContinue={showPaywall}
       />
     );
@@ -544,8 +613,10 @@ export function WelcomeScreen() {
   if (screenKey === 'paywall') {
     return (
       <OnboardingPaywallScreen
-        onContinue={finishOnboarding}
-        onRestore={() => Alert.alert('Restore Purchases', 'Purchases are not active in this build yet.')}
+        onContinueWithoutPurchase={continueWithoutPurchase}
+        onPurchase={requestPurchase}
+        onRestore={restorePurchases}
+        purchasesAvailable={purchasesAvailable}
       />
     );
   }
@@ -754,7 +825,7 @@ function ScanIntroScreen({
     <View style={styles.screenBlock}>
       <KikoSpeechBubble
         pose="scanning"
-        text="Now show me what you're craving 👀"
+        text="Now show me what you're craving."
       />
       <OnboardingScanCard
         errorMessage={errorMessage}
@@ -1034,20 +1105,17 @@ function getFirstResultTitle(dishName: string | undefined, recipeTitle: string) 
   return recipeTitle;
 }
 
-function getSavingsText(scanResult: { estimatedSavings: number; restaurantPrice: number } | null, recipe: Recipe) {
-  const estimatedSavings = scanResult?.estimatedSavings ?? recipe.estimatedSavings;
-  const restaurantPrice = scanResult?.restaurantPrice ?? 0;
-
-  if (restaurantPrice > 0 && estimatedSavings > 0) {
-    return `$${estimatedSavings.toFixed(2)}`;
-  }
-
-  return `$${recipe.estimatedHomemadeCost.toFixed(2)}`;
-}
-
-function getTimeText(recipe: Recipe) {
-  const totalTime = recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes;
-  return `${totalTime} min`;
+function hasCompleteOnboardingRecipe(recipe: Recipe | null | undefined) {
+  return Boolean(
+    recipe?.title?.trim() &&
+    recipe.description?.trim() &&
+    Array.isArray(recipe.ingredients) &&
+    recipe.ingredients.length > 0 &&
+    recipe.ingredients.every((ingredient) => ingredient.name?.trim() && ingredient.quantity?.trim()) &&
+    Array.isArray(recipe.steps) &&
+    recipe.steps.length > 0 &&
+    recipe.steps.every((step) => step?.trim()),
+  );
 }
 
 function createScanSessionId(source: ScanSource) {

@@ -24,7 +24,7 @@ import {
   getXpDefinitions,
   saveRecipe,
 } from './store.js';
-import { createAiScan, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
+import { createAiRecipeCorrection, createAiScan, createAiTextRecipe, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
 import { isRecipeValidationFailure } from './services/openRouterProvider.js';
 import type { ApiFailure, ApiResponse } from './types.js';
 
@@ -34,7 +34,7 @@ const maxImageDataUrlChars = 12_000_000;
 const jsonBodyLimit = '16mb';
 
 const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
-const scanSourceSchema = z.enum(['camera', 'photos']);
+const scanSourceSchema = z.enum(['camera', 'photos', 'description']);
 const imageDataUrlSchema = z.string()
   .min(1)
   .max(maxImageDataUrlChars)
@@ -58,6 +58,17 @@ const scanRequestSchema = z.object({
   source: scanSourceSchema.optional().default('camera'),
   mode: recipeModeSchema.optional().default('Restaurant Copy'),
   image: scanImageMetadataSchema.optional(),
+  mealDescription: z.string().trim().min(1).max(240).optional(),
+}).superRefine((value, context) => {
+  if (value.source === 'description' && !value.mealDescription) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'A meal description is required for description scans.', path: ['mealDescription'] });
+  }
+  if (value.source === 'description' && value.image) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Description scans cannot include an image.', path: ['image'] });
+  }
+  if (value.source !== 'description' && value.mealDescription) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Meal descriptions require source description.', path: ['source'] });
+  }
 });
 const challengeRequestSchema = z.object({
   recipeId: z.string().min(1),
@@ -69,6 +80,11 @@ const xpEventRequestSchema = z.object({
   eventType: z.string().min(1),
   sourceId: z.string().min(1).optional(),
 });
+const recipeCorrectionRequestSchema = z.object({
+  correctionNote: z.string().trim().min(1).max(300),
+  dishNameOverride: z.string().trim().min(1).max(120).optional(),
+  mode: recipeModeSchema.optional().default('Restaurant Copy'),
+}).strict();
 
 app.use(cors());
 app.use(express.json({ limit: jsonBodyLimit }));
@@ -142,6 +158,12 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
       model: fableActive ? getAiConfig({ fableActive: true }).fableModel : 'default',
       failClosed: false,
     });
+
+    if (body.mealDescription) {
+      const result = await createAiTextRecipe({ mealDescription: body.mealDescription, mode: body.mode, fableActive });
+      sendOk(response.status(201), { ...result, source: body.source });
+      return;
+    }
 
     logScanRequest(body, request.get('content-type'));
     const result = await createAiScan({
@@ -237,6 +259,30 @@ app.post('/v1/recipes/:recipeId/coaching', async (request, response, next) => {
       return;
     }
     sendOk(response, result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Regenerates a recipe from a user correction (e.g. wrong dish identified)
+// without requiring a new photo/scan. Reuses the existing OpenRouter recipe
+// pipeline via createAiRecipeCorrection — see aiService.ts for details.
+app.post('/v1/recipes/:recipeId/correct', async (request, response, next) => {
+  try {
+    const body = parseRequest(recipeCorrectionRequestSchema, request.body);
+    const result = await createAiRecipeCorrection({
+      correctionNote: body.correctionNote,
+      dishNameOverride: body.dishNameOverride,
+      mode: body.mode,
+      recipeId: request.params.recipeId,
+    });
+
+    if (!result) {
+      sendNotFound(response, 'recipe_not_found', 'Recipe not found or expired. Please scan again.');
+      return;
+    }
+
+    sendOk(response.status(201), result);
   } catch (error) {
     next(error);
   }

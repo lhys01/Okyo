@@ -20,7 +20,6 @@ import { LibraryScreen } from '../screens/LibraryScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { RecipeDetailScreen, RecipeStepsScreen } from '../screens/RecipeDetailScreen';
 import { RestaurantPacksScreen } from '../screens/RestaurantPacksScreen';
-import { ScanScreen } from '../screens/ScanScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import type { MainTabParamList } from './types';
 
@@ -31,7 +30,6 @@ type MainTabRouteName = keyof MainTabParamList;
 const tabLabels: Record<MainTabRouteName, string> = {
   HomeScreen: 'Home',
   RestaurantPacksScreen: 'Discover',
-  ScanScreen: 'Scan',
   LibraryScreen: 'Saved',
   ProfileScreen: 'Profile',
   SettingsScreen: 'Settings',
@@ -48,8 +46,8 @@ const visibleTabOrder: MainTabRouteName[] = [
 ];
 
 function TabIcon({ color, focused, routeName }: { color: string; focused: boolean; routeName: MainTabRouteName }) {
-  const iconSize = routeName === 'ScanScreen' ? 36 : focused ? 27 : 26;
-  const strokeWidth = routeName === 'ScanScreen' ? 2.1 : focused ? 2.2 : 1.9;
+  const iconSize = focused ? 27 : 26;
+  const strokeWidth = focused ? 2.2 : 1.9;
 
   switch (routeName) {
     case 'HomeScreen':
@@ -64,7 +62,6 @@ function TabIcon({ color, focused, routeName }: { color: string; focused: boolea
       return <User color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'SettingsScreen':
       return <Settings color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
-    case 'ScanScreen':
     default:
       return <Camera color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
   }
@@ -189,7 +186,6 @@ export function MainTabs() {
     >
       <Tab.Screen name="HomeScreen" component={HomeScreen} options={{ title: 'Home' }} />
       <Tab.Screen name="RestaurantPacksScreen" component={RestaurantPacksScreen} options={{ title: 'Discover' }} />
-      <Tab.Screen name="ScanScreen" component={ScanScreen} options={{ title: 'Scan' }} />
       <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Saved' }} />
       <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />
       <Tab.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />

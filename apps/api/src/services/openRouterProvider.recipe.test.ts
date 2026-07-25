@@ -8,9 +8,19 @@ import {
   normalizeRecipeProviderOutputShape,
   openRouterRecipeOutputSchema,
   OpenRouterProviderError,
+  repairStepInstructionText,
   recipeArrayFieldDefinitions,
   validateRecipeStructure,
 } from './openRouterProvider.js';
+
+test('step repair never invents generic durations or repeated suffixes', () => {
+  for (const text of ['Chop 1 onion.', 'Mix the sauce.', 'Plate the rice.', 'Serve immediately.', 'Garnish with scallions.']) {
+    const repaired = repairStepInstructionText(text, ['onion']);
+    assert.equal(repaired, text);
+    assert.doesNotMatch(repaired, /for 2 minutes|until hot and evenly coated|until fragrant or lightly browned/);
+  }
+  assert.equal(repairStepInstructionText('Bake the chicken for 25 minutes until golden.', ['chicken']), 'Bake the chicken for 25 minutes until golden.');
+});
 
 function buildStep(index: number, overrides: Record<string, unknown> = {}) {
   return {
@@ -209,7 +219,7 @@ test('output schema carries a single recipe (no per-mode keys)', () => {
   assert.ok(Array.isArray(parsed.steps));
 });
 
-test('output schema strips nutrition estimates from the recipe contract', () => {
+test('output schema preserves valid nutrition estimates and rejects malformed values', () => {
   const parsed = openRouterRecipeOutputSchema.parse({
     ...buildValidRecipe(),
     nutritionEstimate: {
@@ -220,7 +230,20 @@ test('output schema strips nutrition estimates from the recipe contract', () => 
     },
   });
 
-  assert.equal('nutritionEstimate' in parsed, false);
+  assert.deepEqual(parsed.nutritionEstimate, {
+    calories: 520,
+    proteinGrams: 35,
+    carbohydratesGrams: 48,
+    fatGrams: 20,
+  });
+  for (const nutritionEstimate of [
+    { calories: -1, proteinGrams: 1, carbohydratesGrams: 1, fatGrams: 1 },
+    { calories: Number.NaN, proteinGrams: 1, carbohydratesGrams: 1, fatGrams: 1 },
+    { calories: Number.POSITIVE_INFINITY, proteinGrams: 1, carbohydratesGrams: 1, fatGrams: 1 },
+    { calories: 5001, proteinGrams: 1, carbohydratesGrams: 1, fatGrams: 1 },
+  ]) {
+    assert.throws(() => openRouterRecipeOutputSchema.parse({ ...buildValidRecipe(), nutritionEstimate }));
+  }
 });
 
 test('recipe generation adds quantified water when cooking steps require it', async () => {
