@@ -19,14 +19,13 @@ import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import {
   getSafeRecipeMode,
-  isRecipeMode,
-  type Recipe,
   type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
+import { resolveCanonicalRecipes, type CanonicalRecipe } from '../state/canonicalRecipes';
 import { useOkyoStore, type CompletedChallenge } from '../state/useOkyoStore';
 import { getModeChipPalette, getModeLabel } from '../utils/modeDisplay';
-import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
 type SavingsNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -39,7 +38,7 @@ type SavingsEntry = {
   homeCost: number;
   restaurantCost: number;
   completedAt?: string | null;
-  recipe?: Recipe;
+  recipe?: CanonicalRecipe;
   imageStatus?: string;
   imageUri?: string | null;
 };
@@ -54,26 +53,25 @@ const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 
 export function SavingsDashboardScreen() {
   const navigation = useNavigation<SavingsNavigation>();
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const recipesById = useOkyoStore((state) => state.recipesById);
+  const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const storedMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
-  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
-  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const [selectedPeriod, setSelectedPeriod] = useState<SavingsPeriod>('month');
 
-  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id) : [];
+  const safeSavedRecipes = useMemo(
+    () => resolveCanonicalRecipes(recipesById, savedRecipeIds),
+    [recipesById, savedRecipeIds],
+  );
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeStoredMoneySaved = getFiniteNumber(storedMoneySaved);
-  const latestImageUri = getRealScanImageUri(selectedScanImage);
-
   const recipeEntries = useMemo(
     () => safeSavedRecipes.map((recipe) => toRecipeEntry(
       recipe,
-      getRecipeImageUrl(recipe, recipe.id === latestScanRecipe?.id ? latestImageUri : null),
+      getRecipeImageUrl(recipe),
     )),
-    [latestImageUri, latestScanRecipe?.id, safeSavedRecipes],
+    [safeSavedRecipes],
   );
   const challengeEntries = useMemo(
     () => safeCompletedChallenges.map(toChallengeEntry),
@@ -115,8 +113,8 @@ export function SavingsDashboardScreen() {
     ? 'Start remaking meals to track your savings.'
     : 'Your kitchen savings will stack up here.';
   const zeroSavingsBody = mealCount > 0
-    ? 'Okyo will keep real savings estimates here as your saved meals and cooking wins add up.'
-    : 'Save a restaurant-style recipe or finish a cooking challenge to start tracking what you kept at home.';
+    ? 'Okyo will keep real savings estimates here as your liked meals and cooking wins add up.'
+    : 'Like a homemade recipe or finish a cooking challenge to start tracking what you kept at home.';
 
   const goToScan = () => {
     uiLog('SavingsDashboardScreen', 'scan_another_craving');
@@ -133,18 +131,14 @@ export function SavingsDashboardScreen() {
     navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
-  const openSavedRecipe = (recipe: Recipe) => {
-    const mode = getSafeRecipeMode(recipe.mode);
+  const openSavedRecipe = (recipe: CanonicalRecipe) => {
+    const mode = recipe.selectedMode;
     uiLog('SavingsDashboardScreen', 'open_recent_win', { recipeId: recipe.id });
-    writeSavedRecipeContext({
-      recipe,
-      reason: 'open_saved_savings_recipe',
-      source: 'SavingsDashboardScreen.openSavedRecipe',
+    setSelectedMode(mode);
+    navigation.navigate('MainTabs', {
+      screen: 'RecipeDetailScreen',
+      params: { mode, recipeId: recipe.id },
     });
-    if (isRecipeMode(recipe.mode)) {
-      setSelectedMode(recipe.mode);
-    }
-    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
   };
 
   if (!hasSavingsData) {
@@ -199,8 +193,8 @@ export function SavingsDashboardScreen() {
           </Text>
           <Text style={styles.heroBody}>
             {hasSelectedPeriodSavings
-              ? 'Estimated from restaurant-style meals you saved or cooked at home.'
-              : 'Save a restaurant-style recipe or switch to All time to review earlier wins.'}
+              ? 'Estimated from meals you liked or cooked at home.'
+              : 'Like a recipe or switch to All time to review earlier wins.'}
           </Text>
         </View>
         <View style={styles.heroBadge}>
@@ -291,7 +285,7 @@ export function SavingsDashboardScreen() {
               <RecentWinRow
                 key={entry.id}
                 entry={entry}
-                onPress={entry.recipe ? () => openSavedRecipe(entry.recipe as Recipe) : undefined}
+                onPress={entry.recipe ? () => openSavedRecipe(entry.recipe!) : undefined}
               />
             ))}
           </View>
@@ -390,14 +384,14 @@ function ModeChip({ mode }: { mode: RecipeMode }) {
   );
 }
 
-function toRecipeEntry(recipe: Recipe, imageUri?: string | null): SavingsEntry {
+function toRecipeEntry(recipe: CanonicalRecipe, imageUri?: string | null): SavingsEntry {
   const savings = getFiniteNumber(recipe.estimatedSavings);
   const homeCost = getFiniteNumber(recipe.estimatedHomemadeCost);
 
   return {
     id: `recipe-${recipe.id}`,
     title: recipe.title,
-    mode: getSafeRecipeMode(recipe.mode),
+    mode: recipe.selectedMode,
     savings,
     homeCost,
     restaurantCost: homeCost + savings,
@@ -451,9 +445,8 @@ function getFiniteNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-function getOptionalDate(recipe: Recipe) {
-  const maybeSavedAt = (recipe as Recipe & { savedAt?: unknown; createdAt?: unknown }).savedAt ??
-    (recipe as Recipe & { savedAt?: unknown; createdAt?: unknown }).createdAt;
+function getOptionalDate(recipe: CanonicalRecipe) {
+  const maybeSavedAt = recipe.savedAt ?? recipe.createdAt;
 
   return typeof maybeSavedAt === 'string' && maybeSavedAt.trim().length > 0 ? maybeSavedAt : null;
 }
@@ -463,8 +456,8 @@ function cleanDisplayText(value: string) {
   const copyStyle = `${copyWord}-style`;
 
   return value
-    .replace(new RegExp(`\\b${copyStyle}\\b`, 'gi'), 'restaurant-style')
-    .replace(new RegExp(`\\b${copyWord}\\b`, 'gi'), 'restaurant-style')
+    .replace(new RegExp(`\\b${copyStyle}\\b`, 'gi'), 'homemade')
+    .replace(new RegExp(`\\b${copyWord}\\b`, 'gi'), 'homemade')
     .replace(/\bdupes?\b/gi, 'swaps')
     .replace(/\bmock\b/gi, 'demo')
     .trim();

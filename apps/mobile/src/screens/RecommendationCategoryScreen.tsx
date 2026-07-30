@@ -1,7 +1,7 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { NavArrowLeft } from 'iconoir-react-native';
+import { NavArrowLeft, Spark } from 'iconoir-react-native';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -58,7 +58,7 @@ export function RecommendationCategoryScreen() {
         </View>
 
         <View style={[styles.hero, { backgroundColor: art.tint }]}>
-          <Text style={styles.heroEmoji}>{art.emoji}</Text>
+          <Spark color={colors.coral} height={58} strokeWidth={1.8} width={58} />
         </View>
         <Text style={styles.kicker}>Food inspiration</Text>
         <Text style={styles.title}>{category}</Text>
@@ -101,9 +101,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.hero,
     justifyContent: 'center',
     paddingVertical: 28,
-  },
-  heroEmoji: {
-    fontSize: 64,
   },
   kicker: {
     ...typography.caption,

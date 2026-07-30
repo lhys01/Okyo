@@ -118,7 +118,7 @@ export function AnalysisLoadingScreen() {
   }, []);
 
   useEffect(() => {
-    if (reduceMotion || outcome !== 'pending') {
+    if (isDescriptionScan || reduceMotion || outcome !== 'pending') {
       scanLineProgress.stopAnimation();
       return;
     }
@@ -131,10 +131,10 @@ export function AnalysisLoadingScreen() {
     );
     animation.start();
     return () => animation.stop();
-  }, [reduceMotion, scanLineProgress, outcome]);
+  }, [isDescriptionScan, reduceMotion, scanLineProgress, outcome]);
 
   useEffect(() => {
-    if (outcome !== 'pending') {
+    if (outcome !== 'pending' || reduceMotion) {
       return;
     }
 
@@ -144,7 +144,7 @@ export function AnalysisLoadingScreen() {
     }, 2000);
 
     return () => clearInterval(pulse);
-  }, [statusMessages.length, statusSequenceKey, outcome]);
+  }, [statusMessages.length, statusSequenceKey, outcome, reduceMotion]);
 
   useEffect(() => {
     const isPending = outcome === 'pending';
@@ -213,18 +213,23 @@ export function AnalysisLoadingScreen() {
   }, [latestScanFailure?.rejectionReason, latestScanRecipe, latestScanResult, outcome, timedOut]);
 
   useEffect(() => {
-    if (didNavigate.current || outcome !== 'success') {
+    const routeScanSessionId = route.params?.scanSessionId;
+    const isCurrentRouteSession = !routeScanSessionId || routeScanSessionId === scanSessionId;
+    if (didNavigate.current || outcome !== 'success' || !isCurrentRouteSession) {
       return;
     }
 
     const finish = setTimeout(() => {
       didNavigate.current = true;
       uiLog('AnalysisLoadingScreen', 'navigate_result', { status: latestScanStatus });
-      navigation.navigate('ResultSummaryScreen', { scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined });
+      navigation.navigate('ResultSummaryScreen', {
+        recipeId: latestScanRecipe?.id,
+        scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined,
+      });
     }, 750);
 
     return () => clearTimeout(finish);
-  }, [outcome, navigation, route.params?.scanSessionId, scanSessionId, latestScanStatus]);
+  }, [outcome, navigation, route.params?.scanSessionId, scanSessionId, latestScanRecipe?.id, latestScanStatus]);
 
   // Safety net: the scan store always receives a terminal write (the API client
   // times out at 60s), but if anything ever hangs past that, resolve to the
@@ -337,13 +342,10 @@ export function AnalysisLoadingScreen() {
             <NavArrowLeft color={colors.charcoal} height={24} strokeWidth={2.35} width={24} />
             <Text style={styles.backPillText}>Home</Text>
           </Pressable>
-          <View pointerEvents="none" style={styles.topTitleWrap}>
-            <Text style={styles.topTitle}>{isFailure ? 'Scan issue' : 'Analyzing'}</Text>
-          </View>
         </View>
 
-        <View style={styles.hero}>
-          {stableScanImageUri ? (
+        <View style={[styles.hero, isDescriptionScan ? styles.descriptionHero : null]}>
+          {!isDescriptionScan && stableScanImageUri ? (
             <View style={styles.scanImageWrap}>
               <Image resizeMode="cover" source={{ uri: stableScanImageUri }} style={styles.scanImage} />
               {!isFailure ? (
@@ -357,7 +359,11 @@ export function AnalysisLoadingScreen() {
               ) : null}
             </View>
           ) : null}
-          <KikoMascot pose={isFailure ? 'thinking' : 'scanning'} size={72} style={styles.heroMascot} />
+          <KikoMascot
+            pose={isFailure ? 'thinking' : 'scanning'}
+            size={isDescriptionScan ? 48 : 72}
+            style={styles.heroMascot}
+          />
           {isFailure ? (
             <>
               <Text style={styles.title}>{failureCopy.title}</Text>
@@ -365,7 +371,9 @@ export function AnalysisLoadingScreen() {
             </>
           ) : (
             <>
-              <Text style={styles.title}>{isDescriptionScan ? 'Kiko is shaping your recipe' : 'Kiko is studying your food'}</Text>
+              <Text style={[styles.title, isDescriptionScan ? styles.descriptionTitle : null]}>
+                {isDescriptionScan ? 'Kiko is building your recipe' : 'Kiko is studying your food'}
+              </Text>
               <Text numberOfLines={2} style={styles.statusText}>
                 {statusMessages[pulseSequenceKey.current === statusSequenceKey ? pulseIndex : 0] ?? statusMessages[0]}
               </Text>
@@ -423,7 +431,7 @@ const styles = StyleSheet.create({
   },
   topBar: {
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     marginTop: 8,
     minHeight: 64,
     position: 'relative',
@@ -448,24 +456,12 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
   },
-  topTitleWrap: {
-    alignItems: 'center',
-    bottom: 0,
-    justifyContent: 'center',
-    left: 90,
-    position: 'absolute',
-    right: 90,
-    top: 0,
-  },
-  topTitle: {
-    color: colors.charcoal,
-    fontSize: 21,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
   hero: {
     alignItems: 'center',
     marginTop: 24,
+  },
+  descriptionHero: {
+    marginTop: 8,
   },
   heroMascot: {
     marginTop: 4,
@@ -499,6 +495,11 @@ const styles = StyleSheet.create({
     lineHeight: 35,
     textAlign: 'center',
   },
+  descriptionTitle: {
+    fontSize: 24,
+    lineHeight: 29,
+    maxWidth: 300,
+  },
   statusText: {
     color: colors.coral,
     fontSize: 19,
@@ -519,6 +520,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   progressTrack: {
+    alignSelf: 'center',
     backgroundColor: colors.cream,
     borderRadius: 999,
     height: 8,

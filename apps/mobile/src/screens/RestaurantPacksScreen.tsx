@@ -1,6 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { NavArrowRight } from 'iconoir-react-native';
+import { NavArrowRight, Spark } from 'iconoir-react-native';
 import { useEffect, useRef } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,7 +21,7 @@ type RestaurantPacksNavigation = NativeStackNavigationProp<RootStackParamList>;
 
 function getPackDescription(packName: string) {
   const name = packName.replace('-inspired', '');
-  return `Homemade swaps inspired by ${name} favorites.`;
+  return `Homemade versions of ${name} favorites.`;
 }
 
 function getAverageSavings(pack: RestaurantPack) {
@@ -75,7 +75,9 @@ export function RestaurantPacksScreen() {
                 onPress={() => openCategory(category)}
                 style={({ pressed }) => [styles.categoryTile, { backgroundColor: art.tint }, pressed ? styles.pressed : null]}
               >
-                <Text style={styles.categoryEmoji}>{art.emoji}</Text>
+                <View style={styles.categoryIcon}>
+                  <Spark color={colors.coral} height={30} strokeWidth={2} width={30} />
+                </View>
                 <Text numberOfLines={2} style={styles.categoryName}>{category}</Text>
                 <Text style={styles.categoryCount}>{count} {count === 1 ? 'recipe' : 'recipes'}</Text>
               </Pressable>
@@ -85,8 +87,8 @@ export function RestaurantPacksScreen() {
 
         {safePacks.length > 0 ? (
           <View style={styles.packsSection}>
-            <Text style={styles.sectionTitle}>Restaurant-style collections</Text>
-            <Text style={styles.sectionSubtitle}>Curated packs inspired by takeout favorites.</Text>
+            <Text style={styles.sectionTitle}>Curated collections</Text>
+            <Text style={styles.sectionSubtitle}>Homemade takes on takeout favorites.</Text>
             <View style={styles.packGrid}>
               {safePacks.map((pack, index) => {
                 const packDishes = Array.isArray(pack.dishes) ? pack.dishes : [];
@@ -152,8 +154,11 @@ const styles = StyleSheet.create({
     padding: 16,
     width: '48%',
   },
-  categoryEmoji: {
-    fontSize: 34,
+  categoryIcon: {
+    alignItems: 'center',
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
   },
   categoryName: {
     color: colors.charcoal,

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
@@ -25,7 +27,18 @@ import {
   saveRecipe,
 } from './store.js';
 import { createAiRecipeCorrection, createAiScan, createAiTextRecipe, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
+import { CorrectionValidationError } from './services/correctionIntent.js';
+import {
+  createCorrectionDiagnostics,
+  getCorrectionHttpStatus,
+  logCorrectionRequest,
+} from './services/correctionReliability.js';
 import { isRecipeValidationFailure } from './services/openRouterProvider.js';
+import {
+  CURRENT_RECIPE_MODES,
+  isLegacyRecipeMode,
+  recipeModeInputSchema,
+} from './services/recipeModes.js';
 import type { ApiFailure, ApiResponse } from './types.js';
 
 const port = Number(process.env.PORT ?? 8081);
@@ -33,7 +46,7 @@ export const app = express();
 const maxImageDataUrlChars = 12_000_000;
 const jsonBodyLimit = '16mb';
 
-const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
+const recipeModeSchema = z.enum(['Normal', 'Lighter', 'Healthier', 'More Protein']);
 const scanSourceSchema = z.enum(['camera', 'photos', 'description']);
 const imageDataUrlSchema = z.string()
   .min(1)
@@ -56,7 +69,7 @@ const scanImageMetadataSchema = z.object({
 }).strict();
 const scanRequestSchema = z.object({
   source: scanSourceSchema.optional().default('camera'),
-  mode: recipeModeSchema.optional().default('Restaurant Copy'),
+  mode: recipeModeInputSchema.optional().default('Normal'),
   image: scanImageMetadataSchema.optional(),
   mealDescription: z.string().trim().min(1).max(240).optional(),
 }).superRefine((value, context) => {
@@ -72,7 +85,7 @@ const scanRequestSchema = z.object({
 });
 const challengeRequestSchema = z.object({
   recipeId: z.string().min(1),
-  mode: recipeModeSchema.optional().default('Restaurant Copy'),
+  mode: recipeModeSchema.optional().default('Normal'),
   rating: z.enum(['Nailed it', 'Pretty close', 'Needs work', 'Not close']),
   matchScore: z.number().min(0).max(10).optional(),
 });
@@ -81,9 +94,15 @@ const xpEventRequestSchema = z.object({
   sourceId: z.string().min(1).optional(),
 });
 const recipeCorrectionRequestSchema = z.object({
-  correctionNote: z.string().trim().min(1).max(300),
+  correctionRequestId: z.string().trim().min(1).max(120).optional(),
+  correctionNote: z.string().min(1).max(300).refine((value) => value.trim().length > 0, {
+    message: 'Correction note is required.',
+  }),
   dishNameOverride: z.string().trim().min(1).max(120).optional(),
-  mode: recipeModeSchema.optional().default('Restaurant Copy'),
+  expectedSourceRecipeId: z.string().trim().min(1).max(240).optional(),
+  canonicalRecipeId: z.string().trim().min(1).max(240).optional(),
+  scanSessionId: z.string().trim().min(1).max(240).optional(),
+  mode: recipeModeInputSchema.optional().default('Normal'),
 }).strict();
 
 app.use(cors());
@@ -113,6 +132,7 @@ app.get('/debug/ai-config', (_request, response) => {
 app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) => {
   try {
     const body = parseRequest(scanRequestSchema, normalizeScanRequestInput(request.body));
+    logRecipeModeMigration('/v1/scans', getRequestMode(request.body), body.mode);
 
     // Configurable image size guard (secondary check; Zod schema is the primary).
     const imageSizeBytes = body.image?.dataUrlSizeBytes ?? body.image?.dataUrl?.length ?? 0;
@@ -268,22 +288,69 @@ app.post('/v1/recipes/:recipeId/coaching', async (request, response, next) => {
 // without requiring a new photo/scan. Reuses the existing OpenRouter recipe
 // pipeline via createAiRecipeCorrection — see aiService.ts for details.
 app.post('/v1/recipes/:recipeId/correct', async (request, response, next) => {
+  const diagnostics = createCorrectionDiagnostics({
+    correctionRequestId: typeof request.body?.correctionRequestId === 'string'
+      ? request.body.correctionRequestId
+      : randomUUID(),
+    sourceRecipeId: request.params.recipeId,
+  });
   try {
     const body = parseRequest(recipeCorrectionRequestSchema, request.body);
+    logRecipeModeMigration(
+      '/v1/recipes/:recipeId/correct',
+      getRequestMode(request.body),
+      body.mode,
+    );
+    diagnostics.canonicalRecipeId = body.canonicalRecipeId;
+    diagnostics.scanSessionId = body.scanSessionId;
+    diagnostics.requestedSourceRevisionId = body.expectedSourceRecipeId ?? request.params.recipeId;
     const result = await createAiRecipeCorrection({
       correctionNote: body.correctionNote,
+      diagnostics,
       dishNameOverride: body.dishNameOverride,
+      expectedSourceRecipeId: body.expectedSourceRecipeId,
+      canonicalRecipeId: body.canonicalRecipeId,
+      scanSessionId: body.scanSessionId,
       mode: body.mode,
       recipeId: request.params.recipeId,
     });
 
     if (!result) {
+      diagnostics.failureCategory = 'source_recipe_missing';
+      logCorrectionRequest(diagnostics, 404);
       sendNotFound(response, 'recipe_not_found', 'Recipe not found or expired. Please scan again.');
       return;
     }
 
+    logCorrectionRequest(diagnostics, 201);
     sendOk(response.status(201), result);
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      diagnostics.failureCategory = 'malformed_client_request';
+      logRequestValidationFailure(
+        '/v1/recipes/:recipeId/correct',
+        request.body,
+        error,
+      );
+      logCorrectionRequest(diagnostics, 400, error);
+      sendError(response.status(400), 'validation_error', 'Request validation failed.');
+      return;
+    }
+
+    const status = getCorrectionHttpStatus(error);
+    logCorrectionRequest(diagnostics, status, error);
+    if (status === 409) {
+      sendError(response.status(409), 'stale_recipe_revision', 'This recipe changed before the update finished. Try again.');
+      return;
+    }
+    if (status === 422) {
+      sendError(response.status(422), 'recipe_correction_failed', 'We couldn’t update the recipe. Try again.');
+      return;
+    }
+    if (status === 502 || status === 503) {
+      sendError(response.status(status), 'recipe_correction_unavailable', 'We couldn’t update the recipe. Try again.');
+      return;
+    }
     next(error);
   }
 });
@@ -303,7 +370,7 @@ app.get('/v1/restaurant-packs/:packId', (request, response) => {
   sendOk(response, { pack });
 });
 
-app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+app.use((error: unknown, request: Request, response: Response, _next: NextFunction) => {
   if (error instanceof FoodRejectionError) {
     sendError(
       response.status(422),
@@ -324,7 +391,17 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
   }
 
   if (error instanceof z.ZodError) {
-    sendError(response.status(400), 'validation_error', 'Request validation failed.', error.flatten());
+    logRequestValidationFailure(request.route?.path ?? request.path, request.body, error);
+    sendError(response.status(400), 'validation_error', 'Request validation failed.');
+    return;
+  }
+
+  if (error instanceof CorrectionValidationError) {
+    sendError(
+      response.status(422),
+      'recipe_correction_failed',
+      'We couldn’t update the recipe. Try again.',
+    );
     return;
   }
 
@@ -352,6 +429,72 @@ if (process.env.NODE_ENV !== 'test') {
 
 function parseRequest<TSchema extends z.ZodTypeAny>(schema: TSchema, value: unknown): z.infer<TSchema> {
   return schema.parse(value);
+}
+
+function logRecipeModeMigration(
+  endpoint: string,
+  receivedMode: unknown,
+  normalizedMode: string,
+) {
+  if (!isLegacyRecipeMode(receivedMode)) {
+    return;
+  }
+  console.log('recipe_mode_migrated', {
+    endpoint,
+    receivedMode,
+    normalizedMode,
+  });
+}
+
+function logRequestValidationFailure(
+  endpoint: string,
+  requestBody: unknown,
+  error: z.ZodError,
+) {
+  for (const issue of error.issues) {
+    const invalidField = issue.path.length > 0 ? issue.path.join('.') : 'request';
+    const receivedValue = getValueAtPath(requestBody, issue.path);
+    console.log('request_validation_failed', {
+      endpoint,
+      invalidField,
+      receivedValue: getSafeValidationLogValue(invalidField, receivedValue),
+      expectedCurrentValues: invalidField === 'mode' ? CURRENT_RECIPE_MODES : undefined,
+      finalStatus: 400,
+    });
+  }
+}
+
+function getRequestMode(body: unknown): unknown {
+  return body && typeof body === 'object' && !Array.isArray(body)
+    ? (body as Record<string, unknown>).mode
+    : undefined;
+}
+
+function getValueAtPath(value: unknown, path: Array<string | number>): unknown {
+  let current = value;
+  for (const segment of path) {
+    if (!current || typeof current !== 'object') {
+      return undefined;
+    }
+    current = (current as Record<string | number, unknown>)[segment];
+  }
+  return current;
+}
+
+function getSafeValidationLogValue(field: string, value: unknown): unknown {
+  if (/(?:correctionNote|mealDescription|dataUrl|image|uri)/i.test(field)) {
+    return typeof value === 'string' ? `[redacted string length=${value.length}]` : '[redacted]';
+  }
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'undefined'
+  ) {
+    return value;
+  }
+  return Array.isArray(value) ? `[array length=${value.length}]` : '[object]';
 }
 
 function sendOk<T>(response: Response, data: T) {
@@ -394,7 +537,6 @@ function logScanRequest(body: z.infer<typeof scanRequestSchema>, contentType: st
   console.log('api_scan_image_exists', { exists: Boolean(body.image) });
   console.log('api_scan_image_data_url_exists', { exists: Boolean(body.image?.dataUrl) });
   console.log('api_scan_image_data_url_length', { length: body.image?.dataUrl?.length ?? 0 });
-  console.log('api_scan_image_data_url_prefix', { prefix: body.image?.dataUrl?.slice(0, 30) ?? null });
   console.log('api_scan_provider_visible_start', {
     contentType,
     hasDataUrl: Boolean(body.image?.dataUrl),

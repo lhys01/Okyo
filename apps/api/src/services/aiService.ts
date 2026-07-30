@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
 
@@ -31,7 +31,6 @@ import {
   isDrinkAnalysisText,
   isGenericDishName,
   OpenRouterProviderError,
-  repairStepCoachingWithAI,
   runWithOpenRouterMetrics,
   type ComponentRepairOutput,
   type OpenRouterRecipeOutput,
@@ -39,9 +38,51 @@ import {
   type OpenRouterVisionOutput,
   type StepCoachingPatch,
 } from './openRouterProvider.js';
+import {
+  areCorrectionCandidatesEffectivelyIdentical,
+  analyzeIngredientChanges,
+  CorrectionValidationError,
+  CorrectionRequestValidationError,
+  correctionUsedFuzzyNormalization,
+  getCorrectionDishName,
+  getCorrectionIngredientHintsForPlan,
+  getCorrectionTargetConcept,
+  getMandatoryCorrectionRequirementsForPlan,
+  getNutritionRequirementTargets,
+  evaluateNutritionRequirements,
+  isActionableCorrectionPlan,
+  parseCorrectionRequirements,
+  type CorrectionAppliedChangeManifest,
+  type CorrectionCandidateAssessment,
+  type CorrectionGenerationContext,
+  type CorrectionIntent,
+  type CorrectionValidationIssue,
+} from './correctionIntent.js';
+import {
+  applyCorrectionPatch,
+  type CorrectionPatchApplication,
+} from './correctionPatch.js';
+import {
+  getCorrectionIssueCodes,
+  type CorrectionAttemptDiagnostics,
+  type CorrectionNutritionSnapshot,
+  type CorrectionRequestDiagnostics,
+} from './correctionReliability.js';
+import {
+  reconcileCorrectionNutrition,
+  validateCorrectionCandidate,
+  type CorrectionValidationResult,
+} from './correctionValidator.js';
 import { logScanEvaluation } from './scanEvalLogger.js';
 import { recordPlatterCoverage, recordRecipeQuality } from './recipeQualityAnalytics.js';
-import { getGeneratedRecipe, storeGeneratedRecipe } from '../store.js';
+import {
+  getCurrentGeneratedRecipe,
+  getGeneratedRecipe,
+  getGeneratedRecipeRevisionMetadata,
+  storeGeneratedRecipe,
+  storeGeneratedRecipeRevision,
+  StaleRecipeRevisionError,
+} from '../store.js';
 
 // Bump when the vision/recipe prompt or post-processing pipeline changes substantially.
 // Any cached scan result with a different version is automatically stale.
@@ -54,12 +95,54 @@ type ScanCacheEntry =
   | { kind: 'rejection'; error: FoodRejectionError; expiresAt: number };
 // ponytail: in-memory only; add Redis/disk when multi-process deployment matters
 const scanCache = new Map<string, ScanCacheEntry>();
+type CorrectionRequestOutcome =
+  | { kind: 'success'; result: AiScanSuccessResult | null }
+  | { kind: 'failure'; error: unknown };
+const correctionRequestResults = new Map<string, { outcome: CorrectionRequestOutcome; expiresAt: number }>();
+const correctionRequestInFlight = new Map<string, Promise<AiScanSuccessResult | null>>();
+const CORRECTION_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+
+function createUniqueScanSourceRecipe(recipe: Recipe, scanId: string): Recipe {
+  return {
+    ...recipe,
+    id: `scan-source-${scanId}-${randomUUID()}`,
+    scanResultId: scanId,
+  };
+}
+
+function materializeCachedScanResult(cached: AiScanSuccessResult): AiScanSuccessResult {
+  if (!cached.recipe || !cached.scan || !cached.shareCard) {
+    return cached;
+  }
+  const scanId = `scan-${Date.now()}-${randomUUID()}`;
+  const recipe = createUniqueScanSourceRecipe(cached.recipe, scanId);
+  const scan = {
+    ...cached.scan,
+    id: scanId,
+    recipeId: recipe.id,
+    groceryListId: `grocery-${recipe.id}`,
+    shareCardId: `share-${scanId}`,
+  };
+  const groceryList = getGroceryListForRecipe(recipe);
+  return {
+    ...cached,
+    scan,
+    recipe,
+    groceryList,
+    shareCard: {
+      ...cached.shareCard,
+      id: `share-${scanId}`,
+      scanResultId: scanId,
+      headline: recipe.title,
+    },
+  };
+}
 
 function getScanCacheKey(dataUrl: string, mode: string): string {
   return createHash('sha1').update(dataUrl).digest('hex') + ':' + mode + ':' + RECIPE_PIPELINE_VERSION;
 }
 
-const recipeModeSchema = z.enum(['Restaurant Copy', 'Budget', 'Healthy']);
+const recipeModeSchema = z.enum(['Normal', 'Lighter', 'Healthier', 'More Protein']);
 const difficultySchema = z.enum(['Easy', 'Medium', 'Hard']);
 const confidenceSchema = z.number().min(0).max(1);
 const matchScoreSchema = z.number().min(0).max(10);
@@ -79,7 +162,7 @@ const visibleComponentsSchema = z.object({
   toppingsGarnish: z.string().optional().default(''),
   cookingMethod: z.string().optional().default(''),
 });
-const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
+const recipeModes: RecipeMode[] = ['Normal', 'Lighter', 'Healthier', 'More Protein'];
 const defaultRestaurantPrice = 18;
 const defaultHomemadeCost = 6.5;
 const uploadedImageConfidenceThreshold = 0.4;
@@ -193,6 +276,15 @@ export const ingredientCostEstimateSchema = z.object({
 
 export type FoodImageAnalysis = z.infer<typeof foodImageAnalysisSchema>;
 export type GeneratedRecipeOutput = z.infer<typeof generatedRecipeOutputSchema> & {
+  correctionManifest?: CorrectionAppliedChangeManifest[];
+  correctionPatch?: CorrectionPatchApplication;
+  correctionRawPatch?: {
+    ingredientOperations: OpenRouterRecipeOutput['ingredientOperations'];
+    stepOperations: OpenRouterRecipeOutput['stepOperations'];
+    nutritionEstimate?: OpenRouterRecipeOutput['nutritionEstimate'];
+    metadataPatch?: OpenRouterRecipeOutput['metadataPatch'];
+  };
+  patchValidationIssues?: string[];
   recipe?: Recipe;
   warnings?: string[];
 };
@@ -210,8 +302,10 @@ export type AnalyzeFoodImageInput = {
 
 export type GenerateRecipeFromDishInput = {
   analysis: FoodImageAnalysis;
+  correction?: CorrectionGenerationContext;
   mode: RecipeMode;
   fableActive?: boolean;
+  storeResult?: boolean;
 };
 
 export type EstimateIngredientCostsInput = {
@@ -326,15 +420,16 @@ export async function generateRecipeFromDish(
     const output = await generateRecipeWithOpenRouter({
       analysis: input.analysis,
       config,
+      correction: input.correction,
       mode: input.mode,
     });
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterTextModel, { stage: 'recipe' }));
-    const result = createRecipeFromOpenRouterOutput(output, input.analysis, input.mode);
-
-    // Store recipe for deferred coaching — enriched on Guided Cooking tap, not on scan.
-    if (result.recipe) {
-      storeGeneratedRecipe(result.recipe);
-    }
+    const result = createRecipeFromOpenRouterOutput(
+      output,
+      input.analysis,
+      input.mode,
+      input.correction?.originalRecipe,
+    );
 
     const initialScore = result.recipe?.structuredSteps?.length
       ? calculateRecipeCoachingScore(result.recipe.structuredSteps)
@@ -355,9 +450,15 @@ export async function generateRecipeFromDish(
     let finalResult = result;
     if (finalResult.recipe && isPlatterStyleMeal(input.analysis)) {
       finalResult = await ensureComponentCoverage(finalResult, input.analysis, config);
-      if (finalResult.recipe) {
-        storeGeneratedRecipe(finalResult.recipe);
-      }
+    }
+    if (finalResult.recipe) {
+      const normalizedRecipe = normalizeRecipeIngredientsInRecipe(finalResult.recipe, input.analysis);
+      finalResult = {
+        ...finalResult,
+        recipe: normalizedRecipe,
+      };
+      // Persist only the final post-repair ingredient list.
+      if (input.storeResult !== false) storeGeneratedRecipe(normalizedRecipe);
     }
 
     return finalResult;
@@ -383,7 +484,7 @@ function recordRecipeQualityForResult(args: {
   const { config, analysis, result, initialScore, finalScore, repairDelivered, generationMs } = args;
   const finalSteps = result.recipe?.structuredSteps ?? [];
   const warnings = finalSteps.length > 0
-    ? collectCoachingWarnings(
+    ? collectV1RecipeWarnings(
         finalSteps,
         analysis,
         analysis.dishName ?? '',
@@ -417,30 +518,9 @@ export async function enrichRecipeCoaching(
   if (!recipe?.structuredSteps?.length) {
     return null;
   }
-
-  const steps = recipe.structuredSteps;
-  const weaknesses = identifyCoachingWeaknesses(steps);
-  if (weaknesses.length === 0) {
-    return { structuredSteps: steps };
-  }
-
-  const config = getAiConfig();
-  try {
-    const patches = await repairStepCoachingWithAI({
-      steps,
-      weaknesses,
-      dishName: recipe.title,
-      config,
-    });
-    const repairedSteps = applyCoachingPatches(steps, patches, weaknesses);
-    const repairedScore = calculateRecipeCoachingScore(repairedSteps);
-    const initialScore = calculateRecipeCoachingScore(steps);
-    // Only return repaired steps if they didn't regress the score.
-    return { structuredSteps: repairedScore >= initialScore ? repairedSteps : steps };
-  } catch {
-    // Fail gracefully — return uncoached steps so Guided Cooking still opens.
-    return { structuredSteps: steps };
-  }
+  // Guided Cooking V1 uses the concise canonical instruction data directly.
+  // Removed teaching-card fields are neither required nor regenerated here.
+  return { structuredSteps: recipe.structuredSteps };
 }
 
 export function estimateIngredientCosts(input: EstimateIngredientCostsInput): IngredientCostEstimate {
@@ -483,10 +563,11 @@ export async function createAiTextRecipe(input: { mealDescription: string; mode:
     visibleComponents: {}, restaurantPriceEstimate: 0, homemadeCostEstimate: 0, matchScore: 7.2, difficulty: 'Easy', modes: [input.mode],
     mealDescription: input.mealDescription.trim(),
   });
-  const generated = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive });
+  const generated = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive, storeResult: false });
   if (!generated.recipe) throw new Error('RECIPE_MISSING: Recipe object was not generated');
-  const recipe = generated.recipe;
-  const scanId = `scan-text-${Date.now()}`;
+  const scanId = `scan-text-${Date.now()}-${randomUUID()}`;
+  const recipe = createUniqueScanSourceRecipe(generated.recipe, scanId);
+  storeGeneratedRecipe(recipe);
   const costEstimate = estimateIngredientCosts({ analysis, recipe });
   const scan: ScanResult = {
     id: scanId, dishName, bestGuessDishName: dishName, bestGuessNote: 'Based on your description; check the ingredients before cooking.',
@@ -514,18 +595,134 @@ export async function createAiTextRecipe(input: { mealDescription: string; mode:
 // ingredients/steps rather than only renaming the title client-side.
 export async function createAiRecipeCorrection(input: {
   correctionNote: string;
+  diagnostics: CorrectionRequestDiagnostics;
   dishNameOverride?: string;
+  expectedSourceRecipeId?: string;
   fableActive?: boolean;
   mode: RecipeMode;
   recipeId: string;
+  canonicalRecipeId?: string;
+  scanSessionId?: string;
 }): Promise<AiScanSuccessResult | null> {
-  const existingRecipe = getGeneratedRecipe(input.recipeId);
+  const requestId = input.diagnostics.correctionRequestId;
+  const completed = requestId ? correctionRequestResults.get(requestId) : undefined;
+  if (completed && completed.expiresAt > Date.now()) {
+    if (completed.outcome.kind === 'failure') throw completed.outcome.error;
+    return completed.outcome.result;
+  }
+  if (completed) correctionRequestResults.delete(requestId!);
+  const inFlight = requestId ? correctionRequestInFlight.get(requestId) : undefined;
+  if (inFlight) return inFlight;
+
+  const work = runWithOpenRouterMetrics(async () => {
+    try {
+      return await createAiRecipeCorrectionWithMetrics(input);
+    } finally {
+      input.diagnostics.metrics = getOpenRouterMetrics();
+    }
+  });
+  if (!requestId) return work;
+  correctionRequestInFlight.set(requestId, work);
+  try {
+    const result = await work;
+    correctionRequestResults.set(requestId, {
+      outcome: { kind: 'success', result },
+      expiresAt: Date.now() + CORRECTION_IDEMPOTENCY_TTL_MS,
+    });
+    return result;
+  } catch (error) {
+    correctionRequestResults.set(requestId, {
+      outcome: { kind: 'failure', error },
+      expiresAt: Date.now() + CORRECTION_IDEMPOTENCY_TTL_MS,
+    });
+    throw error;
+  } finally {
+    correctionRequestInFlight.delete(requestId);
+  }
+}
+
+async function createAiRecipeCorrectionWithMetrics(input: {
+  correctionNote: string;
+  diagnostics: CorrectionRequestDiagnostics;
+  dishNameOverride?: string;
+  expectedSourceRecipeId?: string;
+  fableActive?: boolean;
+  mode: RecipeMode;
+  recipeId: string;
+  canonicalRecipeId?: string;
+  scanSessionId?: string;
+}): Promise<AiScanSuccessResult | null> {
+  const sourceMetadata = getGeneratedRecipeRevisionMetadata(input.recipeId);
+  input.diagnostics.canonicalRecipeId = input.canonicalRecipeId;
+  input.diagnostics.scanSessionId = input.scanSessionId;
+  input.diagnostics.latestStoredRevisionId = input.recipeId;
+  input.diagnostics.requestedSourceRevisionId = input.expectedSourceRecipeId ?? input.recipeId;
+  input.diagnostics.correctionKind = sourceMetadata?.parentRevisionId
+    ? 'sequential_correction'
+    : 'new_scan';
+  if (input.expectedSourceRecipeId && input.expectedSourceRecipeId !== input.recipeId) {
+    input.diagnostics.correctionKind = 'stale_race';
+    throw new StaleRecipeRevisionError(input.expectedSourceRecipeId, input.recipeId);
+  }
+  let existingRecipe: Recipe | null;
+  try {
+    existingRecipe = getCurrentGeneratedRecipe(input.recipeId);
+  } catch (error) {
+    if (error instanceof StaleRecipeRevisionError) {
+      input.diagnostics.correctionKind = 'stale_race';
+      input.diagnostics.latestStoredRevisionId = error.latestSourceRecipeId ?? input.recipeId;
+    }
+    throw error;
+  }
   if (!existingRecipe) {
     return null;
   }
 
   const config = getAiConfig({ fableActive: input.fableActive });
-  const correctedDishName = (input.dishNameOverride?.trim() || existingRecipe.title || 'Corrected dish').slice(0, 120);
+  const correctionPlan = parseCorrectionRequirements(input.correctionNote);
+  if (!isActionableCorrectionPlan(correctionPlan)) {
+    throw new CorrectionRequestValidationError([
+      'The correction request did not contain an actionable change.',
+    ]);
+  }
+  const intents = correctionPlan.requirements;
+  const primaryIntent = intents[0];
+  const identityIntent = intents.find(
+    (intent) => intent.type === 'correct_dish_identity',
+  ) ?? primaryIntent;
+  input.diagnostics.intentType = intents.map((intent) => intent.type).join('+');
+  input.diagnostics.normalizedTargetConcept = intents
+    .map(getCorrectionTargetConcept)
+    .join(' | ');
+  input.diagnostics.fuzzyNormalizedConcept = correctionUsedFuzzyNormalization(input.correctionNote);
+  const nutritionRequirements = getNutritionRequirementTargets(
+    existingRecipe,
+    intents,
+  );
+  input.diagnostics.parsedRequirements = intents.map((intent, intentIndex) => ({
+    requirementIndex: intentIndex + 1,
+    intentType: intent.type,
+    ...(intent.type === 'nutrition_goal'
+      ? {
+          nutrient: nutritionRequirements.find(
+            (requirement) => requirement.requirementIndex === intentIndex + 1,
+          )?.nutrient ?? intent.nutrient,
+          direction: intent.direction,
+        }
+      : {}),
+  }));
+  input.diagnostics.originalNutrition = getCorrectionNutritionSnapshot(existingRecipe);
+  input.diagnostics.nutritionTargets = nutritionRequirements;
+  const mandatoryRequirements = getMandatoryCorrectionRequirementsForPlan(
+    intents,
+    existingRecipe,
+  );
+  const correctedDishName = getCorrectionDishName(
+    existingRecipe.title || 'Corrected dish',
+    identityIntent,
+    input.dishNameOverride,
+  ).slice(0, 120);
+  const existingIngredientNames = existingRecipe.ingredients?.map((ingredient) => ingredient.name) ?? [];
   const analysis = foodImageAnalysisSchema.parse({
     candidateScanId: `correction-${Date.now()}`,
     aiSource: 'openrouter_ai',
@@ -539,7 +736,7 @@ export async function createAiRecipeCorrection(input: {
     isFoodImage: true,
     isRestaurantMeal: false,
     visibleIngredients: [],
-    likelyIngredients: existingRecipe.ingredients?.map((ingredient) => ingredient.name) ?? [],
+    likelyIngredients: getCorrectionIngredientHintsForPlan(existingIngredientNames, intents),
     possibleDishNames: [correctedDishName],
     visibleComponents: {},
     restaurantPriceEstimate: 0,
@@ -550,21 +747,120 @@ export async function createAiRecipeCorrection(input: {
     mealDescription: input.correctionNote.trim(),
   });
 
-  const generated = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive });
-  if (!generated.recipe) {
+  const correctionContext: CorrectionGenerationContext = {
+    note: input.correctionNote,
+    normalizedNote: correctionPlan.normalizedNote,
+    intent: primaryIntent,
+    intents,
+    requirements: mandatoryRequirements,
+    nutritionRequirements,
+    originalRecipe: existingRecipe,
+  };
+  const firstGenerated = await generateRecipeFromDish({
+    analysis,
+    correction: correctionContext,
+    mode: input.mode,
+    fableActive: input.fableActive,
+    storeResult: false,
+  });
+  if (!firstGenerated.recipe) {
     throw new Error('RECIPE_MISSING: Correction did not produce a recipe');
   }
 
-  const recipe = generated.recipe;
-  const scanId = `scan-correction-${Date.now()}`;
+  let recipe = reconcileCorrectionNutrition(firstGenerated.recipe);
+  recipe = { ...recipe, scanResultId: existingRecipe.scanResultId };
+  let validation = validateCorrectionCandidate(existingRecipe, recipe, intents);
+  let assessment = buildCorrectionAssessment(existingRecipe, recipe, intents, validation);
+  let correctionIssues = validation.blockingIssues;
+  input.diagnostics.firstAttempt = getCorrectionAttemptDiagnostics(
+    recipe,
+    assessment,
+    firstGenerated.correctionPatch,
+    firstGenerated.correctionRawPatch,
+    validation.blockingIssues,
+  );
+  input.diagnostics.firstValidationIssueCodes = validation.blockingIssues.map((issue) => issue.code);
+  let confidence = firstGenerated.confidence;
+
+  if (correctionIssues.length > 0) {
+    input.diagnostics.focusedRepairRan = true;
+    const repaired = await generateRecipeFromDish({
+      analysis,
+      correction: {
+        ...correctionContext,
+        missedRequirements: correctionIssues.map(formatValidationIssueForRepair),
+        missedValidationIssues: correctionIssues,
+        previousCandidate: recipe,
+        previousRequirementEvaluations: assessment.providerRequirementEvaluations,
+        previousIngredientChanges: assessment.ingredientChangeAnalysis.changes,
+        previousPatch: firstGenerated.correctionRawPatch,
+      },
+      mode: input.mode,
+      fableActive: input.fableActive,
+      storeResult: false,
+    });
+    if (!repaired.recipe) {
+      throw new CorrectionValidationError(correctionIssues);
+    }
+    recipe = reconcileCorrectionNutrition(repaired.recipe);
+    recipe = { ...recipe, scanResultId: existingRecipe.scanResultId };
+    validation = validateCorrectionCandidate(existingRecipe, recipe, intents);
+    assessment = buildCorrectionAssessment(existingRecipe, recipe, intents, validation);
+    input.diagnostics.repairCandidateEffectivelyIdentical =
+      areCorrectionCandidatesEffectivelyIdentical(
+        firstGenerated.recipe,
+        repaired.recipe,
+      );
+    confidence = repaired.confidence;
+    correctionIssues = validation.blockingIssues;
+    input.diagnostics.repairAttempt = getCorrectionAttemptDiagnostics(
+      recipe,
+      assessment,
+      repaired.correctionPatch,
+      repaired.correctionRawPatch,
+      validation.blockingIssues,
+    );
+    input.diagnostics.repairValidationIssueCodes = mergeValidationIssueCodes(
+      validation.blockingIssues,
+      getDiagnosticRequirementEvaluations(assessment),
+    );
+    input.diagnostics.repairBlockingValidationIssues = validation.blockingIssues;
+    if (
+      input.diagnostics.repairCandidateEffectivelyIdentical &&
+      correctionIssues.length > 0
+    ) {
+      input.diagnostics.repairValidationIssueCodes = [
+        ...new Set([
+          ...input.diagnostics.repairValidationIssueCodes,
+          'repair_candidate_unchanged',
+        ]),
+      ];
+    }
+  }
+
+  if (correctionIssues.length > 0) {
+    throw new CorrectionValidationError(correctionIssues);
+  }
+
+  const scanId = existingRecipe.scanResultId;
   const costEstimate = estimateIngredientCosts({ analysis, recipe });
+  // Commit only after generation, normalization, nutrition checks, mandatory
+  // correction validation, focused repair (when needed), and deterministic cost
+  // calculation have all succeeded. The store rechecks that the parent is still
+  // current, so a racing stale response cannot overwrite a newer revision.
+  const revision = storeGeneratedRecipeRevision(input.recipeId, recipe);
+  recipe = revision.recipe;
+  input.diagnostics.generatedRevisionId = recipe.id;
+  input.diagnostics.parentRevisionId = revision.parentRevisionId;
+  input.diagnostics.latestStoredRevisionId = recipe.id;
+  const finalDishName = recipe.title;
   const scan: ScanResult = {
     id: scanId,
-    dishName: correctedDishName,
-    bestGuessDishName: correctedDishName,
+    dishName: finalDishName,
+    bestGuessDishName: finalDishName,
     bestGuessNote: 'Updated from your correction.',
-    possibleDishNames: [correctedDishName],
-    confidence: generated.confidence,
+    possibleDishNames: [finalDishName],
+    confidence,
     difficulty: recipe.difficulty,
     estimatedSavings: costEstimate.estimatedSavings,
     homemadeCost: costEstimate.homemadeCost,
@@ -592,10 +888,132 @@ export async function createAiRecipeCorrection(input: {
       footer: 'Made with Okyo',
     },
     note: 'Recipe updated from your correction.',
-    ...createAiDebugMetadata(config, 'openrouter_ai', generated.confidence),
+    ...createAiDebugMetadata(config, 'openrouter_ai', confidence),
     scanState: 'clear_food',
     uploadedImage: false,
   };
+}
+
+function getCorrectionNutritionSnapshot(
+  recipe: Recipe,
+): CorrectionNutritionSnapshot | undefined {
+  const nutrition = recipe.nutritionEstimate;
+  if (!nutrition) {
+    return undefined;
+  }
+  return {
+    calories: nutrition.calories,
+    proteinGrams: nutrition.proteinGrams,
+    carbohydratesGrams: nutrition.carbohydratesGrams,
+    fatGrams: nutrition.fatGrams,
+    ...(nutrition.fiberGrams === undefined
+      ? {}
+      : { fiberGrams: nutrition.fiberGrams }),
+  };
+}
+
+function buildCorrectionAssessment(
+  source: Recipe,
+  candidate: Recipe,
+  requirements: CorrectionIntent[],
+  validation: CorrectionValidationResult,
+): CorrectionCandidateAssessment {
+  // Diagnostics retain the existing shape, but validation decisions come only
+  // from validateCorrectionCandidate. No provider manifest is passed here.
+  const evaluations = evaluateNutritionRequirements(source, candidate, requirements);
+  return {
+    recipe: candidate,
+    issues: validation.blockingIssues.map((issue) => issue.message),
+    providerRequirementEvaluations: evaluations,
+    finalRequirementEvaluations: evaluations,
+    caloriesReconciled: false,
+    providerDisplayedCalories: candidate.nutritionEstimate?.calories ?? null,
+    ingredientChangeAnalysis: analyzeIngredientChanges(source, candidate, requirements),
+  };
+}
+
+function getCorrectionAttemptDiagnostics(
+  providerRecipe: Recipe,
+  assessment: CorrectionCandidateAssessment,
+  patchApplication?: CorrectionPatchApplication,
+  rawPatch?: GeneratedRecipeOutput['correctionRawPatch'],
+  blockingValidationIssues: CorrectionValidationIssue[] = [],
+): CorrectionAttemptDiagnostics {
+  const candidateNutrition = getCorrectionNutritionSnapshot(providerRecipe);
+  const patchDiagnostics = patchApplication && rawPatch
+    ? {
+        ingredientReferenceMap: patchApplication.references.ingredientMap,
+        stepReferenceMap: patchApplication.references.stepMap,
+        ingredientOperations: rawPatch.ingredientOperations,
+        stepOperations: rawPatch.stepOperations,
+        rejectedOperationReasons: patchApplication.rejectedOperationReasons,
+        appliedOperationCount: patchApplication.appliedOperationCount,
+        appliedStepReferences: rawPatch.stepOperations.flatMap((operation) => {
+          const reference = operation.sourceStepId ?? operation.result?.id;
+          return reference ? [reference] : [];
+        }),
+      }
+    : undefined;
+  return {
+    ...(candidateNutrition ? { candidateNutrition } : {}),
+    providerRequirementEvaluations: assessment.providerRequirementEvaluations,
+    finalRequirementEvaluations: assessment.finalRequirementEvaluations,
+    validationIssueCodes: getCorrectionIssueCodes(
+      [],
+      getDiagnosticRequirementEvaluations(assessment),
+    ),
+    blockingValidationIssues,
+    caloriesReconciled: assessment.caloriesReconciled,
+    providerDisplayedCalories: assessment.providerDisplayedCalories,
+    ...(assessment.reconciledCalories === undefined
+      ? {}
+      : { reconciledCalories: assessment.reconciledCalories }),
+    detectedChangeCount: assessment.ingredientChangeAnalysis.changes.length,
+    ingredientChanges: assessment.ingredientChangeAnalysis.changes.map((change) => ({
+      kind: change.kind,
+      ...(change.normalizedBeforeName
+        ? { normalizedBeforeName: change.normalizedBeforeName }
+        : {}),
+      ...(change.normalizedAfterName
+        ? { normalizedAfterName: change.normalizedAfterName }
+        : {}),
+      ...(change.beforeQuantity ? { beforeQuantity: change.beforeQuantity } : {}),
+      ...(change.afterQuantity ? { afterQuantity: change.afterQuantity } : {}),
+      affectedRequirementIndexes: change.affectedRequirementIndexes,
+      affectedStepIndexes: change.affectedStepIndexes,
+      referencedInSteps: change.referencedInSteps,
+    })),
+    rejectedManifestChanges:
+      assessment.ingredientChangeAnalysis.rejectedManifestChanges,
+    ...(patchDiagnostics ? { patch: patchDiagnostics } : {}),
+  };
+}
+
+function getDiagnosticRequirementEvaluations(
+  assessment: CorrectionCandidateAssessment,
+) {
+  return assessment.caloriesReconciled
+    ? assessment.finalRequirementEvaluations
+    : assessment.providerRequirementEvaluations;
+}
+
+function formatValidationIssueForRepair(issue: CorrectionValidationIssue): string {
+  const context = [
+    issue.requirementIndex === undefined ? '' : `requirement ${issue.requirementIndex}`,
+    issue.ingredientIndex === undefined ? '' : `ingredient ${issue.ingredientIndex + 1}`,
+    issue.stepIndex === undefined ? '' : `step ${issue.stepIndex}`,
+  ].filter(Boolean).join(', ');
+  return `${issue.code}${context ? ` (${context})` : ''}: ${issue.message}${issue.details ? ` ${JSON.stringify(issue.details)}` : ''}`;
+}
+
+function mergeValidationIssueCodes(
+  issues: CorrectionValidationIssue[],
+  evaluations: CorrectionCandidateAssessment['finalRequirementEvaluations'],
+): string[] {
+  return [...new Set([
+    ...issues.map((issue) => issue.code),
+    ...evaluations.flatMap((evaluation) => evaluation.issueCodes),
+  ])];
 }
 
 async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
@@ -659,7 +1077,11 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
     const cached = scanCache.get(scanCacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       console.log('[scan_cache]', { hit: true, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8), ttl: 'valid' });
-      if (cached.kind === 'success') return cached.result;
+      if (cached.kind === 'success') {
+        const result = materializeCachedScanResult(cached.result);
+        if (result.recipe) storeGeneratedRecipe(result.recipe);
+        return result;
+      }
       throw cached.error;
     }
     console.log('[scan_cache]', { hit: false, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8) });
@@ -724,7 +1146,7 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
       scanState: analysis.scanState,
     });
     const recipeStartedAt = Date.now();
-    const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive });
+    const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive, storeResult: false });
     const recipeMs = Date.now() - recipeStartedAt;
     const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
     logScanDebug('api_scan_recipe_result', {
@@ -742,19 +1164,20 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
       throw new Error(`RECIPE_GENERATION_FAILED: ${recipeFallbackReason || 'unknown reason'}`);
     }
 
-    const recipe = generatedRecipe.recipe;
-
-    if (!recipe) {
+    if (!generatedRecipe.recipe) {
       // Fail-closed: throw when recipe is missing. Never return partial scans.
       throw new Error('RECIPE_MISSING: Recipe object was not generated');
     }
+
+    const scanId = `scan-${Date.now()}-${randomUUID()}`;
+    const recipe = createUniqueScanSourceRecipe(generatedRecipe.recipe, scanId);
+    storeGeneratedRecipe(recipe);
 
     const costEstimate = estimateIngredientCosts({ analysis, recipe });
     const usedOpenRouterAnalysis = analysis.notes.includes('OpenRouter test output; verify before using.');
     const fallbackReason = recipeFallbackReason;
     const aiSource = 'openrouter_ai' as const;
 
-    const scanId = `scan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const groceryListId = `grocery-${recipe.id}`;
     const shareCardId = `share-${scanId}`;
 
@@ -848,11 +1271,20 @@ function createRecipeFromOpenRouterOutput(
   output: OpenRouterRecipeOutput,
   analysis: FoodImageAnalysis,
   mode: RecipeMode,
+  correctionBaseRecipe?: Recipe,
 ): GeneratedRecipeOutput {
   // One AI call -> one canonical recipe. The recipe is stamped with the mode the
-  // scan was generated under (origin metadata); Budget/Healthy are computed view
-  // projections in the UI, never separate generations.
-  const recipe = createRecipeFromVariant(output, analysis, mode);
+  // scan was generated under (origin metadata); presentation selections share
+  // this recipe and never trigger separate generations.
+  const patch = correctionBaseRecipe && hasStructuredCorrectionPatch(output)
+    ? applyCorrectionPatch(correctionBaseRecipe, {
+        ingredientOperations: output.ingredientOperations,
+        stepOperations: output.stepOperations,
+        nutritionEstimate: output.nutritionEstimate,
+        metadataPatch: output.metadataPatch,
+      })
+    : undefined;
+  const recipe = patch?.recipe ?? createRecipeFromVariant(output, analysis, mode);
 
   return {
     aiSource: 'openrouter_ai',
@@ -862,7 +1294,24 @@ function createRecipeFromOpenRouterOutput(
     recipe,
     recipeId: recipe.id,
     title: recipe.title,
+    correctionManifest: patch?.manifest ?? output.appliedChanges,
+    ...(patch ? {
+      correctionPatch: patch,
+      correctionRawPatch: {
+        ingredientOperations: output.ingredientOperations,
+        stepOperations: output.stepOperations,
+        nutritionEstimate: output.nutritionEstimate,
+        metadataPatch: output.metadataPatch,
+      },
+      patchValidationIssues: patch.rejectedOperationReasons,
+    } : {}),
   };
+}
+
+function hasStructuredCorrectionPatch(output: OpenRouterRecipeOutput): boolean {
+  return output.ingredientOperations.length > 0 ||
+    output.stepOperations.length > 0 ||
+    Boolean(output.metadataPatch);
 }
 
 function createRecipeFromVariant(
@@ -876,7 +1325,7 @@ function createRecipeFromVariant(
 ): Recipe {
   const restaurantPrice = normalizeRestaurantPrice(analysis.restaurantPriceEstimate);
   // Single canonical recipe: homemade cost is the AI estimate, normalized. No
-  // per-mode cost multipliers — Budget/Healthy are view projections, not data.
+  // per-mode cost multipliers because presentation labels are not recipe data.
   const homemadeCost = normalizeHomemadeCost(analysis.homemadeCostEstimate, restaurantPrice);
   const title = getRecipeTitle(variant.title, analysis.dishName, mode);
   const ingredients = getRecipeIngredients(variant.ingredients, analysis, mode);
@@ -928,7 +1377,6 @@ function createRecipeFromVariant(
     confidenceNote: `${options.confidenceNotePrefix ?? 'AI-assisted testing output.'} Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
     mainIngredientsSummary: getDefaultMainIngredientsSummary(ingredients),
     equipment: getSafeList(variant.equipment, getDefaultEquipment(analysis), 5).map(cleanRecipeCopy),
-    bestFor: getDefaultBestFor(),
     avoidMistake: mistakeWarning,
     mistakeWarning,
     storageAndReheating: storage,
@@ -1101,7 +1549,7 @@ export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
       getSafeTextValue(output.rejectionReason, ''),
     ],
   );
-  const cuisine = getSafeTextValue(output.cuisine, 'Restaurant-style');
+  const cuisine = getSafeTextValue(output.cuisine, 'Homestyle');
   const scanState = reconcileScanState({
     broadDishCategory,
     confidence,
@@ -1499,7 +1947,7 @@ function normalizeDishName(value: unknown, cuisine: string, broadDishCategory: s
     case 'soup/stew':
       return 'Cozy Soup Bowl';
     case 'dessert':
-      return 'Restaurant-Style Dessert';
+      return 'Homestyle Dessert';
     case 'breakfast item':
       return 'Breakfast Plate';
     case 'drink/beverage':
@@ -1507,7 +1955,7 @@ function normalizeDishName(value: unknown, cuisine: string, broadDishCategory: s
     case 'mixed platter':
       return 'Mixed Restaurant Plate';
     default:
-      return cuisine && cuisine !== 'Restaurant-style' ? `${titleCase(cuisine)}-Style Plate` : 'Restaurant-Style Food Plate';
+      return cuisine && cuisine !== 'Homestyle' ? `${titleCase(cuisine)}-Style Plate` : 'Homestyle Food Plate';
   }
 }
 
@@ -1548,7 +1996,7 @@ function getBroadDishAlternatives(dishName: string, broadDishCategory: string) {
     case 'drink/beverage':
       return ['Fruit Smoothie', 'Berry Smoothie', 'Iced Latte'];
     case 'dessert':
-      return ['Chocolate Cake', 'Ice Cream Sundae', 'Restaurant-Style Dessert'];
+      return ['Chocolate Cake', 'Ice Cream Sundae', 'Homestyle Dessert'];
     case 'mixed platter':
       return ['Grilled Meat Plate', 'Saucy Rice Bowl', 'Loaded Salad'];
     default:
@@ -1603,10 +2051,9 @@ function cleanDishName(value: string) {
     .trim();
 }
 
-function getRecipeTitle(value: string, dishName: string, mode: RecipeMode) {
-  const prefix = mode === 'Budget' ? 'Budget ' : mode === 'Healthy' ? 'Lighter ' : '';
-  const fallbackTitle = `${prefix}${dishName}`;
-  // Strip "Homemade" before isGenericDishName check so "Homemade Restaurant-Style Food Plate"
+function getRecipeTitle(value: string, dishName: string, _mode: RecipeMode) {
+  const fallbackTitle = dishName;
+  // Strip "Homemade" before checking whether the dish name is generic.
   // falls through to the fallback instead of surfacing as a title.
   const stripped = typeof value === 'string' ? value.replace(/^homemade\s+/i, '').trim() : '';
   const safeValue = stripped && !isPlaceholderText(stripped) && !isGenericDishName(stripped) ? stripped : '';
@@ -1654,17 +2101,27 @@ const INGREDIENT_SYNONYM_GROUPS: string[][] = [
   ['ground meat', 'mince', 'minced meat', 'ground beef', 'minced beef'],
 ];
 
+function normalizeIngredientReference(value: string): string {
+  return value
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Build a normalized alias → canonical index lookup at module load time.
 const INGREDIENT_SYNONYM_LOOKUP = new Map<string, number>(
   INGREDIENT_SYNONYM_GROUPS.flatMap((group, idx) =>
-    group.map((alias) => [alias.toLowerCase().trim(), idx]),
+    group.map((alias) => [normalizeIngredientReference(alias), idx]),
   ),
 );
 
 // Returns the canonical form of an ingredient name for comparison.
 // Handles synonyms and simple plural auto-stripping.
 function canonicalIngredientName(name: string): string {
-  const lower = name.toLowerCase().trim();
+  const lower = normalizeIngredientReference(name);
   const direct = INGREDIENT_SYNONYM_LOOKUP.get(lower);
   if (direct !== undefined) {
     return INGREDIENT_SYNONYM_GROUPS[direct][0];
@@ -1832,7 +2289,6 @@ function sanitizeRecipeVagueness(recipe: Recipe, analysis: FoodImageAnalysis): R
     mistakeWarning: fixOptional(recipe.mistakeWarning),
     storageAndReheating: fixOptional(recipe.storageAndReheating),
     storage: fixOptional(recipe.storage),
-    bestFor: fixOptional(recipe.bestFor),
   };
 }
 
@@ -1847,8 +2303,7 @@ function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mod
     .map((ing) => normalizeRareProtein(ing));
   const beforeNames = ingredients.map((ing) => ing.name);
   const base = ensureCoreIngredients(ingredients, analysis, mode).slice(0, 16);
-  const modeNormalized = mode === 'Budget' ? base.map(normalizeBudgetIngredient) : base;
-  const dedupedList = dedupeIngredientConcepts(modeNormalized, analysis);
+  const dedupedList = dedupeIngredientConcepts(base, analysis);
   const quantityFixed = dedupedList.map(normalizeBadQuantities);
   const simpleNormalized = normalizeSimpleFruitIngredients(quantityFixed, analysis);
   // Mango sticky rice: 5-8 ingredients max — coconut + mango + sticky rice + sugar + salt fits well inside.
@@ -1860,7 +2315,14 @@ function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mod
     mode,
     beforeCount: beforeNames.length,
     afterCount: finalList.length,
-    added: finalList.map((ing) => ing.name).filter((name) => !beforeNames.includes(name)),
+    added: finalList
+      .map((ing) => ing.name)
+      .filter((name) => !beforeNames.some((beforeName) => ingredientsMatch(beforeName, name))),
+    modified: finalList
+      .map((ing) => ing.name)
+      .filter((name) =>
+        !beforeNames.includes(name) &&
+        beforeNames.some((beforeName) => ingredientsMatch(beforeName, name))),
   });
   return finalList;
 }
@@ -1905,21 +2367,6 @@ function normalizeRareProtein(ingredient: RecipeIngredient): RecipeIngredient {
     return { ...ingredient, name: name.replace(/\bshark(?:\s+fillets?)?\b/gi, replacement) };
   }
   return ingredient;
-}
-
-// Strip presentation-only modifiers that don't correspond to a grocery-store product.
-// Only applies to Budget mode — Restaurant Copy/Healthy may intentionally specify
-// particular cuts or presentations.
-function normalizeBudgetIngredient(ingredient: RecipeIngredient): RecipeIngredient {
-  const name = ingredient.name
-    .replace(/\biceberg lettuce\s+leaves\b/gi, 'lettuce')
-    .replace(/\b(?:crinkle-?cut|hand-?cut|house-?made|hand-?crafted|artisanal?|freshly-?cut|freshly-?ground)\b\s*/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  // Budget-only: swap expensive proteins for affordable alternatives.
-  if (/\blobster\b/i.test(name)) return { ...ingredient, name: name.replace(/\blobster\b/gi, 'shrimp') };
-  if (/\b(?:swordfish|monkfish)\b/i.test(name)) return { ...ingredient, name: name.replace(/\b(?:swordfish|monkfish)\b/gi, 'white fish') };
-  return name === ingredient.name ? ingredient : { ...ingredient, name };
 }
 
 // Plain fruit / minimally-prepped whole foods — dish needs 1-4 ingredients, not a salad.
@@ -2725,12 +3172,8 @@ function toStructuredStep(
   };
 }
 
-// Scores a recipe 0-100 based on how many of the 11 key coaching fields are
-// populated per step. A score ≥ 75 indicates a well-coached recipe.
-// A doneWhen counts toward the coaching score only when it's a genuine completion
-// signal. Active cooking steps need an observable cue (color/texture/temp/physical
-// test); a bare timer does not qualify. Passive steps (rest, chill, marinate) may
-// legitimately rely on time, so for those, presence is enough.
+// Scores only the V1 fields needed for concise, cookable Guided Cooking steps.
+// Removed teaching-card fields do not lower recipe quality or trigger repairs.
 function doneWhenCountsTowardScore(step: RecipeStep): boolean {
   if (!step.doneWhen) return false;
   const stepTextLower = `${step.title ?? ''} ${step.text}`.toLowerCase();
@@ -2745,21 +3188,10 @@ export function calculateRecipeCoachingScore(steps: RecipeStep[]): number {
   for (const step of steps) {
     let score = 0;
     if (step.title?.trim()) score++;
-    if (step.why || step.whyItMatters) score++;
-    if (step.commonMistake || step.safetyNote) score++;
-    if (step.lookFor) score++;
-    // doneWhen earns credit only when it's a real completion signal. On an active
-    // cooking step, a bare timer ("cook 5 minutes") is not — it would inflate the
-    // score without telling the cook what done looks like. Passive steps (rest,
-    // chill, marinate) legitimately use time, so they still count on presence.
-    if (step.doneWhen && doneWhenCountsTowardScore(step)) score++;
-    if (step.chefTip) score++;
-    if (step.commonQuestion && step.commonQuestionAnswer) score++;
+    if (step.text.trim()) score++;
     if (step.ingredientsUsed?.length) score++;
     if (step.toolsUsed?.length) score++;
-    if (step.stepImagePrompt) score++;
-    if (step.decisionPoint && step.ifYes && step.ifNo) score++;
-    total += (score / 11) * 100;
+    total += (score / 4) * 100;
   }
   return Math.round(total / steps.length);
 }
@@ -2831,7 +3263,7 @@ function getStepSafetyNote(step: string, analysis: FoodImageAnalysis) {
 function getStepFlavorBoost(step: string, _analysis: FoodImageAnalysis) {
   const text = step.toLowerCase();
   if (includesAny(text, ['sauce', 'mayo', 'mayonnaise', 'ketchup', 'mustard'])) {
-    return 'Optional boost: add pickle juice, smoked paprika, or extra mustard for restaurant-style flavor.';
+    return 'Optional boost: add pickle juice, smoked paprika, or extra mustard for extra flavor.';
   }
   if (includesAny(text, ['pasta', 'noodle', 'rigatoni', 'sauce'])) {
     return 'Optional boost: finish with black pepper, basil, or a little parmesan.';
@@ -3065,10 +3497,6 @@ function getDefaultEquipment(analysis: FoodImageAnalysis) {
   }
 
   return ['skillet or pot', 'knife and cutting board', 'mixing spoon'];
-}
-
-function getDefaultBestFor() {
-  return 'home cooking';
 }
 
 function getDefaultAvoidMistake(analysis: FoodImageAnalysis) {
@@ -3366,7 +3794,7 @@ function getDefaultSubstitutions() {
 function ensureCoreIngredients(
   ingredients: RecipeIngredient[],
   analysis: FoodImageAnalysis,
-  mode: RecipeMode = 'Restaurant Copy',
+  _mode: RecipeMode = 'Normal',
 ) {
   const dishText = [
     analysis.dishName,
@@ -3495,7 +3923,7 @@ function ensureCoreIngredients(
     // Shortcut = frozen base (no wrapper/filling); from-scratch = wrappers + filling.
     const hasFrozen = result.some((i) => /frozen\s+dumpling|frozen\s+wonton|frozen\s+gyoza|frozen\s+potsticker/i.test(i.name));
     const hasWrapper = result.some((i) => /wrapper/i.test(i.name));
-    const shortcut = hasFrozen || (mode === 'Budget' && !hasWrapper);
+    const shortcut = hasFrozen;
 
     if (shortcut) {
       // Replace any wrapper the model added so we don't end up half-shortcut, half-scratch.
@@ -3920,16 +4348,16 @@ function isPantryIngredient(value: string) {
 
 function cleanRecipeCopy(value: string) {
   return value
-    .replace(/\bcipycat\b/gi, 'inspired-by')
-    .replace(/\bcopy\s*cat\b/gi, 'inspired-by')
-    .replace(/\bcopycat(?:-style)?\b/gi, 'inspired-by')
-    .replace(/\bofficial\b/gi, 'restaurant-style')
+    .replace(/\bcipycat\b/gi, 'homemade')
+    .replace(/\bcopy\s*cat\b/gi, 'homemade')
+    .replace(/\bcopycat(?:-style)?\b/gi, 'homemade')
+    .replace(/\bofficial\b/gi, 'homemade')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 function ensureInspiredTitle(value: string) {
-  // Strip "Inspired-by" / "Inspired by" variants — the UI badge handles that copy, not the title.
+  // Strip source-attribution variants from generated titles.
   // Also strip leading "Homemade" and normalize shark → fish (common hallucination on novelty foods).
   return cleanRecipeCopy(value)
     .replace(/^homemade\s+/i, '')
@@ -4029,6 +4457,42 @@ export type CoachingWarningResult = {
   warnCounts: Record<string, number>;
   warnings: CoachingWarning[];
 };
+
+function collectV1RecipeWarnings(
+  steps: RecipeStep[],
+  _analysis: FoodImageAnalysis,
+  dishName: string,
+  recipeIngredients?: string[],
+): CoachingWarningResult {
+  const warnCounts: Record<string, number> = {};
+  const warnings: CoachingWarning[] = [];
+  const warn = (tag: string, ctx: object) => {
+    warnings.push({ tag, ctx });
+    warnCounts[tag] = (warnCounts[tag] ?? 0) + 1;
+  };
+
+  steps.forEach((step, index) => {
+    const ctx = { dish: dishName, step: index + 1 };
+    if (!step.title?.trim()) warn('[recipe-quality] missing title', ctx);
+    if (!step.text.trim()) warn('[recipe-quality] missing instruction', ctx);
+    if (!step.ingredientsUsed?.length) warn('[recipe-quality] missing ingredientsUsed', ctx);
+    if (!step.toolsUsed?.length) warn('[recipe-quality] missing toolsUsed', ctx);
+    if (recipeIngredients?.length && step.ingredientsUsed?.length) {
+      for (const ingredient of step.ingredientsUsed) {
+        if (!recipeIngredients.some((recipeIngredient) => ingredientsMatch(recipeIngredient, ingredient))) {
+          warn('[recipe-quality] unknown ingredient reference', { ...ctx, ingredient });
+        }
+      }
+    }
+  });
+
+  return {
+    score: calculateRecipeCoachingScore(steps),
+    totalWarnings: warnings.length,
+    warnCounts,
+    warnings,
+  };
+}
 
 // Pure detection pass: scans steps and returns every coaching-quality warning,
 // the per-tag counts, and the recipe's coaching score. No console output — the
@@ -4314,16 +4778,14 @@ function collectCoachingWarnings(
   return { score: coachingScore, totalWarnings, warnCounts, warnings };
 }
 
-// Thin logging wrapper around collectCoachingWarnings — preserves the original
-// dev-console behavior (per-warning lines + a formatted recipe-quality summary)
-// and returns the detection result so callers can reuse it without re-scanning.
+// Logs only the concise V1 cookability checks used by the current product.
 function auditStepCoachingQuality(
   steps: RecipeStep[],
   analysis: FoodImageAnalysis,
   dishName: string,
   recipeIngredients?: string[],
 ): CoachingWarningResult {
-  const result = collectCoachingWarnings(steps, analysis, dishName, recipeIngredients);
+  const result = collectV1RecipeWarnings(steps, analysis, dishName, recipeIngredients);
   for (const { tag, ctx } of result.warnings) {
     console.warn(tag, ctx);
   }
@@ -4337,7 +4799,7 @@ function auditStepCoachingQuality(
       summaryLines.push(`    ${tag.replace('[recipe-quality] ', '')} (${count})`);
     }
   } else {
-    summaryLines.push(`  No warnings — recipe is fully coached.`);
+    summaryLines.push('  No warnings — recipe passes V1 cookability checks.');
   }
   console.log(summaryLines.join('\n'));
   return result;
@@ -4715,10 +5177,19 @@ function mergeRepairIntoRecipe(
   // when the matcher had a false negative and repair re-generated the same item).
   const existingGroupNames = (recipe.ingredientGroups ?? []).map((g) => g.component);
   const newGroups: RecipeIngredientGroup[] = repair.ingredientGroups
-    .filter((g) => g.component && g.items.length > 0 && !isComponentCovered(g.component, existingGroupNames))
+    .filter((g) => g.component && isLeafComponentName(g.component, analysis) && g.items.length > 0 && !isComponentCovered(g.component, existingGroupNames))
     .map((g) => ({ component: g.component, items: g.items.map(toRecipeIngredient) }));
 
-  const newIngredients = repair.ingredients.map(toRecipeIngredient);
+  const existingIngredientKeys = new Set(recipe.ingredients.map(canonicalRecipeIngredientIdentity));
+  const newIngredients = repair.ingredients
+    .map(toRecipeIngredient)
+    .filter((ingredient) => isLeafComponentName(ingredient.name, analysis))
+    .filter((ingredient) => {
+      const key = canonicalRecipeIngredientIdentity(ingredient);
+      if (existingIngredientKeys.has(key)) return false;
+      existingIngredientKeys.add(key);
+      return true;
+    });
   const newStepTexts = repair.steps.map(getStepText).filter(Boolean) as string[];
 
   // Renumber: repair steps arrive with stepNumber starting at 1. Offset them
@@ -4729,7 +5200,7 @@ function mergeRepairIntoRecipe(
     .filter((s): s is RecipeStep => Boolean(s?.text))
     .map((s, i) => ({ ...s, stepNumber: stepOffset + i + 1 }));
 
-  const allIngredients = [...recipe.ingredients, ...newIngredients];
+  const allIngredients = normalizeRecipeIngredients([...recipe.ingredients, ...newIngredients]);
 
   return {
     ...recipe,
@@ -4748,7 +5219,8 @@ async function ensureComponentCoverage(
   analysis: FoodImageAnalysis,
   config: AiConfig,
 ): Promise<GeneratedRecipeOutput> {
-  const detected = analysis.detectedComponents ?? [];
+  const detected = (analysis.detectedComponents ?? [])
+    .filter((component) => isLeafComponentName(component.name, analysis));
   if (detected.length === 0) return result;
 
   const recipe = result.recipe!;
@@ -4789,7 +5261,7 @@ async function ensureComponentCoverage(
           structuredSteps: validateTimeline(repairedRecipe.structuredSteps),
         };
       }
-      repairAddedComponents = repairOutput.ingredientGroups.length;
+      repairAddedComponents = repairedRecipe.ingredients.length - recipe.ingredients.length;
     } catch (repairError) {
       console.warn('[component-coverage] repair failed', {
         dish: analysis.dishName,
@@ -4846,6 +5318,85 @@ async function ensureComponentCoverage(
   }
 
   return result;
+}
+
+const PREPARATION_WORDS_FOR_CANONICAL_INGREDIENTS = new Set([
+  'chopped', 'cooked', 'crushed', 'cubed', 'diced', 'divided', 'finely', 'fresh',
+  'grated', 'ground', 'halved', 'minced', 'optional', 'raw', 'roasted', 'shredded',
+  'sliced', 'small', 'large', 'medium', 'thinly', 'thickly',
+]);
+
+function canonicalIngredientStorageText(value: string): string {
+  return value
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9/\s-]+/g, ' ')
+    .replace(/-/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\bcups?\b/g, 'cup')
+    .replace(/\btablespoons?\b/g, 'tbsp')
+    .replace(/\bteaspoons?\b/g, 'tsp')
+    .replace(/\bgrams?\b/g, 'g')
+    .replace(/\bounces?\b/g, 'oz')
+    .replace(/\bpounds?\b/g, 'lb');
+}
+
+function canonicalIngredientStorageIdentity(ingredient: RecipeIngredient): string {
+  let name = canonicalIngredientStorageText(ingredient.name);
+  const embeddedAmount = name.match(/^(?:\d+(?:\.\d+)?|\d+\/\d+|one|two|three|four|five|six|a|an)\s+[a-z]+\s+(.+)$/);
+  if (embeddedAmount) name = embeddedAmount[1];
+  const toTasteName = name.match(/^(.+?)\s+to\s+taste$/) ?? name.match(/^to\s+taste\s+(.+)$/);
+  if (toTasteName) name = toTasteName[1];
+  const words = name.split(' ').filter((word) => !PREPARATION_WORDS_FOR_CANONICAL_INGREDIENTS.has(word));
+  let identity = words.join(' ');
+  if (identity.endsWith('s') && identity.length > 3) identity = identity.slice(0, -1);
+  if (/\b(?:cooking|vegetable|canola|neutral|frying) oil\b/.test(identity)) return 'cooking oil';
+  return identity;
+}
+
+function canonicalIngredientStorageKey(ingredient: RecipeIngredient): string {
+  const identity = canonicalIngredientStorageIdentity(ingredient);
+  let amount = canonicalIngredientStorageText(ingredient.quantity);
+  const normalizedName = canonicalIngredientStorageText(ingredient.name);
+  const embeddedAmount = normalizedName
+    .match(/^((?:\d+(?:\.\d+)?|\d+\/\d+|one|two|three|four|five|six|a|an)\s+[a-z]+)\s+.+$/);
+  if (embeddedAmount) amount = embeddedAmount[1];
+  if (/^(?:.+\s+to\s+taste|to\s+taste\s+.+)$/.test(normalizedName)) amount = 'to taste';
+  return `${identity}|${amount}`;
+}
+
+export function normalizeRecipeIngredients(ingredients: RecipeIngredient[]): RecipeIngredient[] {
+  const seen = new Set<string>();
+  return ingredients.filter((ingredient) => {
+    const key = canonicalIngredientStorageKey(ingredient);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function canonicalRecipeIngredientIdentity(ingredient: RecipeIngredient): string {
+  return canonicalIngredientStorageIdentity(ingredient);
+}
+
+function normalizeRecipeIngredientsInRecipe(recipe: Recipe, analysis: FoodImageAnalysis): Recipe {
+  const ingredients = normalizeRecipeIngredients(recipe.ingredients);
+  return {
+    ...recipe,
+    ingredients,
+    groceryItems: getGroceryItems(ingredients, analysis),
+  };
+}
+
+function isLeafComponentName(name: string, analysis: FoodImageAnalysis): boolean {
+  const normalized = normalizeComponentText(name);
+  const dish = normalizeComponentText(analysis.dishName);
+  if (!normalized || normalized === dish || (dish.length > 5 && normalized.includes(dish))) return false;
+  if (/\b(?:filling|finished dish|prepared dish|meal|platter|plate|bowl)\b/.test(normalized)) return false;
+  if (/^(?:dumplings?|wontons?|potstickers?|gyoza|mandu)$/.test(normalized)) return false;
+  return true;
 }
 
 function appendCoverageWarning(confidenceNote: string, warning: string) {

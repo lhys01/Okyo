@@ -15,6 +15,40 @@ export function isValidNutritionEstimate(value: NutritionEstimate | null | undef
   return value.fiberGrams === undefined || isValidNutritionValue(value.fiberGrams, nutritionBounds.fiberGrams);
 }
 
+export function getCaloriesFromMacros(value: Pick<
+  NutritionEstimate,
+  'proteinGrams' | 'carbohydratesGrams' | 'fatGrams'
+>) {
+  return (value.proteinGrams * 4) + (value.carbohydratesGrams * 4) + (value.fatGrams * 9);
+}
+
+export function isNutritionCalorieEstimateConsistent(value: NutritionEstimate) {
+  if (!isValidNutritionEstimate(value)) {
+    return false;
+  }
+
+  const macroCalories = getCaloriesFromMacros(value);
+  const tolerance = Math.max(20, macroCalories * 0.1);
+  return Math.abs(value.calories - macroCalories) <= tolerance;
+}
+
+export function normalizeNutritionEstimate(
+  value: NutritionEstimate | null | undefined,
+): NutritionEstimate | null {
+  if (!isValidNutritionEstimate(value)) {
+    return null;
+  }
+
+  if (isNutritionCalorieEstimateConsistent(value)) {
+    return value;
+  }
+
+  return {
+    ...value,
+    calories: Math.round(getCaloriesFromMacros(value)),
+  };
+}
+
 function isValidNutritionValue(value: number, maximum: number) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= maximum;
 }

@@ -17,12 +17,18 @@ test('each scan randomizes 99 remaining messages without repeats', () => {
   assert.deepEqual(new Set(sequence.slice(1)), new Set(SCAN_STATUS_MESSAGE_POOL));
 });
 
-test('description scans use a text-specific first message', () => {
-  assert.equal(createDescriptionStatusSequence(() => 0)[0], 'Reading your idea');
+test('description scans use a compact recipe-construction sequence', () => {
+  assert.deepEqual(createDescriptionStatusSequence(() => 0), [
+    'Understanding your idea',
+    'Building the ingredient list',
+    'Estimating servings',
+    'Shaping the recipe',
+    'Checking the steps',
+  ]);
 });
 
 test('loading sequence source changes never leak the previous flow first message', () => {
-  assert.equal(createStatusSequenceForScan('description', () => 0)[0], 'Reading your idea');
+  assert.equal(createStatusSequenceForScan('description', () => 0)[0], 'Understanding your idea');
   assert.equal(createStatusSequenceForScan('photos', () => 0)[0], 'Identifying the dish');
   assert.equal(createStatusSequenceForScan('camera', () => 0)[0], 'Identifying the dish');
 });

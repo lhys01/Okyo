@@ -4,24 +4,20 @@ import type { RouteProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  Bookmark,
   Cart,
-  Check,
   Clock,
   Cutlery,
   FireFlame,
-  Heart,
   Leaf,
   MoneySquare,
   NavArrowLeft,
   ShareAndroid,
-  Spark,
   User,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -30,14 +26,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { OKYO_API_BASE_URL } from '../api/config';
 import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { colors, fontFamilies } from '../components/OkyoUI';
+import { RecipeLikeButton } from '../components/RecipeLikeButton';
+import { RecipeNutritionCards } from '../components/RecipeNutritionCards';
 import {
-  defaultScanResult,
-  getSafeRecipeForMode,
   getSafeRecipeMode,
   isRecipeMode,
   type Recipe,
@@ -46,11 +41,16 @@ import {
   type RecipeStep,
 } from '../mocks';
 import type { MainTabParamList, RootStackParamList } from '../navigation/types';
+import {
+  RECIPE_PRESENTATION_MODES,
+  resolveCanonicalRecipe,
+  type RecipePresentationMode,
+} from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
-import { attachRealScanImage } from '../utils/savedRecipeImage';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { getNextGuidedCookingPreview } from '../utils/guidedCookingPreview';
+import { getConciseGuidedInstruction } from '../utils/guidedInstruction';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
@@ -117,32 +117,26 @@ type GuidedCookingStep = {
 export function RecipeDetailScreen() {
   const navigation = useNavigation<RecipeDetailNavigation>();
   const route = useRoute<RecipeDetailRoute>();
+  const routeRecipeId = route.params?.recipeId;
   const routeMode = route.params?.mode;
-  const initialMode = getSafeRecipeMode(routeMode ?? defaultScanResult.modes[0]);
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
-  const setStoreSelectedMode = useOkyoStore((state) => state.setSelectedMode);
-  const latestScanResult = useOkyoStore((state) => state.latestScanResult);
-  const saveRecipe = useOkyoStore((state) => state.saveRecipe);
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
-  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
-  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
+  const setRecipePresentationMode = useOkyoStore((state) => state.setRecipePresentationMode);
+  const toggleRecipeLiked = useOkyoStore((state) => state.toggleRecipeLiked);
+  const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
+  const recipesById = useOkyoStore((state) => state.recipesById);
+  const addRecipeToGrocery = useOkyoStore((state) => state.addRecipeToGrocery);
+  const startCookingRecipe = useOkyoStore((state) => state.startCookingRecipe);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
-  const [selectedMode, setSelectedMode] = useState<RecipeMode>(
-    getSafeRecipeMode(initialMode ?? storeSelectedMode),
-  );
-  const isDemoScan = isExplicitDemoScan(selectedScanImage);
-  const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
-  const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
-  const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
+  const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId);
+  const selectedMode = getSafeRecipeMode(recipe?.selectedMode ?? routeMode ?? storeSelectedMode);
+  const scanResult = recipe?.scanResult ?? null;
+  const selectedScanImage = recipe?.originalImage ?? null;
   const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
   const canShowSavings = restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
-  const availableModes = scanResult?.modes ?? getAvailableModes(latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, isDemoScan);
-  const spicePairings = getSafeTextList(recipe?.spicePairings);
+  const selectedPresentationMode = recipe?.selectedPresentationMode ?? 'Normal';
   const ingredientGroups = getSafeIngredientGroups(recipe);
   const equipment = getSafeTextList(recipe?.equipment);
-  const substitutions = getSafeTextList(recipe?.substitutions);
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
   const displayDescription = cleanDisplayText(recipe?.description ?? '');
   const ingredientCount = getIngredientCount(recipe);
@@ -155,17 +149,12 @@ export function RecipeDetailScreen() {
       : [];
   const totalTime = recipe ? recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes : 0;
   const perServingCost = recipe && recipe.servings > 0 ? recipe.estimatedHomemadeCost / recipe.servings : null;
-  const flavorNotes = getFlavorNotes(recipe, spicePairings);
-  const whyBullets = getWhyBullets(recipe, totalTime);
-  const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
+  const recipeImageUrl = getRecipeImageUrl(recipe);
   const recipeImageStatus = getRecipeImageStatus(recipe);
-  const [coachingLoading, setCoachingLoading] = useState(false);
+  const isLiked = Boolean(recipe && savedRecipeIds.includes(recipe.id));
 
   useEffect(() => {
-    const safeMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
-    setSelectedMode(safeMode);
-
-    uiLog('RecipeDetailScreen', 'enter', { routeMode, safeMode });
+    uiLog('RecipeDetailScreen', 'enter', { recipeId: routeRecipeId, routeMode });
     const _traceUri = recipeImageUrl ?? null;
     const _hasStampedUri = Boolean((recipe as { imageUri?: string } | null)?.imageUri);
     checkImageFileExists(_traceUri).then((fileExists) => {
@@ -173,7 +162,6 @@ export function RecipeDetailScreen() {
         screen: 'RecipeDetailScreen',
         recipeId: recipe?.id ?? null,
         imageSource: _hasStampedUri ? 'recipe.imageUri'
-          : getRealScanImageUri(selectedScanImage) ? 'selectedScanImage'
           : _traceUri ? 'recipe.imageUrl'
           : 'none',
         imageUri: _traceUri,
@@ -194,7 +182,7 @@ export function RecipeDetailScreen() {
         screen: 'RecipeDetailScreen',
       });
     }
-  }, [routeMode, storeSelectedMode]);
+  }, [recipe?.id, recipeImageUrl, routeMode, routeRecipeId]);
 
   const goBack = () => {
     if (navigation.canGoBack()) {
@@ -205,9 +193,10 @@ export function RecipeDetailScreen() {
     navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
-  const chooseMode = (mode: RecipeMode) => {
-    setSelectedMode(mode);
-    setStoreSelectedMode(mode);
+  const choosePresentationMode = (mode: RecipePresentationMode) => {
+    if (recipe && mode !== recipe.selectedPresentationMode) {
+      setRecipePresentationMode(recipe.id, mode);
+    }
     uiLog('RecipeDetailScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
       dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
@@ -216,25 +205,25 @@ export function RecipeDetailScreen() {
     });
   };
 
-  const saveSelectedRecipe = () => {
+  const toggleSelectedRecipeLike = () => {
     if (!recipe) {
       return;
     }
 
-    const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
-    uiLog('RecipeDetailScreen', 'save_recipe', { recipeId: recipe.id });
-    saveRecipe(attachRealScanImage(recipe, selectedScanImage));
-    if (!alreadySaved) {
-      awardXPOnce(`save-recipe-${recipe.id}`, 5);
-    }
-    unlockBadge('first-dupe');
-    track(analyticsEvents.RECIPE_SAVED, {
-      dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
-      mode: recipe.mode,
-      savings: canShowSavings ? recipe.estimatedSavings : 0,
-      screen: 'RecipeDetailScreen',
+    uiLog('RecipeDetailScreen', isLiked ? 'unlike_recipe' : 'like_recipe', {
+      recipeId: recipe.id,
     });
-    Alert.alert('Saved', `${cleanDisplayText(recipe.title)} was added to your library.`);
+    toggleRecipeLiked(recipe.id);
+    if (!isLiked) {
+      awardXPOnce(`save-recipe-${recipe.id}`, 5);
+      unlockBadge('first-dupe');
+      track(analyticsEvents.RECIPE_SAVED, {
+        dishName: recipe.title,
+        mode: recipe.mode,
+        savings: canShowSavings ? recipe.estimatedSavings : 0,
+        screen: 'RecipeDetailScreen',
+      });
+    }
   };
 
   const openShareRecipe = () => {
@@ -245,52 +234,41 @@ export function RecipeDetailScreen() {
     navigation.navigate('ShareCardPreviewScreen', {
       cardType: 'scan_result',
       mode: selectedMode,
-      scanContext: {
-        image: selectedScanImage,
-        recipe,
-        scanResult,
-      },
+      recipeId: recipe.id,
     });
   };
 
+  const openRecipeEditor = () => {
+    if (!recipe) {
+      return;
+    }
+    navigation.navigate('ResultSummaryScreen', { recipeId: recipe.id });
+  };
+
   const openGroceryList = () => {
-    navigation.navigate('GroceryListScreen', { mode: selectedMode });
+    if (!recipe) {
+      return;
+    }
+    addRecipeToGrocery(recipe.id);
+    navigation.navigate('GroceryListScreen', { mode: selectedMode, recipeId: recipe.id });
   };
 
   const openCookingSteps = () => {
-    if (coachingLoading) return;
-
-    const needsCoaching = !isDemoScan &&
-      Boolean(recipe?.id) &&
-      Boolean(recipe?.structuredSteps?.some((step) => !step.why && !step.chefTip && !step.commonQuestion));
-
-    if (!needsCoaching) {
-      navigation.navigate('RecipeStepsScreen', { mode: selectedMode });
+    if (!recipe) {
       return;
     }
 
-    setCoachingLoading(true);
-    fetch(`${OKYO_API_BASE_URL}/v1/recipes/${recipe!.id}/coaching`, { method: 'POST' })
-      .then(async (res) => {
-        if (res.ok) {
-          const data = await res.json() as { ok: boolean; data?: { structuredSteps?: RecipeStep[] } };
-          if (data.ok && Array.isArray(data.data?.structuredSteps) && latestScanRecipe) {
-            setLatestScanRecipe({ ...latestScanRecipe, structuredSteps: data.data.structuredSteps });
-          }
-        }
-      })
-      .catch(() => {
-        // Coaching failed — open Guided Cooking with uncoached steps.
-      })
-      .finally(() => {
-        setCoachingLoading(false);
-        navigation.navigate('RecipeStepsScreen', { mode: selectedMode });
-      });
+    startCookingRecipe(recipe.id);
+    navigation.navigate('RecipeStepsScreen', {
+      completion: false,
+      mode: selectedMode,
+      recipeId: recipe.id,
+    });
   };
 
   if (!recipe) {
     return (
-      <ScreenFrame onBack={goBack} title="Recipe">
+      <ScreenFrame onBack={goBack}>
         <View style={styles.issueCard}>
           <Text style={styles.kicker}>Recipe issue</Text>
           <Text style={styles.issueTitle}>This recipe needs another try.</Text>
@@ -327,17 +305,12 @@ export function RecipeDetailScreen() {
             >
               <NavArrowLeft color={colors.charcoal} height={23} strokeWidth={2.35} width={23} />
             </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={saveSelectedRecipe}
-              style={({ pressed }) => [styles.circleSaveButton, pressed ? styles.pressed : null]}
-            >
-              <Heart color={colors.charcoal} height={23} strokeWidth={2.1} width={23} />
-            </Pressable>
-            <View style={styles.inspiredPill}>
-              <Spark color={colors.coral} height={18} strokeWidth={2.2} width={18} />
-              <Text style={styles.inspiredPillText}>Inspired by your restaurant meal</Text>
-            </View>
+            <RecipeLikeButton
+              compact
+              isLiked={isLiked}
+              onToggle={toggleSelectedRecipeLike}
+              style={styles.circleSaveButton}
+            />
           </FoodImage>
 
           <View style={styles.overviewPanel}>
@@ -366,10 +339,25 @@ export function RecipeDetailScreen() {
             </View>
 
             <Text style={styles.description}>{displayDescription}</Text>
+            <Pressable
+              accessibilityLabel="Edit recipe"
+              accessibilityRole="button"
+              onPress={openRecipeEditor}
+              style={({ pressed }) => [styles.editRecipeAction, pressed ? styles.pressed : null]}
+            >
+              <Text style={styles.editRecipeActionText}>Edit recipe</Text>
+            </Pressable>
+            <RecipeNutritionCards nutrition={recipe.nutritionEstimate} />
 
             <View style={styles.modeSection}>
               <Text style={styles.sectionSmallTitle}>Choose your style</Text>
-              <RecipeModeTabs modes={availableModes} selectedMode={selectedMode} onSelectMode={chooseMode} />
+              <RecipeModeTabs
+                selectedMode={selectedPresentationMode}
+                onSelectMode={choosePresentationMode}
+              />
+              <Text style={styles.modeDisclosure}>
+                Recipe adaptations are coming soon. This choice does not change ingredients or nutrition yet.
+              </Text>
             </View>
 
             <View style={styles.previewSection}>
@@ -403,27 +391,6 @@ export function RecipeDetailScreen() {
               ))}
             </View>
 
-            <InfoCard title="Why you'll love this">
-              {whyBullets.map((bullet) => (
-                <View key={bullet} style={styles.bulletRow}>
-                  <Check color={colors.coral} height={16} strokeWidth={2.35} width={16} />
-                  <Text style={styles.bulletText}>{bullet}</Text>
-                </View>
-              ))}
-            </InfoCard>
-
-            {flavorNotes.length > 0 ? (
-              <InfoCard title="Flavor notes">
-                <View style={styles.chipRow}>
-                  {flavorNotes.map((note) => (
-                    <View key={note} style={styles.flavorChipWrap}>
-                      <Text numberOfLines={1} style={styles.flavorChipText}>{note}</Text>
-                    </View>
-                  ))}
-                </View>
-              </InfoCard>
-            ) : null}
-
             {equipment.length > 0 ? (
               <InfoCard title="Equipment you'll need">
                 <View style={styles.equipmentRow}>
@@ -434,17 +401,6 @@ export function RecipeDetailScreen() {
                     </View>
                   ))}
                 </View>
-              </InfoCard>
-            ) : null}
-
-            {substitutions.length > 0 ? (
-              <InfoCard title="Easy swaps">
-                {substitutions.map((item) => (
-                  <View key={item} style={styles.bulletRow}>
-                    <Leaf color={colors.green} height={16} strokeWidth={2.2} width={16} />
-                    <Text style={styles.bulletText}>{cleanDisplayText(item)}</Text>
-                  </View>
-                ))}
               </InfoCard>
             ) : null}
 
@@ -471,10 +427,10 @@ export function RecipeDetailScreen() {
               </View>
             </View>
 
-            <PrimaryAction label={coachingLoading ? 'Preparing...' : 'Start Cooking'} onPress={openCookingSteps} />
+            <PrimaryAction label="Start Cooking" onPress={openCookingSteps} />
             <View style={styles.secondaryActionsRow}>
-              <SecondaryIconAction icon={<Bookmark color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Save" onPress={saveSelectedRecipe} />
-              <SecondaryIconAction icon={<Cart color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Grocery List" onPress={openGroceryList} />
+              <RecipeLikeButton isLiked={isLiked} onToggle={toggleSelectedRecipeLike} />
+              <SecondaryIconAction icon={<Cart color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Add to Grocery" onPress={openGroceryList} />
               <SecondaryIconAction icon={<ShareAndroid color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Share" onPress={openShareRecipe} />
             </View>
           </View>
@@ -487,20 +443,19 @@ export function RecipeDetailScreen() {
 export function RecipeStepsScreen() {
   const navigation = useNavigation<RecipeStepsNavigation>();
   const route = useRoute<RecipeStepsRoute>();
+  const routeRecipeId = route.params?.recipeId;
   const routeMode = route.params?.mode;
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
-  const selectedMode = getSafeRecipeMode(routeMode ?? storeSelectedMode);
-  const latestScanResult = useOkyoStore((state) => state.latestScanResult);
-  const saveRecipe = useOkyoStore((state) => state.saveRecipe);
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
-  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
+  const toggleRecipeLiked = useOkyoStore((state) => state.toggleRecipeLiked);
+  const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
+  const recipesById = useOkyoStore((state) => state.recipesById);
+  const completeRecipe = useOkyoStore((state) => state.completeRecipe);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
-  const isDemoScan = isExplicitDemoScan(selectedScanImage);
-  const storedRecipe = getStoredRecipeForMode(latestScanRecipe ? [latestScanRecipe] : [], selectedMode, latestScanRecipe);
-  const recipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
-  const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
+  const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId);
+  const selectedMode = getSafeRecipeMode(routeMode ?? recipe?.selectedMode ?? storeSelectedMode);
+  const scanResult = recipe?.scanResult ?? null;
+  const selectedScanImage = recipe?.originalImage ?? null;
   const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
   const canShowSavings = Boolean(recipe) && restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
   const spicePairings = getSafeTextList(recipe?.spicePairings);
@@ -510,16 +465,22 @@ export function RecipeStepsScreen() {
     [cookingTerms, recipe, spicePairings],
   );
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
-  const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
-  const recipeImageStatus = getRecipeImageStatus(recipe);
+  const recipeImageUrl = getRecipeImageUrl(recipe);
+  const completionImageUri = recipe?.origin === 'scan'
+    ? getRealScanImageUri(recipe.originalImage)
+    : null;
   const [activeStepIndex, setActiveStepIndex] = useState(0);
-  const [showCompletion, setShowCompletion] = useState(false);
+  const [showCompletion, setShowCompletion] = useState(route.params?.completion === true);
+  const isLiked = Boolean(recipe && savedRecipeIds.includes(recipe.id));
   const activeStep = guidedSteps[Math.min(activeStepIndex, Math.max(guidedSteps.length - 1, 0))];
   const nextStepPreview = getNextGuidedCookingPreview(guidedSteps, activeStepIndex);
   const progress = guidedSteps.length > 0 ? ((activeStepIndex + 1) / guidedSteps.length) * 100 : 0;
+  const guidedTotalTime = recipe
+    ? recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes
+    : 0;
 
   useEffect(() => {
-    uiLog('RecipeStepsScreen', 'enter', { routeMode, selectedMode });
+    uiLog('RecipeStepsScreen', 'enter', { recipeId: routeRecipeId, routeMode, selectedMode });
     const _traceUri = recipeImageUrl ?? null;
     const _hasStampedUri = Boolean((recipe as { imageUri?: string } | null)?.imageUri);
     checkImageFileExists(_traceUri).then((fileExists) => {
@@ -527,7 +488,6 @@ export function RecipeStepsScreen() {
         screen: 'RecipeStepsScreen',
         recipeId: recipe?.id ?? null,
         imageSource: _hasStampedUri ? 'recipe.imageUri'
-          : getRealScanImageUri(selectedScanImage) ? 'selectedScanImage'
           : _traceUri ? 'recipe.imageUrl'
           : 'none',
         imageUri: _traceUri,
@@ -548,7 +508,7 @@ export function RecipeStepsScreen() {
         screen: 'RecipeStepsScreen',
       });
     }
-  }, [routeMode, selectedMode]);
+  }, [routeMode, routeRecipeId, selectedMode]);
 
   useEffect(() => {
     if (activeStepIndex >= guidedSteps.length) {
@@ -556,34 +516,42 @@ export function RecipeStepsScreen() {
     }
   }, [activeStepIndex, guidedSteps.length]);
 
-  const goBack = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
+  useEffect(() => {
+    setShowCompletion(route.params?.completion === true);
+  }, [route.params?.completion, routeRecipeId]);
 
-    navigation.navigate('RecipeDetailScreen', { mode: selectedMode });
+  const setCompletionVisible = (visible: boolean) => {
+    setShowCompletion(visible);
+    navigation.setParams({ completion: visible });
   };
 
-  const saveSelectedRecipe = () => {
+  const goBack = () => {
+    if (routeRecipeId) {
+      navigation.navigate('RecipeDetailScreen', { mode: selectedMode, recipeId: routeRecipeId });
+      return;
+    }
+    navigation.navigate('HomeScreen');
+  };
+
+  const toggleSelectedRecipeLike = () => {
     if (!recipe) {
       return;
     }
 
-    const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
-    uiLog('RecipeStepsScreen', 'save_recipe', { recipeId: recipe.id });
-    saveRecipe(attachRealScanImage(recipe, selectedScanImage));
-    if (!alreadySaved) {
-      awardXPOnce(`save-recipe-${recipe.id}`, 5);
-    }
-    unlockBadge('first-dupe');
-    track(analyticsEvents.RECIPE_SAVED, {
-      dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
-      mode: recipe.mode,
-      savings: canShowSavings ? recipe.estimatedSavings : 0,
-      screen: 'RecipeStepsScreen',
+    uiLog('RecipeStepsScreen', isLiked ? 'unlike_recipe' : 'like_recipe', {
+      recipeId: recipe.id,
     });
-    Alert.alert('Saved', `${cleanDisplayText(recipe.title)} was added to your library.`);
+    toggleRecipeLiked(recipe.id);
+    if (!isLiked) {
+      awardXPOnce(`save-recipe-${recipe.id}`, 5);
+      unlockBadge('first-dupe');
+      track(analyticsEvents.RECIPE_SAVED, {
+        dishName: recipe.title,
+        mode: recipe.mode,
+        savings: canShowSavings ? recipe.estimatedSavings : 0,
+        screen: 'RecipeStepsScreen',
+      });
+    }
   };
 
   const openShareRecipe = () => {
@@ -594,17 +562,13 @@ export function RecipeStepsScreen() {
     navigation.navigate('ShareCardPreviewScreen', {
       cardType: 'scan_result',
       mode: selectedMode,
-      scanContext: {
-        image: selectedScanImage,
-        recipe,
-        scanResult,
-      },
+      recipeId: recipe.id,
     });
   };
 
   const goToStep = (nextIndex: number) => {
     const clampedIndex = Math.max(0, Math.min(guidedSteps.length - 1, nextIndex));
-    setShowCompletion(false);
+    setCompletionVisible(false);
     setActiveStepIndex(clampedIndex);
   };
 
@@ -614,7 +578,10 @@ export function RecipeStepsScreen() {
 
   const goNextStep = () => {
     if (activeStepIndex >= guidedSteps.length - 1) {
-      setShowCompletion(true);
+      if (recipe) {
+        completeRecipe(recipe.id);
+      }
+      setCompletionVisible(true);
       return;
     }
 
@@ -623,7 +590,7 @@ export function RecipeStepsScreen() {
 
   if (!recipe) {
     return (
-      <ScreenFrame onBack={goBack} title="Cooking Steps">
+      <ScreenFrame onBack={goBack}>
         <View style={styles.issueCard}>
           <Text style={styles.kicker}>Steps issue</Text>
           <Text style={styles.issueTitle}>This recipe needs another try.</Text>
@@ -631,7 +598,12 @@ export function RecipeStepsScreen() {
             Okyo needs a completed recipe before it can show cooking steps for this scan.
           </Text>
           <View style={styles.issueActions}>
-            <PrimaryAction label="Back to Recipe" onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })} />
+            <PrimaryAction
+              label="Back to Recipe"
+              onPress={() => routeRecipeId
+                ? navigation.navigate('RecipeDetailScreen', { mode: selectedMode, recipeId: routeRecipeId })
+                : navigation.navigate('HomeScreen')}
+            />
             <SecondaryAction label="Scan Again" onPress={() => navigation.navigate('MainTabs', { screen: 'HomeScreen' })} />
           </View>
         </View>
@@ -646,33 +618,45 @@ export function RecipeStepsScreen() {
           <View style={styles.simpleTopBar}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => setShowCompletion(false)}
+              onPress={() => setCompletionVisible(false)}
               style={({ pressed }) => [styles.smallBackButton, pressed ? styles.pressed : null]}
             >
               <NavArrowLeft color={colors.charcoal} height={22} strokeWidth={2.35} width={22} />
               <Text style={styles.smallBackText}>Steps</Text>
             </Pressable>
-            <Text numberOfLines={1} style={styles.simpleTopTitle}>Done</Text>
-            <View style={styles.topBarSpacer} />
           </View>
 
           <ScrollView contentContainerStyle={styles.completionScrollContent} showsVerticalScrollIndicator={false}>
             <View style={styles.completionCard}>
               <Text style={styles.completionEyebrow}>You made it.</Text>
-              <FoodImage
-                fallbackLabel="Recipe image"
-                imageStatus={recipeImageStatus}
-                imageUrl={recipeImageUrl}
-                showFallbackLabel
-                style={styles.completionImage}
-              />
-              <KikoMascot pose="celebrating" size={80} style={styles.completionMascot} />
+              <CompletionRecipeImage uri={completionImageUri} />
+              <KikoMascot pose="celebrating" size={68} style={styles.completionMascot} />
               <Text numberOfLines={2} style={styles.completionTitle}>{displayTitle}</Text>
               <Text style={styles.completionBody}>
-                Nice work. Let it rest if the recipe calls for it, taste once more, then enjoy your Okyo version.
+                Nice work. Your recipe is ready to enjoy.
               </Text>
-              <PrimaryAction label="Share it" onPress={openShareRecipe} />
-              <SecondaryAction label="Save" onPress={saveSelectedRecipe} />
+              <PrimaryAction
+                label="Back to Recipe"
+                onPress={() => navigation.navigate('RecipeDetailScreen', {
+                  mode: selectedMode,
+                  recipeId: recipe.id,
+                })}
+              />
+              <View style={styles.completionActionsRow}>
+                <RecipeLikeButton isLiked={isLiked} onToggle={toggleSelectedRecipeLike} />
+                <Pressable
+                  accessibilityLabel="Share recipe"
+                  accessibilityRole="button"
+                  onPress={openShareRecipe}
+                  style={({ pressed }) => [
+                    styles.completionShareAction,
+                    pressed ? styles.pressed : null,
+                  ]}
+                >
+                  <ShareAndroid color={colors.charcoal} height={20} strokeWidth={2.1} width={20} />
+                  <Text style={styles.completionShareText}>Share</Text>
+                </Pressable>
+              </View>
             </View>
           </ScrollView>
         </View>
@@ -692,23 +676,16 @@ export function RecipeStepsScreen() {
             <NavArrowLeft color={colors.charcoal} height={22} strokeWidth={2.35} width={22} />
             <Text style={styles.smallBackText}>Back</Text>
           </Pressable>
-          <Text numberOfLines={1} style={styles.simpleTopTitle}>Guided Cooking</Text>
-          <View style={styles.topBarSpacer} />
         </View>
 
         <View style={styles.guidedHeader}>
-          <KikoMascot pose="cooking" size={56} style={styles.guidedMascot} />
           <View style={styles.guidedHeaderCopy}>
             <Text numberOfLines={2} style={styles.guidedRecipeTitle}>{displayTitle}</Text>
             <View style={styles.guidedProgressRow}>
               <Text style={styles.guidedProgressText}>
-                {activeStep?.phase ? `${activeStep.phase} · ` : ''}Step {activeStepIndex + 1} of {guidedSteps.length}
+                Step {activeStepIndex + 1} of {guidedSteps.length}
+                {guidedTotalTime > 0 ? ` · ${guidedTotalTime} min total` : ''}
               </Text>
-              {recipe?.isCompactRecipe ? (
-                <View style={styles.compactBadge}>
-                  <Text style={styles.compactBadgeText}>Quick Recipe</Text>
-                </View>
-              ) : null}
             </View>
           </View>
         </View>
@@ -719,7 +696,7 @@ export function RecipeStepsScreen() {
 
         {activeStep ? (
           <View style={styles.guidedStepCard}>
-            <ScrollView contentContainerStyle={styles.guidedStepCardContent} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+            <View style={styles.guidedStepCardContent}>
               <View style={styles.guidedStepTopRow}>
                 <Text style={styles.guidedStepNumber}>Step {activeStep.stepNumber}</Text>
                 {activeStep.estimatedMinutes ? (
@@ -729,62 +706,25 @@ export function RecipeStepsScreen() {
                 ) : null}
               </View>
 
-              {activeStep.phase ? (
-                <Text style={styles.guidedPhaseLabel}>
-                  {activeStep.phase}
-                  {activeStep.phaseStepCount > 1 ? ` — ${activeStep.phaseStepIndex} of ${activeStep.phaseStepCount}` : ''}
-                </Text>
-              ) : null}
-
               <Text
                 numberOfLines={2}
                 style={styles.guidedStepTitle}
               >
                 {activeStep.title}
               </Text>
-              <Text style={styles.guidedInstruction}>{activeStep.instruction}</Text>
-
-              {(activeStep.visualCue || activeStep.doneWhen) ? (
-                <View style={styles.guidedCueBlock}>
-                  {activeStep.visualCue ? (
-                    <>
-                      <Text style={styles.guidedCueLabel}>Look for</Text>
-                      <Text style={styles.guidedCueText}>{activeStep.visualCue}</Text>
-                    </>
-                  ) : null}
-                  {activeStep.doneWhen ? (
-                    <>
-                      <Text style={styles.guidedDoneLabel}>Done when</Text>
-                      <Text style={styles.guidedDoneText}>{activeStep.doneWhen}</Text>
-                    </>
-                  ) : null}
-                </View>
-              ) : null}
-
-              {activeStep.why ? (
-                <View style={styles.guidedWhyBlock}>
-                  <Text style={styles.guidedWhyLabel}>Why this matters</Text>
-                  <Text style={styles.guidedWhyText}>{activeStep.why}</Text>
-                </View>
-              ) : null}
-
-              {(activeStep.commonMistake ?? activeStep.safetyNote) ? (
-                <View style={styles.guidedSafetyBlock}>
-                  <Text style={styles.guidedSafetyLabel}>Avoid this</Text>
-                  <Text style={styles.guidedSafetyText}>{activeStep.commonMistake ?? activeStep.safetyNote}</Text>
-                </View>
-              ) : null}
-
-              <GuidedChipGroup
-                label="Use now"
-                values={activeStep.ingredientsUsed.map((ingredient) => cleanDisplayText(ingredient.name)).slice(0, 5)}
-              />
-
-              <GuidedChipGroup
-                label="Tools"
-                values={activeStep.toolsUsed.slice(0, 3)}
-              />
-            </ScrollView>
+              <ScrollView
+                nestedScrollEnabled
+                showsVerticalScrollIndicator={false}
+                style={styles.guidedInstructionScroll}
+              >
+                <Text
+                  maxFontSizeMultiplier={1.5}
+                  style={styles.guidedInstruction}
+                >
+                  {getConciseGuidedInstruction(activeStep.instruction)}
+                </Text>
+              </ScrollView>
+            </View>
           </View>
         ) : null}
 
@@ -835,10 +775,9 @@ export function RecipeStepsScreen() {
 type ScreenFrameProps = {
   children: ReactNode;
   onBack: () => void;
-  title: string;
 };
 
-function ScreenFrame({ children, onBack, title }: ScreenFrameProps) {
+function ScreenFrame({ children, onBack }: ScreenFrameProps) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
@@ -851,8 +790,6 @@ function ScreenFrame({ children, onBack, title }: ScreenFrameProps) {
             <NavArrowLeft color={colors.charcoal} height={22} strokeWidth={2.35} width={22} />
             <Text style={styles.smallBackText}>Back</Text>
           </Pressable>
-          <Text numberOfLines={1} style={styles.simpleTopTitle}>{title}</Text>
-          <View style={styles.topBarSpacer} />
         </View>
         {children}
       </ScrollView>
@@ -860,27 +797,29 @@ function ScreenFrame({ children, onBack, title }: ScreenFrameProps) {
   );
 }
 
-function GuidedChipGroup({ label, values }: { label: string; values: string[] }) {
-  const safeValues = [...new Set(values.map((value) => cleanDisplayText(value)).filter(Boolean))].slice(0, 5);
+function CompletionRecipeImage({ uri }: { uri: string | null }) {
+  const [failedUri, setFailedUri] = useState<string | null>(null);
 
-  if (safeValues.length === 0) {
+  useEffect(() => {
+    if (uri !== failedUri) {
+      setFailedUri(null);
+    }
+  }, [failedUri, uri]);
+
+  if (!uri || failedUri === uri) {
     return null;
   }
 
   return (
-    <View style={styles.guidedChipGroup}>
-      <Text style={styles.guidedChipLabel}>{label}</Text>
-      <View style={styles.guidedChipRow}>
-        {safeValues.map((value, index) => (
-          <View key={`${label}-${index}-${value}`} style={styles.guidedChipWrap}>
-            <Text numberOfLines={1} style={styles.guidedChipText}>{value}</Text>
-          </View>
-        ))}
-      </View>
-    </View>
+    <Image
+      accessibilityLabel="Uploaded recipe photo"
+      onError={() => setFailedUri(uri)}
+      resizeMode="cover"
+      source={{ uri }}
+      style={styles.completionImage}
+    />
   );
 }
-
 
 type QuickStatProps = {
   icon: ReactNode;
@@ -901,17 +840,14 @@ function QuickStat({ icon, label, value }: QuickStatProps) {
 }
 
 type RecipeModeTabsProps = {
-  modes: RecipeMode[];
-  selectedMode: RecipeMode;
-  onSelectMode: (mode: RecipeMode) => void;
+  selectedMode: RecipePresentationMode;
+  onSelectMode: (mode: RecipePresentationMode) => void;
 };
 
-function RecipeModeTabs({ modes, selectedMode, onSelectMode }: RecipeModeTabsProps) {
-  const safeModes = modes.length > 0 ? modes : defaultScanResult.modes;
-
+function RecipeModeTabs({ selectedMode, onSelectMode }: RecipeModeTabsProps) {
   return (
     <View style={styles.modeTabs}>
-      {safeModes.map((mode) => {
+      {RECIPE_PRESENTATION_MODES.map((mode) => {
         const isSelected = selectedMode === mode;
 
         return (
@@ -932,7 +868,7 @@ function RecipeModeTabs({ modes, selectedMode, onSelectMode }: RecipeModeTabsPro
               numberOfLines={1}
               style={[styles.modeTabText, isSelected ? styles.modeTabTextSelected : null]}
             >
-              {getModeLabel(mode)}
+              {mode}
             </Text>
           </Pressable>
         );
@@ -1215,6 +1151,51 @@ const styles = StyleSheet.create({
     lineHeight: 27,
     marginTop: 18,
   },
+  editRecipeAction: {
+    alignSelf: 'flex-start',
+    backgroundColor: recipeColors.orangeSoft,
+    borderRadius: 999,
+    justifyContent: 'center',
+    marginTop: 12,
+    minHeight: 44,
+    paddingHorizontal: 16,
+  },
+  editRecipeActionText: {
+    color: recipeColors.orangeDeep,
+    fontFamily: fontFamilies.bold,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  nutritionSummary: {
+    marginTop: 24,
+  },
+  nutritionSummaryRow: {
+    flexDirection: 'row',
+    marginTop: 14,
+  },
+  nutritionSummaryItem: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 4,
+  },
+  nutritionSummaryValue: {
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  nutritionSummaryLabel: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.bold,
+    fontSize: 10,
+    marginTop: 3,
+  },
+  nutritionFiber: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.bold,
+    fontSize: 12,
+    marginTop: 10,
+  },
   modeSection: {
     marginTop: 24,
     paddingBottom: 16,
@@ -1254,6 +1235,13 @@ const styles = StyleSheet.create({
   },
   modeTabTextSelected: {
     color: '#fffdf8',
+  },
+  modeDisclosure: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 9,
   },
   previewSection: {
     marginTop: 22,
@@ -1505,20 +1493,14 @@ const styles = StyleSheet.create({
   },
   guidedScreenContent: {
     flex: 1,
-    paddingBottom: 24,
+    paddingBottom: 18,
     paddingHorizontal: 20,
   },
   guidedHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-    minHeight: 80,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  guidedMascot: {
-    marginLeft: -4,
+    marginTop: 2,
+    minHeight: 62,
+    paddingHorizontal: 4,
+    paddingVertical: 6,
   },
   guidedHeaderCopy: {
     flex: 1,
@@ -1560,7 +1542,7 @@ const styles = StyleSheet.create({
     backgroundColor: recipeColors.creamDeep,
     borderRadius: 999,
     height: 6,
-    marginTop: 12,
+    marginTop: 6,
     overflow: 'hidden',
   },
   guidedProgressFill: {
@@ -1570,12 +1552,11 @@ const styles = StyleSheet.create({
   },
   guidedStepCard: {
     flex: 1,
-    marginTop: 14,
+    marginTop: 10,
   },
   guidedStepCardContent: {
-    flexGrow: 1,
-    padding: 22,
-    paddingBottom: 26,
+    paddingHorizontal: 8,
+    paddingVertical: 14,
   },
   guidedStepTopRow: {
     alignItems: 'center',
@@ -1615,17 +1596,21 @@ const styles = StyleSheet.create({
   guidedStepTitle: {
     color: recipeColors.charcoal,
     fontFamily: fontFamilies.display,
-    fontSize: 27,
+    fontSize: 25,
     fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 34,
+    lineHeight: 31,
   },
   guidedInstruction: {
     color: recipeColors.text,
     fontFamily: fontFamilies.body,
-    fontSize: 18,
-    lineHeight: 27,
-    marginTop: 14,
+    fontSize: 20,
+    lineHeight: 29,
+  },
+  guidedInstructionScroll: {
+    flexGrow: 0,
+    marginTop: 10,
+    maxHeight: 174,
   },
   guidedCueBlock: {
     backgroundColor: recipeColors.greenSoft,
@@ -1809,12 +1794,13 @@ const styles = StyleSheet.create({
   },
   completionCard: {
     alignItems: 'center',
-    padding: 22,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   completionScrollContent: {
     flexGrow: 1,
     paddingTop: 12,
-    paddingBottom: 4,
+    paddingBottom: 150,
   },
   completionEyebrow: {
     color: recipeColors.orange,
@@ -1831,7 +1817,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   completionMascot: {
-    marginTop: -24,
+    marginTop: 8,
   },
   completionTitle: {
     color: recipeColors.charcoal,
@@ -1849,6 +1835,31 @@ const styles = StyleSheet.create({
     lineHeight: 25,
     marginTop: 12,
     textAlign: 'center',
+  },
+  completionActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+    width: '100%',
+  },
+  completionShareAction: {
+    alignItems: 'center',
+    backgroundColor: recipeColors.cream,
+    borderColor: 'rgba(232, 220, 203, 0.84)',
+    borderRadius: 22,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    minHeight: 54,
+    paddingHorizontal: 16,
+  },
+  completionShareText: {
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 15,
+    fontWeight: '800',
   },
   instructionsSection: {
     paddingTop: 16,
@@ -2056,18 +2067,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
-  simpleTopTitle: {
-    color: recipeColors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    flex: 1,
-    fontSize: 18,
-    fontWeight: '800',
-    lineHeight: 23,
-    textAlign: 'center',
-  },
-  topBarSpacer: {
-    width: 82,
-  },
   issueCard: {
     marginTop: 18,
     padding: 18,
@@ -2119,31 +2118,6 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.99 }],
   },
 });
-
-function isExplicitDemoScan(image: { placeholder?: boolean; source?: string } | null) {
-  return image?.placeholder === true && image.source === 'mock';
-}
-
-function getStoredRecipeForMode(recipes: Recipe[], mode: RecipeMode, fallbackRecipe: Recipe | null) {
-  // One canonical recipe per scan; the view mode (Restaurant/Budget/Healthy) is a
-  // lens, not a separate recipe. Match by mode first for legacy multi-recipe
-  // saved data, otherwise return the single canonical recipe so every view tab
-  // renders it.
-  return recipes.find((candidate) => candidate.mode === mode) ??
-    fallbackRecipe ??
-    recipes[0] ??
-    null;
-}
-
-function getAvailableModes(recipes: Recipe[], fallbackRecipe: Recipe | null, isDemoScan: boolean) {
-  const modes = [
-    ...recipes.map((candidate) => candidate.mode),
-    ...(fallbackRecipe ? [fallbackRecipe.mode] : []),
-  ];
-  const uniqueModes = modes.filter((mode, index) => modes.indexOf(mode) === index);
-
-  return uniqueModes.length > 0 || !isDemoScan ? uniqueModes : defaultScanResult.modes;
-}
 
 function getEstimatedRestaurantPrice(recipe: Recipe | null) {
   return recipe ? recipe.estimatedHomemadeCost + recipe.estimatedSavings : 0;
@@ -2265,34 +2239,6 @@ function getIngredientCount(recipe: Recipe | null) {
   const ingredients = groupedItems.length > 0 ? groupedItems : Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
 
   return ingredients.length;
-}
-
-function getFlavorNotes(recipe: Recipe | null, pairings: string[]) {
-  const notes = [
-    ...pairings,
-    recipe?.bestFor,
-    recipe?.mainIngredientsSummary,
-  ]
-    .map((value) => cleanDisplayText(value ?? ''))
-    .flatMap((value) => value.split(',').map((part) => part.trim()))
-    .filter(Boolean);
-
-  return Array.from(new Set(notes)).slice(0, 4);
-}
-
-function getWhyBullets(recipe: Recipe | null, totalTime: number) {
-  if (!recipe) {
-    return [];
-  }
-
-  const bullets = [
-    recipe.bestFor ? cleanDisplayText(recipe.bestFor) : null,
-    totalTime > 0 ? `Ready in about ${totalTime} minutes` : null,
-    recipe.estimatedSavings > 0 ? `Saves about ${formatCurrency(recipe.estimatedSavings)} versus restaurant prices` : null,
-    recipe.mainIngredientsSummary ? `Built around ${cleanDisplayText(recipe.mainIngredientsSummary)}` : null,
-  ].filter(Boolean) as string[];
-
-  return bullets.slice(0, 3);
 }
 
 function getStepCopy(step: DisplayRecipeStep, index: number) {
@@ -2626,18 +2572,6 @@ function normalizeForMatching(value: string) {
     .trim();
 }
 
-function getModeLabel(mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return 'Budget';
-    case 'Healthy':
-      return 'Lighter';
-    case 'Restaurant Copy':
-    default:
-      return 'Restaurant Style';
-  }
-}
-
 function cleanDisplayText(value: string) {
   const commonTypo = `Amer${'cian'}`;
   const lowercaseTypo = `amer${'cian'}`;
@@ -2647,7 +2581,7 @@ function cleanDisplayText(value: string) {
   return value
     .replace(new RegExp(`\\b${commonTypo}\\b`, 'g'), 'American')
     .replace(new RegExp(`\\b${lowercaseTypo}\\b`, 'g'), 'american')
-    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
-    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
+    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'homemade')
+    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'homemade')
     .trim();
 }

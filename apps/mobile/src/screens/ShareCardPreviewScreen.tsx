@@ -37,6 +37,7 @@ import {
   type ScanResult,
 } from '../mocks';
 import type { RootStackParamList, ShareCardType } from '../navigation/types';
+import { resolveCanonicalRecipe } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getRecipeImageUrl } from '../utils/recipeImages';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
@@ -66,20 +67,29 @@ export function ShareCardPreviewScreen() {
   const route = useRoute<ShareCardRoute>();
   const cardType = getSafeCardType(route.params?.cardType);
   const storeMode = useOkyoStore((state) => state.selectedMode);
-  const latestScanResult = useOkyoStore((state) => state.latestScanResult);
-  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
+  const recipesById = useOkyoStore((state) => state.recipesById);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
   const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
-  const selectedMode = getSafeRecipeMode(route.params?.mode ?? storeMode);
+  const requestedRecipeId = route.params?.recipeId;
+  const canonicalRecipe = requestedRecipeId
+    ? resolveCanonicalRecipe(recipesById, requestedRecipeId)
+    : null;
+  const selectedMode = getSafeRecipeMode(canonicalRecipe?.selectedMode ?? route.params?.mode ?? storeMode);
   const scanContext = route.params?.scanContext;
-  const shareImage = scanContext?.image ?? selectedScanImage;
+  const shareImage = canonicalRecipe?.originalImage ??
+    scanContext?.image ??
+    (selectedScanImage?.source === 'mock' ? selectedScanImage : null);
   const isDemoScan = shareImage?.source === 'mock';
   const routeRecipe = scanContext?.recipe ?? null;
-  const recipe = getShareRecipe(selectedMode, latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, routeRecipe, isDemoScan);
-  const scanResult = scanContext?.scanResult ?? latestScanResult ?? (isDemoScan ? defaultScanResult : null);
+  const recipe = requestedRecipeId
+    ? canonicalRecipe
+    : (isDemoScan ? routeRecipe ?? getSafeRecipeForMode(selectedMode) : null);
+  const scanResult = canonicalRecipe?.scanResult ??
+    scanContext?.scanResult ??
+    (isDemoScan ? defaultScanResult : null);
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
   const latestChallenge = safeCompletedChallenges[safeCompletedChallenges.length - 1];
@@ -109,8 +119,7 @@ export function ShareCardPreviewScreen() {
   const fallbackScanResult = scanResult ?? defaultScanResult;
   const hasScanShareContext = Boolean(
     cardType !== 'scan_result' ||
-    recipe ||
-    (scanResult && (scanContext?.recipe || latestScanRecipe)) ||
+    (recipe && scanResult) ||
     isDemoScan,
   );
   const missingScanResult = cardType === 'scan_result' && !hasScanShareContext;
@@ -124,7 +133,7 @@ export function ShareCardPreviewScreen() {
     const dataByType: Record<ShareCardType, Omit<ShareCardData, 'caption'>> = {
       scan_result: {
         cardType: 'scan_result',
-        eyebrow: 'Restaurant-style swap',
+        eyebrow: 'Homemade recipe',
         dishName: scanDishName,
         restaurantPrice: scanRestaurantPrice,
         homemadeCost: scanHomemadeCost,
@@ -576,24 +585,6 @@ function buildCaption(data: Omit<ShareCardData, 'caption'>) {
   return `${dishName} remade at home with Okyo. Restaurant estimate ${formatCurrency(data.restaurantPrice)} -> home estimate ${formatCurrency(data.homemadeCost)}. Saved about ${formatCurrency(data.estimatedSavings)} with a ${modeLabel} homemade version. Made with Okyo.`;
 }
 
-function getShareRecipe(
-  mode: RecipeMode,
-  recipes: Recipe[],
-  fallbackRecipe: Recipe | null,
-  routeRecipe: Recipe | null,
-  isDemoScan: boolean,
-) {
-  // One canonical recipe per scan; the view mode is a lens. The explicit
-  // route/scan-context recipe wins; otherwise match by mode for legacy
-  // multi-recipe saves, then fall back to the single canonical recipe so sharing
-  // works under any view lens. Demo scans fall back to a mock.
-  return routeRecipe ??
-    recipes.find((item) => item.mode === mode) ??
-    fallbackRecipe ??
-    recipes[0] ??
-    (isDemoScan ? getSafeRecipeForMode(mode) : null);
-}
-
 type ShareStatData = {
   label: string;
   value: string;
@@ -792,12 +783,12 @@ function getCuisineLabel(recipe: Recipe) {
 
 function getModeLabel(mode: RecipeMode | string) {
   switch (mode) {
-    case 'Budget':
-      return 'Budget';
-    case 'Healthy':
+    case 'Lighter':
       return 'Lighter';
-    case 'Restaurant Copy':
-      return 'Restaurant Style';
+    case 'Healthier':
+      return 'Healthier';
+    case 'Normal':
+      return 'Normal';
     default:
       return String(mode);
   }
@@ -826,8 +817,8 @@ function cleanDisplayText(value: string) {
   const copyStyle = `${copyWord}-style`;
 
   return value
-    .replace(new RegExp(`\\b${copyStyle}\\b`, 'gi'), 'restaurant-style')
-    .replace(new RegExp(`\\b${copyWord}\\b`, 'gi'), 'restaurant-style')
+    .replace(new RegExp(`\\b${copyStyle}\\b`, 'gi'), 'homemade')
+    .replace(new RegExp(`\\b${copyWord}\\b`, 'gi'), 'homemade')
     .replace(/\bdupes?\b/gi, 'swaps')
     .replace(/\bmock\b/gi, 'demo')
     .trim();

@@ -142,15 +142,10 @@ export async function enrichRecipeContext(
  * Pure + deterministic (no I/O) so it is easy to unit test and so the recipe
  * provider can append it without any Epicure-specific knowledge. Returns '' when
  * there is nothing to inject, which keeps the base prompt byte-for-byte unchanged.
- *
- * Mode-specific behavior (requirement 7):
- *  - Restaurant Copy → prioritize complementary ingredients
- *  - Healthy         → prioritize healthy substitutions
- *  - Budget          → prioritize budget substitutions
  */
 export function buildEpicurePromptSection(
   enrichment: EnrichedRecipeContext | null,
-  mode: RecipeMode,
+  _mode: RecipeMode,
 ): string {
   if (!enrichment) {
     return '';
@@ -164,23 +159,11 @@ export function buildEpicurePromptSection(
     'INGREDIENT INTELLIGENCE (from Epicure — optional guidance, never required):',
     `Detected ingredients: ${enrichment.detectedIngredients.join(', ') || 'none'}`,
     `Complementary ingredients: ${complementary}`,
-    `Healthy substitutions: ${healthy}`,
-    `Budget substitutions: ${budget}`,
+    `Optional wellness-oriented substitutions: ${healthy}`,
+    `Optional cost-conscious substitutions: ${budget}`,
     'Use these suggestions when helpful, but do not force them. Only apply a suggestion when it fits the actual dish; never change the dish into something else.',
-    getModeEmphasis(mode),
+    'The selected presentation mode is not a recipe variant. Do not alter ingredients or nutrition solely because of that label.',
   ].join('\n');
-}
-
-function getModeEmphasis(mode: RecipeMode): string {
-  switch (mode) {
-    case 'Healthy':
-      return 'For this Healthy recipe, prioritize the healthy substitutions above when they keep the dish recognizable.';
-    case 'Budget':
-      return 'For this Budget recipe, prioritize the budget substitutions above when they keep the dish recognizable.';
-    case 'Restaurant Copy':
-    default:
-      return 'For this Restaurant Copy recipe, prioritize the complementary ingredients above to round out authentic restaurant-style flavor.';
-  }
 }
 
 // ─── Pure helpers (unit-tested) ───────────────────────────────────────────────

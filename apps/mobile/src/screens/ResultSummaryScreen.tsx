@@ -2,38 +2,34 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  Bookmark,
   Camera,
   Cart,
-  CheckCircle,
   Clock,
   Cutlery,
   NavArrowLeft,
-  OpenBook,
+  Play,
   PlusCircle,
   Settings,
-  ShareAndroid,
-  ShieldCheck,
-  Sparks,
-  ArrowRight,
 } from 'iconoir-react-native';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { correctScanRecipe } from '../api/client';
-import { attachRealScanImage } from '../utils/savedRecipeImage';
+import { CORRECTION_FAILURE_MESSAGE, correctScanRecipe } from '../api/client';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { canUseScanStateForRoute } from '../utils/onboardingScanGuards';
 import {
   buildCorrectionRequest,
   canSubmitCorrection,
+  getRecipeCorrectionSourceId,
   isCurrentCorrectionRequest,
   validateCorrectionNote,
 } from '../utils/recipeCorrection';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 import { KikoMascot } from '../components/KikoMascot';
+import { RecipeLikeButton } from '../components/RecipeLikeButton';
+import { RecipeNutritionCards } from '../components/RecipeNutritionCards';
 import {
   PrimaryButton,
   colors,
@@ -50,13 +46,12 @@ import {
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { resolveCanonicalRecipe } from '../state/canonicalRecipes';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { getRealScanImageUri } from '../utils/recipeImages';
 import { isUsableScan } from '../utils/scanDecision';
-import { isValidNutritionEstimate } from '../utils/nutrition';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
-const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
 type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'ResultSummaryScreen'>;
 type ResultSummaryRoute = RouteProp<RootStackParamList, 'ResultSummaryScreen'>;
 
@@ -73,17 +68,20 @@ export function ResultSummaryScreen() {
   const storedLatestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
   const storedSelectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const storedLatestAiDebugMetadata = useOkyoStore((state) => state.latestAiDebugMetadata);
-  const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
-  const setLatestScanResult = useOkyoStore((state) => state.setLatestScanResult);
-  const setLatestScanRecipe = useOkyoStore((state) => state.setLatestScanRecipe);
+  const recipesById = useOkyoStore((state) => state.recipesById);
+  const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
+  const correctRecipe = useOkyoStore((state) => state.correctRecipe);
+  const confirmRecipeIdentification = useOkyoStore((state) => state.confirmRecipeIdentification);
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
-  const saveRecipe = useOkyoStore((state) => state.saveRecipe);
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const toggleRecipeLiked = useOkyoStore((state) => state.toggleRecipeLiked);
+  const startCookingRecipe = useOkyoStore((state) => state.startCookingRecipe);
+  const addRecipeToGrocery = useOkyoStore((state) => state.addRecipeToGrocery);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const routeScanSessionId = route.params?.scanSessionId;
+  const routeRecipeId = route.params?.recipeId;
   const canUseStoredScanState = canUseScanStateForRoute(
     routeScanSessionId,
     scanSessionId,
@@ -94,15 +92,37 @@ export function ResultSummaryScreen() {
     : latestScanSession
       ? 'latest_scan_session'
       : 'legacy_latest_scan_fields';
-  const latestScanResult = canUseStoredScanState ? latestScanSession?.latestScanResult ?? storedLatestScanResult : null;
-  const latestScanStatus = canUseStoredScanState ? latestScanSession?.latestScanStatus ?? storedLatestScanStatus : null;
+  const sessionRecipeId = latestScanSession?.latestScanRecipe?.id;
+  const requestedRecipeId = routeRecipeId ??
+    (canUseStoredScanState && storedLatestScanRecipe?.id === sessionRecipeId ? sessionRecipeId : undefined);
+  const canonicalRecipe = routeRecipeId
+    ? resolveCanonicalRecipe(recipesById, routeRecipeId)
+    : canUseStoredScanState
+      ? resolveCanonicalRecipe(recipesById, requestedRecipeId)
+      : null;
+  const latestScanResult = canonicalRecipe?.scanResult ??
+    (canUseStoredScanState ? latestScanSession?.latestScanResult ?? storedLatestScanResult : null);
+  const latestScanStatus = routeRecipeId && canonicalRecipe
+    ? 'success'
+    : canUseStoredScanState
+      ? latestScanSession?.latestScanStatus ?? storedLatestScanStatus
+      : null;
   const latestScanFailure = canUseStoredScanState ? latestScanSession?.latestScanFailure ?? storedLatestScanFailure : null;
-  const latestScanRecipe = canUseStoredScanState ? latestScanSession?.latestScanRecipe ?? storedLatestScanRecipe : null;
-  const isDescriptionScan = canUseStoredScanState && latestScanSession?.source === 'description';
-  // Single canonical recipe. The view mode (Restaurant/Budget/Healthy) is a lens,
+  const latestScanRecipe = canonicalRecipe &&
+    canonicalRecipe.id === requestedRecipeId &&
+    (Boolean(routeRecipeId) || !sessionRecipeId || sessionRecipeId === requestedRecipeId)
+    ? canonicalRecipe
+    : null;
+  const isDescriptionScan = latestScanRecipe?.origin === 'description' ||
+    (canUseStoredScanState && latestScanSession?.source === 'description');
+  const isPhotoScan = latestScanRecipe?.origin === 'scan' ||
+    (canUseStoredScanState &&
+      (latestScanSession?.source === 'camera' || latestScanSession?.source === 'photos'));
+  // Single canonical recipe. The selected view is a lens,
   // not a separate recipe — kept as a 1-element list for the view selectors/tabs.
   const latestScanRecipes = latestScanRecipe ? [latestScanRecipe] : [];
-  const selectedScanImage = canUseStoredScanState ? latestScanSession?.selectedScanImage ?? storedSelectedScanImage : null;
+  const selectedScanImage = latestScanRecipe?.originalImage ??
+    (canUseStoredScanState ? latestScanSession?.selectedScanImage ?? storedSelectedScanImage : null);
   const selectedScanImageUri = getRealScanImageUri(selectedScanImage);
   const latestAiDebugMetadata = canUseStoredScanState
     ? latestScanSession?.latestAiDebugMetadata ?? storedLatestAiDebugMetadata
@@ -110,17 +130,15 @@ export function ResultSummaryScreen() {
   const isDemoScan = isExplicitDemoScan(selectedScanImage);
   const scanResult = latestScanResult ?? (isDemoScan ? defaultScanResult : null);
   const hasSuccessfulScanSession = latestScanStatus === 'success' && Boolean(scanResult);
-  const storedRecipe = getStoredRecipeForMode(latestScanRecipes, selectedMode, latestScanRecipe, hasSuccessfulScanSession);
-  const selectedRecipe = storedRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
+  const selectedRecipe = latestScanRecipe ?? (isDemoScan ? getSafeRecipeForMode(selectedMode) : null);
   const confidencePercent = isDescriptionScan ? null : getPercentValue(scanResult?.confidence ?? latestAiDebugMetadata?.confidence);
   const matchPercent = isDescriptionScan ? null : confidencePercent ?? getPercentValue(
     typeof scanResult?.matchScore === 'number' ? scanResult.matchScore / 10 : undefined,
   );
   const didTrackResultView = useRef(false);
   const [dishNameOverride, setDishNameOverride] = useState('');
-  // "isEditingDishName" doubles as the correction-input reveal state ("Fix
-  // it" tapped) and "dishGuessConfirmed" as "the user has responded to the
-  // confirmation step" (either "Yes, looks good" or a successful correction).
+  // The large identification Quick Check is one-time. Its editor transitions
+  // into the same small, permanent correction entry used by reopened recipes.
   const [isEditingDishName, setIsEditingDishName] = useState(false);
   const [dishGuessConfirmed, setDishGuessConfirmed] = useState(false);
   const [correctionText, setCorrectionText] = useState('');
@@ -130,6 +148,7 @@ export function ResultSummaryScreen() {
   // request is allowed to apply. An older in-flight response arriving late
   // (after a retry or a second correction) becomes a silent no-op.
   const latestCorrectionRequestIdRef = useRef<string | null>(null);
+  const correctionInFlightRef = useRef(false);
   const correctedScanIdRef = useRef<string | null>(null);
   const [restaurantPriceInput, setRestaurantPriceInput] = useState('');
   const firstScanEventId = `first-scan-${scanResult?.id ?? 'missing-scan'}`;
@@ -164,6 +183,10 @@ export function ResultSummaryScreen() {
       : null;
   const displaySubtitle = getDisplaySubtitle(scanResult?.restaurantStyle, selectedRecipe?.description);
   const bestGuessNote = getBestGuessResultNote(scanResult);
+  const isLiked = selectedRecipe ? savedRecipeIds.includes(selectedRecipe.id) : false;
+  const hasConfirmedIdentification = Boolean(
+    dishGuessConfirmed || latestScanRecipe?.identificationConfirmedAt,
+  );
 
   useEffect(() => {
     // A successful correction writes a new scanResult (new id) on purpose —
@@ -285,9 +308,6 @@ export function ResultSummaryScreen() {
       });
       return;
     }
-    if (!latestScanResult && isDemoScan) {
-      setLatestScanResult(defaultScanResult);
-    }
     if (!scanResult) {
       return;
     }
@@ -307,13 +327,18 @@ export function ResultSummaryScreen() {
       savings: estimatedSavings ?? 0,
       screen: 'ResultSummaryScreen',
     });
-  }, [awardXPOnce, awardedXpEvents, estimatedSavings, firstScanEventId, incrementWeeklyScanCount, isDemoScan, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult, selectedMode, selectedModeRaw, setLatestScanResult, shouldShowFailure, shouldShowPartial]);
+  }, [awardXPOnce, awardedXpEvents, estimatedSavings, firstScanEventId, incrementWeeklyScanCount, isDemoScan, latestScanFailure?.rejectionReason, latestScanResult, latestScanStatus, scanResult, selectedMode, selectedModeRaw, shouldShowFailure, shouldShowPartial]);
 
   // ── Dish confirmation / correction ──────────────────────────────────────
 
   const confirmDishLooksRight = () => {
+    if (selectedRecipe) {
+      confirmRecipeIdentification(selectedRecipe.id);
+    }
     setDishGuessConfirmed(true);
     setIsEditingDishName(false);
+    setCorrectionText('');
+    setCorrectionError(null);
     track(analyticsEvents.MODE_SELECTED, {
       dishName: scanResult?.dishName ?? 'Missing scan',
       mode: selectedMode,
@@ -323,6 +348,7 @@ export function ResultSummaryScreen() {
 
   const revealCorrectionInput = () => {
     setIsEditingDishName(true);
+    setCorrectionText('');
     setCorrectionError(null);
   };
 
@@ -333,20 +359,33 @@ export function ResultSummaryScreen() {
   };
 
   const submitCorrection = async () => {
-    const validationError = validateCorrectionNote(correctionText);
-    if (validationError || !selectedRecipe) {
-      setCorrectionError(validationError ?? 'Okyo needs a recipe to correct.');
+    if (correctionInFlightRef.current) {
       return;
     }
 
+    const validationError = validateCorrectionNote(correctionText);
+    if (validationError || !selectedRecipe) {
+      setCorrectionError(validationError ?? CORRECTION_FAILURE_MESSAGE);
+      return;
+    }
+
+    correctionInFlightRef.current = true;
     const requestId = `correction-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     latestCorrectionRequestIdRef.current = requestId;
     setIsCorrecting(true);
     setCorrectionError(null);
 
     try {
-      const payload = buildCorrectionRequest({ correctionNote: correctionText, mode: selectedMode });
-      const result = await correctScanRecipe(selectedRecipe.id, payload);
+      const sourceRecipeId = getRecipeCorrectionSourceId(selectedRecipe);
+      const payload = buildCorrectionRequest({
+        correctionRequestId: requestId,
+        correctionNote: correctionText,
+        expectedSourceRecipeId: sourceRecipeId,
+        canonicalRecipeId: selectedRecipe.id,
+        scanSessionId,
+        mode: selectedMode,
+      });
+      const result = await correctScanRecipe(sourceRecipeId, payload);
 
       if (!isCurrentCorrectionRequest(requestId, latestCorrectionRequestIdRef.current)) {
         // A newer correction (or a "Yes, looks good") superseded this one.
@@ -355,13 +394,17 @@ export function ResultSummaryScreen() {
 
       const correctedRecipe = result.recipe ?? result.recipes?.[0] ?? null;
       if (!correctedRecipe || !result.scan) {
-        setCorrectionError('Okyo could not update the recipe. Try a shorter correction.');
+        setCorrectionError(CORRECTION_FAILURE_MESSAGE);
+        return;
+      }
+
+      const didUpdateRecipe = correctRecipe(selectedRecipe.id, correctedRecipe, result.scan);
+      if (!didUpdateRecipe) {
+        setCorrectionError(CORRECTION_FAILURE_MESSAGE);
         return;
       }
 
       correctedScanIdRef.current = result.scan.id;
-      setLatestScanResult(result.scan);
-      setLatestScanRecipe(correctedRecipe);
       setDishNameOverride(result.scan.dishName ?? '');
       setDishGuessConfirmed(true);
       setIsEditingDishName(false);
@@ -372,47 +415,62 @@ export function ResultSummaryScreen() {
         savings: correctedRecipe.estimatedSavings,
         screen: 'ResultSummaryScreen',
       });
-    } catch (error) {
+    } catch {
       if (!isCurrentCorrectionRequest(requestId, latestCorrectionRequestIdRef.current)) {
         return;
       }
-      setCorrectionError(error instanceof Error ? error.message : 'Okyo could not update the recipe. Try again.');
+      setCorrectionError(CORRECTION_FAILURE_MESSAGE);
     } finally {
       if (isCurrentCorrectionRequest(requestId, latestCorrectionRequestIdRef.current)) {
+        correctionInFlightRef.current = false;
         setIsCorrecting(false);
       }
     }
   };
 
-  const chooseMode = (mode: RecipeMode) => {
-    setSelectedMode(mode);
-    uiLog('ResultSummaryScreen', 'choose_mode', { mode });
-    track(analyticsEvents.MODE_SELECTED, {
-      dishName: scanResult?.dishName ?? 'Missing scan',
-      mode,
-      screen: 'ResultSummaryScreen',
-    });
-  };
-
-  const saveSelectedRecipe = () => {
-    if (!selectedRecipe) {
+  const toggleSelectedRecipeLike = () => {
+    if (!selectedRecipe || !resolveCanonicalRecipe(recipesById, selectedRecipe.id)) {
       return;
     }
 
-    const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === selectedRecipe.id);
-    uiLog('ResultSummaryScreen', 'save_recipe', { recipeId: selectedRecipe.id });
-    saveRecipe(attachRealScanImage(selectedRecipe, selectedScanImage));
-    if (!alreadySaved) {
-      awardXPOnce(`save-recipe-${selectedRecipe.id}`, 5);
-    }
-    unlockBadge('first-dupe');
-    track(analyticsEvents.RECIPE_SAVED, {
-      dishName: selectedRecipe.title,
-      mode: selectedRecipe.mode,
-      savings: estimatedSavings ?? 0,
-      screen: 'ResultSummaryScreen',
+    uiLog('ResultSummaryScreen', isLiked ? 'unlike_recipe' : 'like_recipe', {
+      recipeId: selectedRecipe.id,
     });
-    navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
+    toggleRecipeLiked(selectedRecipe.id);
+    if (!isLiked) {
+      awardXPOnce(`save-recipe-${selectedRecipe.id}`, 5);
+      unlockBadge('first-dupe');
+      track(analyticsEvents.RECIPE_SAVED, {
+        dishName: selectedRecipe.title,
+        mode: selectedRecipe.mode,
+        savings: estimatedSavings ?? 0,
+        screen: 'ResultSummaryScreen',
+      });
+    }
+  };
+
+  const startCooking = () => {
+    if (!selectedRecipe || !resolveCanonicalRecipe(recipesById, selectedRecipe.id)) {
+      return;
+    }
+
+    startCookingRecipe(selectedRecipe.id);
+    navigation.navigate('MainTabs', {
+      screen: 'RecipeStepsScreen',
+      params: { completion: false, mode: selectedMode, recipeId: selectedRecipe.id },
+    });
+  };
+
+  const addSelectedRecipeToGrocery = () => {
+    if (!selectedRecipe || !resolveCanonicalRecipe(recipesById, selectedRecipe.id)) {
+      return;
+    }
+
+    addRecipeToGrocery(selectedRecipe.id);
+    navigation.navigate('MainTabs', {
+      screen: 'GroceryListScreen',
+      params: { mode: selectedMode, recipeId: selectedRecipe.id },
+    });
   };
 
   const openShareDupe = () => {
@@ -423,11 +481,14 @@ export function ResultSummaryScreen() {
     navigation.navigate('ShareCardPreviewScreen', {
       cardType: 'scan_result',
       mode: selectedMode,
-      scanContext: {
-        image: selectedScanImage,
-        recipe: selectedRecipe,
-        scanResult,
-      },
+      recipeId: isDemoScan ? undefined : selectedRecipe.id,
+      scanContext: isDemoScan
+        ? {
+            image: selectedScanImage,
+            recipe: selectedRecipe,
+            scanResult,
+          }
+        : undefined,
     });
   };
 
@@ -540,19 +601,20 @@ export function ResultSummaryScreen() {
 
   return (
     <ResultFrame onScanAgain={goToScan} onSettings={openSettings}>
-      <FoodImageCard
-        dishName={displayDishName || 'Scanned dish'}
-        imageUri={selectedScanImageUri ?? undefined}
-        isDemoScan={isDemoScan}
-        isDescriptionScan={isDescriptionScan}
-      />
+      {!isDescriptionScan ? (
+        <FoodImageCard
+          dishName={displayDishName || 'Scanned dish'}
+          imageUri={selectedScanImageUri ?? undefined}
+          isDemoScan={isDemoScan}
+        />
+      ) : null}
 
       <View style={styles.headerSection}>
         <Text
           adjustsFontSizeToFit
           minimumFontScale={0.82}
           numberOfLines={2}
-          style={styles.title}
+          style={[styles.title, isDescriptionScan ? styles.descriptionTitle : null]}
         >
           {selectedRecipe.title || displayDishName || 'Scanned dish'}
         </Text>
@@ -565,14 +627,15 @@ export function ResultSummaryScreen() {
           <View style={styles.statDivider} />
           <StatBlock
             icon={<Cutlery color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
-            label="Difficulty"
-            value={selectedRecipe.difficulty ?? '—'}
+            label="Servings"
+            value={`${selectedRecipe.servings}`}
           />
         </View>
       </View>
 
-      {!dishGuessConfirmed ? (
+      {isPhotoScan && !hasConfirmedIdentification ? (
         <DishConfirmationCard
+          canSubmit={canSubmitCorrection(correctionText)}
           correctionError={correctionError}
           correctionText={correctionText}
           dishName={displayDishName || selectedRecipe.title || 'this dish'}
@@ -584,26 +647,39 @@ export function ResultSummaryScreen() {
           onFixIt={revealCorrectionInput}
           onSubmitCorrection={() => void submitCorrection()}
         />
-      ) : null}
+      ) : isEditingDishName ? (
+        <RecipeEditCard
+          canSubmit={canSubmitCorrection(correctionText)}
+          correctionError={correctionError}
+          correctionText={correctionText}
+          isCorrecting={isCorrecting}
+          onCancel={cancelCorrection}
+          onChangeCorrectionText={setCorrectionText}
+          onSubmitCorrection={() => void submitCorrection()}
+        />
+      ) : (
+        <EditRecipeAction onPress={revealCorrectionInput} />
+      )}
 
-      <NutritionEstimateSection nutrition={selectedRecipe.nutritionEstimate} />
+      <RecipeNutritionCards nutrition={selectedRecipe.nutritionEstimate} />
       <RecipeContent recipe={selectedRecipe} />
+      <View style={styles.homemadeEstimateCard}>
+        <Text style={styles.homemadeEstimateLabel}>Homemade Estimate</Text>
+        <Text style={styles.homemadeEstimateValue}>{formatOptionalCurrency(homemadeEstimate)}</Text>
+        <Text style={styles.homemadeEstimateNote}>Estimated total cost to make at home</Text>
+      </View>
 
       <View style={styles.actions}>
-        <ResultPrimaryButton onPress={() => navigation.navigate('MainTabs', { screen: 'RecipeStepsScreen', params: { mode: selectedMode } })}>
-          <OpenBook color="#fffdf8" height={25} strokeWidth={2.15} width={25} />
-          <Text style={styles.resultPrimaryButtonText}>Start cooking</Text>
+        <ResultPrimaryButton onPress={startCooking}>
+          <Play color="#fffdf8" height={25} strokeWidth={2.2} width={25} />
+          <Text style={styles.resultPrimaryButtonText}>Start Cooking</Text>
         </ResultPrimaryButton>
         <View style={styles.secondaryRow}>
-          <ActionButton
-            icon={<Bookmark color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
-            label="Save"
-            onPress={saveSelectedRecipe}
-          />
+          <RecipeLikeButton isLiked={isLiked} onToggle={toggleSelectedRecipeLike} />
           <ActionButton
             icon={<Cart color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
             label="Add to grocery list"
-            onPress={() => navigation.navigate('MainTabs', { screen: 'GroceryListScreen', params: { mode: selectedMode } })}
+            onPress={addSelectedRecipeToGrocery}
           />
         </View>
       </View>
@@ -643,16 +719,6 @@ function ResultFrame({ children, onScanAgain, onSettings }: ResultFrameProps) {
               Scan again
             </Text>
           </Pressable>
-          <View pointerEvents="none" style={styles.topTitleWrap}>
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.82}
-              numberOfLines={1}
-              style={styles.topTitle}
-            >
-              Result
-            </Text>
-          </View>
           <Pressable
             accessibilityLabel="Open settings"
             accessibilityRole="button"
@@ -672,10 +738,9 @@ type FoodImageCardProps = {
   dishName: string;
   imageUri?: string;
   isDemoScan: boolean;
-  isDescriptionScan: boolean;
 };
 
-function FoodImageCard({ dishName, imageUri, isDemoScan, isDescriptionScan }: FoodImageCardProps) {
+function FoodImageCard({ dishName, imageUri, isDemoScan }: FoodImageCardProps) {
   if (imageUri) {
     return (
       <View style={styles.foodImageCard}>
@@ -693,20 +758,6 @@ function FoodImageCard({ dishName, imageUri, isDemoScan, isDescriptionScan }: Fo
           </View>
           <Text style={styles.photoUnavailableTitle}>{dishName}</Text>
           <Text style={styles.photoUnavailableBody}>Example result shown without a saved food photo.</Text>
-        </View>
-      </View>
-    );
-  }
-
-  if (isDescriptionScan) {
-    return (
-      <View style={styles.foodImageCard}>
-        <View style={styles.photoEmptyContent}>
-          <View style={styles.photoEmptyIcon}>
-            <Sparks color={colors.coral} height={25} strokeWidth={2.2} width={25} />
-          </View>
-          <Text style={styles.photoUnavailableTitle}>Recipe idea</Text>
-          <Text style={styles.photoUnavailableBody}>Built from your meal description.</Text>
         </View>
       </View>
     );
@@ -730,30 +781,48 @@ function RecipeContent({ recipe }: { recipe: Recipe }) {
     <View style={styles.recipeContent}>
       <Text style={styles.recipeSectionTitle}>Ingredients</Text>
       <View style={styles.recipeList}>
-        {recipe.ingredients.map((ingredient) => (
-          <View key={`${ingredient.quantity}-${ingredient.name}`} style={styles.recipeListRow}>
+        {recipe.ingredients.map((ingredient, index) => (
+          <View key={getIngredientRowKey(ingredient, index)} style={styles.recipeListRow}>
             <View style={styles.recipeBullet} />
             <Text style={styles.recipeListText}>{ingredient.quantity} {ingredient.name}</Text>
           </View>
         ))}
       </View>
 
-      <Text style={styles.recipeSectionTitle}>Steps</Text>
+      <Text style={styles.recipeSectionTitle}>Equipment</Text>
       <View style={styles.recipeList}>
-        {recipe.steps.map((step, index) => (
-          <View key={`${index}-${step}`} style={styles.recipeListRow}>
-            <View style={styles.stepNumber}>
-              <Text style={styles.stepNumberText}>{index + 1}</Text>
-            </View>
-            <Text style={styles.recipeListText}>{step}</Text>
+        {(recipe.equipment ?? []).length > 0 ? (recipe.equipment ?? []).map((item) => (
+          <View key={item} style={styles.recipeListRow}>
+            <View style={styles.recipeBullet} />
+            <Text style={styles.recipeListText}>{item}</Text>
           </View>
-        ))}
+        )) : (
+          <View style={styles.recipeListRow}>
+            <View style={styles.recipeBullet} />
+            <Text style={styles.recipeListText}>No special equipment listed</Text>
+          </View>
+        )}
       </View>
     </View>
   );
 }
 
+function getIngredientRowKey(ingredient: Recipe['ingredients'][number], index: number): string {
+  const ingredientId = (ingredient as Recipe['ingredients'][number] & { id?: unknown }).id;
+  const stablePart = typeof ingredientId === 'string' && ingredientId.trim()
+    ? ingredientId.trim()
+    : `${ingredient.quantity} ${ingredient.name}`;
+  const normalized = stablePart
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'ingredient';
+  return `ingredient-${normalized}-${index}`;
+}
+
 type DishConfirmationCardProps = {
+  canSubmit: boolean;
   correctionError: string | null;
   correctionText: string;
   dishName: string;
@@ -772,6 +841,7 @@ type DishConfirmationCardProps = {
 // submitting regenerates the recipe from the same photo/session via
 // correctScanRecipe (see recipeCorrection.ts + api/client.ts).
 function DishConfirmationCard({
+  canSubmit,
   correctionError,
   correctionText,
   dishName,
@@ -796,7 +866,7 @@ function DishConfirmationCard({
             editable={!isCorrecting}
             multiline
             onChangeText={onChangeCorrectionText}
-            placeholder="These are lamb chops, not chicken."
+            placeholder="Fix anything that looks wrong"
             placeholderTextColor={recipeColors.muted}
             style={styles.correctionInput}
             value={correctionText}
@@ -805,9 +875,9 @@ function DishConfirmationCard({
           <View style={styles.confirmActions}>
             <Pressable
               accessibilityRole="button"
-              disabled={isCorrecting}
+              disabled={isCorrecting || !canSubmit}
               onPress={onSubmitCorrection}
-              style={[styles.confirmPrimary, isCorrecting ? styles.confirmDisabled : null]}
+              style={[styles.confirmPrimary, isCorrecting || !canSubmit ? styles.confirmDisabled : null]}
             >
               <Text style={styles.confirmPrimaryText}>{isCorrecting ? 'Updating…' : 'Submit correction'}</Text>
             </Pressable>
@@ -835,33 +905,72 @@ function DishConfirmationCard({
   );
 }
 
-function NutritionEstimateSection({ nutrition }: { nutrition: Recipe['nutritionEstimate'] }) {
-  if (!isValidNutritionEstimate(nutrition)) return null;
-  const values = [
-    ['Calories', `${nutrition.calories} kcal`],
-    ['Protein', `${nutrition.proteinGrams} g`],
-    ['Carbohydrates', `${nutrition.carbohydratesGrams} g`],
-    ['Fat', `${nutrition.fatGrams} g`],
-  ];
+type RecipeEditCardProps = {
+  canSubmit: boolean;
+  correctionError: string | null;
+  correctionText: string;
+  isCorrecting: boolean;
+  onCancel: () => void;
+  onChangeCorrectionText: (value: string) => void;
+  onSubmitCorrection: () => void;
+};
+
+function EditRecipeAction({ onPress }: { onPress: () => void }) {
   return (
-    <View accessibilityLabel="Nutrition estimate" style={styles.nutritionSection}>
-      <View style={styles.nutritionHeader}>
-        <Text style={styles.nutritionTitle}>Nutrition estimate</Text>
-        <Text style={styles.nutritionNote}>Estimated per serving</Text>
-      </View>
-      <View style={styles.nutritionGrid}>
-        {values.map(([label, value]) => (
-          <View key={label} style={styles.nutritionValue}>
-            <Text style={styles.nutritionLabel}>{label}</Text>
-            <Text style={styles.nutritionAmount}>{value}</Text>
-          </View>
-        ))}
-      </View>
-      {typeof nutrition.fiberGrams === 'number' ? <Text style={styles.nutritionFiber}>Fiber · {nutrition.fiberGrams} g</Text> : null}
-    </View>
+    <Pressable
+      accessibilityLabel="Edit recipe"
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.editRecipeAction, pressed ? styles.pressed : null]}
+    >
+      <Text style={styles.editRecipeActionText}>Edit recipe</Text>
+    </Pressable>
   );
 }
 
+function RecipeEditCard({
+  canSubmit,
+  correctionError,
+  correctionText,
+  isCorrecting,
+  onCancel,
+  onChangeCorrectionText,
+  onSubmitCorrection,
+}: RecipeEditCardProps) {
+  return (
+    <View style={styles.recipeEditCard}>
+      <Text style={styles.recipeEditTitle}>Edit recipe</Text>
+      <TextInput
+        editable={!isCorrecting}
+        multiline
+        onChangeText={onChangeCorrectionText}
+        placeholder="Fix anything that looks wrong"
+        placeholderTextColor={recipeColors.muted}
+        style={styles.correctionInput}
+        value={correctionText}
+      />
+      {correctionError ? <Text style={styles.correctionErrorText}>{correctionError}</Text> : null}
+      <View style={styles.confirmActions}>
+        <Pressable
+          accessibilityRole="button"
+          disabled={isCorrecting || !canSubmit}
+          onPress={onSubmitCorrection}
+          style={[styles.confirmPrimary, isCorrecting || !canSubmit ? styles.confirmDisabled : null]}
+        >
+          <Text style={styles.confirmPrimaryText}>{isCorrecting ? 'Updating…' : 'Submit correction'}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={isCorrecting}
+          onPress={onCancel}
+          style={[styles.confirmSecondary, isCorrecting ? styles.confirmDisabled : null]}
+        >
+          <Text style={styles.confirmSecondaryText}>Cancel</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
 
 type StatBlockProps = {
   icon: ReactNode;
@@ -893,47 +1002,6 @@ function StatBlock({ icon, label, value }: StatBlockProps) {
           {value}
         </Text>
       </View>
-    </View>
-  );
-}
-
-type ResultModeTabsProps = {
-  selectedMode: RecipeMode;
-  onSelectMode: (mode: RecipeMode) => void;
-};
-
-function ResultModeTabs({ selectedMode, onSelectMode }: ResultModeTabsProps) {
-  return (
-    <View style={styles.modeTabs}>
-      {recipeModes.map((mode, index) => {
-        const isSelected = selectedMode === mode;
-        const modeUi = getModeUi(mode);
-
-        return (
-          <View key={mode} style={styles.modeTabSlot}>
-            {index > 0 ? <View style={styles.modeDivider} /> : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSelected }}
-              onPress={() => onSelectMode(mode)}
-              style={({ pressed }) => [
-                styles.modeTab,
-                isSelected ? styles.modeTabSelected : null,
-                pressed ? styles.pressed : null,
-              ]}
-            >
-              <Text
-                adjustsFontSizeToFit
-                minimumFontScale={0.82}
-                numberOfLines={1}
-                style={[styles.modeTabText, isSelected ? styles.modeTabTextSelected : null]}
-              >
-                {modeUi.label}
-              </Text>
-            </Pressable>
-          </View>
-        );
-      })}
     </View>
   );
 }
@@ -1046,9 +1114,10 @@ function logResultDecision(details: Record<string, unknown>) {
 }
 
 const modeUiByMode: Record<RecipeMode, { label: string }> = {
-  'Restaurant Copy': { label: 'Restaurant Style' },
-  Budget: { label: 'Budget' },
-  Healthy: { label: 'Lighter' },
+  Normal: { label: 'Normal' },
+  Lighter: { label: 'Lighter' },
+  Healthier: { label: 'Healthier' },
+  'More Protein': { label: 'More Protein' },
 };
 
 function getModeUi(mode: RecipeMode) {
@@ -1078,7 +1147,7 @@ function getDisplaySubtitle(restaurantStyle?: string, recipeDescription?: string
   }
 
   if (description.toLowerCase().includes('budget') || description.toLowerCase().includes('lower-cost')) {
-    return 'Budget-friendly homemade recipe from the photo';
+    return 'Lighter homemade recipe from the photo';
   }
 
   if (style) {
@@ -1088,33 +1157,16 @@ function getDisplaySubtitle(restaurantStyle?: string, recipeDescription?: string
   return 'Homemade recipe from the photo';
 }
 
-function getModeCardTitle(mode: RecipeMode) {
-  switch (mode) {
-    case 'Budget':
-      return 'Budget pick for your scan';
-    case 'Healthy':
-      return 'Lighter pick for your scan';
-    case 'Restaurant Copy':
-    default:
-      return 'Best match for your scan';
-  }
+function getModeCardTitle(_mode: RecipeMode) {
+  return 'Recipe view';
 }
 
-function getModeSummary(recipe: Recipe, mode: RecipeMode) {
+function getModeSummary(recipe: Recipe, _mode: RecipeMode) {
   const description = cleanDisplayText(recipe.description);
   if (description) {
     return description;
   }
-
-  switch (mode) {
-    case 'Budget':
-      return 'Keeps the dish feeling familiar while nudging the grocery cost down.';
-    case 'Healthy':
-      return 'A lighter version with the same cozy scan-inspired idea.';
-    case 'Restaurant Copy':
-    default:
-      return 'A homemade restaurant-style version built from your scan.';
-  }
+  return 'A homemade version built from your scan.';
 }
 
 function cleanDisplayText(value: string) {
@@ -1126,8 +1178,8 @@ function cleanDisplayText(value: string) {
   return value
     .replace(new RegExp(`\\b${commonTypo}\\b`, 'g'), 'American')
     .replace(new RegExp(`\\b${lowercaseTypo}\\b`, 'g'), 'american')
-    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
-    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
+    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'homemade')
+    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'homemade')
     .trim();
 }
 
@@ -1270,22 +1322,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  topTitleWrap: {
-    alignItems: 'center',
-    bottom: 0,
-    justifyContent: 'center',
-    left: 118,
-    position: 'absolute',
-    right: 118,
-    top: 0,
-  },
-  topTitle: {
-    color: recipeColors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 20,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
   settingsButton: {
     alignItems: 'center',
     backgroundColor: recipeColors.card,
@@ -1320,6 +1356,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     lineHeight: 40,
     minWidth: 0,
+  },
+  descriptionTitle: {
+    fontSize: 29,
+    lineHeight: 35,
   },
   failureHeadline: {
     color: recipeColors.charcoal,
@@ -1412,10 +1452,41 @@ const styles = StyleSheet.create({
   confirmCard: {
     backgroundColor: recipeColors.card,
     borderColor: recipeColors.border,
-    borderRadius: 26,
+    borderRadius: 22,
     borderWidth: 1,
-    marginTop: 18,
-    padding: 20,
+    marginTop: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  editRecipeAction: {
+    alignSelf: 'flex-start',
+    backgroundColor: recipeColors.orangeSoft,
+    borderRadius: 999,
+    justifyContent: 'center',
+    marginTop: 12,
+    minHeight: 44,
+    paddingHorizontal: 16,
+  },
+  editRecipeActionText: {
+    color: recipeColors.orangeDeep,
+    fontFamily: fontFamilies.bold,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  recipeEditCard: {
+    backgroundColor: recipeColors.card,
+    borderColor: recipeColors.border,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  recipeEditTitle: {
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 17,
+    fontWeight: '800',
   },
   correctionInput: {
     backgroundColor: recipeColors.cream,
@@ -1424,10 +1495,10 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.body,
     fontSize: 15,
     lineHeight: 21,
-    marginTop: 10,
-    minHeight: 72,
+    marginTop: 7,
+    minHeight: 64,
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 10,
     textAlignVertical: 'top',
   },
   correctionErrorText: {
@@ -1435,7 +1506,7 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bold,
     fontSize: 13,
     fontWeight: '700',
-    marginTop: 8,
+    marginTop: 6,
   },
   confirmDisabled: {
     opacity: 0.6,
@@ -1443,24 +1514,25 @@ const styles = StyleSheet.create({
   confirmLabel: {
     color: recipeColors.orange,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     textTransform: 'uppercase',
   },
   confirmTitle: {
     color: recipeColors.charcoal,
     fontFamily: fontFamilies.extraBold,
-    fontSize: 21,
+    fontSize: 18,
     fontWeight: '800',
-    marginTop: 6,
+    lineHeight: 23,
+    marginTop: 3,
   },
   confirmDishName: {
     color: recipeColors.charcoal,
     fontFamily: fontFamilies.display,
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '700',
-    lineHeight: 29,
-    marginTop: 8,
+    lineHeight: 25,
+    marginTop: 4,
   },
   alternativeRow: {
     flexDirection: 'row',
@@ -1493,8 +1565,8 @@ const styles = StyleSheet.create({
   },
   confirmActions: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 12,
+    gap: 8,
+    marginTop: 9,
   },
   confirmPrimary: {
     alignItems: 'center',
@@ -1502,7 +1574,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
-    minHeight: 48,
+    minHeight: 44,
     paddingHorizontal: 10,
   },
   confirmPrimaryText: {
@@ -1518,13 +1590,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     flex: 1,
     justifyContent: 'center',
-    minHeight: 48,
+    minHeight: 44,
     paddingHorizontal: 10,
   },
   confirmSecondaryText: {
     color: recipeColors.charcoal,
     fontFamily: fontFamilies.bold,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     textAlign: 'center',
   },
@@ -1533,8 +1605,8 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.body,
     fontSize: 13,
     fontWeight: '500',
-    lineHeight: 19,
-    marginTop: 10,
+    lineHeight: 18,
+    marginTop: 6,
   },
   savingsHero: {
     alignItems: 'stretch',
@@ -1646,6 +1718,31 @@ const styles = StyleSheet.create({
   },
   recipeContent: {
     marginTop: 6,
+  },
+  homemadeEstimateCard: {
+    backgroundColor: recipeColors.greenSoft,
+    borderRadius: 22,
+    marginTop: 22,
+    padding: 18,
+  },
+  homemadeEstimateLabel: {
+    color: recipeColors.green,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  homemadeEstimateValue: {
+    color: recipeColors.charcoal,
+    fontFamily: fontFamilies.display,
+    fontSize: 28,
+    fontWeight: '800',
+    marginTop: 5,
+  },
+  homemadeEstimateNote: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.body,
+    fontSize: 13,
+    marginTop: 4,
   },
   nutritionSection: {
     borderTopColor: recipeColors.border,
@@ -2087,7 +2184,7 @@ function getScanFailureCopy(failure: { rejectionType?: string; rejectionReason?:
   if (failure?.rejectionType === 'not_food') {
     return {
       title: 'Try a food photo.',
-      body: friendlyReason ?? 'Okyo needs a clear food photo to build a useful inspired-by recipe.',
+      body: friendlyReason ?? 'Okyo needs a clear food photo to build a useful homemade recipe.',
     };
   }
 

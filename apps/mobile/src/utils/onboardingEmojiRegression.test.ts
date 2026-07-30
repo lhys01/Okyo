@@ -16,7 +16,7 @@ const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Pictographic emoji ranges, plus the specific heart symbol called out in the
 // spec. Deliberately excludes plain typographic punctuation (e.g. the arrow
 // "→" or bullet "•") which are not emoji.
-const EMOJI_PATTERN = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}❤♥]/gu;
+const EMOJI_PATTERN = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu;
 
 function readSource(relativePath: string) {
   return readFileSync(path.join(srcDir, relativePath), 'utf8');
@@ -49,12 +49,7 @@ for (const relativePath of additionalEmojiScanTargets) {
   });
 }
 
-test('the onboarding scan-intro Kiko speech bubble uses plain text, not the old craving emoji', () => {
-  // This is the exact string that regressed previously: a trailing 👀 emoji
-  // on the "Now show me what you're craving" copy. Assert the emoji variant
-  // is gone and the plain-text replacement is present, so this test would
-  // have failed before that fix landed.
+test('the onboarding scan-intro Kiko speech bubble uses plain text', () => {
   const source = readSource('screens/WelcomeScreen.tsx');
-  assert.equal(source.includes("Now show me what you're craving 👀"), false);
   assert.match(source, /Now show me what you're craving\./);
 });

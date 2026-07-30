@@ -1,4 +1,11 @@
 export const FIRST_SCAN_STATUS_MESSAGE = 'Identifying the dish';
+export const DESCRIPTION_STATUS_MESSAGES = [
+  'Understanding your idea',
+  'Building the ingredient list',
+  'Estimating servings',
+  'Shaping the recipe',
+  'Checking the steps',
+] as const;
 
 export const SCAN_STATUS_MESSAGE_POOL = [
   'Mapping the dish', 'Spreading the sauce', 'Chopping the herbs', 'Checking the texture',
@@ -39,13 +46,8 @@ export function createScanStatusSequence(random = Math.random) {
   return [FIRST_SCAN_STATUS_MESSAGE, ...remaining];
 }
 
-export function createDescriptionStatusSequence(random = Math.random) {
-  const remaining = [...SCAN_STATUS_MESSAGE_POOL];
-  for (let index = remaining.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(random() * (index + 1));
-    [remaining[index], remaining[swapIndex]] = [remaining[swapIndex], remaining[index]];
-  }
-  return ['Reading your idea', ...remaining];
+export function createDescriptionStatusSequence(_random = Math.random) {
+  return [...DESCRIPTION_STATUS_MESSAGES];
 }
 
 export function createStatusSequenceForScan(source: 'description' | 'camera' | 'photos' | 'mock', random = Math.random) {

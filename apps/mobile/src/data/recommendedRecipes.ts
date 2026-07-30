@@ -48,19 +48,18 @@ export const recommendationCategories: RecommendationCategory[] = [
   'Dinner Ideas',
 ];
 
-// Soft, on-brand tints + an emoji used for Discover category tiles.
-const categoryArt: Record<RecommendationCategory, { tint: string; emoji: string }> = {
-  Breakfast: { tint: '#fff1d9', emoji: '🍳' },
-  Smoothies: { tint: '#f3e6f7', emoji: '🥤' },
-  'High Protein': { tint: '#ffe2d6', emoji: '🍗' },
-  Pasta: { tint: '#ffe7c7', emoji: '🍝' },
-  Bowls: { tint: '#e7f0d6', emoji: '🥗' },
-  Salads: { tint: '#e3f3e0', emoji: '🥬' },
-  'Burgers & Sandwiches': { tint: '#ffe6cc', emoji: '🍔' },
-  Pizza: { tint: '#ffe0d0', emoji: '🍕' },
-  Desserts: { tint: '#f7e3e9', emoji: '🍫' },
-  Snacks: { tint: '#fff0cf', emoji: '🧀' },
-  'Dinner Ideas': { tint: '#ffe8d4', emoji: '🍽️' },
+const categoryArt: Record<RecommendationCategory, { tint: string }> = {
+  Breakfast: { tint: '#fff1d9' },
+  Smoothies: { tint: '#f3e6f7' },
+  'High Protein': { tint: '#ffe2d6' },
+  Pasta: { tint: '#ffe7c7' },
+  Bowls: { tint: '#e7f0d6' },
+  Salads: { tint: '#e3f3e0' },
+  'Burgers & Sandwiches': { tint: '#ffe6cc' },
+  Pizza: { tint: '#ffe0d0' },
+  Desserts: { tint: '#f7e3e9' },
+  Snacks: { tint: '#fff0cf' },
+  'Dinner Ideas': { tint: '#ffe8d4' },
 };
 
 export function getCategoryArt(category: RecommendationCategory) {
@@ -72,7 +71,6 @@ export type RecommendationRecipe = Recipe & {
   mealTimes: MealTime[];
   blurb: string;
   tint: string;
-  emoji: string;
 };
 
 type RecommendationSpec = {
@@ -127,7 +125,7 @@ function buildRecommendation(spec: RecommendationSpec): RecommendationRecipe {
       return getSampleFoodImageUrl(spec.imageKey ?? getCategoryImageKey(spec.category));
     })(),
     title: spec.title,
-    mode: 'Restaurant Copy',
+    mode: 'Normal',
     description: spec.blurb,
     prepTimeMinutes: spec.prep,
     cookTimeMinutes: spec.cook,
@@ -142,14 +140,12 @@ function buildRecommendation(spec: RecommendationSpec): RecommendationRecipe {
     structuredSteps,
     substitutions: spec.substitutions,
     pantryNote: spec.pantryNote,
-    confidenceNote: 'Okyo recommended recipe. Cost is a home-kitchen estimate, not a restaurant price.',
+    confidenceNote: 'Okyo recommended recipe. Cost is a home-kitchen estimate.',
     equipment: spec.equipment,
-    bestFor: spec.blurb,
     category: spec.category,
     mealTimes: spec.mealTimes,
     blurb: spec.blurb,
     tint: art.tint,
-    emoji: art.emoji,
   };
 }
 

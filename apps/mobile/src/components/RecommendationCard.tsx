@@ -7,31 +7,44 @@ import type { RecommendationRecipe } from '../data/recommendedRecipes';
 import { getRecipeImageUrl } from '../utils/recipeImages';
 
 type RecommendationCardProps = {
+  compact?: boolean;
   recipe: RecommendationRecipe;
   onPress: () => void;
 };
 
-export function RecommendationCard({ recipe, onPress }: RecommendationCardProps) {
+export function RecommendationCard({ compact = false, recipe, onPress }: RecommendationCardProps) {
   return (
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.card, pressed ? styles.pressed : null]}
+      style={({ pressed }) => [
+        styles.card,
+        compact ? styles.compactCard : styles.regularCard,
+        pressed ? styles.pressed : null,
+      ]}
     >
       <FoodImage
         fallbackLabel={recipe.category}
         imageStatus={recipe.imageStatus}
         imageUrl={getRecipeImageUrl(recipe)}
-        style={styles.art}
+        style={[styles.art, compact ? styles.compactArt : styles.regularArt]}
       >
         <View style={styles.categoryPill}>
           <Text numberOfLines={1} style={styles.categoryPillText}>{recipe.category}</Text>
         </View>
       </FoodImage>
-      <View style={styles.body}>
-        <Text numberOfLines={2} style={styles.title}>{recipe.title}</Text>
-        <Text numberOfLines={2} style={styles.blurb}>{recipe.blurb}</Text>
-        <Text style={styles.meta}>{recipe.difficulty} · {recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes} min</Text>
+      <View style={[styles.body, compact ? styles.compactBody : null]}>
+        <Text maxFontSizeMultiplier={1.3} numberOfLines={2} style={styles.title}>{recipe.title}</Text>
+        {!compact ? <Text numberOfLines={2} style={styles.blurb}>{recipe.blurb}</Text> : null}
+        <Text
+          adjustsFontSizeToFit
+          maxFontSizeMultiplier={1.3}
+          minimumFontScale={0.78}
+          numberOfLines={1}
+          style={styles.meta}
+        >
+          {recipe.difficulty} · {recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes} min
+        </Text>
       </View>
     </Pressable>
   );
@@ -43,16 +56,29 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: radius.card,
-    minHeight: 278,
     overflow: 'hidden',
-    width: '48%',
     ...shadows.card,
+  },
+  regularCard: {
+    minHeight: 278,
+    width: '48%',
+  },
+  compactCard: {
+    flex: 1,
+    height: 214,
+    minWidth: 0,
   },
   art: {
     alignItems: 'center',
-    aspectRatio: 1.4,
     justifyContent: 'center',
     width: '100%',
+  },
+  regularArt: {
+    aspectRatio: 1.4,
+  },
+  compactArt: {
+    height: 112,
+    minHeight: 112,
   },
   categoryPill: {
     backgroundColor: 'rgba(255, 255, 255, 0.82)',
@@ -72,6 +98,11 @@ const styles = StyleSheet.create({
     gap: 4,
     flex: 1,
     padding: 12,
+  },
+  compactBody: {
+    justifyContent: 'space-between',
+    minHeight: 88,
+    padding: 10,
   },
   title: {
     color: colors.charcoal,

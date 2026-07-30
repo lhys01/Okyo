@@ -4,9 +4,11 @@ import type { CreateScanResult, ScanImageMetadata, ScanSource } from '../api/typ
 import type { Recipe } from '../mocks';
 import { getSafeRecipeMode, isRecipeMode, type RecipeMode } from '../mocks';
 import { useOkyoStore, type LatestScanFailure } from '../state/useOkyoStore';
-import { hasFoodEvidence, isUsableScan, shouldRejectScan } from './scanDecision';
+import { isUsableCanonicalRecipe } from '../state/canonicalRecipes';
+import { shouldRejectScan } from './scanDecision';
 import { copyToDocuments } from './scanImageStorage';
 import { getSafeTerminalScanStatus, isCurrentScanSession } from './scanControllerUtils';
+import { normalizeOutboundRecipeMode } from './recipeModes';
 import { uiLog } from './uiDebug';
 
 type StartScanInput = {
@@ -33,11 +35,16 @@ export async function startScan(input: StartScanInput) {
   const state = useOkyoStore.getState();
   const scanSessionId = createScanSessionId(input.source);
   const mealDescription = input.mealDescription ?? null;
-
-  state.clearLatestScan({ reason: `${input.reason}.clearTemporaryState`, source: 'scanController' });
+  const mode = normalizeOutboundRecipeMode(input.mode);
   const image = input.image && input.source !== 'description'
     ? await copyToDocuments(input.image)
     : input.image;
+  state.clearLatestScan({
+    preserveImageUri: image?.uri,
+    reason: `${input.reason}.clearTemporaryState`,
+    source: 'scanController',
+  });
+  state.setSelectedMode(mode);
   if (image && input.source !== 'description') {
     lastPreparedImage = { scanSessionId, image };
   }
@@ -61,9 +68,9 @@ export async function startScan(input: StartScanInput) {
   uiLog('scanController', 'scan_started', { source: input.source, scanSessionId, uploadedImage });
   input.navigateToAnalysis(scanSessionId);
 
-  void createMockScan({ image, mealDescription: input.mealDescription, mode: input.mode, source: input.source })
+  void createMockScan({ image, mealDescription: input.mealDescription, mode, source: input.source })
     .then((result) => {
-      writeScanResult(scanSessionId, input.source, image, result, input.mode, mealDescription);
+      writeScanResult(scanSessionId, input.source, image, result, mode, mealDescription);
       input.onSettled?.();
     })
     .catch((error: unknown) => {
@@ -79,17 +86,36 @@ function writeScanResult(scanSessionId: string, source: ScanSource, image: ScanI
   const status = result.status ?? (result.scan && result.recipe ? 'success' : 'failed');
   const terminalStatus = getSafeTerminalScanStatus({ ...result, status });
   const recipes = getScanRecipes(result);
-  const foodEvidence = hasFoodEvidence({ result, status });
-  const usable = Boolean(result.scan && isUsableScan({ recipes, result, scan: result.scan, status }));
-  if ((terminalStatus === 'success' || terminalStatus === 'partial') && usable && result.scan) {
-    const selectedRecipe = getRecipeForMode(recipes, mode, result.recipe);
-    const storedStatus = status === 'partial' ? 'partial' : selectedRecipe || foodEvidence ? 'success' : status;
-    useOkyoStore.getState().writeLatestScanSession({
-      scanSessionId, latestScanStatus: storedStatus, latestScanFailure: null, latestScanResult: result.scan,
+  const selectedRecipe = getRecipeForMode(recipes, mode, result.recipe);
+  if (
+    status === 'success' &&
+    terminalStatus === 'success' &&
+    result.scan &&
+    isUsableCanonicalRecipe(selectedRecipe)
+  ) {
+    if (source === 'mock') {
+      useOkyoStore.getState().writeLatestScanSession({
+        scanSessionId, latestScanStatus: 'success', latestScanFailure: null, latestScanResult: result.scan,
+        latestScanRecipe: selectedRecipe, selectedScanImage: getPreviewImageMetadata(result.image ?? image),
+        latestAiDebugMetadata: getAiDebugMetadata(result), mealDescription, source, reason: 'scanController.demo_success',
+      });
+      return;
+    }
+    const committed = useOkyoStore.getState().commitSuccessfulScanSession({
+      scanSessionId, latestScanStatus: 'success', latestScanFailure: null, latestScanResult: result.scan,
       latestScanRecipe: selectedRecipe, selectedScanImage: getPreviewImageMetadata(result.image ?? image),
       latestAiDebugMetadata: getAiDebugMetadata(result), mealDescription, source, reason: 'scanController.api_success',
     });
+    if (!committed) return;
     if (isRecipeMode(result.recipe?.mode)) useOkyoStore.getState().setSelectedMode(getSafeRecipeMode(result.recipe.mode));
+    return;
+  }
+  if (status === 'partial') {
+    useOkyoStore.getState().writeLatestScanSession({
+      scanSessionId, latestScanStatus: 'partial', latestScanFailure: null, latestScanResult: result.scan ?? null,
+      latestScanRecipe: null, selectedScanImage: getPreviewImageMetadata(result.image ?? image),
+      latestAiDebugMetadata: getAiDebugMetadata(result), mealDescription, source, reason: 'scanController.api_partial',
+    });
     return;
   }
   const failureStatus = terminalStatus === 'rejected' || shouldRejectScan({ result, status }) ? 'rejected' : 'failed';

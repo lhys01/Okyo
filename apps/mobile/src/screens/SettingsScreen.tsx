@@ -45,8 +45,8 @@ export function SettingsScreen() {
 
   const confirmClearData = () => {
     Alert.alert(
-      'Clear saved recipes and challenges?',
-      'This clears local saved dupes, challenge results, XP, and badges for testing.',
+      'Clear liked recipes and challenges?',
+      'This clears local liked recipes, challenge results, XP, and badges for testing.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -103,7 +103,7 @@ export function SettingsScreen() {
         <Text style={styles.sectionTitle}>Development</Text>
         <SecondaryButton onPress={confirmResetOnboarding}>Reset Onboarding</SecondaryButton>
         <Pressable style={styles.dangerButton} onPress={confirmClearData}>
-          <Text style={styles.dangerButtonText}>Delete Saved Data</Text>
+          <Text style={styles.dangerButtonText}>Delete Liked Data</Text>
         </Pressable>
       </View>
     </ScrollView>

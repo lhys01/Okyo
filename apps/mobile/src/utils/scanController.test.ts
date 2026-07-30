@@ -33,9 +33,9 @@ test('AnalysisLoadingScreen stays pending until a terminal status arrives', () =
   assert.equal(getAnalysisScreenOutcome({ status: 'pending', usable: false, hasResult: false }), 'pending');
 });
 
-test('only a usable success or partial result navigates to ResultSummaryScreen', () => {
+test('only a usable successful result navigates to ResultSummaryScreen', () => {
   assert.equal(getAnalysisScreenOutcome({ status: 'success', usable: true, hasResult: true }), 'success');
-  assert.equal(getAnalysisScreenOutcome({ status: 'partial', usable: true, hasResult: true }), 'success');
+  assert.equal(getAnalysisScreenOutcome({ status: 'partial', usable: true, hasResult: true }), 'inline_failure');
 });
 
 test('failed, rejected, and unusable success/partial results resolve to an inline failure, never a navigation', () => {

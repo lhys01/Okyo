@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { assessPlatterCoverage, generateRecipeFromDish, normalizeVisionOutput, type FoodImageAnalysis } from './aiService.js';
+import {
+  assessPlatterCoverage,
+  generateRecipeFromDish,
+  normalizeRecipeIngredients,
+  normalizeVisionOutput,
+  type FoodImageAnalysis,
+} from './aiService.js';
+import type { RecipeIngredient } from '../types.js';
 
 function recipeAnalysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAnalysis {
   return {
     candidateScanId: `scan-${Math.random().toString(36).slice(2)}`,
     aiSource: 'openrouter_ai',
     dishName: 'Lemon Chicken',
-    cuisine: 'Restaurant-style',
-    restaurantStyle: 'Restaurant-style',
+    cuisine: 'Homestyle',
+    restaurantStyle: 'Homestyle',
     scanState: 'clear_food',
     broadDishCategory: 'grilled poultry',
     confidence: 0.82,
@@ -31,7 +38,7 @@ function recipeAnalysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAn
     homemadeCostEstimate: 7,
     matchScore: 8,
     difficulty: 'Easy',
-    modes: ['Restaurant Copy', 'Budget', 'Healthy'],
+    modes: ['Normal', 'Lighter', 'Healthier', 'More Protein'],
     notes: [],
     detectedComponents: [],
     ...overrides,
@@ -72,7 +79,7 @@ function buildProviderRecipe(overrides: Record<string, unknown> = {}) {
   return {
     dishName: 'Test Platter',
     title: 'Test Platter',
-    description: 'A compact restaurant-style platter.',
+    description: 'A compact homestyle platter.',
     ingredients: ['1 lb chicken thighs', '2 cups cooked rice', '2 tbsp soy sauce', '1 tbsp vegetable oil', '1 tsp kosher salt', '1 scallion'],
     equipment: ['skillet', 'cutting board'],
     steps: [
@@ -101,7 +108,7 @@ test('normalizes dim cluttered restaurant food into an uncertain food result', (
     dishName: 'spicy noodle bowl',
     scanState: 'food_present_uncertain_dish',
     broadDishCategory: 'pasta/noodles',
-    cuisine: 'Restaurant-style',
+    cuisine: 'Homestyle',
     confidence: 68,
     isFoodImage: true,
     isRestaurantMeal: true,
@@ -131,7 +138,7 @@ test('does not invent restaurant price when a photo has no visible price', () =>
     dishName: 'saucy rice bowl',
     scanState: 'food_present_uncertain_dish',
     broadDishCategory: 'rice bowl',
-    cuisine: 'Restaurant-style',
+    cuisine: 'Homestyle',
     confidence: 67,
     isFoodImage: true,
     isRestaurantMeal: true,
@@ -160,7 +167,7 @@ test('keeps non-generic possible dish names for uncertain food', () => {
     possibleDishNames: ['mixed restaurant plate', 'grilled meat plate', 'loaded sandwich'],
     scanState: 'food_present_uncertain_dish',
     broadDishCategory: 'grilled meat',
-    cuisine: 'Restaurant-style',
+    cuisine: 'Homestyle',
     confidence: 61,
     isFoodImage: true,
     isRestaurantMeal: true,
@@ -191,7 +198,7 @@ test('keeps multiple-plate scans focused on the central edible dish', () => {
     dishName: 'grilled chicken rice bowl',
     scanState: 'clear_food',
     broadDishCategory: 'rice bowl',
-    cuisine: 'Restaurant-style',
+    cuisine: 'Homestyle',
     confidence: 82,
     isFoodImage: true,
     isRestaurantMeal: true,
@@ -220,7 +227,7 @@ test('treats screenshots of food posts as food when food is visible', () => {
     dishName: 'cheesy pizza',
     scanState: 'food_present_uncertain_dish',
     broadDishCategory: 'pizza',
-    cuisine: 'Restaurant-style',
+    cuisine: 'Homestyle',
     confidence: '64',
     isFoodImage: 'true',
     isRestaurantMeal: 'true',
@@ -278,7 +285,7 @@ test('downgrades too-unclear to partial food when ingredients and components sho
     dishName: 'unclear dish',
     scanState: 'too_unclear',
     broadDishCategory: 'mixed platter',
-    cuisine: 'Restaurant-style',
+    cuisine: 'Homestyle',
     confidence: 48,
     foodDetected: true,
     isFoodImage: false,
@@ -339,7 +346,7 @@ test('rescues not-food output when dish name and components show food evidence',
     dishName: 'mixed grill plate',
     scanState: 'not_food',
     broadDishCategory: 'grilled meat',
-    cuisine: 'Restaurant-style',
+    cuisine: 'Homestyle',
     confidence: 71,
     foodDetected: false,
     isFoodImage: false,
@@ -527,7 +534,7 @@ test('warns instead of failing when General Tso chicken and rice cover primary c
 
   try {
     await withRecipeEnv(async () => {
-      const output = await generateRecipeFromDish({ analysis, mode: 'Restaurant Copy' });
+      const output = await generateRecipeFromDish({ analysis, mode: 'Normal' });
       assert.equal(fetchCalls, 1);
       assert.ok(output.recipe);
       assert.deepEqual(output.warnings?.map((warning) => warning.split(':')[0]), ['platter_coverage_below_90']);
@@ -584,7 +591,7 @@ test('warns instead of failing when sushi platter core sushi is covered but pres
 
   try {
     await withRecipeEnv(async () => {
-      const output = await generateRecipeFromDish({ analysis, mode: 'Restaurant Copy' });
+      const output = await generateRecipeFromDish({ analysis, mode: 'Normal' });
       assert.equal(fetchCalls, 1);
       assert.ok(output.recipe);
       assert.deepEqual(output.warnings?.map((warning) => warning.split(':')[0]), ['platter_coverage_below_90']);
@@ -641,7 +648,7 @@ test('targets repair when a primary platter protein is missing', async () => {
 
   try {
     await withRecipeEnv(async () => {
-      const output = await generateRecipeFromDish({ analysis, mode: 'Restaurant Copy' });
+      const output = await generateRecipeFromDish({ analysis, mode: 'Normal' });
       assert.equal(fetchCalls, 2);
       assert.ok(output.recipe?.ingredientGroups?.some((group) => group.component === 'Crispy Chicken Pieces'));
       assert.equal(output.warnings, undefined);
@@ -649,6 +656,108 @@ test('targets repair when a primary platter protein is missing', async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('dumpling filling references do not become a missing recipe component', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  const analysis = recipeAnalysis({
+    dishName: 'Dumpling Platter',
+    broadDishCategory: 'mixed platter',
+    visibleIngredients: ['dumplings', 'dumpling filling', 'soy sauce', 'sesame oil'],
+    detectedComponents: [{ name: 'Dumpling Platter', confidence: 0.92 }],
+  });
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return recipeProviderResponse(buildProviderRecipe({
+      dishName: 'Dumpling Platter',
+      title: 'Dumpling Platter',
+      ingredients: ['1 package dumpling wrappers', '1/2 lb ground pork', '1 cup napa cabbage', '2 tbsp soy sauce', '1 tsp sesame oil'],
+      steps: [
+        { stepNumber: 1, title: 'Make Filling', step: 'Mix the pork and cabbage filling.', ingredients: ['pork', 'cabbage'], tools: ['bowl'] },
+        { stepNumber: 2, title: 'Cook Dumplings', step: 'Cook the dumplings until tender.', ingredients: ['dumplings'], tools: ['pan'] },
+        { stepNumber: 3, title: 'Season', step: 'Season the filling to taste.', ingredients: ['filling'], tools: ['spoon'] },
+        { stepNumber: 4, title: 'Check Texture', step: 'Check that the dumplings are tender.', ingredients: ['dumplings'], tools: ['pan'] },
+        { stepNumber: 5, title: 'Rest', step: 'Let the dumplings rest briefly.', ingredients: ['dumplings'], tools: ['plate'] },
+        { stepNumber: 6, title: 'Serve', step: 'Serve the dumplings with the sauce.', ingredients: ['dumplings', 'sauce'], tools: ['plate'] },
+      ],
+    }));
+  };
+
+  try {
+    await withRecipeEnv(async () => {
+      const output = await generateRecipeFromDish({ analysis, mode: 'Normal' });
+      assert.equal(fetchCalls, 1);
+      assert.ok(output.recipe);
+      assert.ok(!output.recipe.ingredients.some((ingredient) => /dumpling filling|cooked dumpling filling|dumpling platter/i.test(ingredient.name)));
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('component repair adds only missing leaf ingredients and canonical duplicates are removed', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  const analysis = recipeAnalysis({
+    dishName: 'Dumpling Platter',
+    broadDishCategory: 'mixed platter',
+    visibleIngredients: ['dumpling wrappers', 'soy sauce', 'sesame oil', 'water'],
+    detectedComponents: [{ name: 'Dumpling Wrappers', confidence: 0.92 }],
+  });
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      return recipeProviderResponse(buildProviderRecipe({
+        dishName: 'Dumpling Platter',
+        title: 'Dumpling Platter',
+        ingredientGroups: [{ component: 'Sauce', items: ['2 tbsp soy sauce', '1 tsp sesame oil'] }],
+        ingredients: ['2 tbsp soy sauce', '1 tsp sesame oil', '1 tbsp vegetable oil', '2 cups water'],
+      }));
+    }
+    return recipeProviderResponse({
+      ingredientGroups: [{ component: 'Dumpling Wrappers', items: ['1 package dumpling wrappers'] }],
+      ingredients: [
+        '1 package dumpling wrappers',
+        '2 tbsp soy sauce',
+        '1 tsp sesame oil',
+        '1 tbsp vegetable oil',
+        '2 cups cooked dumpling filling',
+        '2 cups water',
+      ],
+      steps: [{ stepNumber: 1, title: 'Wrap', step: 'Wrap the filling in the dumpling wrappers.', ingredients: ['dumpling wrappers'], tools: ['board'] }],
+    });
+  };
+
+  try {
+    await withRecipeEnv(async () => {
+      const output = await generateRecipeFromDish({ analysis, mode: 'Normal' });
+      assert.equal(fetchCalls, 2);
+      assert.ok(output.recipe);
+      const keys = output.recipe.ingredients.map((ingredient) => `${ingredient.name.toLowerCase()}|${ingredient.quantity.toLowerCase()}`);
+      assert.equal(new Set(keys).size, keys.length);
+      assert.equal(output.recipe.ingredients.filter((ingredient) => /soy sauce|sesame oil|vegetable oil|water/i.test(ingredient.name)).length, 4);
+      assert.ok(!output.recipe.ingredients.some((ingredient) => /cooked dumpling filling/i.test(ingredient.name)));
+      assert.ok(output.recipe.ingredients.some((ingredient) => /dumpling wrappers/i.test(ingredient.name)));
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('ingredient normalization preserves legitimate quantities while removing canonical duplicates', () => {
+  const ingredients: RecipeIngredient[] = [
+    { name: 'minced vegetable', quantity: '1 cup' },
+    { name: '1 cup minced vegetable', quantity: 'vegetable, minced' },
+    { name: 'salt', quantity: 'to taste' },
+    { name: 'to taste salt', quantity: '' },
+    { name: 'cooking oil', quantity: '1 tbsp' },
+    { name: 'vegetable oil', quantity: '1 tbsp' },
+    { name: 'cooking oil', quantity: '2 tbsp' },
+  ];
+  const normalized = normalizeRecipeIngredients(ingredients);
+  assert.equal(normalized.length, 4);
+  assert.ok(normalized.some((ingredient) => ingredient.quantity === '2 tbsp'));
 });
 
 test('classifies non-critical platter misses as warnings and primary misses as repairable fatal issues', () => {
@@ -707,7 +816,7 @@ test('app-facing recipe conversion does not leave unsafe chicken temperatures be
   const recipe = {
     dishName: 'Lemon Chicken',
     title: 'Lemon Chicken',
-    description: 'Simple restaurant-style lemon chicken.',
+    description: 'Simple homestyle lemon chicken.',
     ingredients: ['1 lb chicken breasts', '1 tbsp olive oil', '1/2 tsp salt', '1 lemon', '1 garlic clove'],
     equipment: ['skillet', 'instant-read thermometer'],
     steps: [
@@ -741,7 +850,7 @@ test('app-facing recipe conversion does not leave unsafe chicken temperatures be
   try {
     const output = await generateRecipeFromDish({
       analysis: recipeAnalysis(),
-      mode: 'Restaurant Copy',
+      mode: 'Normal',
     });
     const text = JSON.stringify(output.recipe);
 

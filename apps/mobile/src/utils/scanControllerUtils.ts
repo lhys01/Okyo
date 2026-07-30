@@ -22,8 +22,8 @@ export type AnalysisScreenOutcome = 'pending' | 'success' | 'inline_failure';
 
 // Decides whether AnalysisLoadingScreen should navigate to the result screen,
 // render an inline failure state, or keep waiting. Only a genuinely usable
-// success/partial result may navigate away — every other terminal status
-// (failed, rejected, or a claimed success/partial with no usable recipe)
+// successful result may navigate away — every other terminal status
+// (partial, failed, rejected, or a claimed success with no usable recipe)
 // resolves to an inline failure on the same screen.
 export function getAnalysisScreenOutcome(input: {
   status: CreateScanResult['status'] | 'pending' | null | undefined;
@@ -33,7 +33,7 @@ export function getAnalysisScreenOutcome(input: {
   if (!input.status || input.status === 'pending') {
     return 'pending';
   }
-  if ((input.status === 'success' || input.status === 'partial') && input.usable && input.hasResult) {
+  if (input.status === 'success' && input.usable && input.hasResult) {
     return 'success';
   }
   return 'inline_failure';
