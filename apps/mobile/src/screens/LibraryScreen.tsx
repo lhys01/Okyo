@@ -1,11 +1,11 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  Bookmark,
   Camera,
   Cart,
   Clock,
   Cutlery,
+  HeartSolid,
   MoneySquare,
   Search,
   ThreePointsCircle,
@@ -18,8 +18,13 @@ import { analyticsEvents, track } from '../analytics/track';
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
-import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
+import { getSafeRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
+import {
+  getRecipeIngredientPreview,
+  resolveCanonicalRecipes,
+  type CanonicalRecipe,
+} from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getModeChipPalette, getModeLabel } from '../utils/modeDisplay';
 import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
@@ -27,13 +32,11 @@ import { checkImageFileExists, getStorageLocation } from '../utils/imageValidati
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 type LibraryNavigation = NativeStackNavigationProp<RootStackParamList>;
-type LibraryFilter = 'recent' | 'restaurant' | 'budget' | 'lighter' | 'fast';
+type LibraryFilter = 'recent' | 'lighter' | 'fast';
 
 const filters: Array<{ id: LibraryFilter; label: string }> = [
   { id: 'recent', label: 'Recent' },
-  { id: 'restaurant', label: 'Restaurant Style' },
-  { id: 'budget', label: 'Budget' },
-  { id: 'lighter', label: 'Lighter' },
+  { id: 'lighter', label: 'Healthier' },
   { id: 'fast', label: 'Fast meals' },
 ];
 
@@ -41,18 +44,20 @@ const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 
 export function LibraryScreen() {
   const navigation = useNavigation<LibraryNavigation>();
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const recipesById = useOkyoStore((state) => state.recipesById);
+  const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
   const removeSavedRecipe = useOkyoStore((state) => state.removeSavedRecipe);
-  const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
+  const addRecipeToGrocery = useOkyoStore((state) => state.addRecipeToGrocery);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<LibraryFilter>('recent');
   const didTrackMalformedData = useRef(false);
 
-  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [];
-  const malformedRecipeCount = Array.isArray(savedRecipes)
-    ? savedRecipes.filter((recipe) => !recipe?.id || !recipe?.title).length
-    : 0;
+  const safeSavedRecipes = useMemo(
+    () => resolveCanonicalRecipes(recipesById, savedRecipeIds),
+    [recipesById, savedRecipeIds],
+  );
+  const malformedRecipeCount = savedRecipeIds.length - safeSavedRecipes.length;
   const sortedRecipes = useMemo(() => sortSavedRecipes(safeSavedRecipes), [safeSavedRecipes]);
   const filteredRecipes = useMemo(
     () => filterRecipes(sortedRecipes, activeFilter, searchQuery),
@@ -69,25 +74,18 @@ export function LibraryScreen() {
     uiLog('LibraryScreen', 'enter', { malformedRecipeCount });
     didTrackMalformedData.current = true;
     track(analyticsEvents.RESULT_ERROR, {
-      errorMessage: 'Saved recipe data was missing fields.',
+      errorMessage: 'Liked recipe data was missing fields.',
       screen: 'LibraryScreen',
     });
   }, [malformedRecipeCount]);
 
-  const prepareRecipeContext = (recipe: Recipe) => {
-    const mode = getSafeRecipeMode(recipe.mode);
-    writeSavedRecipeContext({
-      recipe,
-      reason: 'open_saved_recipe',
-      source: 'LibraryScreen.prepareRecipeContext',
-    });
-    if (isRecipeMode(recipe.mode)) {
-      setSelectedMode(recipe.mode);
-    }
+  const prepareRecipeContext = (recipe: CanonicalRecipe) => {
+    const mode = recipe.selectedMode;
+    setSelectedMode(mode);
     return mode;
   };
 
-  const openSavedRecipe = (recipe: Recipe | null | undefined) => {
+  const openSavedRecipe = (recipe: CanonicalRecipe | null | undefined) => {
     if (!recipe?.id) {
       return;
     }
@@ -108,17 +106,24 @@ export function LibraryScreen() {
       });
     });
     uiLog('LibraryScreen', 'cook_again', { recipeId: recipe.id });
-    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
+    navigation.navigate('MainTabs', {
+      screen: 'RecipeDetailScreen',
+      params: { mode, recipeId: recipe.id },
+    });
   };
 
-  const openGroceries = (recipe: Recipe | null | undefined) => {
+  const openGroceries = (recipe: CanonicalRecipe | null | undefined) => {
     if (!recipe?.id) {
       return;
     }
 
     const mode = prepareRecipeContext(recipe);
+    addRecipeToGrocery(recipe.id);
     uiLog('LibraryScreen', 'open_groceries', { recipeId: recipe.id });
-    navigation.navigate('MainTabs', { screen: 'GroceryListScreen', params: { mode } });
+    navigation.navigate('MainTabs', {
+      screen: 'GroceryListScreen',
+      params: { mode, recipeId: recipe.id },
+    });
   };
 
   const goToScan = () => {
@@ -128,8 +133,8 @@ export function LibraryScreen() {
 
   const confirmRemove = (recipe: Recipe) => {
     Alert.alert(
-      'Remove from Library?',
-      `${cleanDisplayText(recipe.title)} will leave your saved meals.`,
+      'Remove from Liked?',
+      `${cleanDisplayText(recipe.title)} will leave your liked recipes.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -147,12 +152,12 @@ export function LibraryScreen() {
   if (safeSavedRecipes.length === 0) {
     return (
       <LibraryFrame>
-        <TopBar title="Plan" />
+        <TopBar title="Liked" />
         <View style={styles.emptyCard}>
           <KikoMascot pose="wave" size={118} style={styles.emptyMascot} />
-          <Text style={styles.emptyTitle}>Saved meals worth remaking will live here.</Text>
+          <Text style={styles.emptyTitle}>No liked recipes yet.</Text>
           <Text style={styles.emptyBody}>
-            Scan a craving, save the homemade version, and Okyo will build your dinner shelf.
+            Tap the heart on a recipe and it will stay here for later.
           </Text>
           <PrimaryAction icon={<Camera color="#fffdf8" height={20} strokeWidth={2.2} width={20} />} label="Scan a meal" onPress={goToScan} />
         </View>
@@ -162,23 +167,23 @@ export function LibraryScreen() {
 
   return (
     <LibraryFrame>
-      <TopBar title="Plan" />
+      <TopBar title="Liked" />
 
       <View style={styles.heroCard}>
         <View style={styles.heroCopy}>
           <Text style={styles.heroKicker}>Recipe shelf</Text>
           <Text style={styles.heroTitle}>
-            Saved meals worth <Text style={styles.heroAccent}>remaking</Text>
+            Liked recipes worth <Text style={styles.heroAccent}>remaking</Text>
           </Text>
           <Text style={styles.heroBody}>
-            Your favorite restaurant-style recipes, ready for an easy dinner repeat.
+            Your favorite homemade recipes, ready for an easy dinner repeat.
           </Text>
         </View>
         <View style={styles.recipeMascotCard}>
           <KikoMascot pose="recipe" size={76} />
         </View>
         <View style={styles.heroStats}>
-          <HeroStat icon={<Bookmark color={colors.coral} height={18} strokeWidth={2} width={18} />} value={safeSavedRecipes.length.toString()} label="saved" />
+          <HeroStat icon={<HeartSolid color={colors.coral} height={18} width={18} />} value={safeSavedRecipes.length.toString()} label="liked" />
           <HeroStat icon={<MoneySquare color={colors.green} height={18} strokeWidth={2} width={18} />} value={formatCurrency(totalHomemadeEstimate)} label="home est." />
           <HeroStat icon={<Clock color="#d8800b" height={18} strokeWidth={2} width={18} />} value={easyMeals.toString()} label="easy" />
         </View>
@@ -192,7 +197,7 @@ export function LibraryScreen() {
             autoCorrect={false}
             clearButtonMode="while-editing"
             onChangeText={setSearchQuery}
-            placeholder="Search saved recipes"
+            placeholder="Search liked recipes"
             placeholderTextColor="#978b80"
             returnKeyType="search"
             style={styles.searchInput}
@@ -238,7 +243,7 @@ export function LibraryScreen() {
           ))
         ) : (
           <View style={styles.noMatchesCard}>
-            <Text style={styles.noMatchesTitle}>No saved meals match that yet.</Text>
+            <Text style={styles.noMatchesTitle}>No liked recipes match that yet.</Text>
             <Text style={styles.noMatchesBody}>Try another search or switch filters to see more of your recipe shelf.</Text>
           </View>
         )}
@@ -285,12 +290,12 @@ function SavedRecipeCard({
   onGroceries,
   onRemove,
 }: {
-  recipe: Recipe;
+  recipe: CanonicalRecipe;
   onCook: () => void;
   onGroceries: () => void;
   onRemove: () => void;
 }) {
-  const mode = getSafeRecipeMode(recipe.mode);
+  const mode = recipe.selectedMode;
   const modeLabel = getModeLabel(mode);
   const modePalette = getModeChipPalette(mode);
 
@@ -313,7 +318,9 @@ function SavedRecipeCard({
             </Pressable>
           </View>
           <Text numberOfLines={2} style={styles.recipeTitle}>{cleanDisplayText(recipe.title)}</Text>
-          <Text numberOfLines={1} style={styles.recipeSubtitle}>Inspired-by homemade version</Text>
+          <Text numberOfLines={1} style={styles.recipeSubtitle}>
+            {getRecipeIngredientPreview(recipe)}
+          </Text>
           <View style={styles.recipeMetaRow}>
             <MetaChip icon={<Clock color={colors.charcoal} height={15} strokeWidth={2} width={15} />} label={`${getTotalTime(recipe)} min`} />
             <MetaChip icon={<Cutlery color={colors.charcoal} height={15} strokeWidth={2} width={15} />} label={getDifficulty(recipe)} />
@@ -374,7 +381,7 @@ function PrimaryAction({ icon, label, onPress }: { icon: ReactNode; label: strin
   );
 }
 
-function filterRecipes(recipes: Recipe[], activeFilter: LibraryFilter, searchQuery: string) {
+function filterRecipes(recipes: CanonicalRecipe[], activeFilter: LibraryFilter, searchQuery: string) {
   const query = searchQuery.trim().toLowerCase();
 
   return recipes.filter((recipe) => {
@@ -384,12 +391,8 @@ function filterRecipes(recipes: Recipe[], activeFilter: LibraryFilter, searchQue
     }
 
     switch (activeFilter) {
-      case 'restaurant':
-        return recipe.mode === 'Restaurant Copy';
-      case 'budget':
-        return recipe.mode === 'Budget';
       case 'lighter':
-        return recipe.mode === 'Healthy';
+        return recipe.selectedMode === 'Healthier';
       case 'fast':
         return getTotalTime(recipe) <= 30;
       case 'recent':
@@ -399,7 +402,7 @@ function filterRecipes(recipes: Recipe[], activeFilter: LibraryFilter, searchQue
   });
 }
 
-function sortSavedRecipes(recipes: Recipe[]) {
+function sortSavedRecipes(recipes: CanonicalRecipe[]) {
   return recipes.slice().sort((a, b) => {
     const aTime = getSavedTime(a);
     const bTime = getSavedTime(b);
@@ -411,9 +414,8 @@ function sortSavedRecipes(recipes: Recipe[]) {
   });
 }
 
-function getSavedTime(recipe: Recipe) {
-  const maybeSavedAt = (recipe as Recipe & { savedAt?: unknown; createdAt?: unknown }).savedAt ??
-    (recipe as Recipe & { savedAt?: unknown; createdAt?: unknown }).createdAt;
+function getSavedTime(recipe: CanonicalRecipe) {
+  const maybeSavedAt = recipe.savedAt ?? recipe.createdAt;
 
   if (typeof maybeSavedAt !== 'string') {
     return 0;
@@ -423,9 +425,9 @@ function getSavedTime(recipe: Recipe) {
   return Number.isFinite(date.getTime()) ? date.getTime() : 0;
 }
 
-function getSearchText(recipe: Recipe) {
+function getSearchText(recipe: CanonicalRecipe) {
   const ingredientText = recipe.ingredients?.map((ingredient) => ingredient.name).join(' ') ?? '';
-  return `${recipe.title} ${recipe.description} ${recipe.mode} ${ingredientText}`.toLowerCase();
+  return `${recipe.title} ${recipe.description} ${recipe.selectedMode} ${ingredientText}`.toLowerCase();
 }
 
 function getTotalTime(recipe: Recipe) {
@@ -446,8 +448,8 @@ function cleanDisplayText(value: string) {
   const copyStyle = `${copyWord}-style`;
 
   return value
-    .replace(new RegExp(`\\b${copyStyle}\\b`, 'gi'), 'restaurant-style')
-    .replace(new RegExp(`\\b${copyWord}\\b`, 'gi'), 'restaurant-style')
+    .replace(new RegExp(`\\b${copyStyle}\\b`, 'gi'), 'homemade')
+    .replace(new RegExp(`\\b${copyWord}\\b`, 'gi'), 'homemade')
     .replace(/\bdupes?\b/gi, 'swaps')
     .replace(/\bmock\b/gi, 'demo')
     .trim();

@@ -1,5 +1,9 @@
 import { OKYO_API_BASE_URL, OKYO_API_TIMEOUT_MS, OKYO_DEV_MODEL_OVERRIDE } from './config';
 import type { ApiResponse, CorrectRecipeRequest, CreateScanRequest, CreateScanResult } from './types';
+import { normalizeOutboundRecipeMode } from '../utils/recipeModes';
+
+export const CORRECTION_FAILURE_MESSAGE = 'We couldn’t update the recipe. Try again.';
+const REQUEST_FAILURE_MESSAGE = 'Okyo couldn’t complete that request. Try again.';
 
 export async function createMockScan(request: CreateScanRequest): Promise<CreateScanResult> {
   return postJson<CreateScanResult>('/v1/scans', request);
@@ -17,14 +21,19 @@ export async function createTextRecipe(mealDescription: string, mode: CreateScan
 // retaking the photo. Reuses the same scan-result shape as createMockScan so
 // callers can treat the response identically.
 export async function correctScanRecipe(recipeId: string, request: CorrectRecipeRequest): Promise<CreateScanResult> {
-  return postJson<CreateScanResult>(`/v1/recipes/${encodeURIComponent(recipeId)}/correct`, request);
+  return postJson<CreateScanResult>(
+    `/v1/recipes/${encodeURIComponent(recipeId)}/correct`,
+    request,
+    CORRECTION_FAILURE_MESSAGE,
+  );
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+async function postJson<T>(path: string, body: unknown, safeFailureMessage?: string): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OKYO_API_TIMEOUT_MS);
-  const requestBody = JSON.stringify(body);
-  logApiRequest(path, requestBody, body);
+  const normalizedBody = normalizeRecipeApiRequestBody(path, body);
+  const requestBody = JSON.stringify(normalizedBody);
+  logApiRequest(path, requestBody, normalizedBody);
 
   try {
     const response = await fetch(`${OKYO_API_BASE_URL}${path}`, {
@@ -34,17 +43,77 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
       signal: controller.signal,
     });
 
-    const payload = await response.json() as ApiResponse<T>;
+    const responseText = await response.text();
+    const payload = parseApiResponse<T>(responseText);
     logApiResponse(path, response.status, payload);
 
+    if (!payload) {
+      throw new Error(safeFailureMessage ?? REQUEST_FAILURE_MESSAGE);
+    }
+
     if (!response.ok || !payload.ok) {
-      const message = payload.ok ? `Request failed with ${response.status}` : payload.error.message;
+      const message = safeFailureMessage ??
+        (payload.ok ? REQUEST_FAILURE_MESSAGE : payload.error.message);
       throw new Error(message);
     }
 
     return payload.data;
+  } catch (error) {
+    if (safeFailureMessage) {
+      throw new Error(safeFailureMessage);
+    }
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error(REQUEST_FAILURE_MESSAGE);
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+export function normalizeRecipeApiRequestBody(path: string, body: unknown): unknown {
+  const isRecipeRequest = path === '/v1/scans' ||
+    /^\/v1\/recipes\/[^/]+\/correct$/.test(path);
+  if (
+    !isRecipeRequest ||
+    !body ||
+    typeof body !== 'object' ||
+    Array.isArray(body)
+  ) {
+    return body;
+  }
+
+  const request = body as Record<string, unknown>;
+  return {
+    ...request,
+    mode: normalizeOutboundRecipeMode(request.mode),
+  };
+}
+
+export function parseApiResponse<T>(responseText: string): ApiResponse<T> | null {
+  try {
+    const value = JSON.parse(responseText) as unknown;
+    if (!value || typeof value !== 'object' || !('ok' in value)) {
+      return null;
+    }
+
+    const response = value as Partial<ApiResponse<T>>;
+    if (response.ok === true && 'data' in response) {
+      return response as ApiResponse<T>;
+    }
+    if (
+      response.ok === false &&
+      'error' in response &&
+      response.error &&
+      typeof response.error === 'object' &&
+      'message' in response.error &&
+      typeof response.error.message === 'string'
+    ) {
+      return response as ApiResponse<T>;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 

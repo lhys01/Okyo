@@ -70,7 +70,7 @@ test('normalizeIngredientList trims, dedupes (case-insensitive), and caps length
 
 test('enrichRecipeContext returns null when EPICURE_ENABLED is off (no provider call)', async () => {
   const result = await enrichRecipeContext(
-    { dishName: 'Creamy Tomato Pasta', ingredients: ['pasta', 'tomato'], mode: 'Healthy' },
+    { dishName: 'Creamy Tomato Pasta', ingredients: ['pasta', 'tomato'], mode: 'Healthier' },
     makeConfig({ epicureEnabled: false }),
   );
   assert.equal(result, null);
@@ -92,7 +92,7 @@ test('getEpicureSuggestions returns empty suggestions when the API key is missin
 
 test('enrichRecipeContext returns null when there are no ingredients to enrich', async () => {
   const result = await enrichRecipeContext(
-    { dishName: 'Mystery Dish', ingredients: [], mode: 'Restaurant Copy' },
+    { dishName: 'Mystery Dish', ingredients: [], mode: 'Normal' },
     makeConfig(),
   );
   assert.equal(result, null);
@@ -103,9 +103,9 @@ test('enrichRecipeContext returns null when there are no ingredients to enrich',
 // prompt is byte-for-byte unchanged from the pre-Epicure behavior.
 
 test('buildEpicurePromptSection returns empty string for null enrichment (base prompt unchanged)', () => {
-  assert.equal(buildEpicurePromptSection(null, 'Restaurant Copy'), '');
-  assert.equal(buildEpicurePromptSection(null, 'Healthy'), '');
-  assert.equal(buildEpicurePromptSection(null, 'Budget'), '');
+  assert.equal(buildEpicurePromptSection(null, 'Normal'), '');
+  assert.equal(buildEpicurePromptSection(null, 'Healthier'), '');
+  assert.equal(buildEpicurePromptSection(null, 'Lighter'), '');
 });
 
 // ── Requirement 7: mode-specific behavior ─────────────────────────────────────
@@ -117,22 +117,14 @@ const enrichment: EnrichedRecipeContext = {
   budgetSubstitutions: { parmesan: 'pecorino' },
 };
 
-test('Restaurant Copy prioritizes complementary ingredients', () => {
-  const section = buildEpicurePromptSection(enrichment, 'Restaurant Copy');
-  assert.match(section, /Complementary ingredients: basil, parmesan/);
-  assert.match(section, /Restaurant Copy recipe, prioritize the complementary ingredients/);
-});
-
-test('Healthy prioritizes healthy substitutions', () => {
-  const section = buildEpicurePromptSection(enrichment, 'Healthy');
-  assert.match(section, /Healthy substitutions: cream → greek yogurt/);
-  assert.match(section, /Healthy recipe, prioritize the healthy substitutions/);
-});
-
-test('Budget prioritizes budget substitutions', () => {
-  const section = buildEpicurePromptSection(enrichment, 'Budget');
-  assert.match(section, /Budget substitutions: parmesan → pecorino/);
-  assert.match(section, /Budget recipe, prioritize the budget substitutions/);
+test('current presentation modes do not request different recipe variants', () => {
+  for (const mode of ['Normal', 'Lighter', 'Healthier', 'More Protein'] as const) {
+    const section = buildEpicurePromptSection(enrichment, mode);
+    assert.match(section, /Complementary ingredients: basil, parmesan/);
+    assert.match(section, /Optional wellness-oriented substitutions: cream → greek yogurt/);
+    assert.match(section, /Optional cost-conscious substitutions: parmesan → pecorino/);
+    assert.match(section, /presentation mode is not a recipe variant/i);
+  }
 });
 
 test('countSuggestions sums complementary + both substitution maps', () => {

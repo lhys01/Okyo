@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildCorrectionRequest,
   canSubmitCorrection,
+  getRecipeCorrectionSourceId,
   isCurrentCorrectionRequest,
   validateCorrectionNote,
 } from './recipeCorrection';
@@ -29,7 +30,8 @@ test('an overly long correction does not submit', () => {
 test('building the request payload includes the exact "lamb chops, not chicken" example text', () => {
   const request = buildCorrectionRequest({
     correctionNote: 'These are lamb chops, not chicken.',
-    mode: 'Restaurant Copy',
+    expectedSourceRecipeId: 'source-1',
+    mode: 'Normal',
   });
   assert.equal(request.correctionNote, 'These are lamb chops, not chicken.');
   assert.ok(request.correctionNote.includes('lamb chops, not chicken'));
@@ -39,18 +41,21 @@ test('building the request payload trims whitespace from the note and dish name 
   const request = buildCorrectionRequest({
     correctionNote: '  Lamb chops, not chicken.  ',
     dishNameOverride: '  Lamb Chops  ',
-    mode: 'Budget',
+    expectedSourceRecipeId: 'source-2',
+    mode: 'Lighter',
   });
   assert.equal(request.correctionNote, 'Lamb chops, not chicken.');
   assert.equal(request.dishNameOverride, 'Lamb Chops');
-  assert.equal(request.mode, 'Budget');
+  assert.equal(request.mode, 'Lighter');
+  assert.equal(request.expectedSourceRecipeId, 'source-2');
 });
 
 test('an empty dish name override is omitted from the request payload', () => {
   const request = buildCorrectionRequest({
     correctionNote: 'Lamb chops, not chicken.',
     dishNameOverride: '   ',
-    mode: 'Restaurant Copy',
+    expectedSourceRecipeId: 'source-3',
+    mode: 'Normal',
   });
   assert.equal('dishNameOverride' in request, false);
 });
@@ -65,4 +70,16 @@ test('a stale pre-correction response is ignored by the race guard', () => {
 
 test('the race guard rejects any response once no request is in flight', () => {
   assert.equal(isCurrentCorrectionRequest('correction-1', null), false);
+});
+
+test('sequential corrections always target the latest generated source recipe id', () => {
+  assert.equal(
+    getRecipeCorrectionSourceId({ id: 'canonical-recipe', sourceRecipeId: 'generated-correction-1' }),
+    'generated-correction-1',
+  );
+  assert.equal(
+    getRecipeCorrectionSourceId({ id: 'canonical-recipe', sourceRecipeId: 'generated-correction-2' }),
+    'generated-correction-2',
+  );
+  assert.equal(getRecipeCorrectionSourceId({ id: 'canonical-recipe' }), 'canonical-recipe');
 });

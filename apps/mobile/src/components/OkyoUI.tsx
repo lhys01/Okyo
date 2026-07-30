@@ -142,7 +142,7 @@ type ModeTabsProps = {
 };
 
 export function ModeTabs({ modes, selectedMode, onSelectMode }: ModeTabsProps) {
-  const safeModes: RecipeMode[] = modes.length > 0 ? modes : ['Restaurant Copy'];
+  const safeModes: RecipeMode[] = modes.length > 0 ? modes : ['Normal'];
 
   return (
     <View style={styles.modeTabs}>
@@ -177,8 +177,8 @@ type RecipeCardProps = {
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 
 export function RecipeCard({ recipe, onPress, onRemove }: RecipeCardProps) {
-  const title = getSafeText(recipe?.title, 'Saved Okyo dupe');
-  const mode = isRecipeMode(recipe?.mode) ? recipe.mode : 'Restaurant Copy';
+  const title = getSafeText(recipe?.title, 'Liked Okyo recipe');
+  const mode = isRecipeMode(recipe?.mode) ? recipe.mode : 'Normal';
   const estimatedHomemadeCost = getSafeNumber(recipe?.estimatedHomemadeCost);
   const difficulty = getSafeText(recipe?.difficulty, 'Easy');
 
@@ -220,7 +220,7 @@ type PackCardProps = {
 
 export function PackCard({ pack, label, description, averageSavings, topDish, onPress }: PackCardProps) {
   const dishes = Array.isArray(pack?.dishes) ? pack.dishes : [];
-  const name = getSafeText(pack?.name, 'Restaurant-inspired pack');
+  const name = getSafeText(pack?.name, 'Curated recipe pack');
 
   return (
     <Pressable style={({ pressed }) => [styles.card, styles.cardPressable, pressed ? styles.pressed : null]} onPress={onPress}>

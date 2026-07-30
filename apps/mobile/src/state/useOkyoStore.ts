@@ -12,7 +12,37 @@ import {
   type RecipeMode,
   type ScanResult,
 } from '../mocks';
+import {
+  addCanonicalRecipeToGrocery,
+  commitSuccessfulScan,
+  confirmCanonicalRecipeIdentification,
+  correctCanonicalRecipe,
+  getCanonicalScanRecipeId,
+  getEmptyCanonicalRecipeCollections,
+  isMockOrDemoRecipe,
+  isUsableCanonicalRecipe,
+  registerCanonicalRecipe,
+  removeCanonicalSavedRecipe,
+  resolveCanonicalRecipe,
+  saveCanonicalRecipe,
+  setCanonicalRecipeCompletion,
+  setCanonicalRecipeMode,
+  setCanonicalRecipePresentationMode,
+  toggleCanonicalRecipeLiked,
+  updateCanonicalRecipe,
+  type CanonicalRecipe,
+  type CanonicalRecipeCollections,
+  type CanonicalRecipeOrigin,
+  type RecipePresentationMode,
+} from './canonicalRecipes';
 import { onboardingPersistence } from './onboardingPersistence';
+import { normalizeNutritionEstimate } from '../utils/nutrition';
+import {
+  isCurrentRecipeMode,
+  migrateLegacyRecipeMode,
+  normalizePersistedRecipeModeState,
+} from '../utils/recipeModes';
+import { normalizeRecipeTime } from '../utils/recipeIntegrity';
 
 export type OnboardingGoal =
   | 'Save money'
@@ -63,23 +93,19 @@ export type LatestScanSession = {
   updatedAt: string;
 };
 
-type LatestScanSessionWrite = Omit<LatestScanSession, 'updatedAt'> & {
+export type LatestScanSessionWrite = Omit<LatestScanSession, 'updatedAt'> & {
   reason: string;
 };
 
 type LatestScanClear = {
-  reason: string;
-  source: string;
-};
-
-type SavedRecipeContextWrite = {
-  recipe: Recipe;
+  preserveImageUri?: string;
   reason: string;
   source: string;
 };
 
 type OkyoState = {
   hasCompletedOnboarding: boolean;
+  hasHydrated: boolean;
   hasSeenOnboarding: boolean;
   onboardingGoal: OnboardingGoal | null;
   weeklyGoal: OnboardingWeeklyGoal | null;
@@ -98,7 +124,10 @@ type OkyoState = {
   latestAiDebugMetadata: AiDebugMetadata | null;
   mealDescription: string | null;
   selectedMode: RecipeMode;
-  savedRecipes: Recipe[];
+  recipesById: Record<string, CanonicalRecipe>;
+  recentRecipeIds: string[];
+  savedRecipeIds: string[];
+  groceryRecipeIds: string[];
   completedChallenges: CompletedChallenge[];
   totalMoneySaved: number;
   weeklyScanCount: number;
@@ -110,6 +139,7 @@ type OkyoState = {
   leaderboardEntries: LeaderboardEntry[];
   completeOnboarding: () => void;
   setOnboardingCompletionFromStorage: (completed: boolean) => void;
+  setHasHydrated: (hydrated: boolean) => void;
   resetOnboarding: () => void;
   setGoal: (goal: OnboardingGoal) => void;
   setWeeklyGoal: (goal: OnboardingWeeklyGoal) => void;
@@ -120,17 +150,27 @@ type OkyoState = {
   markPaywallShown: () => void;
   beginLatestScanSession: (scanSession: LatestScanSessionWrite) => void;
   writeLatestScanSession: (scanSession: LatestScanSessionWrite) => void;
+  commitSuccessfulScanSession: (scanSession: LatestScanSessionWrite) => boolean;
   clearLatestScan: (clear: LatestScanClear) => void;
-  writeSavedRecipeContext: (context: SavedRecipeContextWrite) => void;
-  setLatestScanResult: (scanResult: ScanResult | null) => void;
-  setLatestScanStatus: (status: ScanStatus | 'pending' | null) => void;
-  setLatestScanFailure: (failure: LatestScanFailure | null) => void;
-  setLatestScanRecipe: (recipe: Recipe | null) => void;
-  setSelectedScanImage: (image: ScanImageMetadata | null) => void;
-  setLatestAiDebugMetadata: (metadata: AiDebugMetadata | null) => void;
   setSelectedMode: (mode: RecipeMode) => void;
-  saveRecipe: (recipe: Recipe) => void;
+  registerRecipe: (
+    recipe: Recipe,
+    origin: Exclude<CanonicalRecipeOrigin, 'scan' | 'description'>,
+  ) => void;
+  updateRecipe: (recipeId: string, update: Partial<Recipe>) => void;
+  correctRecipe: (recipeId: string, recipe: Recipe, scan: ScanResult) => boolean;
+  confirmRecipeIdentification: (recipeId: string) => void;
+  setRecipeMode: (recipeId: string, mode: RecipeMode) => void;
+  setRecipePresentationMode: (recipeId: string, mode: RecipePresentationMode) => void;
+  startCookingRecipe: (recipeId: string) => void;
+  completeRecipe: (recipeId: string) => void;
+  saveRecipe: (
+    recipe: Recipe | string,
+    origin?: Exclude<CanonicalRecipeOrigin, 'scan' | 'description'>,
+  ) => void;
   removeSavedRecipe: (recipeId: string) => void;
+  toggleRecipeLiked: (recipeId: string) => void;
+  addRecipeToGrocery: (recipeId: string) => void;
   completeChallenge: (challenge: CompletedChallenge) => void;
   incrementMoneySaved: (amount: number) => void;
   incrementWeeklyScanCount: () => void;
@@ -146,6 +186,7 @@ export const useOkyoStore = create<OkyoState>()(
   persist(
     (set) => ({
       hasCompletedOnboarding: false,
+      hasHydrated: false,
       hasSeenOnboarding: false,
       onboardingGoal: null,
       weeklyGoal: null,
@@ -163,8 +204,8 @@ export const useOkyoStore = create<OkyoState>()(
       selectedScanImage: null,
       latestAiDebugMetadata: null,
       mealDescription: null,
-      selectedMode: 'Restaurant Copy',
-      savedRecipes: [],
+      selectedMode: 'Normal',
+      ...getEmptyCanonicalRecipeCollections(),
       completedChallenges: [],
       totalMoneySaved: 0,
       weeklyScanCount: 0,
@@ -181,6 +222,7 @@ export const useOkyoStore = create<OkyoState>()(
         });
       },
       setOnboardingCompletionFromStorage: (completed) => set({ hasCompletedOnboarding: completed }),
+      setHasHydrated: (hydrated) => set({ hasHydrated: hydrated }),
       resetOnboarding: () => {
         set({
           hasCompletedOnboarding: false,
@@ -225,7 +267,7 @@ export const useOkyoStore = create<OkyoState>()(
           };
         });
         if (outgoingScanImageUri) {
-          deleteUnusedScanImage(outgoingScanImageUri, useOkyoStore.getState().savedRecipes);
+          deleteUnusedScanImage(outgoingScanImageUri, useOkyoStore.getState().recipesById);
         }
       },
       writeLatestScanSession: (scanSession) =>
@@ -263,6 +305,47 @@ export const useOkyoStore = create<OkyoState>()(
             ...getLatestScanSessionState(latestScanSession),
           };
         }),
+      commitSuccessfulScanSession: (scanSession) => {
+        let committed = false;
+        set((state) => {
+          const collections = getCanonicalCollections(state);
+          const nextCollections = commitSuccessfulScan(collections, {
+            activeScanSessionId: state.scanSessionId,
+            completedAt: new Date().toISOString(),
+            image: scanSession.selectedScanImage,
+            recipe: scanSession.latestScanRecipe,
+            scan: scanSession.latestScanResult,
+            scanSessionId: scanSession.scanSessionId,
+            selectedMode: state.selectedMode,
+            source: scanSession.source,
+            status: scanSession.latestScanStatus,
+          });
+          const recipeId = getCanonicalScanRecipeId(scanSession.scanSessionId);
+          const canonicalRecipe = resolveCanonicalRecipe(nextCollections.recipesById, recipeId);
+          if (nextCollections === collections || !canonicalRecipe || !canonicalRecipe.scanResult) {
+            return state;
+          }
+
+          const latestScanSession = createLatestScanSession({
+            ...scanSession,
+            latestScanResult: canonicalRecipe.scanResult,
+            latestScanRecipe: canonicalRecipe,
+            latestScanStatus: 'success',
+          });
+          committed = true;
+          logScanStateWrite({
+            ...getLatestScanSessionSummary(latestScanSession),
+            reason: scanSession.reason,
+            canonicalRecipeId: recipeId,
+          });
+
+          return {
+            ...nextCollections,
+            ...getLatestScanSessionState(latestScanSession),
+          };
+        });
+        return committed;
+      },
       clearLatestScan: (clear) => {
         let outgoingScanImageUri: string | undefined;
         set((state) => {
@@ -276,71 +359,96 @@ export const useOkyoStore = create<OkyoState>()(
 
           return getClearedLatestScanState();
         });
-        if (outgoingScanImageUri) {
-          deleteUnusedScanImage(outgoingScanImageUri, useOkyoStore.getState().savedRecipes);
+        if (outgoingScanImageUri && outgoingScanImageUri !== clear.preserveImageUri) {
+          deleteUnusedScanImage(outgoingScanImageUri, useOkyoStore.getState().recipesById);
         }
       },
-      writeSavedRecipeContext: (context) =>
+      setSelectedMode: (mode) => set({ selectedMode: getMigratedRecipeMode(mode) }),
+      registerRecipe: (recipe, origin) =>
+        set((state) => registerCanonicalRecipe(getCanonicalCollections(state), recipe, origin)),
+      updateRecipe: (recipeId, update) =>
         set((state) => {
-          logScanStateClear({
-            previousScanSessionId: state.scanSessionId,
-            previousStatus: state.latestScanStatus,
-            preservedScanSessionId: state.latestScanSession?.scanSessionId ?? null,
-            reason: context.reason,
-            scope: 'legacy_saved_recipe_context',
-            source: context.source,
-          });
-
-          return {
-            latestAiDebugMetadata: null,
-            latestScanFailure: null,
-            latestScanRecipe: context.recipe,
-            latestScanResult: null,
-            latestScanStatus: null,
-            latestScanSession: null,
-            selectedScanImage: null,
-          };
+          const nextCollections = updateCanonicalRecipe(getCanonicalCollections(state), recipeId, update);
+          return syncLatestScanRecipe(state, nextCollections, recipeId);
         }),
-      setLatestScanResult: (scanResult) => set({ latestScanResult: scanResult }),
-      setLatestScanStatus: (status) => set({ latestScanStatus: status }),
-      setLatestScanFailure: (failure) => set({ latestScanFailure: failure }),
-      setLatestScanRecipe: (recipe) => set({ latestScanRecipe: recipe }),
-      setSelectedScanImage: (image) => set({ selectedScanImage: image }),
-      setLatestAiDebugMetadata: (metadata) => set({ latestAiDebugMetadata: metadata }),
-      setSelectedMode: (mode) => set({ selectedMode: mode }),
-      saveRecipe: (recipe) =>
+      correctRecipe: (recipeId, recipe, scan) => {
+        let didCorrect = false;
         set((state) => {
-          const existingRecipe = state.savedRecipes.find((savedRecipe) => savedRecipe.id === recipe.id);
-          if (!existingRecipe) {
-            return { savedRecipes: [...state.savedRecipes, recipe] };
-          }
-
-          const realRecipeImageUri = getRecipeRealImageUri(recipe);
-          if (!realRecipeImageUri) {
-            return { savedRecipes: state.savedRecipes };
-          }
-
-          return {
-            savedRecipes: state.savedRecipes.map((savedRecipe) =>
-              savedRecipe.id === recipe.id
-                ? attachRecipeImageUri(savedRecipe, realRecipeImageUri)
-                : savedRecipe,
-            ),
-          };
-        }),
-      removeSavedRecipe: (recipeId) => {
-        let imageUri: string | undefined;
-        set((state) => {
-          const recipe = state.savedRecipes.find((r) => r.id === recipeId);
-          imageUri = recipe?.imageUri;
-          return { savedRecipes: state.savedRecipes.filter((r) => r.id !== recipeId) };
+          const collections = getCanonicalCollections(state);
+          const nextCollections = correctCanonicalRecipe(
+            collections,
+            recipeId,
+            recipe,
+            scan,
+          );
+          didCorrect = nextCollections !== collections;
+          return syncLatestScanRecipe(state, nextCollections, recipeId, true);
         });
-        if (imageUri?.includes('/okyo-scan-images/')) {
-          FileSystem.deleteAsync(imageUri, { idempotent: true }).catch((error: unknown) => {
-            logDev('okyo_scan_image_delete_failed', { recipeId, uri: imageUri, error: String(error) });
-          });
-        }
+        return didCorrect;
       },
+      confirmRecipeIdentification: (recipeId) =>
+        set((state) => {
+          const nextCollections = confirmCanonicalRecipeIdentification(
+            getCanonicalCollections(state),
+            recipeId,
+          );
+          return syncLatestScanRecipe(state, nextCollections, recipeId);
+        }),
+      setRecipeMode: (recipeId, mode) =>
+        set((state) => {
+          const normalizedMode = getMigratedRecipeMode(mode);
+          const nextCollections = setCanonicalRecipeMode(
+            getCanonicalCollections(state),
+            recipeId,
+            normalizedMode,
+          );
+          return {
+            ...syncLatestScanRecipe(state, nextCollections, recipeId),
+            selectedMode: normalizedMode,
+          };
+        }),
+      setRecipePresentationMode: (recipeId, mode) =>
+        set((state) => {
+          const nextCollections = setCanonicalRecipePresentationMode(
+            getCanonicalCollections(state),
+            recipeId,
+            mode,
+          );
+          return syncLatestScanRecipe(state, nextCollections, recipeId);
+        }),
+      startCookingRecipe: (recipeId) =>
+        set((state) => setCanonicalRecipeCompletion(
+          getCanonicalCollections(state),
+          recipeId,
+          'cooking',
+        )),
+      completeRecipe: (recipeId) =>
+        set((state) => setCanonicalRecipeCompletion(
+          getCanonicalCollections(state),
+          recipeId,
+          'completed',
+        )),
+      saveRecipe: (recipeOrId, origin = 'library') =>
+        set((state) => {
+          let collections = getCanonicalCollections(state);
+          let recipeId: string;
+          if (typeof recipeOrId === 'string') {
+            recipeId = recipeOrId;
+          } else {
+            recipeId = recipeOrId.id;
+            if (!resolveCanonicalRecipe(collections.recipesById, recipeId)) {
+              collections = registerCanonicalRecipe(collections, recipeOrId, origin);
+            }
+          }
+
+          return saveCanonicalRecipe(collections, recipeId);
+        }),
+      removeSavedRecipe: (recipeId) =>
+        set((state) => removeCanonicalSavedRecipe(getCanonicalCollections(state), recipeId)),
+      toggleRecipeLiked: (recipeId) =>
+        set((state) => toggleCanonicalRecipeLiked(getCanonicalCollections(state), recipeId)),
+      addRecipeToGrocery: (recipeId) =>
+        set((state) => addCanonicalRecipeToGrocery(getCanonicalCollections(state), recipeId)),
       completeChallenge: (challenge) =>
         set((state) => ({
           completedChallenges: state.completedChallenges.some(
@@ -404,7 +512,7 @@ export const useOkyoStore = create<OkyoState>()(
           });
 
           return {
-            savedRecipes: [],
+            ...getEmptyCanonicalRecipeCollections(),
             completedChallenges: [],
             totalMoneySaved: 0,
             xp: 0,
@@ -424,6 +532,14 @@ export const useOkyoStore = create<OkyoState>()(
       name: 'okyo-local-state',
       storage: createJSONStorage(() => AsyncStorage),
       migrate: migratePersistedOkyoState,
+      onRehydrateStorage: () => (state) => {
+        const normalizedState = state
+          ? normalizePersistedRecipeModeState(state)
+          : null;
+        useOkyoStore.setState(normalizedState
+          ? { ...normalizedState, hasHydrated: true }
+          : { hasHydrated: true });
+      },
       partialize: (state) => ({
         hasSeenOnboarding: state.hasSeenOnboarding,
         onboardingGoal: state.onboardingGoal,
@@ -443,7 +559,10 @@ export const useOkyoStore = create<OkyoState>()(
         latestAiDebugMetadata: state.latestAiDebugMetadata,
         mealDescription: state.mealDescription,
         selectedMode: state.selectedMode,
-        savedRecipes: state.savedRecipes,
+        recipesById: state.recipesById,
+        recentRecipeIds: state.recentRecipeIds,
+        savedRecipeIds: state.savedRecipeIds,
+        groceryRecipeIds: state.groceryRecipeIds,
         completedChallenges: state.completedChallenges,
         totalMoneySaved: state.totalMoneySaved,
         weeklyScanCount: state.weeklyScanCount,
@@ -453,21 +572,288 @@ export const useOkyoStore = create<OkyoState>()(
         awardedXpEvents: state.awardedXpEvents,
         leaderboardEntries: state.leaderboardEntries,
       }),
+      version: 3,
     },
   ),
 );
 
-function migratePersistedOkyoState(persistedState: unknown) {
+function migratePersistedOkyoState(persistedState: unknown, version: number) {
   if (!persistedState || typeof persistedState !== 'object' || Array.isArray(persistedState)) {
     return {};
   }
 
+  const modeNormalizedState = normalizePersistedRecipeModeState(persistedState);
   const {
     hasCompletedOnboarding: _legacyOnboardingCompleted,
+    savedRecipes: legacySavedRecipes,
     ...stateWithoutLegacyOnboardingCompletion
-  } = persistedState as Record<string, unknown>;
+  } = modeNormalizedState as Record<string, unknown>;
 
-  return stateWithoutLegacyOnboardingCompletion;
+  if (version >= 1) {
+    return sanitizePersistedCanonicalState(stateWithoutLegacyOnboardingCompletion);
+  }
+
+  let collections = getEmptyCanonicalRecipeCollections();
+  const latestScanStatus = stateWithoutLegacyOnboardingCompletion.latestScanStatus;
+  const latestScanRecipe = stateWithoutLegacyOnboardingCompletion.latestScanRecipe;
+  const latestScanResult = stateWithoutLegacyOnboardingCompletion.latestScanResult;
+  const latestScanSession = stateWithoutLegacyOnboardingCompletion.latestScanSession;
+  const scanSessionId = stateWithoutLegacyOnboardingCompletion.scanSessionId;
+  const selectedMode = getMigratedRecipeMode(stateWithoutLegacyOnboardingCompletion.selectedMode);
+  const selectedScanImage = stateWithoutLegacyOnboardingCompletion.selectedScanImage;
+  if (
+    latestScanStatus === 'success' &&
+    typeof scanSessionId === 'string' &&
+    isUsableCanonicalRecipe(latestScanRecipe as Recipe | null) &&
+    latestScanResult &&
+    typeof latestScanResult === 'object' &&
+    isRecipeModeValue(selectedMode)
+  ) {
+    collections = commitSuccessfulScan(collections, {
+      activeScanSessionId: scanSessionId,
+      image: isScanImageMetadata(selectedScanImage) ? selectedScanImage : null,
+      recipe: latestScanRecipe as Recipe,
+      scan: latestScanResult as ScanResult,
+      scanSessionId,
+      selectedMode,
+      source: getMigratedScanSource(latestScanSession, selectedScanImage),
+      status: 'success',
+    });
+  }
+
+  for (const legacyRecipe of Array.isArray(legacySavedRecipes) ? legacySavedRecipes : []) {
+    if (
+      !isUsableCanonicalRecipe(legacyRecipe as Recipe) ||
+      isMockOrDemoRecipe(legacyRecipe as Recipe) ||
+      (legacyRecipe as Recipe).id.startsWith('rec-')
+    ) {
+      continue;
+    }
+
+    const recipe = legacyRecipe as Recipe;
+    const latestCanonicalId = typeof scanSessionId === 'string'
+      ? getCanonicalScanRecipeId(scanSessionId)
+      : null;
+    const latestCanonical = resolveCanonicalRecipe(collections.recipesById, latestCanonicalId);
+    if (latestCanonical?.sourceRecipeId === recipe.id) {
+      collections = saveCanonicalRecipe(collections, latestCanonical.recipeId);
+      continue;
+    }
+
+    collections = registerCanonicalRecipe(collections, recipe, getMigratedRecipeOrigin(recipe));
+    collections = saveCanonicalRecipe(collections, recipe.id);
+  }
+
+  return sanitizePersistedCanonicalState({
+    ...stateWithoutLegacyOnboardingCompletion,
+    ...collections,
+    latestScanRecipe: typeof scanSessionId === 'string'
+      ? resolveCanonicalRecipe(collections.recipesById, getCanonicalScanRecipeId(scanSessionId))
+      : null,
+  });
+}
+
+function sanitizePersistedCanonicalState(state: Record<string, unknown>) {
+  const recipesById: Record<string, CanonicalRecipe> = {};
+  const persistedRecipes = isRecord(state.recipesById) ? state.recipesById : {};
+
+  for (const [recipeId, value] of Object.entries(persistedRecipes)) {
+    if (
+      !isPersistedCanonicalRecipe(value) ||
+      recipeId !== value.recipeId ||
+      recipeId !== value.id ||
+      isMockOrDemoRecipe(value)
+    ) {
+      continue;
+    }
+
+    const nutritionEstimate = normalizeNutritionEstimate(value.nutritionEstimate);
+    recipesById[recipeId] = {
+      ...value,
+      ...normalizeRecipeTime(value),
+      mode: getMigratedRecipeMode(value.mode),
+      nutritionEstimate: nutritionEstimate ?? undefined,
+      selectedMode: getMigratedRecipeMode(value.selectedMode),
+      selectedPresentationMode: isRecipeModeValue(value.selectedMode) &&
+        isRecipePresentationMode(value.selectedPresentationMode)
+        ? value.selectedPresentationMode
+        : getMigratedPresentationMode(value.selectedMode),
+    };
+  }
+
+  const savedRecipeIds = sanitizeRecipeReferences(state.savedRecipeIds, recipesById)
+    .filter((recipeId) => {
+      const recipe = recipesById[recipeId];
+      return recipe.isSaved === true && typeof recipe.savedAt === 'string';
+    });
+  const savedRecipeIdSet = new Set(savedRecipeIds);
+
+  for (const [recipeId, recipe] of Object.entries(recipesById)) {
+    const isSaved = savedRecipeIdSet.has(recipeId);
+    recipesById[recipeId] = {
+      ...recipe,
+      isSaved,
+      savedAt: isSaved ? recipe.savedAt : undefined,
+    };
+  }
+
+  const recentRecipeIds = sanitizeRecipeReferences(state.recentRecipeIds, recipesById)
+    .filter((recipeId) => {
+      const recipe = recipesById[recipeId];
+      return recipe.origin === 'scan' || recipe.origin === 'description';
+    });
+  const groceryRecipeIds = sanitizeRecipeReferences(state.groceryRecipeIds, recipesById);
+  const latestRecipeId = isRecord(state.latestScanRecipe)
+    ? getString(state.latestScanRecipe.recipeId) ?? getString(state.latestScanRecipe.id)
+    : null;
+  const latestScanRecipe = latestRecipeId
+    ? resolveCanonicalRecipe(recipesById, latestRecipeId)
+    : null;
+
+  return {
+    ...state,
+    recipesById,
+    recentRecipeIds,
+    savedRecipeIds,
+    groceryRecipeIds,
+    latestScanRecipe,
+    selectedMode: getMigratedRecipeMode(state.selectedMode),
+  };
+}
+
+function sanitizeRecipeReferences(
+  value: unknown,
+  recipesById: Record<string, CanonicalRecipe>,
+) {
+  const recipeIds = Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+
+  return [...new Set(recipeIds)].filter((recipeId) => Boolean(resolveCanonicalRecipe(
+    recipesById,
+    recipeId,
+  )));
+}
+
+function isPersistedCanonicalRecipe(value: unknown): value is CanonicalRecipe {
+  if (!isRecord(value) || !isUsableCanonicalRecipe(value as Recipe)) {
+    return false;
+  }
+
+  return (
+    typeof value.recipeId === 'string' &&
+    typeof value.origin === 'string' &&
+    typeof value.createdAt === 'string' &&
+    typeof value.scanCompletedAt === 'string'
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function isRecipePresentationMode(value: unknown): value is RecipePresentationMode {
+  return value === 'Normal' ||
+    value === 'Lighter' ||
+    value === 'Healthier' ||
+    value === 'More Protein';
+}
+
+function getMigratedPresentationMode(value: unknown): RecipePresentationMode {
+  return getMigratedRecipeMode(value);
+}
+
+function getMigratedRecipeMode(value: unknown): RecipeMode {
+  return migrateLegacyRecipeMode(value);
+}
+
+function getString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function getCanonicalCollections(
+  state: Pick<
+    OkyoState,
+    'recipesById' | 'recentRecipeIds' | 'savedRecipeIds' | 'groceryRecipeIds'
+  >,
+): CanonicalRecipeCollections {
+  return {
+    recipesById: state.recipesById,
+    recentRecipeIds: state.recentRecipeIds,
+    savedRecipeIds: state.savedRecipeIds,
+    groceryRecipeIds: state.groceryRecipeIds,
+  };
+}
+
+function syncLatestScanRecipe(
+  state: OkyoState,
+  collections: CanonicalRecipeCollections,
+  recipeId: string,
+  syncScanResult = false,
+) {
+  const canonicalRecipe = resolveCanonicalRecipe(collections.recipesById, recipeId);
+  const isLatestRecipe = state.latestScanRecipe?.id === recipeId;
+  if (!canonicalRecipe || !isLatestRecipe) {
+    return collections;
+  }
+
+  const latestScanResult = syncScanResult && canonicalRecipe.scanResult
+    ? canonicalRecipe.scanResult
+    : state.latestScanResult;
+  const latestScanSession = state.latestScanSession
+    ? {
+        ...state.latestScanSession,
+        latestScanRecipe: canonicalRecipe,
+        latestScanResult,
+        updatedAt: new Date().toISOString(),
+      }
+    : null;
+
+  return {
+    ...collections,
+    latestScanRecipe: canonicalRecipe,
+    latestScanResult,
+    latestScanSession,
+  };
+}
+
+function isRecipeModeValue(value: unknown): value is RecipeMode {
+  return isCurrentRecipeMode(value);
+}
+
+function isScanImageMetadata(value: unknown): value is ScanImageMetadata {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function getMigratedScanSource(latestScanSession: unknown, selectedScanImage: unknown): ScanSource {
+  const sessionSource = latestScanSession &&
+    typeof latestScanSession === 'object' &&
+    !Array.isArray(latestScanSession) &&
+    'source' in latestScanSession
+    ? (latestScanSession as { source?: unknown }).source
+    : undefined;
+  const imageSource = selectedScanImage &&
+    typeof selectedScanImage === 'object' &&
+    !Array.isArray(selectedScanImage) &&
+    'source' in selectedScanImage
+    ? (selectedScanImage as { source?: unknown }).source
+    : undefined;
+  const source = sessionSource ?? imageSource;
+  return source === 'camera' || source === 'photos' || source === 'description'
+    ? source
+    : 'mock';
+}
+
+function getMigratedRecipeOrigin(
+  recipe: Recipe,
+): Exclude<CanonicalRecipeOrigin, 'scan' | 'description'> {
+  if (recipe.id.startsWith('rec-')) {
+    return 'recommendation';
+  }
+  if (recipe.id.startsWith('pack-')) {
+    return 'restaurant-pack';
+  }
+  return 'library';
 }
 
 function createLatestScanSession(scanSession: LatestScanSessionWrite): LatestScanSession {
@@ -502,12 +888,6 @@ function attachRecipeImageUri(recipe: Recipe, imageUri: string): Recipe {
     imageUri,
     imageUrl: imageUri,
   };
-}
-
-function getRecipeRealImageUri(recipe: Recipe) {
-  return typeof recipe.imageUri === 'string' && recipe.imageUri.trim().length > 0
-    ? recipe.imageUri.trim()
-    : null;
 }
 
 function getLatestScanSessionState(latestScanSession: LatestScanSession) {
@@ -608,14 +988,14 @@ function getScanImageUriForCleanup(state: Pick<OkyoState, 'selectedScanImage'>):
   return uri.includes('/okyo-scan-images/') ? uri : undefined;
 }
 
-// Deletes a scan image file from Documents if no saved recipe references it.
-// Called when a scan session ends (scan again, new scan, back to scan).
-function deleteUnusedScanImage(uri: string, savedRecipes: Recipe[]) {
-  const isReferenced = savedRecipes.some(
-    (recipe) => (recipe as Recipe & { imageUri?: string }).imageUri === uri,
+// Deletes a scan image file from Documents if no canonical recipe references it.
+// Successful scan photos remain durable whether or not the user saves the recipe.
+function deleteUnusedScanImage(uri: string, recipesById: Record<string, CanonicalRecipe>) {
+  const isReferenced = Object.values(recipesById).some(
+    (recipe) => recipe.imageUri === uri || recipe.originalImage?.uri === uri,
   );
   if (isReferenced) {
-    logDev('okyo_scan_image_cleanup_skipped', { uri, reason: 'referenced_by_saved_recipe' });
+    logDev('okyo_scan_image_cleanup_skipped', { uri, reason: 'referenced_by_canonical_recipe' });
     return;
   }
   FileSystem.deleteAsync(uri, { idempotent: true }).catch((error: unknown) => {

@@ -2,7 +2,7 @@ import type { Badge, LeaderboardEntry, XpEvent } from './types';
 
 export const mockXpEvents: XpEvent[] = [
   { id: 'first-scan', label: 'First scan', points: 10 },
-  { id: 'save-recipe', label: 'Save recipe', points: 5 },
+  { id: 'save-recipe', label: 'Like recipe', points: 5 },
   { id: 'export-grocery-list', label: 'Export grocery list', points: 10 },
   { id: 'start-dupe-challenge', label: 'Start Dupe Challenge', points: 15 },
   { id: 'complete-dupe-challenge', label: 'Complete Dupe Challenge', points: 40 },
@@ -16,9 +16,9 @@ export const mockXpEvents: XpEvent[] = [
 export const mockBadges: Badge[] = [
   { id: 'first-dupe', name: 'First Dupe', description: 'Complete your first restaurant dupe.', unlocked: true },
   { id: 'nailed-it', name: 'Nailed It', description: 'Earn a 9+/10 match score.', unlocked: true },
-  { id: 'budget-beast', name: 'Budget Beast', description: 'Save $25+ on one dupe.', unlocked: true },
+  { id: 'budget-beast', name: 'Savings Star', description: 'Save $25+ on one recipe.', unlocked: true },
   { id: 'pasta-hacker', name: 'Pasta Hacker', description: 'Make a pasta dupe at home.', unlocked: true },
-  { id: 'healthy-swap-pro', name: 'Healthy Swap Pro', description: 'Complete a Healthy mode dupe.', unlocked: false },
+  { id: 'healthy-swap-pro', name: 'Wellness Cook', description: 'Complete a wellness cooking challenge.', unlocked: false },
   { id: 'grocery-exporter', name: 'Grocery Exporter', description: 'Export a grocery list.', unlocked: false },
   { id: '100-saved-club', name: '$100 Saved Club', description: 'Reach $100 in estimated savings.', unlocked: false },
 ];

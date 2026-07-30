@@ -18,7 +18,7 @@ export async function scheduleOkyoDailyReminder(): Promise<void> {
   await Notifications.scheduleNotificationAsync({
     identifier: OKYO_DAILY_REMINDER_ID,
     content: {
-      title: 'What are you eating tonight? 🍳',
+      title: 'What are you eating tonight?',
       body: 'Scan it and recreate it at home for way less.',
     },
     trigger: {

@@ -1,4 +1,4 @@
-export type RecipeMode = 'Restaurant Copy' | 'Budget' | 'Healthy';
+export type RecipeMode = 'Normal' | 'Lighter' | 'Healthier' | 'More Protein';
 
 export type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
@@ -112,8 +112,8 @@ export type Recipe = {
   // bundled asset URIs so cards can exercise the same image path as production.
   imageUrl?: string;
   imageStatus?: RecipeImageStatus;
-  // Snapshot of the user's real scan photo, attached when the recipe is saved so
-  // the library card can show the actual meal. Only ever a real uploaded image.
+  // Stable local URI for the recipe image. Canonical scan records use the
+  // uploaded photo so every downstream screen resolves the same image.
   imageUri?: string;
   title: string;
   mode: RecipeMode;
@@ -136,7 +136,6 @@ export type Recipe = {
   confidenceNote: string;
   mainIngredientsSummary?: string;
   equipment?: string[];
-  bestFor?: string;
   avoidMistake?: string;
   mistakeWarning?: string;
   storageAndReheating?: string;

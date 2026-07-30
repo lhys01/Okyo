@@ -17,7 +17,7 @@ const baseAnalysis: Omit<FoodImageAnalysis, 'dishName' | 'broadDishCategory' | '
   homemadeCostEstimate: 4,
   matchScore: 85,
   difficulty: 'Easy',
-  modes: ['Restaurant Copy'],
+  modes: ['Normal'],
   notes: [],
   detectedComponents: [],
   possibleDishNames: [],
@@ -88,7 +88,7 @@ async function runTest() {
     };
 
     try {
-      const recipe = await generateRecipeWithOpenRouter({ analysis, config, mode: 'Restaurant Copy' });
+      const recipe = await generateRecipeWithOpenRouter({ analysis, config, mode: 'Normal' });
       const parsed = openRouterRecipeOutputSchema.safeParse(recipe);
       schemaValid = parsed.success;
 

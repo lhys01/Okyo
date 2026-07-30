@@ -50,7 +50,7 @@ function completeShrimpRecipe() {
   return {
     dishName: 'Shrimp Fettuccine Alfredo',
     title: 'Shrimp Fettuccine Alfredo',
-    description: 'A creamy inspired-by restaurant pasta with shrimp.',
+    description: 'A creamy homemade pasta with shrimp.',
     prepTime: '15 minutes',
     cookTime: '20 minutes',
     totalTime: '35 minutes',
@@ -116,6 +116,7 @@ async function postScan(body: unknown) {
       const payload = JSON.stringify(body);
       const request = http.request({
         hostname: '127.0.0.1',
+        localAddress: '127.0.0.1',
         port: address.port,
         path: '/v1/scans',
         method: 'POST',
@@ -154,7 +155,7 @@ test('POST /v1/scans uses deterministic recovery with only vision and recipe pro
   try {
     const response = await postScan({
       source: 'photos',
-      mode: 'Restaurant Copy',
+      mode: 'Normal',
       image: {
         dataUrl: 'data:image/png;base64,AAAA',
         mimeType: 'image/png',
@@ -211,7 +212,7 @@ test('POST /v1/scans normalizes recoverable malformed recipe output without retr
   try {
     const response = await postScan({
       source: 'photos',
-      mode: 'Restaurant Copy',
+      mode: 'Normal',
       image: {
         dataUrl: 'data:image/png;base64,CCCC',
         mimeType: 'image/png',
@@ -260,7 +261,7 @@ test('POST /v1/scans retries truncated JSON once then normalizes malformed retry
   try {
     const response = await postScan({
       source: 'photos',
-      mode: 'Restaurant Copy',
+      mode: 'Normal',
       image: {
         dataUrl: 'data:image/png;base64,DDDD',
         mimeType: 'image/png',
@@ -304,7 +305,7 @@ test('POST /v1/scans uses one combined repair call and maps unrecoverable valida
   try {
     const response = await postScan({
       source: 'photos',
-      mode: 'Restaurant Copy',
+      mode: 'Normal',
       image: {
         dataUrl: 'data:image/png;base64,BBBB',
         mimeType: 'image/png',
@@ -326,6 +327,150 @@ test('POST /v1/scans uses one combined repair call and maps unrecoverable valida
     assert.equal(typeof timing?.combinedRepairMs, 'number');
   } finally {
     globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('description scans accept legacy modes but store and return Normal', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const logs: unknown[][] = [];
+  const recipe = {
+    ...completeShrimpRecipe(),
+    dishName: 'Warm Weeknight Pasta',
+    title: 'Warm Weeknight Pasta',
+  };
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return openRouterResponse(recipe);
+  };
+  console.log = (...args: unknown[]) => { logs.push(args); };
+
+  try {
+    const response = await postScan({
+      source: 'description',
+      mode: 'Restaurant Copy',
+      mealDescription: 'A warm weeknight pasta',
+    });
+    assert.equal(response.status, 201);
+    assert.equal(response.body.data.recipe.mode, 'Normal');
+    assert.equal(calls, 1);
+    const migrationLog = logs.find((entry) => entry[0] === 'recipe_mode_migrated');
+    assert.deepEqual(migrationLog?.[1], {
+      endpoint: '/v1/scans',
+      receivedMode: 'Restaurant Copy',
+      normalizedMode: 'Normal',
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('legacy and Normal scan modes share the same normalized cache identity', async () => {
+  const originalFetch = globalThis.fetch;
+  const analysis = {
+    ...shrimpAnalysis(),
+    dishName: 'Normalized Cache Pasta',
+    possibleDishNames: ['Normalized Cache Pasta'],
+  };
+  const recipe = {
+    ...completeShrimpRecipe(),
+    dishName: 'Normalized Cache Pasta',
+    title: 'Normalized Cache Pasta',
+  };
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return openRouterResponse(calls === 1 ? analysis : recipe);
+  };
+  const requestBody = {
+    source: 'photos',
+    image: {
+      dataUrl: 'data:image/png;base64,Q0FDSE1PREU=',
+      mimeType: 'image/png',
+      dataUrlSizeBytes: 38,
+    },
+  };
+
+  try {
+    const legacyResponse = await postScan({ ...requestBody, mode: 'Budget' });
+    const currentResponse = await postScan({ ...requestBody, mode: 'Normal' });
+    assert.equal(legacyResponse.status, 201);
+    assert.equal(currentResponse.status, 201);
+    assert.equal(legacyResponse.body.data.recipe.mode, 'Normal');
+    assert.equal(currentResponse.body.data.recipe.mode, 'Normal');
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a cached repeat scan receives a fresh independent API source root', async () => {
+  const originalFetch = globalThis.fetch;
+  const sourceImage = `data:image/png;base64,${Buffer.from(`cache-root-${Date.now()}`).toString('base64')}`;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return openRouterResponse(calls === 1 ? shrimpAnalysis() : completeShrimpRecipe());
+  };
+
+  try {
+    const first = await postScan({
+      source: 'photos',
+      mode: 'Normal',
+      image: { dataUrl: sourceImage, mimeType: 'image/png', dataUrlSizeBytes: sourceImage.length },
+    });
+    const callsAfterFirst = calls;
+    const second = await postScan({
+      source: 'photos',
+      mode: 'Normal',
+      image: { dataUrl: sourceImage, mimeType: 'image/png', dataUrlSizeBytes: sourceImage.length },
+    });
+
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.equal(calls, callsAfterFirst);
+    assert.notEqual(first.body.data.recipe.id, second.body.data.recipe.id);
+    assert.notEqual(first.body.data.scan.id, second.body.data.scan.id);
+    assert.equal(first.body.data.scan.recipeId, first.body.data.recipe.id);
+    assert.equal(second.body.data.scan.recipeId, second.body.data.recipe.id);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('invalid scan modes return a safe 400 and log only the invalid field value', async () => {
+  const originalLog = console.log;
+  const logs: unknown[][] = [];
+  console.log = (...args: unknown[]) => { logs.push(args); };
+
+  try {
+    const response = await postScan({
+      source: 'photos',
+      mode: 'Chef Surprise',
+      image: {
+        dataUrl: 'data:image/png;base64,U0VDUkVU',
+        mimeType: 'image/png',
+      },
+    });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, 'validation_error');
+    assert.equal(response.body.error.message, 'Request validation failed.');
+    assert.equal(response.body.error.details, undefined);
+
+    const validationLog = logs.find((entry) => entry[0] === 'request_validation_failed');
+    assert.ok(validationLog);
+    assert.deepEqual(validationLog[1], {
+      endpoint: '/v1/scans',
+      invalidField: 'mode',
+      receivedValue: 'Chef Surprise',
+      expectedCurrentValues: ['Normal', 'Lighter', 'Healthier', 'More Protein'],
+      finalStatus: 400,
+    });
+    assert.doesNotMatch(JSON.stringify(validationLog), /U0VDUkVU|data:image/);
+  } finally {
     console.log = originalLog;
   }
 });

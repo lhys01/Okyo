@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   mockBadges,
   mockGroceryLists,
@@ -24,19 +26,97 @@ const awardedXpEvents: AwardedXpEvent[] = [];
 // Deferred coaching store: recipes awaiting on-demand coaching enrichment.
 // Keyed by recipe.id. TTL = 1 day (survives the typical user session).
 const GENERATED_RECIPE_TTL_MS = 24 * 60 * 60 * 1000;
-const generatedRecipeStore = new Map<string, { recipe: Recipe; expiresAt: number }>();
+type GeneratedRecipeEntry = {
+  recipe: Recipe;
+  expiresAt: number;
+  parentRevisionId?: string;
+  rootRevisionId: string;
+  supersededBy?: string;
+};
+const generatedRecipeStore = new Map<string, GeneratedRecipeEntry>();
+
+export class StaleRecipeRevisionError extends Error {
+  readonly sourceRecipeId: string;
+  readonly latestSourceRecipeId?: string;
+
+  constructor(sourceRecipeId: string, latestSourceRecipeId?: string) {
+    super('The source recipe revision is no longer current.');
+    this.name = 'StaleRecipeRevisionError';
+    this.sourceRecipeId = sourceRecipeId;
+    this.latestSourceRecipeId = latestSourceRecipeId;
+  }
+}
 
 export function storeGeneratedRecipe(recipe: Recipe): void {
-  generatedRecipeStore.set(recipe.id, { recipe, expiresAt: Date.now() + GENERATED_RECIPE_TTL_MS });
+  generatedRecipeStore.set(recipe.id, {
+    recipe,
+    expiresAt: Date.now() + GENERATED_RECIPE_TTL_MS,
+    rootRevisionId: recipe.id,
+  });
 }
 
 export function getGeneratedRecipe(recipeId: string): Recipe | null {
+  return getGeneratedRecipeEntry(recipeId)?.recipe ?? null;
+}
+
+export function getCurrentGeneratedRecipe(recipeId: string): Recipe | null {
+  const entry = getGeneratedRecipeEntry(recipeId);
+  if (!entry) {
+    return null;
+  }
+  if (entry.supersededBy) {
+    throw new StaleRecipeRevisionError(recipeId, entry.supersededBy);
+  }
+  return entry.recipe;
+}
+
+export function storeGeneratedRecipeRevision(
+  parentRevisionId: string,
+  candidate: Recipe,
+): {
+  parentRevisionId: string;
+  recipe: Recipe;
+  rootRevisionId: string;
+} {
+  const parent = getGeneratedRecipeEntry(parentRevisionId);
+  if (!parent) {
+    throw new StaleRecipeRevisionError(parentRevisionId);
+  }
+  if (parent.supersededBy) {
+    throw new StaleRecipeRevisionError(parentRevisionId, parent.supersededBy);
+  }
+
+  const revisionId = `recipe-revision-${randomUUID()}`;
+  const recipe = { ...candidate, id: revisionId };
+  parent.supersededBy = revisionId;
+  generatedRecipeStore.set(revisionId, {
+    recipe,
+    expiresAt: Date.now() + GENERATED_RECIPE_TTL_MS,
+    parentRevisionId,
+    rootRevisionId: parent.rootRevisionId,
+  });
+  return { parentRevisionId, recipe, rootRevisionId: parent.rootRevisionId };
+}
+
+export function getGeneratedRecipeRevisionMetadata(recipeId: string) {
+  const entry = getGeneratedRecipeEntry(recipeId);
+  if (!entry) {
+    return null;
+  }
+  return {
+    parentRevisionId: entry.parentRevisionId,
+    rootRevisionId: entry.rootRevisionId,
+    supersededBy: entry.supersededBy,
+  };
+}
+
+function getGeneratedRecipeEntry(recipeId: string): GeneratedRecipeEntry | null {
   const entry = generatedRecipeStore.get(recipeId);
   if (!entry || Date.now() > entry.expiresAt) {
     generatedRecipeStore.delete(recipeId);
     return null;
   }
-  return entry.recipe;
+  return entry;
 }
 
 export function getScan(scanId: string) {
@@ -181,7 +261,7 @@ function getBadgeForChallenge(
   if (recipeTitle.toLowerCase().includes('rigatoni') || recipeTitle.toLowerCase().includes('pasta')) {
     return 'pasta-hacker';
   }
-  if (mode === 'Healthy') {
+  if (mode === 'Healthier') {
     return 'healthy-swap-pro';
   }
 

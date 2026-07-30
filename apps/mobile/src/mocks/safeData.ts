@@ -1,14 +1,15 @@
 import { defaultRecipe, getDefaultRecipeForMode } from './recipes';
 import type { Recipe, RecipeMode } from './types';
+import { CURRENT_RECIPE_MODES, isCurrentRecipeMode } from '../utils/recipeModes';
 
-export const recipeModes: RecipeMode[] = ['Restaurant Copy', 'Budget', 'Healthy'];
+export const recipeModes: RecipeMode[] = [...CURRENT_RECIPE_MODES];
 
 export function isRecipeMode(mode: unknown): mode is RecipeMode {
-  return typeof mode === 'string' && recipeModes.includes(mode as RecipeMode);
+  return isCurrentRecipeMode(mode);
 }
 
 export function getSafeRecipeMode(mode: unknown): RecipeMode {
-  return isRecipeMode(mode) ? mode : 'Restaurant Copy';
+  return isRecipeMode(mode) ? mode : 'Normal';
 }
 
 export function getSafeRecipeForMode(mode: unknown): Recipe {

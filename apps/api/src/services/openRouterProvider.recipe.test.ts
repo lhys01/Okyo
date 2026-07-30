@@ -2,16 +2,99 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { AiConfig } from '../config/aiConfig.js';
+import type { Recipe } from '../types.js';
 import type { FoodImageAnalysis } from './aiService.js';
+import {
+  getMandatoryCorrectionRequirementsForPlan,
+  getNutritionRequirementTargets,
+  normalizeCorrectionText,
+  parseCorrectionRequirements,
+  evaluateNutritionRequirements,
+  type CorrectionGenerationContext,
+} from './correctionIntent.js';
 import {
   generateRecipeWithOpenRouter,
   normalizeRecipeProviderOutputShape,
+  normalizeCorrectionPatchProviderOutput,
+  parseCorrectionPatchProviderOutput,
   openRouterRecipeOutputSchema,
   OpenRouterProviderError,
   repairStepInstructionText,
   recipeArrayFieldDefinitions,
   validateRecipeStructure,
 } from './openRouterProvider.js';
+
+test('dedicated correction patch schema accepts patch-only operation variants', () => {
+  const parsed = parseCorrectionPatchProviderOutput({
+    ingredientOperations: [
+      { operation: 'remove', sourceIngredientId: ' ingredient-1 ', supportsRequirementIndexes: [] },
+      { operation: 'add', result: { id: 'added-1', name: 'new component', quantity: '1 cup' }, supportsRequirementIndexes: [1] },
+      { operation: 'replace', sourceIngredientId: 'ingredient-2', result: { name: 'updated component', quantity: '1/2 cup' }, supportsRequirementIndexes: [1] },
+    ],
+    stepOperations: [
+      { operation: 'remove', sourceStepId: 'step-1' },
+      { operation: 'add', result: { id: 'added-step-1', text: 'Use the new component.', ingredientReferences: ['added-1'] } },
+    ],
+    nutritionEstimate: { calories: '200', proteinGrams: '20', carbohydratesGrams: 10, fatGrams: 5 },
+    metadataPatch: null,
+  });
+  assert.equal(parsed.success, true);
+  if (parsed.success) {
+    assert.equal(parsed.data.ingredientOperations[0]?.sourceIngredientId, 'ingredient-1');
+    assert.equal(parsed.data.nutritionEstimate?.calories, 200);
+    assert.equal(parsed.data.metadataPatch, undefined);
+  }
+});
+
+test('patch schema rejects operation-specific missing fields and normalizes missing arrays', () => {
+  const empty = parseCorrectionPatchProviderOutput({});
+  assert.equal(empty.success, true);
+  if (empty.success) {
+    assert.deepEqual(empty.data.ingredientOperations, []);
+    assert.deepEqual(empty.data.stepOperations, []);
+  }
+  const invalid = parseCorrectionPatchProviderOutput({
+    ingredientOperations: [{ operation: 'replace', result: { name: 'new component', quantity: '1 cup' } }],
+  });
+  assert.equal(invalid.success, false);
+  if (!invalid.success) assert.ok(invalid.subcodes.includes('correction_patch_missing_source_id'));
+});
+
+test('normalizes generic operation aliases and inherits omitted source fields', () => {
+  const source: Recipe = {
+    id: 'source', scanResultId: 'scan', title: 'Test dish', mode: 'Normal', description: '',
+    prepTimeMinutes: 5, cookTimeMinutes: 10, totalTimeMinutes: 15, servings: 2,
+    difficulty: 'Easy', estimatedHomemadeCost: 1, estimatedSavings: 1,
+    substitutions: [], pantryNote: '', confidenceNote: '',
+    ingredients: [{ name: 'base component', quantity: '1 cup' }, { name: 'other component', quantity: '2 tbsp' }],
+    steps: ['Mix base component.'],
+    structuredSteps: [{ stepNumber: 1, title: 'Mix', text: 'Mix base component.', ingredientsUsed: ['base component'], toolsUsed: ['bowl'] } as any],
+  };
+  const parsed = parseCorrectionPatchProviderOutput({
+    ingredientOperations: [
+      { operation: 'swap', sourceIngredientId: ' ingredient-1 ', name: 'replacement component' },
+      { operation: 'adjust_quantity', sourceIngredientId: 'ingredient-2', quantity: '4 tbsp' },
+    ],
+    stepOperations: [{ operation: 'update', sourceStepId: 'step-1', text: 'Mix the reduced-fat base component.' }],
+  }, source);
+  assert.equal(parsed.success, true);
+  if (parsed.success) {
+    assert.equal(parsed.data.ingredientOperations[0]?.operation, 'replace');
+    assert.equal(parsed.data.ingredientOperations[0]?.result.quantity, '1 cup');
+    assert.equal(parsed.data.ingredientOperations[1]?.operation, 'change_quantity');
+    assert.equal(parsed.data.ingredientOperations[1]?.result.name, 'other component');
+    assert.equal(parsed.data.stepOperations[0]?.operation, 'replace');
+    assert.equal(parsed.data.stepOperations[0]?.result.text, 'Mix the reduced-fat base component.');
+  }
+});
+
+test('rejects genuinely unsupported correction operation aliases', () => {
+  const parsed = parseCorrectionPatchProviderOutput({
+    ingredientOperations: [{ operation: 'teleport', sourceIngredientId: 'ingredient-1', result: { name: 'x', quantity: '1 cup' } }],
+  });
+  assert.equal(parsed.success, false);
+  if (!parsed.success) assert.ok(parsed.subcodes.includes('correction_patch_operation_invalid'));
+});
 
 test('step repair never invents generic durations or repeated suffixes', () => {
   for (const text of ['Chop 1 onion.', 'Mix the sauce.', 'Plate the rice.', 'Serve immediately.', 'Garnish with scallions.']) {
@@ -60,8 +143,8 @@ function analysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAnalysis
     candidateScanId: `test-${Math.random().toString(36).slice(2)}`,
     aiSource: 'openrouter_ai',
     dishName: 'Creamy Tomato Pasta',
-    cuisine: 'Restaurant-style',
-    restaurantStyle: 'Restaurant-style',
+    cuisine: 'Homestyle',
+    restaurantStyle: 'Homestyle',
     scanState: 'clear_food',
     broadDishCategory: 'pasta/noodles',
     confidence: 0.82,
@@ -83,7 +166,7 @@ function analysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAnalysis
     homemadeCostEstimate: 6,
     matchScore: 8,
     difficulty: 'Easy',
-    modes: ['Restaurant Copy', 'Budget', 'Healthy'],
+    modes: ['Normal', 'Lighter', 'Healthier', 'More Protein'],
     notes: [],
     detectedComponents: [],
     ...overrides,
@@ -100,6 +183,67 @@ function providerResponse(recipe: unknown): Promise<Response> {
     status: 200,
     headers: { 'content-type': 'application/json' },
   }));
+}
+
+function correctionContext(
+  note = 'Apply a relevant edit',
+  focused = false,
+): CorrectionGenerationContext {
+  const plan = parseCorrectionRequirements(note);
+  const intent = plan.requirements[0];
+  const originalRecipe: Recipe = {
+    id: 'source-revision',
+    scanResultId: 'scan-revision',
+    title: 'Savory Pasta',
+    mode: 'Normal',
+    description: 'A simple savory pasta.',
+    prepTimeMinutes: 10,
+    cookTimeMinutes: 15,
+    totalTimeMinutes: 25,
+    servings: 2,
+    difficulty: 'Easy',
+    estimatedHomemadeCost: 6,
+    estimatedSavings: 10,
+    ingredients: [
+      { name: 'pasta', quantity: '8 oz' },
+      { name: 'tomato sauce', quantity: '1 cup' },
+      { name: 'cream', quantity: '1/2 cup' },
+      { name: 'parmesan', quantity: '1/4 cup' },
+      { name: 'olive oil', quantity: '1 tbsp' },
+    ],
+    steps: Array.from({ length: 6 }, (_, index) => `Complete step ${index + 1}.`),
+    structuredSteps: Array.from({ length: 6 }, (_, index) => ({
+      title: `Step ${index + 1}`,
+      text: `Complete step ${index + 1}.`,
+      ingredientsUsed: ['olive oil'],
+      toolsUsed: ['skillet'],
+    })),
+    substitutions: [],
+    pantryNote: '',
+    confidenceNote: 'Estimated recipe.',
+    equipment: ['skillet'],
+    nutritionEstimate: {
+      calories: 520,
+      proteinGrams: 18,
+      carbohydratesGrams: 70,
+      fatGrams: 19,
+    },
+  };
+  return {
+    note,
+    normalizedNote: normalizeCorrectionText(note),
+    intent,
+    intents: plan.requirements,
+    requirements: getMandatoryCorrectionRequirementsForPlan(plan.requirements, originalRecipe),
+    nutritionRequirements: getNutritionRequirementTargets(originalRecipe, plan.requirements),
+    originalRecipe,
+    ...(focused
+      ? {
+          missedRequirements: ['The requested outcome was not applied.'],
+          previousCandidate: originalRecipe,
+        }
+      : {}),
+  };
 }
 
 function collectZodArrayPaths(schema: unknown, path = ''): string[] {
@@ -270,7 +414,7 @@ test('recipe generation adds quantified water when cooking steps require it', as
     const output = await generateRecipeWithOpenRouter({
       analysis: analysis({ dishName: 'Water Closure Tomato Pasta' }),
       config: testConfig,
-      mode: 'Restaurant Copy',
+      mode: 'Normal',
     });
 
     assert.ok(output.ingredients.includes('8 cups water'));
@@ -314,7 +458,7 @@ test('recipe generation corrects unsafe poultry internal temperatures', async ()
         likelyIngredients: ['olive oil', 'salt'],
       }),
       config: testConfig,
-      mode: 'Restaurant Copy',
+      mode: 'Normal',
     });
     const text = JSON.stringify(output.steps);
 
@@ -427,7 +571,7 @@ test('recipe provider output normalization recovers generic string and object ar
       const output = await generateRecipeWithOpenRouter({
         analysis: analysis(testCase.analysis),
         config: testConfig,
-        mode: 'Restaurant Copy',
+        mode: 'Normal',
       });
 
       assert.equal(calls, 1, testCase.name);
@@ -486,7 +630,7 @@ test('recipe repair rejects a changed response when the final recipe is still in
       generateRecipeWithOpenRouter({
         analysis: analysis({ dishName: 'Unresolved Repair Pasta' }),
         config: testConfig,
-        mode: 'Restaurant Copy',
+        mode: 'Normal',
       }),
       (error: unknown) => error instanceof OpenRouterProviderError &&
         error.failure.reason === 'openrouter_invalid_schema' &&
@@ -503,7 +647,7 @@ test('deterministic repair preserves Shrimp Fettuccine Alfredo ingredients witho
   let calls = 0;
   const initial = {
     ...buildValidRecipe(8),
-    description: 'A creamy inspired-by restaurant pasta with shrimp.',
+    description: 'A creamy homemade restaurant pasta with shrimp.',
   };
   initial.dishName = 'Shrimp Fettuccine Alfredo';
   initial.title = 'Shrimp Fettuccine Alfredo';
@@ -557,7 +701,7 @@ test('deterministic repair preserves Shrimp Fettuccine Alfredo ingredients witho
         },
       }),
       config: testConfig,
-      mode: 'Restaurant Copy',
+      mode: 'Normal',
     });
 
     assert.equal(calls, 1);
@@ -569,6 +713,215 @@ test('deterministic repair preserves Shrimp Fettuccine Alfredo ingredients witho
       );
     }
     assert.deepEqual(validateRecipeStructure(output), []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a correction automatically retries one malformed provider response without surfacing an intermediate failure', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response('<html>temporary upstream response</html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      });
+    }
+    return providerResponse(buildValidRecipe(6));
+  };
+
+  try {
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: 'Savory Pasta' }),
+      config: testConfig,
+      correction: correctionContext('Make it brighter'),
+      mode: 'Normal',
+    });
+    assert.equal(calls, 2);
+    assert.equal(output.title, 'Creamy Tomato Pasta');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('compound correction prompts require every goal and focused repair preserves satisfied goals', async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedPrompt = '';
+  globalThis.fetch = async (_input, init) => {
+    capturedPrompt = typeof init?.body === 'string' ? init.body : '';
+    return providerResponse(buildValidRecipe(6));
+  };
+
+  try {
+    const context = correctionContext('less fat and more protein', true);
+    const partialCandidate: Recipe = {
+      ...context.originalRecipe,
+      ingredients: context.originalRecipe.ingredients.map((ingredient, index) =>
+        index === 4 ? { ...ingredient, quantity: '2 tsp' } : ingredient),
+      steps: context.originalRecipe.steps.map((step, index) =>
+        index === 0 ? `${step} Use the adjusted olive oil quantity.` : step),
+      structuredSteps: context.originalRecipe.structuredSteps?.map((step, index) =>
+        index === 0
+          ? { ...step, text: `${step.text} Use the adjusted olive oil quantity.` }
+          : step),
+      nutritionEstimate: {
+        calories: 495,
+        proteinGrams: 20,
+        carbohydratesGrams: 70,
+        fatGrams: 16,
+      },
+    };
+    context.missedRequirements = [
+      'Requirement 2 (nutrition_goal): Per-serving protein did not make the required meaningful change.',
+    ];
+    context.previousCandidate = partialCandidate;
+    context.previousRequirementEvaluations = evaluateNutritionRequirements(
+      context.originalRecipe,
+      partialCandidate,
+      context.intents,
+    );
+    await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: 'Savory Pasta' }),
+      config: testConfig,
+      correction: context,
+      mode: 'Normal',
+    });
+
+    assert.match(capturedPrompt, /Parsed ordered requirements: 1\. nutrition_goal; 2\. nutrition_goal/);
+    assert.match(capturedPrompt, /ALL parsed requirements below are mandatory/);
+    assert.match(capturedPrompt, /\(fat, less\): original 19 g; corrected value MUST be at most 16\.15 g/);
+    assert.match(capturedPrompt, /\(protein, more\): original 18 g; corrected value MUST be at least 21\.6 g/);
+    assert.match(capturedPrompt, /Requirement 2 \(nutrition_goal\).*protein/s);
+    assert.match(capturedPrompt, /candidate 20 g; required at least 21\.6 g; numeric target FAIL/);
+    assert.match(capturedPrompt, /candidate 16 g; required at most 16\.15 g; numeric target PASS/);
+    assert.match(capturedPrompt, /repair only those misses, preserve every already-satisfied requirement/);
+    assert.match(capturedPrompt, /Use the previous candidate as the repair base/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('focused nutrition repair preserves a passing quantity-only edit with a generic step', async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedPrompt = '';
+  globalThis.fetch = async (_input, init) => {
+    capturedPrompt = typeof init?.body === 'string' ? init.body : '';
+    return providerResponse(buildValidRecipe(6));
+  };
+
+  try {
+    const context = correctionContext('more protein', true);
+    const candidate: Recipe = {
+      ...context.originalRecipe,
+      ingredients: context.originalRecipe.ingredients.map((ingredient, index) =>
+        index === 0 ? { ...ingredient, quantity: '10 oz' } : ingredient),
+      nutritionEstimate: {
+        calories: 540,
+        proteinGrams: 24,
+        carbohydratesGrams: 70,
+        fatGrams: 19,
+      },
+    };
+    context.previousCandidate = candidate;
+    context.previousRequirementEvaluations = evaluateNutritionRequirements(
+      context.originalRecipe,
+      candidate,
+      context.intents,
+    );
+    context.previousIngredientChanges = [{
+      kind: 'quantity_changed',
+      beforeName: 'savory component',
+      afterName: 'savory component',
+      normalizedBeforeName: 'savory component',
+      normalizedAfterName: 'savory component',
+      beforeQuantity: '8 oz',
+      afterQuantity: '10 oz',
+      affectedRequirementIndexes: [1],
+      affectedStepIndexes: [],
+      referencedInSteps: false,
+    }];
+    context.missedRequirements = [
+      'An ingredient or quantity changed for the nutrition goal but is missing from the affected instructions.',
+    ];
+
+    await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: 'Savory Pasta' }),
+      config: testConfig,
+      correction: context,
+      mode: 'Normal',
+    });
+
+    assert.match(capturedPrompt, /candidate 24 g; required at least 21\.6 g; numeric target PASS/);
+    assert.match(capturedPrompt, /ingredient or quantity evidence PASS; step evidence PASS/);
+    assert.match(capturedPrompt, /quantity_changed: savory component -> savory component; step evidence FAIL/);
+    assert.match(capturedPrompt, /repair only those misses, preserve every already-satisfied requirement/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a correction performs at most one automatic retry for malformed or transient upstream failures', async () => {
+  for (const scenario of [
+    {
+      name: 'malformed response',
+      expectedReason: 'openrouter_invalid_json',
+      response: () => new Response('not-json', { status: 200 }),
+    },
+    {
+      name: 'transient HTTP failure',
+      expectedReason: 'openrouter_http_error',
+      response: () => new Response('temporarily unavailable', { status: 503 }),
+    },
+  ]) {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return scenario.response();
+    };
+    try {
+      await assert.rejects(
+        generateRecipeWithOpenRouter({
+          analysis: analysis({ dishName: 'Savory Pasta' }),
+          config: testConfig,
+          correction: correctionContext('Make it brighter'),
+          mode: 'Normal',
+        }),
+        (error: unknown) =>
+          error instanceof OpenRouterProviderError &&
+          error.failure.reason === scenario.expectedReason,
+        scenario.name,
+      );
+      assert.equal(calls, scenario.expectedReason === 'openrouter_invalid_json' ? 3 : 2, scenario.name);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
+
+test('the single focused correction repair does not start another automatic retry loop', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response('not-json', { status: 200 });
+  };
+
+  try {
+    await assert.rejects(
+      generateRecipeWithOpenRouter({
+        analysis: analysis({ dishName: 'Savory Pasta' }),
+        config: testConfig,
+        correction: correctionContext('Make it brighter', true),
+        mode: 'Normal',
+      }),
+      (error: unknown) =>
+        error instanceof OpenRouterProviderError &&
+        error.failure.reason === 'openrouter_invalid_json',
+    );
+    assert.equal(calls, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }

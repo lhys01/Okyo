@@ -53,8 +53,12 @@ export type CreateScanRequest = {
 };
 
 export type CorrectRecipeRequest = {
+  correctionRequestId?: string;
   correctionNote: string;
   dishNameOverride?: string;
+  expectedSourceRecipeId?: string;
+  canonicalRecipeId?: string;
+  scanSessionId?: string;
   mode?: RecipeMode;
 };
 

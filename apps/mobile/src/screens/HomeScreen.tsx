@@ -2,7 +2,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { NavArrowRight, Spark } from 'iconoir-react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -12,13 +12,16 @@ import { RecommendationCard } from '../components/RecommendationCard';
 import { ScanEntryOptions } from '../components/ScanEntryOptions';
 import { colors, typography } from '../components/OkyoUI';
 import { getMealTimeForHour, getRecommendationsForMealTime } from '../data/recommendedRecipes';
-import { getSafeRecipeMode, isRecipeMode, type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
+import {
+  getRecipeIngredientPreview,
+  resolveRecentRecipes,
+  type CanonicalRecipe,
+} from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { radius, shadows, spacing } from '../theme/okyoTheme';
-import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
-import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
-import { imageTraceLog, uiLog } from '../utils/uiDebug';
+import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { uiLog } from '../utils/uiDebug';
 import { useOpenRecommendation } from '../utils/useOpenRecommendation';
 import { preparePickedImage } from '../utils/scanImageProcessing';
 import { startScan } from '../utils/scanController';
@@ -28,54 +31,19 @@ type HomeNavigation = NativeStackNavigationProp<RootStackParamList>;
 
 export function HomeScreen() {
   const navigation = useNavigation<HomeNavigation>();
-  const latestScanSession = useOkyoStore((state) => state.latestScanSession);
-  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
-  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
+  const recipesById = useOkyoStore((state) => state.recipesById);
+  const recentRecipeIds = useOkyoStore((state) => state.recentRecipeIds);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const uploadInFlight = useRef(false);
   const openRecommendation = useOpenRecommendation();
   const mealIdeas = useMemo(() => getRecommendationsForMealTime(getMealTimeForHour(new Date().getHours()), 4), []);
   const greeting = useMemo(() => getCompactGreeting(new Date().getHours()), []);
 
-  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes.filter((recipe) => recipe?.id && recipe?.title) : [];
-  const recentRecipes = useMemo(() => safeSavedRecipes.slice().reverse().slice(0, 3), [safeSavedRecipes]);
-  const hasMoreRecent = safeSavedRecipes.length > 3;
-  const heroRecipe = latestScanRecipe ?? recentRecipes[0] ?? null;
-  const heroImageUri = getRecipeImageUrl(
-    heroRecipe,
-    getRealScanImageUri(latestScanSession?.selectedScanImage) ?? getRealScanImageUri(selectedScanImage),
+  const allRecentRecipes = useMemo(
+    () => resolveRecentRecipes(recipesById, recentRecipeIds),
+    [recentRecipeIds, recipesById],
   );
-  const heroImageStatus = getRecipeImageStatus(heroRecipe);
-
-  const didTraceHero = useRef(false);
-  useEffect(() => {
-    if (didTraceHero.current) return;
-    didTraceHero.current = true;
-    const uri = heroImageUri ?? null;
-    const hasStampedUri = Boolean((heroRecipe as { imageUri?: string } | null)?.imageUri);
-    checkImageFileExists(uri).then((fileExists) => {
-      imageTraceLog('HomeScreen', {
-        screen: 'HomeScreen',
-        recipeId: heroRecipe?.id ?? null,
-        imageSource: hasStampedUri ? 'heroRecipe.imageUri'
-          : latestScanSession?.selectedScanImage ? 'latestScanSession.selectedScanImage'
-          : selectedScanImage ? 'selectedScanImage'
-          : 'none',
-        imageUri: uri,
-        fileExists: uri ? fileExists : 'n/a',
-        usingFallback: !hasStampedUri,
-        fallbackReason: !hasStampedUri && !uri ? 'no_hero_recipe_or_scan_image' : null,
-        storageLocation: getStorageLocation(uri),
-      });
-    });
-  }, []);
-
-  const openScan = () => {
-    uiLog('HomeScreen', 'scan_cta');
-    void openCameraImmediately();
-  };
+  const recentRecipes = allRecentRecipes.slice(0, 3);
 
   const openPhotosImmediately = async () => {
     if (uploadInFlight.current) return;
@@ -137,28 +105,19 @@ export function HomeScreen() {
     }
   };
 
-  const openPlan = () => {
-    uiLog('HomeScreen', 'open_plan');
-    navigation.navigate('MainTabs', { screen: 'LibraryScreen' });
-  };
-
   const openDiscover = () => {
     uiLog('HomeScreen', 'open_discover');
     navigation.navigate('MainTabs', { screen: 'RestaurantPacksScreen' });
   };
 
-  const openRecipe = (recipe: Recipe) => {
-    const mode = getSafeRecipeMode(recipe.mode);
-    writeSavedRecipeContext({
-      recipe,
-      reason: 'open_home_recipe',
-      source: 'HomeScreen.openRecipe',
-    });
-    if (isRecipeMode(recipe.mode)) {
-      setSelectedMode(recipe.mode);
-    }
+  const openRecipe = (recipe: CanonicalRecipe) => {
+    const mode = recipe.selectedMode;
+    setSelectedMode(mode);
     uiLog('HomeScreen', 'open_recent_recipe', { recipeId: recipe.id });
-    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode } });
+    navigation.navigate('MainTabs', {
+      screen: 'RecipeDetailScreen',
+      params: { mode, recipeId: recipe.id },
+    });
   };
 
   return (
@@ -174,43 +133,64 @@ export function HomeScreen() {
           onDescribeMeal={() => navigation.navigate('DescribeMealScreen')}
         />
 
-        {heroRecipe || heroImageUri ? (
-          <Pressable
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.heroCard, pressed ? styles.pressed : null]}
-            onPress={heroRecipe ? () => openRecipe(heroRecipe) : openScan}
-          >
-            <FoodImage
-              fallbackLabel="Image coming soon"
-              imageStatus={heroImageStatus}
-              imageUrl={heroImageUri}
-              showFallbackLabel
-              style={styles.heroImage}
-            />
-            <View style={styles.heroCopy}>
-              <Text style={styles.heroEyebrow}>Recent recipe</Text>
-              <Text numberOfLines={2} style={styles.heroTitle}>
-                {heroRecipe?.title ?? 'Latest scan'}
-              </Text>
-              <Text style={styles.heroBody}>
-                {heroRecipe ? `${heroRecipe.totalTimeMinutes ?? heroRecipe.prepTimeMinutes + heroRecipe.cookTimeMinutes} min · ${heroRecipe.difficulty}` : 'Recipe'}
-              </Text>
+        {recentRecipes.length > 0 ? (
+          <View style={styles.recentSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Recent Recipes</Text>
             </View>
-          </Pressable>
+            <View style={styles.timeline}>
+              {recentRecipes.map((recipe, index) => (
+                <Pressable
+                  key={recipe.id}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.timelineItem, pressed ? styles.pressed : null]}
+                  onPress={() => openRecipe(recipe)}
+                >
+                  <View style={styles.timelineMarker}>
+                    <Text style={styles.timelineNumber}>{index + 1}</Text>
+                  </View>
+                  <FoodImage
+                    imageStatus={getRecipeImageStatus(recipe)}
+                    imageUrl={getRecipeImageUrl(recipe)}
+                    style={styles.timelineImage}
+                  />
+                  <View style={styles.timelineCopy}>
+                    <Text numberOfLines={2} style={styles.timelineTitle}>{recipe.title}</Text>
+                    <Text numberOfLines={2} style={styles.timelineIngredients}>
+                      {getRecipeIngredientPreview(recipe)}
+                    </Text>
+                    <Text style={styles.timelineMeta}>
+                      {recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes} min
+                    </Text>
+                  </View>
+                  <NavArrowRight color={colors.muted} height={20} strokeWidth={2} width={20} />
+                </Pressable>
+              ))}
+            </View>
+          </View>
         ) : null}
 
         {mealIdeas.length > 0 ? (
           <View style={styles.ideasSection}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Today's ideas</Text>
+              <Text style={styles.sectionTitle}>Today’s Ideas</Text>
               <Pressable accessibilityRole="button" hitSlop={8} style={styles.sectionLink} onPress={openDiscover}>
                 <Text style={styles.sectionLinkText}>Explore</Text>
                 <NavArrowRight color={colors.charcoal} height={18} strokeWidth={2} width={18} />
               </Pressable>
             </View>
             <View style={styles.ideasGrid}>
-              {mealIdeas.map((recipe) => (
-                <RecommendationCard key={recipe.id} recipe={recipe} onPress={() => openRecommendation(recipe)} />
+              {[mealIdeas.slice(0, 2), mealIdeas.slice(2, 4)].map((row, rowIndex) => (
+                <View key={`idea-row-${rowIndex}`} style={styles.ideasRow}>
+                  {row.map((recipe) => (
+                    <RecommendationCard
+                      key={recipe.id}
+                      compact
+                      recipe={recipe}
+                      onPress={() => openRecommendation(recipe)}
+                    />
+                  ))}
+                </View>
               ))}
             </View>
             <Pressable
@@ -229,56 +209,6 @@ export function HomeScreen() {
             </Pressable>
           </View>
         ) : null}
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent meals</Text>
-          {hasMoreRecent ? (
-            <Pressable accessibilityRole="button" hitSlop={8} style={styles.sectionLink} onPress={openPlan}>
-              <Text style={styles.sectionLinkText}>View all</Text>
-              <NavArrowRight color={colors.charcoal} height={18} strokeWidth={2} width={18} />
-            </Pressable>
-          ) : null}
-        </View>
-
-        {recentRecipes.length > 0 ? (
-          <View style={styles.timeline}>
-            {recentRecipes.map((recipe, index) => (
-              <Pressable
-                key={recipe.id}
-                accessibilityRole="button"
-                style={({ pressed }) => [styles.timelineItem, pressed ? styles.pressed : null]}
-                onPress={() => openRecipe(recipe)}
-              >
-                <View style={styles.timelineMarker}>
-                  <Text style={styles.timelineNumber}>{index + 1}</Text>
-                </View>
-                <FoodImage
-                  imageStatus={getRecipeImageStatus(recipe)}
-                  imageUrl={getRecipeImageUrl(recipe)}
-                  style={styles.timelineImage}
-                />
-                <View style={styles.timelineCopy}>
-                  <Text numberOfLines={2} style={styles.timelineTitle}>{recipe.title}</Text>
-                  <Text style={styles.timelineMeta}>{recipe.mode}</Text>
-                </View>
-                <NavArrowRight color={colors.muted} height={20} strokeWidth={2} width={20} />
-              </Pressable>
-            ))}
-          </View>
-        ) : (
-          <Pressable
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.emptyRecent, pressed ? styles.pressed : null]}
-            onPress={openScan}
-          >
-            <KikoMascot pose="wave" size={72} style={styles.emptyMascot} />
-            <View style={styles.emptyRecentCopy}>
-              <Spark color={colors.coral} height={22} strokeWidth={2} width={22} />
-              <Text style={styles.emptyRecentTitle}>No recent meals yet.</Text>
-              <Text style={styles.emptyRecentBody}>Scan once and this becomes your cooking timeline.</Text>
-            </View>
-          </Pressable>
-        )}
 
       </ScrollView>
     </SafeAreaView>
@@ -359,50 +289,21 @@ const styles = StyleSheet.create({
     lineHeight: 32,
     maxWidth: 330,
   },
-  heroCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radius.hero,
-    marginTop: 26,
-    overflow: 'hidden',
-    ...shadows.card,
-  },
-  heroImage: {
-    aspectRatio: 1.15,
-    backgroundColor: colors.cream,
-    width: '100%',
-  },
-  heroCopy: {
-    padding: 16,
-  },
-  heroEyebrow: {
-    color: colors.coral,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  heroTitle: {
-    ...typography.title,
-  },
-  heroBody: {
-    color: colors.muted,
-    fontFamily: typography.caption.fontFamily,
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 5,
+  recentSection: {
+    marginTop: spacing.section,
   },
   ideasSection: {
     marginTop: spacing.section,
   },
   ideasGrid: {
-    columnGap: 14,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    gap: 14,
     marginTop: 14,
-    rowGap: 16,
+  },
+  ideasRow: {
+    flexDirection: 'row',
+    gap: 12,
+    minWidth: 0,
+    width: '100%',
   },
   discoverPromptCard: {
     alignItems: 'center',
@@ -457,10 +358,16 @@ const styles = StyleSheet.create({
   },
   timelineItem: {
     alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    borderWidth: 1,
     flexDirection: 'row',
     gap: 14,
-    minHeight: 82,
+    minHeight: 104,
+    overflow: 'hidden',
     padding: 16,
+    ...shadows.card,
   },
   timelineMarker: {
     alignItems: 'center',
@@ -495,26 +402,11 @@ const styles = StyleSheet.create({
     ...typography.caption,
     marginTop: 4,
   },
-  emptyRecent: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 14,
-    padding: 20,
-  },
-  emptyMascot: {
-    marginRight: 8,
-  },
-  emptyRecentCopy: {
-    flex: 1,
-    gap: 7,
-    minWidth: 0,
-  },
-  emptyRecentTitle: {
-    ...typography.heading,
-  },
-  emptyRecentBody: {
-    ...typography.body,
+  timelineIngredients: {
+    color: colors.body,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 4,
   },
   pressed: {
     opacity: 0.82,

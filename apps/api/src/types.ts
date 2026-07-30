@@ -1,4 +1,4 @@
-export type RecipeMode = 'Restaurant Copy' | 'Budget' | 'Healthy';
+export type RecipeMode = 'Normal' | 'Lighter' | 'Healthier' | 'More Protein';
 
 export type DetectedComponent = {
   name: string;
@@ -153,7 +153,6 @@ export type Recipe = {
   confidenceNote: string;
   mainIngredientsSummary?: string;
   equipment?: string[];
-  bestFor?: string;
   avoidMistake?: string;
   mistakeWarning?: string;
   storageAndReheating?: string;

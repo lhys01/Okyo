@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { KikoMascot } from '../components/KikoMascot';
 import { colors, typography } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
+import { resolveCanonicalRecipes } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { radius, shadows, spacing } from '../theme/okyoTheme';
 import { uiLog } from '../utils/uiDebug';
@@ -24,7 +25,8 @@ const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 
 export function ProfileScreen() {
   const navigation = useNavigation<ProfileNavigation>();
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const recipesById = useOkyoStore((state) => state.recipesById);
+  const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
   const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
@@ -32,7 +34,7 @@ export function ProfileScreen() {
   const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const isPremium = useOkyoStore((state) => state.isPremium);
 
-  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
+  const safeSavedRecipes = resolveCanonicalRecipes(recipesById, savedRecipeIds);
   const safeChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeXp = getFiniteNumber(xp);
   const level = Math.floor(safeXp / 100) + 1;

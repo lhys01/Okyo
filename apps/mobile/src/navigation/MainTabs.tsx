@@ -2,15 +2,16 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { BlurView } from 'expo-blur';
 import {
-  Book,
   Camera,
   Cart,
   Compass,
+  Heart,
+  HeartSolid,
   HomeSimple,
   Settings,
   User,
 } from 'iconoir-react-native';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, fontFamilies } from '../components/OkyoUI';
@@ -21,6 +22,7 @@ import { ProfileScreen } from '../screens/ProfileScreen';
 import { RecipeDetailScreen, RecipeStepsScreen } from '../screens/RecipeDetailScreen';
 import { RestaurantPacksScreen } from '../screens/RestaurantPacksScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
+import { useOkyoStore } from '../state/useOkyoStore';
 import type { MainTabParamList } from './types';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -30,7 +32,7 @@ type MainTabRouteName = keyof MainTabParamList;
 const tabLabels: Record<MainTabRouteName, string> = {
   HomeScreen: 'Home',
   RestaurantPacksScreen: 'Discover',
-  LibraryScreen: 'Saved',
+  LibraryScreen: 'Liked',
   ProfileScreen: 'Profile',
   SettingsScreen: 'Settings',
   RecipeDetailScreen: 'Recipe',
@@ -45,6 +47,14 @@ const visibleTabOrder: MainTabRouteName[] = [
   'SettingsScreen',
 ];
 
+export function shouldHideMainTabBar(route: { name: string; params?: unknown } | undefined) {
+  if (route?.name !== 'RecipeStepsScreen') {
+    return false;
+  }
+
+  return (route.params as { completion?: unknown } | undefined)?.completion !== true;
+}
+
 function TabIcon({ color, focused, routeName }: { color: string; focused: boolean; routeName: MainTabRouteName }) {
   const iconSize = focused ? 27 : 26;
   const strokeWidth = focused ? 2.2 : 1.9;
@@ -57,7 +67,9 @@ function TabIcon({ color, focused, routeName }: { color: string; focused: boolea
     case 'GroceryListScreen':
       return <Cart color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'LibraryScreen':
-      return <Book color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
+      return focused
+        ? <HeartSolid color={color} height={iconSize} width={iconSize} />
+        : <Heart color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'ProfileScreen':
       return <User color={color} height={iconSize} strokeWidth={strokeWidth} width={iconSize} />;
     case 'SettingsScreen':
@@ -75,7 +87,7 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
   ) as Record<MainTabRouteName, (typeof state.routes)[number]>;
   const focusedRoute = state.routes[state.index];
 
-  if (focusedRoute?.name === 'RecipeStepsScreen') {
+  if (shouldHideMainTabBar(focusedRoute)) {
     return null;
   }
 
@@ -95,7 +107,7 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
 
     if (!isFocused && !event.defaultPrevented) {
       if (routeName === 'GroceryListScreen') {
-        navigation.navigate('GroceryListScreen', { mode: undefined });
+        navigation.navigate('GroceryListScreen', { mode: undefined, recipeId: undefined });
         return;
       }
 
@@ -165,32 +177,46 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
 }
 
 export function MainTabs() {
+  const hasHydrated = useOkyoStore((state) => state.hasHydrated);
+
+  if (!hasHydrated) {
+    return (
+      <View accessibilityLabel="Loading Okyo" accessibilityRole="progressbar" style={styles.loadingState}>
+        <ActivityIndicator color={colors.coral} size="large" />
+        <Text style={styles.loadingText}>Loading your recipes…</Text>
+      </View>
+    );
+  }
+
   return (
     <Tab.Navigator
+      detachInactiveScreens={false}
       initialRouteName="HomeScreen"
       tabBar={(props) => {
         const focusedRoute = props.state.routes[props.state.index];
 
-        if (focusedRoute.name === 'RecipeStepsScreen') {
+        if (shouldHideMainTabBar(focusedRoute)) {
           return null;
         }
 
         return <FloatingTabBar {...props} />;
       }}
       screenOptions={{
-        animation: 'shift',
+        animation: 'none',
+        freezeOnBlur: false,
         headerShown: false,
+        lazy: false,
         sceneStyle: { backgroundColor: colors.background },
-        tabBarAllowFontScaling: false,
+        tabBarAllowFontScaling: true,
       }}
     >
       <Tab.Screen name="HomeScreen" component={HomeScreen} options={{ title: 'Home' }} />
       <Tab.Screen name="RestaurantPacksScreen" component={RestaurantPacksScreen} options={{ title: 'Discover' }} />
-      <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Saved' }} />
+      <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Liked' }} />
       <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />
       <Tab.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
       <Tab.Screen name="RecipeDetailScreen" component={RecipeDetailScreen} options={{ title: 'Recipe' }} />
-      <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps', tabBarStyle: { display: 'none' } }} />
+      <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps' }} />
       <Tab.Screen name="GroceryListScreen" component={GroceryListScreen} options={{ title: 'Grocery' }} />
     </Tab.Navigator>
   );
@@ -199,6 +225,18 @@ export function MainTabs() {
 const inactiveGray = '#a39b8e';
 
 const styles = StyleSheet.create({
+  loadingState: {
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    flex: 1,
+    gap: 14,
+    justifyContent: 'center',
+  },
+  loadingText: {
+    color: colors.muted,
+    fontFamily: fontFamilies.medium,
+    fontSize: 15,
+  },
   tabBarRoot: {
     backgroundColor: 'transparent',
     overflow: 'visible',

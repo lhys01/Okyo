@@ -67,7 +67,7 @@ export function PaywallScreen() {
 
         <View style={styles.featureList}>
           <FeatureRow>Scan every craving, not just the first few.</FeatureRow>
-          <FeatureRow>Save unlimited restaurant-style recipes and grocery lists.</FeatureRow>
+          <FeatureRow>Like unlimited recipes and build grocery lists.</FeatureRow>
           <FeatureRow>Keep savings, XP, and challenges moving all week.</FeatureRow>
         </View>
 

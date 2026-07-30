@@ -15,6 +15,7 @@ import {
   type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
+import { resolveCanonicalRecipe } from '../state/canonicalRecipes';
 import { type ChallengeRating, useOkyoStore } from '../state/useOkyoStore';
 
 type DupeChallengeNavigation = NativeStackNavigationProp<RootStackParamList, 'DupeChallengeScreen'>;
@@ -38,7 +39,7 @@ function getBadgeForChallenge(recipeTitle: string, mode: RecipeMode, rating: Cha
   if (recipeTitle.toLowerCase().includes('rigatoni') || recipeTitle.toLowerCase().includes('pasta')) {
     return 'pasta-hacker';
   }
-  if (mode === 'Healthy') {
+  if (mode === 'Healthier') {
     return 'healthy-swap-pro';
   }
 
@@ -48,6 +49,7 @@ function getBadgeForChallenge(recipeTitle: string, mode: RecipeMode, rating: Cha
 export function DupeChallengeScreen() {
   const navigation = useNavigation<DupeChallengeNavigation>();
   const route = useRoute<DupeChallengeRoute>();
+  const routeRecipeId = route.params?.recipeId;
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
   const rawMode = route.params?.mode ?? storeSelectedMode;
   const selectedMode = getSafeRecipeMode(rawMode);
@@ -58,10 +60,11 @@ export function DupeChallengeScreen() {
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
+  const recipesById = useOkyoStore((state) => state.recipesById);
   const [isCooked, setIsCooked] = useState(false);
   const startedXpAdded = useRef(false);
   const completionLocked = useRef(false);
-  const recipe = getSafeRecipeForMode(selectedMode);
+  const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId) ?? getSafeRecipeForMode(selectedMode);
 
   useEffect(() => {
     setSelectedMode(selectedMode);
@@ -146,7 +149,7 @@ export function DupeChallengeScreen() {
       {!isRecipeMode(rawMode) ? (
         <View style={styles.fallbackNote}>
           <Text style={styles.fallbackNoteText}>
-            We could not find that challenge mode, so Okyo is using Restaurant Copy.
+            We could not find that challenge mode, so Okyo is using Normal.
           </Text>
         </View>
       ) : null}
@@ -194,7 +197,13 @@ export function DupeChallengeScreen() {
         </View>
       )}
       <View style={styles.returnAction}>
-        <PrimaryButton onPress={() => navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: selectedMode } })}>
+        <PrimaryButton onPress={() => routeRecipeId
+          ? navigation.navigate('MainTabs', {
+              screen: 'RecipeDetailScreen',
+              params: { mode: selectedMode, recipeId: routeRecipeId },
+            })
+          : navigation.goBack()}
+        >
           Back to Recipe
         </PrimaryButton>
       </View>

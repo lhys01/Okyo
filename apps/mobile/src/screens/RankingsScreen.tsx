@@ -8,6 +8,7 @@ import { uiLog } from '../utils/uiDebug';
 import { BadgePill, PrimaryButton, ScreenContainer, colors, sharedStyles } from '../components/OkyoUI';
 import { mockBadges, type Badge, type LeaderboardEntry } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
+import { resolveCanonicalRecipes } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
 
 type RankingsNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -16,8 +17,8 @@ const leaderboardSections = [
   'Biggest Saver This Week',
   'Best Match Score',
   'Most Dupes Completed',
-  'Best Budget Dupe',
-  'Best Healthy Swap',
+  'Best Savings Recipe',
+  'Wellness Challenge',
   'Rising Cook',
 ];
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
@@ -45,8 +46,8 @@ function getBadgeHint(badge: Badge, context: {
   completedChallengeCount: number;
   totalMoneySaved: number;
   bestMatchScore: number;
-  hasBudgetSave: boolean;
-  hasHealthyChallenge: boolean;
+  hasHighSavings: boolean;
+  hasCompletedChallenge: boolean;
   hasPastaRecipe: boolean;
 }) {
   switch (badge.id) {
@@ -57,11 +58,11 @@ function getBadgeHint(badge: Badge, context: {
     case 'nailed-it':
       return context.bestMatchScore >= 9 ? 'Ready to unlock' : 'Earn a 9+/10 match';
     case 'budget-beast':
-      return context.hasBudgetSave ? 'Ready to unlock' : 'Save $25+ on one dupe';
+      return context.hasHighSavings ? 'Ready to unlock' : 'Save $25+ on one recipe';
     case 'pasta-hacker':
       return context.hasPastaRecipe ? 'Ready to unlock' : 'Save or cook a pasta dupe';
     case 'healthy-swap-pro':
-      return context.hasHealthyChallenge ? 'Ready to unlock' : 'Complete a Healthy challenge';
+      return context.hasCompletedChallenge ? 'Ready to unlock' : 'Complete a cooking challenge';
     case 'grocery-exporter':
       return 'Copy or share a grocery list';
     case '100-saved-club':
@@ -85,11 +86,11 @@ function getFallbackEntries(section: string): LeaderboardEntry[] {
       { id: 'mock-dupes-1', rank: 1, displayName: 'Riley', category: section, value: '7 dupes', xp: 410 },
       { id: 'mock-dupes-2', rank: 2, displayName: 'Noah', category: section, value: '5 dupes', xp: 305 },
     ],
-    'Best Budget Dupe': [
+    'Best Savings Recipe': [
       { id: 'mock-budget-1', rank: 1, displayName: 'Priya', category: section, value: '$34 saved', xp: 300 },
       { id: 'mock-budget-2', rank: 2, displayName: 'Kai', category: section, value: '$28 saved', xp: 260 },
     ],
-    'Best Healthy Swap': [
+    'Wellness Challenge': [
       { id: 'mock-healthy-1', rank: 1, displayName: 'Lena', category: section, value: '8.8/10 healthy', xp: 285 },
       { id: 'mock-healthy-2', rank: 2, displayName: 'Theo', category: section, value: '8.4/10 healthy', xp: 245 },
     ],
@@ -109,14 +110,15 @@ export function RankingsScreen() {
   const recentBadgeUnlock = useOkyoStore((state) => state.recentBadgeUnlock);
   const clearRecentBadgeUnlock = useOkyoStore((state) => state.clearRecentBadgeUnlock);
   const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
+  const recipesById = useOkyoStore((state) => state.recipesById);
+  const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
   const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
   const didTrackView = useRef(false);
   const safeXp = typeof xp === 'number' && Number.isFinite(xp) ? xp : 0;
   const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
   const safeLeaderboardEntries = Array.isArray(leaderboardEntries) ? leaderboardEntries : [];
-  const safeSavedRecipes = Array.isArray(savedRecipes) ? savedRecipes : [];
+  const safeSavedRecipes = resolveCanonicalRecipes(recipesById, savedRecipeIds);
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeTotalMoneySaved = typeof totalMoneySaved === 'number' && Number.isFinite(totalMoneySaved)
     ? totalMoneySaved
@@ -136,8 +138,8 @@ export function RankingsScreen() {
   );
   const savedRecipeCount = safeSavedRecipes.length;
   const completedChallengeCount = safeCompletedChallenges.length;
-  const hasBudgetSave = safeSavedRecipes.some((recipe) => recipe?.mode === 'Budget' && recipe?.estimatedSavings >= 25);
-  const hasHealthyChallenge = safeCompletedChallenges.some((challenge) => challenge?.mode === 'Healthy');
+  const hasHighSavings = safeSavedRecipes.some((recipe) => recipe?.estimatedSavings >= 25);
+  const hasCompletedChallenge = safeCompletedChallenges.length > 0;
   const hasPastaRecipe = [
     ...safeSavedRecipes.map((recipe) => recipe?.title ?? ''),
     ...safeCompletedChallenges.map((challenge) => challenge?.recipeTitle ?? ''),
@@ -149,8 +151,8 @@ export function RankingsScreen() {
     completedChallengeCount,
     totalMoneySaved: safeTotalMoneySaved,
     bestMatchScore,
-    hasBudgetSave,
-    hasHealthyChallenge,
+    hasHighSavings,
+    hasCompletedChallenge,
     hasPastaRecipe,
   };
 
@@ -176,10 +178,10 @@ export function RankingsScreen() {
         return bestMatchScore > 0 ? `${bestMatchScore.toFixed(1)}/10 match` : 'No score yet';
       case 'Most Dupes Completed':
         return `${savedRecipeCount + completedChallengeCount} dupes`;
-      case 'Best Budget Dupe':
-        return hasBudgetSave ? `${formatCurrency(bestSavings)} saved` : 'Try Budget mode';
-      case 'Best Healthy Swap':
-        return hasHealthyChallenge ? `${bestMatchScore.toFixed(1)}/10 healthy` : 'Try Healthy mode';
+      case 'Best Savings Recipe':
+        return hasHighSavings ? `${formatCurrency(bestSavings)} saved` : 'Save a recipe';
+      case 'Wellness Challenge':
+        return hasCompletedChallenge ? `${bestMatchScore.toFixed(1)}/10 match` : 'Complete a challenge';
       case 'Rising Cook':
       default:
         return `+${safeXp} XP`;

@@ -6,13 +6,15 @@ import type { RecipeMode } from '../mocks';
 
 export function getModeLabel(mode: RecipeMode): string {
   switch (mode) {
-    case 'Budget':
-      return 'Budget';
-    case 'Healthy':
+    case 'Lighter':
       return 'Lighter';
-    case 'Restaurant Copy':
+    case 'Healthier':
+      return 'Healthier';
+    case 'More Protein':
+      return 'More Protein';
+    case 'Normal':
     default:
-      return 'Restaurant Style';
+      return 'Normal';
   }
 }
 
@@ -20,11 +22,13 @@ export type ModeChipPalette = { bg: string; text: string };
 
 export function getModeChipPalette(mode: RecipeMode): ModeChipPalette {
   switch (mode) {
-    case 'Budget':
+    case 'Lighter':
       return { bg: '#fff1df', text: '#9a5a17' };
-    case 'Healthy':
+    case 'Healthier':
       return { bg: colors.greenSoft, text: colors.green };
-    case 'Restaurant Copy':
+    case 'More Protein':
+      return { bg: colors.coralSoft, text: colors.coralDark };
+    case 'Normal':
     default:
       return { bg: colors.coralSoft, text: colors.coralDark };
   }

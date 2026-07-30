@@ -19,11 +19,18 @@ export type RootStackParamList = {
   WelcomeScreen: undefined;
   GoalScreen: undefined;
   AnalysisLoadingScreen: { scanSessionId?: string } | undefined;
-  ResultSummaryScreen: { scanSessionId?: string } | undefined;
+  ResultSummaryScreen: { recipeId?: string; scanSessionId?: string } | undefined;
   ShareCardPreviewScreen:
-    | { cardType?: ShareCardType; mode?: RecipeMode; packId?: string; dishId?: string; scanContext?: ShareScanContext }
+    | {
+        cardType?: ShareCardType;
+        mode?: RecipeMode;
+        recipeId?: string;
+        packId?: string;
+        dishId?: string;
+        scanContext?: ShareScanContext;
+      }
     | undefined;
-  DupeChallengeScreen: { mode?: RecipeMode } | undefined;
+  DupeChallengeScreen: { mode?: RecipeMode; recipeId?: string } | undefined;
   ChallengeCompleteScreen: { challengeId?: string } | undefined;
   RestaurantPackDetailScreen: { packId?: string } | undefined;
   PaywallScreen: undefined;
@@ -42,7 +49,7 @@ export type MainTabParamList = {
   LibraryScreen: undefined;
   ProfileScreen: undefined;
   SettingsScreen: undefined;
-  RecipeDetailScreen: { mode?: RecipeMode } | undefined;
-  RecipeStepsScreen: { mode?: RecipeMode } | undefined;
-  GroceryListScreen: { mode?: RecipeMode } | undefined;
+  RecipeDetailScreen: { recipeId?: string; mode?: RecipeMode } | undefined;
+  RecipeStepsScreen: { completion?: boolean; recipeId?: string; mode?: RecipeMode } | undefined;
+  GroceryListScreen: { recipeId?: string; mode?: RecipeMode } | undefined;
 };

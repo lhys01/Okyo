@@ -101,6 +101,7 @@ export function WelcomeScreen() {
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const beginLatestScanSession = useOkyoStore((state) => state.beginLatestScanSession);
   const writeLatestScanSession = useOkyoStore((state) => state.writeLatestScanSession);
+  const commitSuccessfulScanSession = useOkyoStore((state) => state.commitSuccessfulScanSession);
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const setWeeklyGoal = useOkyoStore((state) => state.setWeeklyGoal);
@@ -464,6 +465,7 @@ export function WelcomeScreen() {
     const responseImage = getPreviewImageMetadata(getOnboardingResponseImage(selectedImage, result));
     const aiDebugMetadata = getAiDebugMetadata(result);
     const canRevealResult = Boolean(
+      status === 'success' &&
       result.scan &&
       selectedRecipe &&
       hasCompleteOnboardingRecipe(selectedRecipe) &&
@@ -478,9 +480,9 @@ export function WelcomeScreen() {
     if (canRevealResult && result.scan && selectedRecipe) {
       const safeMode = getSafeRecipeMode(selectedRecipe.mode);
       setSelectedMode(safeMode);
-      writeLatestScanSession({
+      const committed = commitSuccessfulScanSession({
         scanSessionId,
-        latestScanStatus: status === 'partial' ? 'partial' : 'success',
+        latestScanStatus: 'success',
         latestScanFailure: null,
         latestScanResult: result.scan,
         latestScanRecipe: selectedRecipe,
@@ -490,6 +492,9 @@ export function WelcomeScreen() {
         source,
         reason: 'WelcomeScreen.api_success',
       });
+      if (!committed) {
+        return false;
+      }
       markFirstOnboardingScanCompleted();
       markFirstOnboardingResultSeen();
       loadingScanSessionIdRef.current = null;

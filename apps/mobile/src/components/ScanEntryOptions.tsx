@@ -14,40 +14,50 @@ type ScanEntryOptionsProps = {
 export function ScanEntryOptions({ compact = false, onTakePhoto, onUpload, onDescribeMeal }: ScanEntryOptionsProps) {
   return (
     <View style={[styles.options, compact ? styles.optionsCompact : null]}>
-      <ScanOption
-        icon={<CameraSolid color="#fffdf8" height={25} width={25} />}
-        label="Take photo"
-        onPress={onTakePhoto}
-        primary
-        compact={compact}
-      />
+      <View style={styles.firstRow}>
+        <ScanOption
+          icon={<CameraSolid color="#fffdf8" height={24} width={24} />}
+          label="Take photo"
+          onPress={onTakePhoto}
+          primary
+          compact={compact}
+          inRow
+        />
+        <ScanOption
+          icon={<Upload color={colors.coral} height={24} strokeWidth={2.3} width={24} />}
+          label="Upload photo"
+          onPress={onUpload}
+          compact={compact}
+          inRow
+        />
+      </View>
       {onDescribeMeal ? (
         <ScanOption
-          icon={<Sparks color={colors.coral} height={21} strokeWidth={2.2} width={21} />}
+          icon={<Sparks color={colors.coral} height={24} strokeWidth={2.2} width={24} />}
           label="Describe a meal"
           onPress={onDescribeMeal}
-          secondaryFullWidth
+          compact={compact}
         />
       ) : null}
-      <ScanOption
-        icon={<Upload color={colors.coral} height={24} strokeWidth={2.3} width={24} />}
-        label="Upload photo"
-        onPress={onUpload}
-        compact={compact}
-      />
     </View>
   );
 }
 
-function ScanOption({ compact = false, icon, label, onPress, primary = false, secondaryFullWidth = false }: { compact?: boolean; icon: ReactNode; label: string; onPress: () => void; primary?: boolean; secondaryFullWidth?: boolean }) {
+function ScanOption({ compact = false, icon, inRow = false, label, onPress, primary = false }: { compact?: boolean; icon: ReactNode; inRow?: boolean; label: string; onPress: () => void; primary?: boolean }) {
   return (
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.button, compact ? styles.buttonCompact : null, secondaryFullWidth ? styles.secondaryFullWidth : null, primary ? styles.primary : styles.secondary, pressed ? styles.pressed : null]}
+      style={({ pressed }) => [
+        styles.button,
+        inRow ? styles.rowButton : null,
+        compact ? styles.buttonCompact : null,
+        primary ? styles.primary : styles.secondary,
+        pressed ? styles.pressed : null,
+      ]}
     >
       <View style={styles.icon}>{icon}</View>
-      <Text adjustsFontSizeToFit minimumFontScale={0.84} numberOfLines={1} style={[styles.text, primary ? styles.primaryText : styles.secondaryText]}>
+      <Text maxFontSizeMultiplier={1.5} numberOfLines={2} style={[styles.text, primary ? styles.primaryText : styles.secondaryText]}>
         {label}
       </Text>
     </Pressable>
@@ -60,26 +70,31 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   optionsCompact: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
     marginTop: 14,
+  },
+  firstRow: {
+    alignItems: 'stretch',
+    flexDirection: 'row',
+    gap: 8,
   },
   button: {
     alignItems: 'center',
     borderRadius: 999,
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
     justifyContent: 'center',
     minHeight: 58,
     minWidth: 0,
-    paddingHorizontal: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  rowButton: {
+    flex: 1,
   },
   buttonCompact: {
-    flex: 1,
-    gap: 6,
-    minHeight: 48,
-    paddingHorizontal: 8,
+    minHeight: 54,
+    paddingHorizontal: 10,
   },
   primary: {
     backgroundColor: colors.coral,
@@ -92,10 +107,6 @@ const styles = StyleSheet.create({
   secondary: {
     backgroundColor: colors.cream,
   },
-  secondaryFullWidth: {
-    flexBasis: '100%',
-    marginTop: 2,
-  },
   pressed: {
     opacity: 0.82,
   },
@@ -107,8 +118,10 @@ const styles = StyleSheet.create({
   },
   text: {
     flexShrink: 1,
+    flexWrap: 'wrap',
     fontSize: 16,
     fontWeight: '700',
+    lineHeight: 20,
     minWidth: 0,
     textAlign: 'center',
   },

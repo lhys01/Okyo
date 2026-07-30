@@ -22,20 +22,22 @@ import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import {
-  defaultScanResult,
-  getSafeRecipeForMode,
   getSafeRecipeMode,
   isRecipeMode,
   type GroceryCategory,
   type GroceryListItem,
   type Recipe,
   type RecipeIngredient,
-  type RecipeMode,
 } from '../mocks';
 import type { MainTabParamList } from '../navigation/types';
+import {
+  resolveCanonicalRecipe,
+  resolveCanonicalRecipes,
+  type CanonicalRecipe,
+} from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getModeLabel } from '../utils/modeDisplay';
-import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
 
 type GroceryListRoute = RouteProp<MainTabParamList, 'GroceryListScreen'>;
@@ -70,24 +72,21 @@ const pantryNames = ['tomato paste', 'crushed tomato', 'canned tomato', 'biscuit
 export function GroceryListScreen() {
   const navigation = useNavigation<GroceryListNavigation>();
   const route = useRoute<GroceryListRoute>();
+  const routeRecipeId = route.params?.recipeId;
   const routeMode = route.params?.mode;
-  const hasRecipeContext = Boolean(routeMode);
-  const rawMode = routeMode ?? defaultScanResult.modes[0];
-  const selectedMode = getSafeRecipeMode(rawMode);
-  const latestScanRecipe = useOkyoStore((state) => state.latestScanRecipe);
-  const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const writeSavedRecipeContext = useOkyoStore((state) => state.writeSavedRecipeContext);
+  const hasRecipeContext = Boolean(routeRecipeId);
+  const recipesById = useOkyoStore((state) => state.recipesById);
+  const groceryRecipeIds = useOkyoStore((state) => state.groceryRecipeIds);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
-  const isDemoScan = isExplicitDemoScan(selectedScanImage);
-  const recipe = getGroceryRecipe(selectedMode, latestScanRecipe ? [latestScanRecipe] : [], latestScanRecipe, isDemoScan);
-  const recipeImageUrl = getRecipeImageUrl(recipe, getRealScanImageUri(selectedScanImage));
+  const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId);
+  const selectedMode = getSafeRecipeMode(routeMode ?? recipe?.selectedMode ?? 'Normal');
+  const recipeImageUrl = getRecipeImageUrl(recipe);
   const recipeImageStatus = getRecipeImageStatus(recipe);
   const items = useMemo(() => (recipe ? buildItems(recipe) : []), [recipe]);
   const listText = useMemo(() => (recipe ? buildListText(recipe, items) : ''), [items, recipe]);
   const savedGroceryRecipes = useMemo(
-    () => (Array.isArray(savedRecipes) ? savedRecipes.filter((savedRecipe) => savedRecipe?.id && savedRecipe?.title).slice().reverse() : []),
-    [savedRecipes],
+    () => resolveCanonicalRecipes(recipesById, groceryRecipeIds).slice().reverse(),
+    [groceryRecipeIds, recipesById],
   );
   const [checkedItemIds, setCheckedItemIds] = useState<string[]>([]);
   const [expandedRecipeIds, setExpandedRecipeIds] = useState<string[]>([]);
@@ -133,7 +132,11 @@ export function GroceryListScreen() {
       return;
     }
 
-    navigation.navigate('RecipeDetailScreen', { mode: selectedMode });
+    if (routeRecipeId) {
+      navigation.navigate('RecipeDetailScreen', { mode: selectedMode, recipeId: routeRecipeId });
+      return;
+    }
+    navigation.navigate('HomeScreen');
   };
 
   const toggleItem = (itemId: string) => {
@@ -154,15 +157,10 @@ export function GroceryListScreen() {
     );
   };
 
-  const openSavedRecipe = (savedRecipe: Recipe) => {
-    const mode = getSafeRecipeMode(savedRecipe.mode);
-    writeSavedRecipeContext({
-      recipe: savedRecipe,
-      reason: 'open_grocery_saved_recipe',
-      source: 'GroceryListScreen.openSavedRecipe',
-    });
+  const openSavedRecipe = (savedRecipe: CanonicalRecipe) => {
+    const mode = savedRecipe.selectedMode;
     setSelectedMode(mode);
-    navigation.navigate('RecipeDetailScreen', { mode });
+    navigation.navigate('RecipeDetailScreen', { mode, recipeId: savedRecipe.id });
   };
 
   const markAllVisible = () => {
@@ -234,7 +232,7 @@ export function GroceryListScreen() {
     return (
       <ScreenFrame onBack={() => navigation.navigate('HomeScreen')} showBack={false} title="Grocery">
         <Text style={styles.savedHubIntro}>
-          Saved recipes become grocery lists here, ready when you are.
+          Recipes you explicitly add appear here, ready when you are.
         </Text>
 
         {savedGroceryRecipes.length > 0 ? (
@@ -260,9 +258,9 @@ export function GroceryListScreen() {
         ) : (
           <View style={styles.savedEmptyCard}>
             <KikoMascot pose="groceryList" size={100} style={styles.savedEmptyMascot} />
-            <Text style={styles.savedEmptyTitle}>Save a recipe to build your grocery list.</Text>
+            <Text style={styles.savedEmptyTitle}>Add a recipe to build your grocery list.</Text>
             <Text style={styles.savedEmptyBody}>
-              When you save a scan or idea, Okyo will collect its ingredients here.
+              Use “Add to Grocery” on a recipe when you want its ingredients here.
             </Text>
           </View>
         )}
@@ -280,7 +278,12 @@ export function GroceryListScreen() {
               ? 'This recipe does not have grocery items yet.'
               : 'Okyo needs a generated recipe before it can build a grocery list for this scan.'}
           </Text>
-          <PrimaryAction label="Back to Recipe" onPress={() => navigation.navigate('RecipeDetailScreen', { mode: selectedMode })} />
+          <PrimaryAction
+            label="Back to Recipe"
+            onPress={() => routeRecipeId
+              ? navigation.navigate('RecipeDetailScreen', { mode: selectedMode, recipeId: routeRecipeId })
+              : navigation.navigate('HomeScreen')}
+          />
         </View>
       </ScreenFrame>
     );
@@ -490,7 +493,7 @@ function SavedRecipeGroceryCard({
               );
             })
           ) : (
-            <Text style={styles.savedIngredientEmpty}>No ingredients listed for this saved recipe yet.</Text>
+            <Text style={styles.savedIngredientEmpty}>No ingredients listed for this liked recipe yet.</Text>
           )}
 
           <Pressable
@@ -817,25 +820,6 @@ function getRecipeTotalTime(recipe: Recipe) {
   return recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes;
 }
 
-function getGroceryRecipe(
-  mode: RecipeMode,
-  recipes: Recipe[],
-  fallbackRecipe: Recipe | null,
-  isDemoScan: boolean,
-) {
-  // One canonical recipe per scan; the view mode is a lens. Match by mode for
-  // legacy multi-recipe saves, otherwise use the single canonical recipe so the
-  // grocery list renders under any view lens. Demo scans fall back to a mock.
-  return recipes.find((recipe) => recipe.mode === mode) ??
-    fallbackRecipe ??
-    recipes[0] ??
-    (isDemoScan ? getSafeRecipeForMode(mode) : null);
-}
-
-function isExplicitDemoScan(image: { placeholder?: boolean; source?: string } | null) {
-  return image?.placeholder === true && image.source === 'mock';
-}
-
 function cleanDisplayText(value: string) {
   const commonTypo = `Amer${'cian'}`;
   const lowercaseTypo = `amer${'cian'}`;
@@ -845,8 +829,8 @@ function cleanDisplayText(value: string) {
   return value
     .replace(new RegExp(`\\b${commonTypo}\\b`, 'g'), 'American')
     .replace(new RegExp(`\\b${lowercaseTypo}\\b`, 'g'), 'american')
-    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
-    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'inspired-by')
+    .replace(new RegExp(`\\b${joinedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'homemade')
+    .replace(new RegExp(`\\b${spacedCopyWord}(?:[-\\s]?style)?\\b`, 'gi'), 'homemade')
     .trim();
 }
 

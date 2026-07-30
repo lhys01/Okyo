@@ -55,7 +55,7 @@ export function DescribeMealScreen() {
         </Pressable>
         <View style={styles.icon}><Sparks color={colors.coral} height={26} width={26} /></View>
         <Text style={styles.title}>Describe a meal</Text>
-        <Text style={styles.subtitle}>Give Okyo a few details and it will build an inspired-by recipe.</Text>
+        <Text style={styles.subtitle}>Give Okyo a few details and it will build a homemade recipe.</Text>
         <TextInput
           accessibilityLabel="Meal description"
           multiline

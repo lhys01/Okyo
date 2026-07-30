@@ -59,11 +59,12 @@ test('navigation registry no longer declares a ScanScreen route anywhere', () =>
   }
 });
 
-test('HomeScreen hero-card fallback and empty-state never target ScanScreen', () => {
+test('HomeScreen scan-entry controls never target ScanScreen', () => {
   const source = readScreenSource('HomeScreen.tsx');
   assert.equal(source.includes('ScanScreen'), false);
-  assert.match(source, /onPress=\{heroRecipe \? \(\) => openRecipe\(heroRecipe\) : openScan\}/);
-  assert.match(source, /onPress=\{openScan\}/);
+  assert.match(source, /onOpenCamera=\{\(\) => void openCameraImmediately\(\)\}/);
+  assert.match(source, /onOpenPhotos=\{openPhotosImmediately\}/);
+  assert.match(source, /onDescribeMeal=\{\(\) => navigation\.navigate\('DescribeMealScreen'\)\}/);
   assert.match(source, /void openCameraImmediately\(\)/);
 });
 

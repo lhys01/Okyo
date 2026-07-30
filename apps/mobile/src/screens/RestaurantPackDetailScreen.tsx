@@ -2,7 +2,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useRef } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
@@ -31,7 +31,7 @@ const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 
 function getPackDescription(packName: string) {
   const name = packName.replace('-inspired', '');
-  return `A static pack of restaurant-style dupes inspired by ${name} menu favorites.`;
+  return `A curated collection of homemade ${name} menu favorites.`;
 }
 
 function getAverageSavings(pack: RestaurantPack) {
@@ -47,13 +47,13 @@ function getAverageSavings(pack: RestaurantPack) {
 function getClosestMode(dish: RestaurantPackDish): RecipeMode {
   const name = dish.dishName.toLowerCase();
   if (name.includes('bowl') || name.includes('wellness') || name.includes('kale')) {
-    return 'Healthy';
+    return 'Healthier';
   }
   if (dish.estimatedSavings >= 25 || name.includes('budget')) {
-    return 'Budget';
+    return 'Lighter';
   }
 
-  return 'Restaurant Copy';
+  return 'Normal';
 }
 
 function makePackRecipe(pack: RestaurantPack, dish: RestaurantPackDish): Recipe {
@@ -66,7 +66,7 @@ function makePackRecipe(pack: RestaurantPack, dish: RestaurantPackDish): Recipe 
     imageUrl: getPackDishImageUrl(dish),
     title: `${dish.dishName} Okyo-style`,
     mode,
-    description: `Inspired-by ${pack.name} dupe made for home kitchens.`,
+    description: `A ${pack.name} recipe made for home kitchens.`,
     prepTimeMinutes: dish.difficulty === 'Easy' ? 10 : 15,
     cookTimeMinutes: dish.difficulty === 'Easy' ? 20 : 30,
     servings: 2,
@@ -83,7 +83,7 @@ function makePackRecipe(pack: RestaurantPack, dish: RestaurantPackDish): Recipe 
     ],
     substitutions: ['Adjust protein, sauce, or base ingredients based on what you have.'],
     pantryNote: 'Assumes salt, pepper, oil, and basic seasonings are available.',
-    confidenceNote: 'Static inspired-by pack recipe using estimated costs and savings.',
+    confidenceNote: 'Curated pack recipe using estimated costs and savings.',
   };
 }
 
@@ -110,10 +110,7 @@ export function RestaurantPackDetailScreen() {
   const route = useRoute<RestaurantPackDetailRoute>();
   const packId = route.params?.packId;
   const pack = mockRestaurantPacks.find((restaurantPack) => restaurantPack.id === packId);
-  const saveRecipe = useOkyoStore((state) => state.saveRecipe);
-  const savedRecipes = useOkyoStore((state) => state.savedRecipes);
-  const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
-  const unlockBadge = useOkyoStore((state) => state.unlockBadge);
+  const registerRecipe = useOkyoStore((state) => state.registerRecipe);
   const didTrackView = useRef(false);
 
   useEffect(() => {
@@ -145,7 +142,7 @@ export function RestaurantPackDetailScreen() {
         <Text style={styles.kicker}>Discover</Text>
         <Text style={styles.title}>Pack not found</Text>
         <Text style={styles.description}>
-          This inspired-by pack is not available in the mock data yet.
+          This curated pack is not available yet.
         </Text>
         <View style={styles.primaryAction}>
           <PrimaryButton onPress={() => navigation.navigate('MainTabs')}>Back to Packs</PrimaryButton>
@@ -155,28 +152,14 @@ export function RestaurantPackDetailScreen() {
   }
   const safeDishes = Array.isArray(pack.dishes) ? pack.dishes : [];
 
-  const saveDish = (dish: RestaurantPackDish) => {
-    uiLog('RestaurantPackDetailScreen', 'save_dish', { dishId: dish.id });
-    const recipe = makePackRecipe(pack, dish);
-    const alreadySaved = savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id);
-    saveRecipe(recipe);
-    if (!alreadySaved) {
-      awardXPOnce(`save-recipe-${recipe.id}`, 5);
-      unlockBadge('first-dupe');
-    }
-    track(analyticsEvents.RECIPE_SAVED, {
-      dishName: recipe.title,
-      mode: recipe.mode,
-      packName: pack.name,
-      savings: recipe.estimatedSavings,
-      screen: 'RestaurantPackDetailScreen',
-    });
-    Alert.alert('Saved', `${recipe.title} was added to your library.`);
-  };
-
   const startChallenge = (dish: RestaurantPackDish) => {
     uiLog('RestaurantPackDetailScreen', 'start_challenge', { dishId: dish.id });
-    navigation.navigate('DupeChallengeScreen', { mode: getClosestMode(dish) });
+    const recipe = makePackRecipe(pack, dish);
+    registerRecipe(recipe, 'restaurant-pack');
+    navigation.navigate('DupeChallengeScreen', {
+      mode: getClosestMode(dish),
+      recipeId: recipe.id,
+    });
   };
 
   const sharePack = (dish?: RestaurantPackDish) => {
@@ -193,7 +176,7 @@ export function RestaurantPackDetailScreen() {
     <ScreenContainer>
       <Text style={styles.kicker}>Discover</Text>
       <Text style={styles.title}>{pack.name}</Text>
-      <Text style={styles.disclaimer}>Inspired-by recipes made for home kitchens.</Text>
+      <Text style={styles.disclaimer}>Curated recipes made for home kitchens.</Text>
       <Text style={styles.description}>{getPackDescription(pack.name)}</Text>
 
       <View style={styles.summaryCard}>
@@ -233,7 +216,6 @@ export function RestaurantPackDetailScreen() {
               </View>
             </View>
             <View style={styles.actions}>
-              <SecondaryButton onPress={() => saveDish(dish)}>Save Recipe</SecondaryButton>
               <SecondaryButton onPress={() => startChallenge(dish)}>Start Challenge</SecondaryButton>
               <SecondaryButton onPress={() => sharePack(dish)}>Share Dish</SecondaryButton>
             </View>
