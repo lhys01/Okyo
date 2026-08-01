@@ -43,6 +43,13 @@ import {
   normalizePersistedRecipeModeState,
 } from '../utils/recipeModes';
 import { normalizeRecipeTime } from '../utils/recipeIntegrity';
+import {
+  clearActiveCookingSession,
+  createActiveCookingSession,
+  isActiveCookingSession,
+  updateActiveCookingSession,
+  type ActiveCookingSession,
+} from './activeCooking';
 
 export type OnboardingGoal =
   | 'Save money'
@@ -128,6 +135,7 @@ type OkyoState = {
   recentRecipeIds: string[];
   savedRecipeIds: string[];
   groceryRecipeIds: string[];
+  activeCookingSession: ActiveCookingSession | null;
   completedChallenges: CompletedChallenge[];
   totalMoneySaved: number;
   weeklyScanCount: number;
@@ -162,7 +170,10 @@ type OkyoState = {
   confirmRecipeIdentification: (recipeId: string) => void;
   setRecipeMode: (recipeId: string, mode: RecipeMode) => void;
   setRecipePresentationMode: (recipeId: string, mode: RecipePresentationMode) => void;
-  startCookingRecipe: (recipeId: string) => void;
+  startCookingRecipe: (recipeId: string, totalStepCount?: number) => boolean;
+  updateCookingStep: (recipeId: string, currentStepIndex: number, totalStepCount: number) => void;
+  syncCookingStepCount: (recipeId: string, totalStepCount: number) => void;
+  endCookingRecipe: (recipeId?: string) => void;
   completeRecipe: (recipeId: string) => void;
   saveRecipe: (
     recipe: Recipe | string,
@@ -206,6 +217,7 @@ export const useOkyoStore = create<OkyoState>()(
       mealDescription: null,
       selectedMode: 'Normal',
       ...getEmptyCanonicalRecipeCollections(),
+      activeCookingSession: null,
       completedChallenges: [],
       totalMoneySaved: 0,
       weeklyScanCount: 0,
@@ -416,18 +428,55 @@ export const useOkyoStore = create<OkyoState>()(
           );
           return syncLatestScanRecipe(state, nextCollections, recipeId);
         }),
-      startCookingRecipe: (recipeId) =>
-        set((state) => setCanonicalRecipeCompletion(
-          getCanonicalCollections(state),
-          recipeId,
-          'cooking',
-        )),
+      startCookingRecipe: (recipeId, totalStepCount = 0) => {
+        let didStart = false;
+        set((state) => {
+          const recipe = resolveCanonicalRecipe(state.recipesById, recipeId);
+          const activeSession = state.activeCookingSession;
+          if (!recipe || (activeSession && activeSession.recipeId !== recipeId)) return state;
+          didStart = true;
+          const nextSession = activeSession?.recipeId === recipeId
+            ? activeSession
+            : createActiveCookingSession(recipeId, recipe.sourceRecipeId, totalStepCount);
+          return {
+            ...setCanonicalRecipeCompletion(getCanonicalCollections(state), recipeId, 'cooking'),
+            activeCookingSession: nextSession,
+          };
+        });
+        return didStart;
+      },
+      updateCookingStep: (recipeId, currentStepIndex, totalStepCount) =>
+        set((state) => state.activeCookingSession?.recipeId === recipeId
+          ? { activeCookingSession: updateActiveCookingSession(state.activeCookingSession, currentStepIndex, totalStepCount) }
+          : state),
+      syncCookingStepCount: (recipeId, totalStepCount) =>
+        set((state) => state.activeCookingSession?.recipeId === recipeId &&
+          state.activeCookingSession.totalStepCount !== totalStepCount
+          ? {
+            activeCookingSession: updateActiveCookingSession(
+              state.activeCookingSession,
+              state.activeCookingSession.currentStepIndex,
+              totalStepCount,
+            ),
+          }
+          : state),
+      endCookingRecipe: (recipeId) =>
+        set((state) => {
+          if (!state.activeCookingSession || (recipeId && state.activeCookingSession.recipeId !== recipeId)) return state;
+          return {
+            ...setCanonicalRecipeCompletion(
+              getCanonicalCollections(state),
+              state.activeCookingSession.recipeId,
+              'ready',
+            ),
+            activeCookingSession: clearActiveCookingSession(state.activeCookingSession, state.activeCookingSession.recipeId),
+          };
+        }),
       completeRecipe: (recipeId) =>
-        set((state) => setCanonicalRecipeCompletion(
-          getCanonicalCollections(state),
-          recipeId,
-          'completed',
-        )),
+        set((state) => ({
+          ...setCanonicalRecipeCompletion(getCanonicalCollections(state), recipeId, 'completed'),
+          activeCookingSession: clearActiveCookingSession(state.activeCookingSession, recipeId),
+        })),
       saveRecipe: (recipeOrId, origin = 'library') =>
         set((state) => {
           let collections = getCanonicalCollections(state);
@@ -513,6 +562,7 @@ export const useOkyoStore = create<OkyoState>()(
 
           return {
             ...getEmptyCanonicalRecipeCollections(),
+            activeCookingSession: null,
             completedChallenges: [],
             totalMoneySaved: 0,
             xp: 0,
@@ -563,6 +613,7 @@ export const useOkyoStore = create<OkyoState>()(
         recentRecipeIds: state.recentRecipeIds,
         savedRecipeIds: state.savedRecipeIds,
         groceryRecipeIds: state.groceryRecipeIds,
+        activeCookingSession: state.activeCookingSession,
         completedChallenges: state.completedChallenges,
         totalMoneySaved: state.totalMoneySaved,
         weeklyScanCount: state.weeklyScanCount,
@@ -709,6 +760,19 @@ function sanitizePersistedCanonicalState(state: Record<string, unknown>) {
   const latestScanRecipe = latestRecipeId
     ? resolveCanonicalRecipe(recipesById, latestRecipeId)
     : null;
+  const activeCookingRecipe = isActiveCookingSession(state.activeCookingSession)
+    ? resolveCanonicalRecipe(recipesById, state.activeCookingSession.recipeId)
+    : null;
+  const persistedCookingSession = activeCookingRecipe && isActiveCookingSession(state.activeCookingSession)
+    ? {
+      ...state.activeCookingSession,
+      recipeRevisionId: activeCookingRecipe.sourceRecipeId,
+      currentStepIndex: Math.max(0, Math.min(
+        state.activeCookingSession.currentStepIndex,
+        Math.max(0, state.activeCookingSession.totalStepCount - 1),
+      )),
+    }
+    : null;
 
   return {
     ...state,
@@ -716,6 +780,7 @@ function sanitizePersistedCanonicalState(state: Record<string, unknown>) {
     recentRecipeIds,
     savedRecipeIds,
     groceryRecipeIds,
+    activeCookingSession: persistedCookingSession,
     latestScanRecipe,
     selectedMode: getMigratedRecipeMode(state.selectedMode),
   };

@@ -2,6 +2,32 @@ import type { CreateScanResult } from '../api/types';
 
 export const HOME_UPLOAD_TARGET_SCREEN = 'AnalysisLoadingScreen' as const;
 
+export function getHomeResetState() {
+  return {
+    index: 0,
+    routes: [{
+      name: 'MainTabs' as const,
+      params: { screen: 'HomeScreen' as const },
+    }],
+  };
+}
+
+export function getFreshDescribeMealResetState(initialDescription?: string) {
+  return {
+    index: 1,
+    routes: [
+      {
+        name: 'MainTabs' as const,
+        params: { screen: 'HomeScreen' as const },
+      },
+      {
+        name: 'DescribeMealScreen' as const,
+        params: initialDescription ? { initialDescription } : undefined,
+      },
+    ],
+  };
+}
+
 export function shouldStartPickedUpload(canceled: boolean, assetCount: number) {
   return !canceled && assetCount > 0;
 }

@@ -2,12 +2,38 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  getFreshDescribeMealResetState,
   getAnalysisScreenOutcome,
   getSafeTerminalScanStatus,
+  getHomeResetState,
   HOME_UPLOAD_TARGET_SCREEN,
   isCurrentScanSession,
   shouldStartPickedUpload,
 } from './scanControllerUtils';
+
+test('fresh scan navigation resets to Home without retaining a completed Result route', () => {
+  assert.deepEqual(getHomeResetState(), {
+    index: 0,
+    routes: [{ name: 'MainTabs', params: { screen: 'HomeScreen' } }],
+  });
+  assert.deepEqual(getFreshDescribeMealResetState(), {
+    index: 1,
+    routes: [
+      { name: 'MainTabs', params: { screen: 'HomeScreen' } },
+      { name: 'DescribeMealScreen', params: undefined },
+    ],
+  });
+});
+
+test('fresh description retries preserve the new input while keeping Home underneath', () => {
+  assert.deepEqual(getFreshDescribeMealResetState('a tofu bowl'), {
+    index: 1,
+    routes: [
+      { name: 'MainTabs', params: { screen: 'HomeScreen' } },
+      { name: 'DescribeMealScreen', params: { initialDescription: 'a tofu bowl' } },
+    ],
+  });
+});
 
 test('cancelled Home uploads stay on Home and selected uploads target analysis directly', () => {
   assert.equal(shouldStartPickedUpload(true, 0), false);

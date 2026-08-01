@@ -95,6 +95,53 @@ test('persisted legacy collections are sanitized before tabs render', () => {
   assert.match(store, /version: 3/);
 });
 
+test('dashboard distinguishes active cooking from ordinary recipe activity', () => {
+  const home = read('screens/HomeScreen.tsx');
+  const detail = read('screens/RecipeDetailScreen.tsx');
+  const store = read('state/useOkyoStore.ts');
+
+  assert.match(home, /activeCookingSession/);
+  assert.match(home, /buildGuidedCookingSteps/);
+  assert.match(home, /Cooking Now/);
+  assert.match(home, /classifyRecipeStepTiming/);
+  assert.match(home, /Hands-on[\s\S]*Waiting[\s\S]*Total/);
+  assert.doesNotMatch(home, /from '\.\/RecipeDetailScreen'/);
+  assert.match(home, /ActiveCookingCard/);
+  assert.match(home, /Continue Cooking/);
+  assert.match(home, /currentStepIndex/);
+  assert.match(home, /filter\(\(recipe\) => recipe\.id !== activeCookingSession\?\.recipeId\)/);
+  assert.match(home, /formatRecipeDuration\(recipeTiming\.totalMinutes\)/);
+  assert.match(store, /activeCookingSession: ActiveCookingSession \| null/);
+  assert.match(store, /updateCookingStep/);
+  assert.match(store, /activeCookingSession: state\.activeCookingSession/);
+  assert.match(detail, /activeCookingSession\?\.currentStepIndex/);
+  assert.match(detail, /buildGuidedCookingSteps/);
+  assert.match(detail, /label="Hands-on"/);
+  assert.match(detail, /label="Waiting"/);
+  assert.match(detail, /label="Total"/);
+  assert.match(detail, /const goToStep = \(nextIndex: number\)[\s\S]{0,500}updateCookingStep\(recipe\.id, clampedIndex, guidedSteps\.length\)/);
+  assert.match(detail, /completeRecipe\(recipe\.id\)/);
+  assert.match(detail, /End Cooking/);
+});
+
+test('all cooking entry points use the shared guided-step builder', () => {
+  const home = read('screens/HomeScreen.tsx');
+  const result = read('screens/ResultSummaryScreen.tsx');
+  const detail = read('screens/RecipeDetailScreen.tsx');
+  const utility = read('utils/guidedCookingSteps.ts');
+
+  assert.match(utility, /export function buildGuidedCookingSteps\(recipe/);
+  assert.match(home, /import \{ buildGuidedCookingSteps \} from '\.\.\/utils\/guidedCookingSteps'/);
+  assert.match(result, /import \{ buildGuidedCookingSteps \} from '\.\.\/utils\/guidedCookingSteps'/);
+  assert.match(detail, /import \{ buildGuidedCookingSteps/);
+  assert.doesNotMatch(home, /getGuidedCookingSteps\(/);
+  assert.doesNotMatch(result, /getGuidedCookingSteps\(/);
+  assert.doesNotMatch(detail, /getGuidedCookingStepsLegacy|legacyGuidedStepCleanupPlaceholder/);
+  assert.match(detail, /if \(!hasHydrated\)/);
+  assert.match(detail, /const goToStep = \(nextIndex: number\)[\s\S]{0,500}updateCookingStep/);
+  assert.doesNotMatch(detail, /useEffect\(\(\) => \{[\s\S]{0,300}updateCookingStep/);
+});
+
 test('Result hides steps, starts Guided Cooking directly, and keeps exact correction copy', () => {
   const result = read('screens/ResultSummaryScreen.tsx');
 

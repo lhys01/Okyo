@@ -15,10 +15,14 @@ import { getMealTimeForHour, getRecommendationsForMealTime } from '../data/recom
 import type { RootStackParamList } from '../navigation/types';
 import {
   getRecipeIngredientPreview,
+  resolveCanonicalRecipe,
   resolveRecentRecipes,
   type CanonicalRecipe,
 } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { resolveActiveCookingStep, type ActiveCookingSession } from '../state/activeCooking';
+import { classifyRecipeStepTiming, formatRecipeDuration, formatRecipeStepTimingLines, getRecipeTiming } from '../utils/recipeIntegrity';
+import { buildGuidedCookingSteps } from '../utils/guidedCookingSteps';
 import { radius, shadows, spacing } from '../theme/okyoTheme';
 import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
@@ -33,6 +37,8 @@ export function HomeScreen() {
   const navigation = useNavigation<HomeNavigation>();
   const recipesById = useOkyoStore((state) => state.recipesById);
   const recentRecipeIds = useOkyoStore((state) => state.recentRecipeIds);
+  const activeCookingSession = useOkyoStore((state) => state.activeCookingSession);
+  const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const uploadInFlight = useRef(false);
   const openRecommendation = useOpenRecommendation();
@@ -43,7 +49,13 @@ export function HomeScreen() {
     () => resolveRecentRecipes(recipesById, recentRecipeIds),
     [recentRecipeIds, recipesById],
   );
-  const recentRecipes = allRecentRecipes.slice(0, 3);
+  const activeCookingRecipe = useMemo(
+    () => resolveCanonicalRecipe(recipesById, activeCookingSession?.recipeId),
+    [activeCookingSession?.recipeId, recipesById],
+  );
+  const recentRecipes = allRecentRecipes
+    .filter((recipe) => recipe.id !== activeCookingSession?.recipeId)
+    .slice(0, 3);
 
   const openPhotosImmediately = async () => {
     if (uploadInFlight.current) return;
@@ -133,6 +145,30 @@ export function HomeScreen() {
           onDescribeMeal={() => navigation.navigate('DescribeMealScreen')}
         />
 
+        {activeCookingRecipe && activeCookingSession ? (
+          <ActiveCookingCard
+            recipe={activeCookingRecipe}
+            session={activeCookingSession}
+            onContinue={() => navigation.navigate('MainTabs', { screen: 'RecipeStepsScreen', params: {
+              completion: false,
+              mode: activeCookingRecipe.selectedMode,
+              recipeId: activeCookingRecipe.id,
+            } })}
+            onViewRecipe={() => navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: {
+              mode: activeCookingRecipe.selectedMode,
+              recipeId: activeCookingRecipe.id,
+            } })}
+            onEnd={() => Alert.alert(
+              'End cooking session?',
+              'Your current step will be cleared, but the recipe will remain in your recipes.',
+              [
+                { text: 'Keep Cooking', style: 'cancel' },
+                { text: 'End Session', style: 'destructive', onPress: () => endCookingRecipe(activeCookingRecipe.id) },
+              ],
+            )}
+          />
+        ) : null}
+
         {recentRecipes.length > 0 ? (
           <View style={styles.recentSection}>
             <View style={styles.sectionHeader}>
@@ -215,6 +251,67 @@ export function HomeScreen() {
   );
 }
 
+function ActiveCookingCard({
+  recipe,
+  session,
+  onContinue,
+  onViewRecipe,
+  onEnd,
+}: {
+  recipe: CanonicalRecipe;
+  session: ActiveCookingSession;
+  onContinue: () => void;
+  onViewRecipe: () => void;
+  onEnd: () => void;
+}) {
+  const guidedSteps = buildGuidedCookingSteps(recipe);
+  const totalSteps = guidedSteps.length;
+  const currentIndex = totalSteps > 0 ? Math.max(0, Math.min(session.currentStepIndex, totalSteps - 1)) : 0;
+  const guidedStep = resolveActiveCookingStep(guidedSteps, session.currentStepIndex);
+  const currentStepTitle = guidedStep?.title || `Step ${currentIndex + 1}`;
+  const currentStepTiming = guidedStep?.timing;
+  const currentStepKind = currentStepTiming ? classifyRecipeStepTiming(currentStepTiming) : 'hands-on';
+  const currentStepState = currentStepKind === 'mixed' ? 'HANDS-ON + WAITING' : currentStepKind === 'waiting' ? 'WAITING' : 'HANDS-ON';
+  const progress = totalSteps > 0 ? ((currentIndex + 1) / totalSteps) * 100 : 0;
+  const recipeTiming = getRecipeTiming(recipe);
+
+  return (
+    <View accessibilityLabel={`Cooking Now: ${recipe.title}, step ${currentIndex + 1} of ${totalSteps}`} style={styles.activeCookingCard}>
+      <View style={styles.activeCookingHeader}>
+        <View style={styles.activeCookingCopy}>
+          <Text style={styles.activeCookingKicker}>Cooking Now</Text>
+          <Text numberOfLines={2} style={styles.activeCookingTitle}>{recipe.title}</Text>
+          <Text style={styles.activeCookingStep}>Step {currentIndex + 1} of {totalSteps} · {currentStepTitle}</Text>
+          <Text style={styles.activeCookingState}>{currentStepState}</Text>
+          {currentStepTiming ? formatRecipeStepTimingLines(currentStepTiming).map((line) => (
+            <Text key={line} style={styles.activeCookingTiming}>{line}</Text>
+          )) : null}
+        </View>
+        <Text style={styles.activeCookingPercent}>{Math.round(progress)}%</Text>
+      </View>
+      <View accessibilityLabel={`${Math.round(progress)} percent cooking progress`} style={styles.activeCookingTrack}>
+        <View style={[styles.activeCookingFill, { width: `${progress}%` }]} />
+      </View>
+      <View accessibilityLabel={`Recipe timing: ${formatRecipeDuration(recipeTiming.handsOnMinutes)} hands-on, ${formatRecipeDuration(recipeTiming.waitingMinutes)} waiting, ${formatRecipeDuration(recipeTiming.totalMinutes)} total`} style={styles.activeCookingBreakdown}>
+        <Text style={styles.activeCookingTime}>Hands-on {formatRecipeDuration(recipeTiming.handsOnMinutes)}</Text>
+        <Text style={styles.activeCookingTime}>Waiting {formatRecipeDuration(recipeTiming.waitingMinutes)}</Text>
+        <Text style={styles.activeCookingTime}>Total {formatRecipeDuration(recipeTiming.totalMinutes)}</Text>
+      </View>
+      <View style={styles.activeCookingActions}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Continue Cooking" style={({ pressed }) => [styles.activeCookingPrimary, pressed ? styles.pressed : null]} onPress={onContinue}>
+          <Text style={styles.activeCookingPrimaryText}>Continue Cooking</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={onViewRecipe} style={({ pressed }) => [styles.activeCookingSecondary, pressed ? styles.pressed : null]}>
+          <Text style={styles.activeCookingSecondaryText}>Full recipe</Text>
+        </Pressable>
+      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel="End Cooking" onPress={onEnd} style={({ pressed }) => [styles.activeCookingEnd, pressed ? styles.pressed : null]}>
+        <Text style={styles.activeCookingEndText}>End Cooking</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function HomeScanSection({ onOpenCamera, onOpenPhotos, onDescribeMeal }: { onOpenCamera: () => void; onOpenPhotos: () => void; onDescribeMeal: () => void }) {
   return (
     <View style={styles.scanSection}>
@@ -256,6 +353,37 @@ const styles = StyleSheet.create({
     marginTop: 16,
     padding: 16,
   },
+  activeCookingCard: {
+    backgroundColor: colors.coralSoft,
+    borderColor: colors.coral,
+    borderRadius: 24,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 16,
+  },
+  activeCookingHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  activeCookingCopy: { flex: 1, paddingRight: 12 },
+  activeCookingKicker: { color: colors.coralDark, fontSize: 12, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase' },
+  activeCookingTitle: { color: colors.charcoal, fontSize: 19, fontWeight: '800', marginTop: 4 },
+  activeCookingStep: { color: colors.body, fontSize: 13, lineHeight: 19, marginTop: 5 },
+  activeCookingState: { color: colors.coralDark, fontSize: 11, fontWeight: '900', letterSpacing: 0.8, marginTop: 7 },
+  activeCookingTiming: { color: colors.body, fontSize: 12, lineHeight: 18, marginTop: 3 },
+  activeCookingPercent: { color: colors.coralDark, fontSize: 18, fontWeight: '800' },
+  activeCookingTrack: { backgroundColor: colors.card, borderRadius: 8, height: 7, marginTop: 13, overflow: 'hidden' },
+  activeCookingFill: { backgroundColor: colors.coral, borderRadius: 8, height: 7 },
+  activeCookingBreakdown: { marginTop: 8 },
+  activeCookingTime: { color: colors.body, fontSize: 12, lineHeight: 18 },
+  activeCookingActions: { alignItems: 'center', flexDirection: 'row', gap: 9, marginTop: 13 },
+  activeCookingPrimary: { backgroundColor: colors.charcoal, borderRadius: 14, flex: 1, paddingHorizontal: 13, paddingVertical: 11 },
+  activeCookingPrimaryText: { color: colors.background, fontSize: 13, fontWeight: '800', textAlign: 'center' },
+  activeCookingSecondary: { borderColor: colors.charcoal, borderRadius: 14, borderWidth: 1, paddingHorizontal: 13, paddingVertical: 10 },
+  activeCookingSecondaryText: { color: colors.charcoal, fontSize: 13, fontWeight: '700' },
+  activeCookingEnd: { alignSelf: 'flex-start', marginTop: 10, paddingVertical: 2 },
+  activeCookingEndText: { color: colors.coralDark, fontSize: 12, fontWeight: '700' },
   scanSectionHeader: {
     alignItems: 'center',
     flexDirection: 'row',

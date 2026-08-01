@@ -12,7 +12,7 @@ import {
   Settings,
 } from 'iconoir-react-native';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
@@ -49,7 +49,10 @@ import { useOkyoStore } from '../state/useOkyoStore';
 import { resolveCanonicalRecipe } from '../state/canonicalRecipes';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { getRealScanImageUri } from '../utils/recipeImages';
+import { formatRecipeDuration, getRecipeTiming } from '../utils/recipeIntegrity';
+import { buildGuidedCookingSteps } from '../utils/guidedCookingSteps';
 import { isUsableScan } from '../utils/scanDecision';
+import { getFreshDescribeMealResetState, getHomeResetState } from '../utils/scanControllerUtils';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 type ResultSummaryNavigation = NativeStackNavigationProp<RootStackParamList, 'ResultSummaryScreen'>;
@@ -76,6 +79,8 @@ export function ResultSummaryScreen() {
   const incrementWeeklyScanCount = useOkyoStore((state) => state.incrementWeeklyScanCount);
   const toggleRecipeLiked = useOkyoStore((state) => state.toggleRecipeLiked);
   const startCookingRecipe = useOkyoStore((state) => state.startCookingRecipe);
+  const activeCookingSession = useOkyoStore((state) => state.activeCookingSession);
+  const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
   const addRecipeToGrocery = useOkyoStore((state) => state.addRecipeToGrocery);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const awardedXpEvents = useOkyoStore((state) => state.awardedXpEvents);
@@ -166,9 +171,7 @@ export function ResultSummaryScreen() {
   const failureCopy = getScanFailureCopy(latestScanFailure);
   const failureGuidance = getFailureGuidance(latestScanFailure?.rejectionType);
   const selectedModeUi = getModeUi(selectedMode);
-  const totalTimeMinutes = selectedRecipe
-    ? selectedRecipe.totalTimeMinutes ?? selectedRecipe.prepTimeMinutes + selectedRecipe.cookTimeMinutes
-    : null;
+  const recipeTiming = selectedRecipe ? getRecipeTiming(selectedRecipe) : null;
   const isUncertainResult = isUncertainScan(scanResult, latestScanStatus, confidencePercent);
   const displayDishName = cleanDisplayText(dishNameOverride.trim() || scanResult?.dishName || '');
   const possibleDishNames = getPossibleDishNames(scanResult, displayDishName);
@@ -454,11 +457,33 @@ export function ResultSummaryScreen() {
       return;
     }
 
-    startCookingRecipe(selectedRecipe.id);
-    navigation.navigate('MainTabs', {
+    const navigateToCooking = () => navigation.navigate('MainTabs', {
       screen: 'RecipeStepsScreen',
       params: { completion: false, mode: selectedMode, recipeId: selectedRecipe.id },
     });
+    const guidedStepCount = buildGuidedCookingSteps(selectedRecipe).length;
+    if (activeCookingSession && activeCookingSession.recipeId !== selectedRecipe.id) {
+      Alert.alert(
+        'Another recipe is in progress',
+        'Choose whether to keep cooking it or end that session before starting this recipe.',
+        [
+          { text: 'Continue Current', style: 'cancel', onPress: () => navigation.navigate('MainTabs', {
+            screen: 'RecipeStepsScreen',
+            params: { completion: false, mode: recipesById[activeCookingSession.recipeId]?.selectedMode ?? selectedMode, recipeId: activeCookingSession.recipeId },
+          }) },
+          { text: 'End & Start This', style: 'destructive', onPress: () => {
+            endCookingRecipe(activeCookingSession.recipeId);
+            startCookingRecipe(selectedRecipe.id);
+            useOkyoStore.getState().updateCookingStep(selectedRecipe.id, 0, guidedStepCount);
+            navigateToCooking();
+          } },
+        ],
+      );
+      return;
+    }
+    startCookingRecipe(selectedRecipe.id);
+    useOkyoStore.getState().updateCookingStep(selectedRecipe.id, 0, guidedStepCount);
+    navigateToCooking();
   };
 
   const addSelectedRecipeToGrocery = () => {
@@ -497,8 +522,8 @@ export function ResultSummaryScreen() {
       reason: 'user_tapped_scan_again',
       source: 'ResultSummaryScreen.goToScan',
     });
-    if (isDescriptionScan) navigation.navigate('DescribeMealScreen');
-    else navigation.navigate('MainTabs', { screen: 'HomeScreen' });
+    if (isDescriptionScan) navigation.reset(getFreshDescribeMealResetState());
+    else navigation.reset(getHomeResetState());
   };
 
   const goBackToScanTab = () => {
@@ -506,8 +531,8 @@ export function ResultSummaryScreen() {
       reason: 'user_tapped_back_to_scan',
       source: 'ResultSummaryScreen.goBackToScanTab',
     });
-    if (isDescriptionScan) navigation.navigate('DescribeMealScreen');
-    else navigation.navigate('MainTabs', { screen: 'HomeScreen' });
+    if (isDescriptionScan) navigation.reset(getFreshDescribeMealResetState());
+    else navigation.reset(getHomeResetState());
   };
 
   const openSettings = () => {
@@ -621,8 +646,20 @@ export function ResultSummaryScreen() {
         <View style={styles.recipeMetaRow}>
           <StatBlock
             icon={<Clock color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
-            label="Time"
-            value={totalTimeMinutes ? `${totalTimeMinutes} min` : '—'}
+            label="Total"
+            value={recipeTiming ? formatRecipeDuration(recipeTiming.totalMinutes) : '—'}
+          />
+          <View style={styles.statDivider} />
+          <StatBlock
+            icon={<Clock color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
+            label="Hands-on"
+            value={recipeTiming ? formatRecipeDuration(recipeTiming.handsOnMinutes) : '—'}
+          />
+          <View style={styles.statDivider} />
+          <StatBlock
+            icon={<Clock color={colors.coral} height={19} strokeWidth={2.2} width={19} />}
+            label="Waiting"
+            value={recipeTiming ? formatRecipeDuration(recipeTiming.waitingMinutes) : '—'}
           />
           <View style={styles.statDivider} />
           <StatBlock

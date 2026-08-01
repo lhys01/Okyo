@@ -97,6 +97,9 @@ export type RecipeStep = {
   why?: string; // Reason this step matters ("Searing locks in moisture and builds flavor.")
   commonMistake?: string; // What to avoid ("Moving the chicken too early prevents browning.")
   estimatedMinutes?: number; // Numeric time estimate from AI (preferred over timeEstimate string)
+  activeMinutes?: number;
+  passiveMinutes?: number;
+  elapsedMinutes?: number;
   timeEstimate?: string;
   visualCue?: string;
   whyItMatters?: string; // legacy — prefer `why`
@@ -139,6 +142,7 @@ export type Recipe = {
   cookTimeMinutes: number;
   totalTimeMinutes?: number;
   activeTimeMinutes?: number;
+  passiveTimeMinutes?: number;
   servings: number;
   skillLevel?: Difficulty;
   difficulty: Difficulty;
