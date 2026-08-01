@@ -13,6 +13,7 @@ import {
   type CorrectionGenerationContext,
 } from './correctionIntent.js';
 import {
+  generateRecipeEditWithOpenRouter,
   generateRecipeWithOpenRouter,
   normalizeRecipeProviderOutputShape,
   normalizeCorrectionPatchProviderOutput,
@@ -23,6 +24,8 @@ import {
   recipeArrayFieldDefinitions,
   validateRecipeStructure,
 } from './openRouterProvider.js';
+import { deriveDishAnatomy } from './dishAnatomy.js';
+import type { FlavorPlan } from './flavorPlan.js';
 
 test('dedicated correction patch schema accepts patch-only operation variants', () => {
   const parsed = parseCorrectionPatchProviderOutput({
@@ -122,6 +125,46 @@ function buildValidRecipe(stepCount = 6) {
     title: 'Creamy Tomato Pasta',
     ingredients: ['8 oz rigatoni', '1 cup tomato sauce', '1/2 cup cream', '1/4 cup parmesan', '1 tbsp olive oil'],
     steps: Array.from({ length: stepCount }, (_, i) => buildStep(i + 1)),
+  };
+}
+
+function buildEditSourceRecipe(): Recipe {
+  return {
+    id: 'source-edit-recipe',
+    scanResultId: 'source-edit-scan',
+    title: 'High Protein Oreo Dessert',
+    mode: 'Normal',
+    description: 'A yogurt dessert with Oreo cookies.',
+    prepTimeMinutes: 10,
+    cookTimeMinutes: 0,
+    totalTimeMinutes: 30,
+    activeTimeMinutes: 10,
+    passiveTimeMinutes: 20,
+    servings: 2,
+    difficulty: 'Easy',
+    estimatedHomemadeCost: 6,
+    estimatedSavings: 8,
+    ingredients: [
+      { name: 'Oreo cookies', quantity: '1 cup' },
+      { name: 'Greek yogurt', quantity: '2 cups' },
+    ],
+    steps: ['Fold the Oreo cookies into the Greek yogurt.'],
+    structuredSteps: [{
+      title: 'Mix',
+      text: 'Fold the Oreo cookies into the Greek yogurt.',
+      ingredientsUsed: ['Oreo cookies', 'Greek yogurt'],
+      toolsUsed: ['bowl'],
+    }],
+    substitutions: [],
+    pantryNote: '',
+    confidenceNote: 'Estimated recipe.',
+    equipment: ['bowl'],
+    nutritionEstimate: {
+      calories: 400,
+      proteinGrams: 25,
+      carbohydratesGrams: 45,
+      fatGrams: 12,
+    },
   };
 }
 
@@ -312,10 +355,9 @@ test('accepts legacy step field names (instruction/ingredientsUsed/toolsUsed)', 
   assert.deepEqual(validateRecipeStructure(parsed), []);
 });
 
-test('rejects when steps is not an array', () => {
+test('rejects an empty instruction set without enforcing an arbitrary step count', () => {
   const parsed = openRouterRecipeOutputSchema.parse({ dishName: 'X', title: 'X', steps: [] });
-  // Empty steps -> too_few_steps + stepNumber edge handled (empty is valid array but too few).
-  assert.ok(validateRecipeStructure(parsed).includes('too_few_steps'));
+  assert.deepEqual(validateRecipeStructure(parsed), ['no_usable_steps']);
 });
 
 test('flags a step missing ingredients', () => {
@@ -600,7 +642,219 @@ test('drink steps singleton object normalizes before strict content validation',
   assert.equal(parsed.steps.length, 1);
   assert.deepEqual(typeof parsed.steps[0] === 'object' && parsed.steps[0].ingredients, ['berries', 'milk']);
   assert.deepEqual(typeof parsed.steps[0] === 'object' && parsed.steps[0].tools, ['blender']);
-  assert.deepEqual(validateRecipeStructure(parsed), ['too_few_steps']);
+  assert.deepEqual(validateRecipeStructure(parsed), []);
+});
+
+test('permissive recipe normalization accepts common complete-recipe aliases', () => {
+  const normalized = normalizeRecipeProviderOutputShape({
+    recipeName: 'Creamy Seed Pasta',
+    recipeDescription: 'A quick pantry pasta.',
+    serves: 'Serves 4',
+    tools: ['pot', 'bowl'],
+    ingredients: [
+      '8 oz pasta',
+      { name: 'sunflower-seed butter', quantity: '1/2 cup' },
+      { ingredient: 'black garlic', amount: '3 cloves' },
+    ],
+    instructions: [
+      'Boil the pasta for 9 minutes.',
+      { name: 'Make Sauce', description: 'Whisk the sunflower-seed butter with black garlic.' },
+    ],
+    nutrition: { calories: '420 kcal', protein: '18 g', carbs: '56 g', fat: '14 g' },
+    prepTimeMinutes: 10,
+    cookTime: '9 minutes',
+    totalTimeMinutes: 19,
+    unrelatedProviderField: { ignored: true },
+  });
+
+  const parsed = openRouterRecipeOutputSchema.parse(normalized);
+  assert.equal(parsed.title, 'Creamy Seed Pasta');
+  assert.equal(parsed.description, 'A quick pantry pasta.');
+  assert.equal(parsed.servings, 4);
+  assert.deepEqual(parsed.equipment, ['pot', 'bowl']);
+  assert.deepEqual(parsed.ingredients, [
+    '8 oz pasta',
+    '1/2 cup sunflower-seed butter',
+    '3 cloves black garlic',
+  ]);
+  assert.equal(parsed.steps.length, 2);
+  assert.equal(parsed.steps[0], 'Boil the pasta for 9 minutes.');
+  assert.equal(typeof parsed.steps[1] === 'object' && parsed.steps[1].step, 'Whisk the sunflower-seed butter with black garlic.');
+  assert.equal(parsed.prepTime, '10');
+  assert.equal(parsed.cookTime, '9 minutes');
+  assert.equal(parsed.totalTime, '19');
+  assert.deepEqual(parsed.nutritionEstimate, {
+    calories: 420,
+    proteinGrams: 18,
+    carbohydratesGrams: 56,
+    fatGrams: 14,
+  });
+  assert.equal('unrelatedProviderField' in parsed, false);
+});
+
+test('directions, macros, yield, and requiredEquipment normalize without optional metadata', () => {
+  const parsed = openRouterRecipeOutputSchema.parse(normalizeRecipeProviderOutputShape({
+    name: 'Simple Marinated Tofu',
+    yield: '2 servings',
+    requiredEquipment: ['bowl'],
+    ingredients: [{ ingredient: 'tofu', amount: '12 oz' }],
+    directions: [{ instruction: 'Marinate the tofu for 30 minutes.' }],
+    macros: { calories: 260, protein: 24, carbohydrates: 10, fat: 14, fiber: 3 },
+    prepTime: '5 minutes',
+    totalTime: '35 minutes',
+  }));
+
+  assert.equal(parsed.title, 'Simple Marinated Tofu');
+  assert.equal(parsed.servings, 2);
+  assert.deepEqual(parsed.ingredients, ['12 oz tofu']);
+  assert.equal(typeof parsed.steps[0] === 'object' && parsed.steps[0].step, 'Marinate the tofu for 30 minutes.');
+  assert.deepEqual(typeof parsed.steps[0] === 'object' && parsed.steps[0].ingredients, []);
+  assert.deepEqual(typeof parsed.steps[0] === 'object' && parsed.steps[0].tools, []);
+  assert.deepEqual(parsed.nutritionEstimate, {
+    calories: 260,
+    proteinGrams: 24,
+    carbohydratesGrams: 10,
+    fatGrams: 14,
+    fiberGrams: 3,
+  });
+});
+
+test('the reproduced live edit shape normalizes ingredient objects inside component groups', () => {
+  const parsed = openRouterRecipeOutputSchema.parse(normalizeRecipeProviderOutputShape({
+    title: 'High Protein Chocolate Dessert',
+    description: 'A chilled high-protein chocolate dessert.',
+    servings: 2,
+    difficulty: 'Easy',
+    prepTimeMinutes: 10,
+    cookTimeMinutes: 0,
+    totalTimeMinutes: 40,
+    activeTimeMinutes: 10,
+    passiveTimeMinutes: 30,
+    ingredients: [
+      { name: 'Greek yogurt', quantity: '2 cups' },
+      { name: 'protein powder', quantity: '1/2 cup' },
+    ],
+    ingredientGroups: [{
+      component: 'Dessert',
+      items: [
+        { name: 'Greek yogurt', quantity: '2 cups' },
+        { ingredient: 'protein powder', amount: '1/2 cup' },
+      ],
+    }],
+    equipment: ['mixing bowl'],
+    steps: [{
+      stepNumber: 1,
+      phase: 2,
+      title: 'Mix',
+      step: 'Whisk the Greek yogurt and protein powder.',
+      ingredients: ['Greek yogurt', 'protein powder'],
+      tools: ['mixing bowl'],
+      activeMinutes: 5,
+      passiveMinutes: 0,
+      elapsedMinutes: 5,
+      timeEstimate: '5 minutes hands-on',
+    }],
+    nutritionEstimate: {
+      calories: 320,
+      proteinGrams: 38,
+      carbohydratesGrams: 24,
+      fatGrams: 8,
+      fiberGrams: 3,
+    },
+  }));
+
+  assert.deepEqual(parsed.ingredientGroups, [{
+    component: 'Dessert',
+    items: ['2 cups Greek yogurt', '1/2 cup protein powder'],
+  }]);
+  assert.deepEqual(parsed.ingredients, ['2 cups Greek yogurt', '1/2 cup protein powder']);
+  assert.equal(parsed.prepTime, '10');
+  assert.equal(parsed.totalTime, '40');
+});
+
+test('a normalizable complete edit uses one call and the edit-only 2048-token floor', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  let requestedMaxTokens = 0;
+  globalThis.fetch = async (_request, init) => {
+    calls += 1;
+    const body = typeof init?.body === 'string'
+      ? JSON.parse(init.body) as { max_tokens?: number }
+      : {};
+    requestedMaxTokens = body.max_tokens ?? 0;
+    return providerResponse({
+      title: 'High Protein Chocolate Dessert',
+      prepTimeMinutes: 10,
+      totalTimeMinutes: 40,
+      ingredients: [
+        { name: 'Greek yogurt', quantity: '2 cups' },
+        { name: 'protein powder', quantity: '1/2 cup' },
+      ],
+      ingredientGroups: [{
+        component: 'Dessert',
+        items: [
+          { name: 'Greek yogurt', quantity: '2 cups' },
+          { name: 'protein powder', quantity: '1/2 cup' },
+        ],
+      }],
+      steps: ['Whisk the Greek yogurt with protein powder and chill for 30 minutes.'],
+    });
+  };
+
+  try {
+    const output = await generateRecipeEditWithOpenRouter({
+      analysis: analysis({ dishName: 'High Protein Oreo Dessert' }),
+      config: { ...testConfig, maxOutputTokens: 1024 },
+      currentRecipe: buildEditSourceRecipe(),
+      editMessage: 'No Oreo and more protein',
+    });
+    assert.equal(calls, 1);
+    assert.equal(requestedMaxTokens, 2048);
+    assert.equal(output.title, 'High Protein Chocolate Dessert');
+    assert.deepEqual(output.ingredientGroups[0]?.items, [
+      '2 cups Greek yogurt',
+      '1/2 cup protein powder',
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('two non-recipe edit responses stop after one schema retry', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse({ message: 'I cannot provide a recipe.' });
+  };
+
+  try {
+    await assert.rejects(
+      generateRecipeEditWithOpenRouter({
+        analysis: analysis({ dishName: 'High Protein Oreo Dessert' }),
+        config: { ...testConfig, maxOutputTokens: 1024 },
+        currentRecipe: buildEditSourceRecipe(),
+        editMessage: 'No Oreo and more protein',
+      }),
+      (error: unknown) => error instanceof OpenRouterProviderError &&
+        error.failure.reason === 'openrouter_invalid_schema',
+    );
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('invalid optional nutrition is dropped instead of rejecting an otherwise usable recipe', () => {
+  const parsed = openRouterRecipeOutputSchema.parse(normalizeRecipeProviderOutputShape({
+    title: 'Simple Fruit Bowl',
+    ingredients: ['1 cup berries'],
+    steps: ['Place the berries in a bowl.'],
+    nutrition: { protein: 2 },
+  }));
+
+  assert.equal(parsed.nutritionEstimate, undefined);
+  assert.deepEqual(parsed.steps, ['Place the berries in a bowl.']);
 });
 
 test('all recipe schema array fields are covered by the shared normalizer map', () => {
@@ -611,12 +865,13 @@ test('all recipe schema array fields are covered by the shared normalizer map', 
   assert.deepEqual(schemaArrayPaths.sort(), normalizedPaths);
 });
 
-test('recipe repair rejects a changed response when the final recipe is still invalid', async () => {
+test('a usable short recipe remains deliverable when optional repair cannot improve it', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
-  const initial = buildValidRecipe(6);
+  const initial = { ...buildValidRecipe(6), description: '' };
   initial.dishName = 'Unresolved Repair Pasta';
   initial.title = 'Unresolved Repair Pasta';
+  initial.description = 'A simple recipe using the main ingredient.';
   initial.ingredients = ['8 oz rigatoni', '1 cup tomato sauce', '1 tbsp olive oil', '1/2 cup cream', '1/4 cup parmesan'];
   initial.steps = initial.steps.slice(0, 3);
   const repaired = structuredClone(initial);
@@ -626,17 +881,274 @@ test('recipe repair rejects a changed response when the final recipe is still in
     return providerResponse(calls === 1 ? initial : repaired);
   };
   try {
-    await assert.rejects(
-      generateRecipeWithOpenRouter({
-        analysis: analysis({ dishName: 'Unresolved Repair Pasta' }),
-        config: testConfig,
-        mode: 'Normal',
-      }),
-      (error: unknown) => error instanceof OpenRouterProviderError &&
-        error.failure.reason === 'openrouter_invalid_schema' &&
-        /too_few_steps/.test(error.failure.openRouterErrorMessage ?? ''),
-    );
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: 'Unresolved Repair Pasta' }),
+      config: testConfig,
+      mode: 'Normal',
+    });
     assert.equal(calls, 2);
+    assert.equal(output.steps.length, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function filledCroissantAnalysis() {
+  const base = analysis({
+    dishName: 'Filled Fruit Croissant',
+    broadDishCategory: 'dessert',
+    visibleIngredients: ['croissant', 'fruit filling'],
+    likelyIngredients: ['plum'],
+    visibleComponents: {
+      protein: '', sauce: 'plum jam', baseStarch: 'croissant', vegetables: '', toppingsGarnish: '', cookingMethod: 'baked',
+    },
+  });
+  return { ...base, anatomy: deriveDishAnatomy(base) };
+}
+
+function filledCroissantRepairCandidate() {
+  return {
+    dishName: 'Filled Fruit Croissant',
+    title: 'Plum-Filled Croissant',
+    description: 'A flaky pastry with a bright plum center.',
+    ingredients: ['1 sheet puff pastry', '1/2 cup plum jam', '1 tbsp sugar', '1 tsp lemon juice'],
+    steps: [
+      buildStep(1, { title: 'Cook Filling', step: 'Cook plum jam with sugar and lemon juice until glossy.', ingredients: ['plum jam', 'sugar', 'lemon juice'], tools: ['saucepan'] }),
+      buildStep(2, { title: 'Cut Pastry', step: 'Cut puff pastry into triangles on a lightly floured board.', ingredients: ['puff pastry'], tools: ['chef knife', 'cutting board'] }),
+      buildStep(3, { title: 'Cool Filling', step: 'Cool plum jam until no longer hot to the touch.', ingredients: ['plum jam'], tools: ['bowl'] }),
+      buildStep(4, { title: 'Fill Pastry', step: 'Place plum jam on each pastry triangle before rolling.', ingredients: ['plum jam', 'puff pastry'], tools: ['spoon'] }),
+      buildStep(5, { title: 'Assemble Croissants', step: 'Roll and seal each pastry triangle around the plum jam.', ingredients: ['puff pastry', 'plum jam'], tools: ['baking sheet'] }),
+      buildStep(6, { title: 'Bake Pastry', step: 'Bake filled pastries until puffed and golden brown.', ingredients: ['puff pastry'], tools: ['oven'] }),
+    ],
+  };
+}
+
+test('a repairable missing-filling contract issue uses one focused quality repair', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const initial = { ...buildValidRecipe(6), dishName: 'Filled Fruit Croissant', title: 'Plain Croissant', ingredients: ['1 sheet puff pastry', '1 tbsp olive oil'] };
+  const repaired = filledCroissantRepairCandidate();
+  globalThis.fetch = async () => providerResponse(++calls === 1 ? initial : repaired);
+  try {
+    const output = await generateRecipeWithOpenRouter({ analysis: filledCroissantAnalysis(), config: testConfig, mode: 'Normal' });
+    assert.equal(calls, 2);
+    assert.equal(output.title, 'Plum-Filled Croissant');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a failed optional quality repair returns the original safe candidate', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const invalid = { ...buildValidRecipe(6), dishName: 'Filled Fruit Croissant', title: 'Plain Croissant', ingredients: ['1 sheet puff pastry', '1 tbsp olive oil'] };
+  globalThis.fetch = async () => providerResponse(++calls === 1 ? invalid : invalid);
+  try {
+    const output = await generateRecipeWithOpenRouter({
+      analysis: { ...filledCroissantAnalysis(), dishName: 'Filled Fruit Croissant Failed Repair' },
+      config: testConfig,
+      mode: 'Normal',
+    });
+    assert.equal(calls, 2);
+    assert.equal(output.title, 'Plain Croissant');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('two- and three-step usable recipes are not rejected for being simple', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const candidates = [buildValidRecipe(2), buildValidRecipe(3)];
+  globalThis.fetch = async () => providerResponse(candidates[calls++] ?? candidates.at(-1));
+  try {
+    const twoStep = await generateRecipeWithOpenRouter({ analysis: analysis({ dishName: 'Two Step Dessert' }), config: testConfig, mode: 'Normal' });
+    const threeStep = await generateRecipeWithOpenRouter({ analysis: analysis({ dishName: 'Three Step Dessert' }), config: testConfig, mode: 'Normal' });
+    assert.equal(twoStep.steps.length, 2);
+    assert.equal(threeStep.steps.length, 3);
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('stale flavor metadata is a soft diagnostic and does not block delivery', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const stalePlan: FlavorPlan = {
+    aromatics: [],
+    coreSeasonings: [],
+    balancingElements: [{ ingredient: 'granulated sugar', role: 'sweetness', quantity: '1 tbsp', stage: 'mixing' }],
+    finishingElements: [],
+  };
+  const candidate = buildValidRecipe(3);
+  globalThis.fetch = async () => {
+    calls += 1;
+    return providerResponse(candidate);
+  };
+  try {
+    const output = await generateRecipeWithOpenRouter({
+      analysis: analysis({ dishName: `Simple Dessert ${Date.now()}`, flavorPlan: stalePlan }),
+      config: testConfig,
+      mode: 'Normal',
+    });
+    assert.equal(output.title, candidate.title);
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function yeastCroissantAnalysis() {
+  return analysis({
+    dishName: 'Plain Butter Croissant',
+    broadDishCategory: 'dessert',
+    visibleIngredients: ['croissant dough', 'yeast', 'butter'],
+    likelyIngredients: ['flour', 'butter'],
+    visibleComponents: {
+      protein: '', sauce: '', baseStarch: 'croissant dough', vegetables: '', toppingsGarnish: '', cookingMethod: 'baked',
+    },
+    mealDescription: 'A plain butter croissant with no filling',
+  });
+}
+
+function yeastCroissantCandidate(includeProof = false) {
+  const candidate = {
+    ...buildValidRecipe(8),
+    dishName: 'Plain Butter Croissant',
+    title: 'Butter Croissant',
+    ingredients: ['1 cup croissant dough', '1 tsp yeast', '2 tbsp butter', '1 cup flour', '1/2 tsp salt'],
+    steps: [
+      buildStep(1, { title: 'Mix Dough', step: 'Mix croissant dough with yeast and butter.', ingredients: ['croissant dough', 'yeast', 'butter'], tools: ['bowl'] }),
+      buildStep(2, { title: 'Laminate Dough', step: 'Fold the croissant dough into layers with butter.', ingredients: ['croissant dough', 'butter'], tools: ['rolling pin'] }),
+      buildStep(3, { title: 'Early Rise', step: 'Form the dough into a ball and let the dough rise for 60 minutes before shaping.', ingredients: ['croissant dough'], tools: ['bowl'] }),
+      buildStep(4, { title: 'Shape Croissants', step: 'Shape the croissant dough into plain crescents.', ingredients: ['croissant dough'], tools: ['baking sheet'] }),
+      ...(includeProof ? [buildStep(5, { title: 'Final Proof', step: 'Rest until puffy for 45 minutes.', ingredients: ['croissant dough'], tools: ['baking sheet'], estimatedMinutes: 45 })] : []),
+      buildStep(includeProof ? 6 : 5, { title: 'Egg Wash', step: 'Brush the shaped croissants with egg wash.', ingredients: ['croissant dough'], tools: ['pastry brush'] }),
+      buildStep(includeProof ? 7 : 6, { title: 'Bake Croissants', step: 'Bake the croissants for 18 minutes.', ingredients: ['croissant dough'], tools: ['oven'] }),
+      buildStep(includeProof ? 8 : 7, { title: 'Cool Croissants', step: 'Cool the plain croissants before serving.', ingredients: ['croissant dough'], tools: ['cooling rack'] }),
+    ],
+  };
+  return candidate;
+}
+
+test('missing final proof receives one narrow deterministic fallback after provider repair', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const invalid = yeastCroissantCandidate(false);
+  globalThis.fetch = async () => providerResponse(++calls === 1 ? invalid : invalid);
+  try {
+    const output = await generateRecipeWithOpenRouter({ analysis: { ...yeastCroissantAnalysis(), dishName: 'Plain Butter Croissant No Duplicate' }, config: testConfig, mode: 'Normal' });
+    assert.equal(calls, 2);
+    const texts = output.steps.map((step) => typeof step === 'string' ? step : step.step);
+    const proofIndex = texts.findIndex((text) => /final proof|proof|puffy/i.test(text));
+    const shapeIndex = texts.findIndex((text) => /shape/i.test(text));
+    const bakeIndex = texts.findIndex((text) => /bake/i.test(text));
+    assert.ok(proofIndex > shapeIndex && proofIndex < bakeIndex);
+    assert.ok(texts.some((text) => /early rise|rise for 60 minutes before shaping/i.test(text)));
+    assert.equal(texts.filter((text) => /proof|puffy/i.test(text)).length, 1);
+    assert.equal((output.steps[proofIndex] as { estimatedMinutes?: number }).estimatedMinutes, 53);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('missing lamination wait receives explicit text and structured timing before final reconciliation', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const invalid = yeastCroissantCandidate(true);
+  invalid.steps[1] = buildStep(2, {
+    title: 'Laminate Dough',
+    step: 'Roll out the dough again and fold it into thirds; repeat this process 3 times, chilling between folds.',
+    ingredients: ['croissant dough', 'butter'],
+    tools: ['rolling pin'],
+    estimatedMinutes: 4,
+  });
+  globalThis.fetch = async () => providerResponse(++calls === 1 ? invalid : invalid);
+  try {
+    const output = await generateRecipeWithOpenRouter({ analysis: yeastCroissantAnalysis(), config: testConfig, mode: 'Normal' });
+    const laminate = output.steps.find((step) => typeof step !== 'string' && /laminate/i.test(step.title ?? '')) as {
+      step: string;
+      activeMinutes?: number;
+      passiveMinutes?: number;
+      elapsedMinutes?: number;
+      timeEstimate?: string;
+    } | undefined;
+    assert.ok(laminate);
+    assert.match(laminate.step, /30 minutes/);
+    assert.equal(laminate.activeMinutes, 4);
+    assert.equal(laminate.passiveMinutes, 90);
+    assert.equal(laminate.elapsedMinutes, 94);
+    assert.match(laminate.timeEstimate ?? '', /4 minutes hands-on/);
+    assert.ok(Number(output.totalTime ?? 0) >= 94);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('deterministic proof repair replaces misplaced and short post-shaping proofs while preserving early fermentation', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const invalid = yeastCroissantCandidate(false);
+  invalid.steps = [
+    ...invalid.steps.slice(0, 4),
+    buildStep(5, { title: 'Short Final Proof', step: 'Proof the shaped croissants for 10 minutes.', ingredients: ['croissant dough'], tools: ['baking sheet'], estimatedMinutes: 10 }),
+    ...invalid.steps.slice(4).map((step, index) => typeof step === 'string' ? step : { ...step, stepNumber: index + 6 }),
+    buildStep(9, { title: 'Late Proof', step: 'Let the baked croissants rise for 45 minutes.', ingredients: ['croissant dough'], tools: ['cooling rack'], estimatedMinutes: 45 }),
+  ];
+  globalThis.fetch = async () => providerResponse(++calls === 1 ? invalid : invalid);
+  try {
+    const output = await generateRecipeWithOpenRouter({ analysis: { ...yeastCroissantAnalysis(), dishName: 'Plain Butter Croissant Proof Replacement' }, config: testConfig, mode: 'Normal' });
+    const texts = output.steps.map((step) => typeof step === 'string' ? step : step.step);
+    const shapeIndex = texts.findIndex((text) => /shape/i.test(text));
+    const proofIndexes = texts.map((text, index) => /proof|puffy/i.test(text) ? index : -1).filter((index) => index >= 0);
+    const eggWashIndex = texts.findIndex((text) => /egg wash/i.test(text));
+    const bakeIndex = texts.findIndex((text) => /bake/i.test(text));
+    assert.equal(calls, 2);
+    assert.equal(proofIndexes.length, 1);
+    assert.ok(proofIndexes[0] > shapeIndex);
+    assert.ok(proofIndexes[0] < eggWashIndex);
+    assert.ok(proofIndexes[0] < bakeIndex);
+    assert.ok(texts.some((text) => /early rise|rise for 60 minutes before shaping/i.test(text)));
+    assert.equal((output.steps[proofIndexes[0]] as { estimatedMinutes?: number }).estimatedMinutes, 53);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a valid provider proof is preserved without a duplicate deterministic proof', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const valid = yeastCroissantCandidate(true);
+  globalThis.fetch = async () => providerResponse(++calls === 1 ? yeastCroissantCandidate(false) : valid);
+  try {
+    const output = await generateRecipeWithOpenRouter({ analysis: { ...yeastCroissantAnalysis(), dishName: 'Plain Butter Croissant Valid Proof' }, config: testConfig, mode: 'Normal' });
+    assert.equal(calls, 2);
+    assert.equal(output.steps.filter((step) => /proof|puffy/i.test(typeof step === 'string' ? step : step.step)).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a misplaced pre-shaping Final Proof is moved after shaping without deleting the early rise', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const invalid = yeastCroissantCandidate(false);
+  invalid.steps = [
+    ...invalid.steps.slice(0, 3),
+    buildStep(4, { title: 'Final Proof', step: 'Proof the dough before shaping for 45 minutes.', ingredients: ['croissant dough'], tools: ['bowl'], estimatedMinutes: 45 }),
+    ...invalid.steps.slice(3).map((step, index) => typeof step === 'string' ? step : { ...step, stepNumber: index + 5 }),
+  ];
+  globalThis.fetch = async () => providerResponse(++calls === 1 ? invalid : invalid);
+  try {
+    const output = await generateRecipeWithOpenRouter({ analysis: { ...yeastCroissantAnalysis(), dishName: 'Plain Butter Croissant Misplaced Proof' }, config: testConfig, mode: 'Normal' });
+    const texts = output.steps.map((step) => typeof step === 'string' ? step : step.step);
+    const shapeIndex = texts.findIndex((text) => /shape/i.test(text));
+    const proofIndexes = texts.map((text, index) => /proof|puffy/i.test(text) ? index : -1).filter((index) => index >= 0);
+    assert.equal(calls, 2);
+    assert.equal(proofIndexes.length, 1);
+    assert.ok(proofIndexes[0] > shapeIndex);
+    assert.ok(texts.some((text) => /early rise|rise for 60 minutes before shaping/i.test(text)));
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -25,6 +25,7 @@ export type CorrectionNutritionSnapshot = {
 export type ParsedCorrectionRequirementDiagnostic = {
   requirementIndex: number;
   intentType: string;
+  target?: string;
   nutrient?: string;
   direction?: string;
 };
@@ -78,7 +79,14 @@ export type CorrectionRequestDiagnostics = {
   focusedRepairRan: boolean;
   repairValidationIssueCodes: string[];
   repairAttempt?: CorrectionAttemptDiagnostics;
+  fallbackRan?: boolean;
+  fallbackValidationIssueCodes?: string[];
+  fallbackBlockingValidationIssues?: CorrectionValidationIssue[];
+  fallbackAttempt?: CorrectionAttemptDiagnostics;
   repairCandidateEffectivelyIdentical?: boolean;
+  editRetryRan?: boolean;
+  editRetryReasonCodes?: string[];
+  finalValidationIssueCodes?: string[];
   failureCategory?: string;
   metrics?: OpenRouterRequestMetrics;
   startedAt: number;
@@ -194,13 +202,20 @@ export function logCorrectionRequest(
     focusedRepairRan: diagnostics.focusedRepairRan,
     repairValidationIssueCodes: diagnostics.repairValidationIssueCodes,
     repairBlockingValidationIssues: diagnostics.repairBlockingValidationIssues ?? [],
+    fallbackRan: diagnostics.fallbackRan ?? false,
+    fallbackValidationIssueCodes: diagnostics.fallbackValidationIssueCodes ?? [],
+    fallbackBlockingValidationIssues: diagnostics.fallbackBlockingValidationIssues ?? [],
     canonicalRecipeId: diagnostics.canonicalRecipeId,
     requestedSourceRevisionId: diagnostics.requestedSourceRevisionId,
     latestStoredRevisionId: diagnostics.latestStoredRevisionId,
     scanSessionId: diagnostics.scanSessionId,
     correctionKind: diagnostics.correctionKind,
     repairAttempt: diagnostics.repairAttempt,
+    fallbackAttempt: diagnostics.fallbackAttempt,
     repairCandidateEffectivelyIdentical: diagnostics.repairCandidateEffectivelyIdentical,
+    editRetryRan: diagnostics.editRetryRan ?? false,
+    editRetryReasonCodes: diagnostics.editRetryReasonCodes ?? [],
+    finalValidationIssueCodes: diagnostics.finalValidationIssueCodes ?? [],
     finalHttpStatus,
     errorCategory: diagnostics.failureCategory ?? (error ? getCorrectionErrorCategory(error) : undefined),
     unexpectedError,
@@ -212,6 +227,19 @@ export function logCorrectionRequest(
   // Emit one sanitized JSON record so nested patch diagnostics remain fully
   // inspectable in Railway logs instead of being rendered as [Object].
   console.log('[recipe_correction_request]', JSON.stringify(payload));
+  if (finalHttpStatus === 422) {
+    console.log('[recipe_correction_failure]', JSON.stringify({
+      requirements: diagnostics.parsedRequirements,
+      blockingIssues: diagnostics.firstAttempt?.blockingValidationIssues ?? [],
+      repairRan: diagnostics.focusedRepairRan,
+      finalBlockingIssues: diagnostics.fallbackRan
+        ? diagnostics.fallbackBlockingValidationIssues ?? diagnostics.repairBlockingValidationIssues ?? diagnostics.firstAttempt?.blockingValidationIssues ?? []
+        : diagnostics.repairBlockingValidationIssues ?? diagnostics.firstAttempt?.blockingValidationIssues ?? [],
+      fallbackRan: diagnostics.fallbackRan ?? false,
+      editRetryRan: diagnostics.editRetryRan ?? false,
+      finalValidationIssueCodes: diagnostics.finalValidationIssueCodes ?? [],
+    }));
+  }
 }
 
 function getCorrectionIssueCode(issue: string): string {

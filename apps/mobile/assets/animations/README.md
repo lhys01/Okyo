@@ -25,7 +25,7 @@ python3 scripts/generate_kiko_animations.py
 - Duration: 3.0s loop at 12fps
 - Size: 384x384
 - Backgrounds: GIF/PNG frames are transparent; MP4 is warm cream
-- Source Kiko asset: `assets/mascot/kiko_transparent_backgrounds_careful/kiko-cooking.png`
+- Source Kiko asset: `assets/kiko-static/40b4aa9b-1feb-4b6b-b4dc-c1af7c11b9ee.png`
 - GIF: `assets/animations/kiko-cooking-pan-saute.gif` (401.7 KB)
 - MP4: `assets/animations/kiko-cooking-pan-saute.mp4` (101.7 KB)
 - PNG frames: `assets/animations/frames/kiko-cooking-pan-saute/` (36 frames)
@@ -37,7 +37,7 @@ python3 scripts/generate_kiko_animations.py
 - Duration: 3.0s loop at 12fps
 - Size: 384x384
 - Backgrounds: GIF/PNG frames are transparent; MP4 is warm cream
-- Source Kiko asset: `assets/mascot/kiko_transparent_backgrounds_careful/kiko-side-profile.png`
+- Source Kiko asset: `assets/kiko-static/626a7f44-4f69-4f44-b779-72ee18ca2491.png`
 - GIF: `assets/animations/kiko-cutting-vegetables.gif` (254.6 KB)
 - MP4: `assets/animations/kiko-cutting-vegetables.mp4` (66.9 KB)
 - PNG frames: `assets/animations/frames/kiko-cutting-vegetables/` (36 frames)
@@ -49,7 +49,7 @@ python3 scripts/generate_kiko_animations.py
 - Duration: 3.0s loop at 12fps
 - Size: 384x384
 - Backgrounds: GIF/PNG frames are transparent; MP4 is warm cream
-- Source Kiko asset: `assets/mascot/kiko_transparent_backgrounds_careful/kiko-scanning.png`
+- Source Kiko asset: `assets/kiko-static/384183e9-8ebb-4d77-9c80-afae5aed6102.png`
 - GIF: `assets/animations/kiko-scanning.gif` (545.9 KB)
 - MP4: `assets/animations/kiko-scanning.mp4` (141.2 KB)
 - PNG frames: `assets/animations/frames/kiko-scanning/` (36 frames)
@@ -61,7 +61,7 @@ python3 scripts/generate_kiko_animations.py
 - Duration: 3.0s loop at 12fps
 - Size: 384x384
 - Backgrounds: GIF/PNG frames are transparent; MP4 is warm cream
-- Source Kiko asset: `assets/mascot/kiko_transparent_backgrounds_careful/kiko-cooking.png`
+- Source Kiko asset: `assets/kiko-static/40b4aa9b-1feb-4b6b-b4dc-c1af7c11b9ee.png`
 - GIF: `assets/animations/kiko-cooking-stirring.gif` (385.2 KB)
 - MP4: `assets/animations/kiko-cooking-stirring.mp4` (84.5 KB)
 - PNG frames: `assets/animations/frames/kiko-cooking-stirring/` (36 frames)
@@ -73,7 +73,7 @@ python3 scripts/generate_kiko_animations.py
 - Duration: 3.0s loop at 12fps
 - Size: 384x384
 - Backgrounds: GIF/PNG frames are transparent; MP4 is warm cream
-- Source Kiko asset: `assets/mascot/kiko_transparent_backgrounds_careful/kiko-celebrating.png`
+- Source Kiko asset: `assets/kiko-static/2a6be0ee-fc9c-4764-a9a6-4b986e7abe58.png`
 - GIF: `assets/animations/kiko-success-celebration.gif` (440.5 KB)
 - MP4: `assets/animations/kiko-success-celebration.mp4` (163.2 KB)
 - PNG frames: `assets/animations/frames/kiko-success-celebration/` (36 frames)
@@ -85,7 +85,7 @@ python3 scripts/generate_kiko_animations.py
 - Duration: 3.0s loop at 12fps
 - Size: 384x384
 - Backgrounds: GIF/PNG frames are transparent; MP4 is warm cream
-- Source Kiko asset: `assets/mascot/kiko_transparent_backgrounds_careful/kiko-grocery-list.png`
+- Source Kiko asset: `assets/kiko-static/bb5aa691-ce28-43ae-a353-8bc73f3ca365.png`
 - GIF: `assets/animations/kiko-grocery-bag.gif` (421.5 KB)
 - MP4: `assets/animations/kiko-grocery-bag.mp4` (100.9 KB)
 - PNG frames: `assets/animations/frames/kiko-grocery-bag/` (36 frames)

@@ -8,6 +8,7 @@ import {
   evaluateNutritionRequirements,
   getCalorieMacroTolerance,
   getCorrectionIngredientHints,
+  getCorrectionPlanConflictIssues,
   getEstimatedCaloriesFromMacros,
   getNutritionRequirementTargets,
   getNutritionTargetPolicy,
@@ -18,6 +19,73 @@ import {
   parseCorrectionRequirements,
   validateCorrectedRecipe,
 } from './correctionIntent.js';
+
+test('open-world correction parsing preserves independent arbitrary requirements', () => {
+  const compound = parseCorrectionRequirements('No Oreo and more protein');
+  assert.deepEqual(compound.requirements, [
+    { type: 'remove_ingredient', note: 'No Oreo and more protein', ingredient: 'oreo' },
+    { type: 'nutrition_goal', note: 'No Oreo and more protein', direction: 'more', nutrient: 'protein' },
+  ]);
+
+  assert.deepEqual(parseCorrectionRequirements('Remove shrimp and use tofu').requirements, [{
+    type: 'replace_ingredient',
+    note: 'Remove shrimp and use tofu',
+    removeIngredient: 'shrimp',
+    addIngredient: 'tofu',
+  }]);
+  assert.deepEqual(parseCorrectionRequirements('Replace tahini with sunflower-seed butter').requirements, [{
+    type: 'replace_ingredient',
+    note: 'Replace tahini with sunflower-seed butter',
+    removeIngredient: 'tahini',
+    addIngredient: 'sunflower seed butter',
+  }]);
+  assert.deepEqual(parseCorrectionRequirements('Add veluntra seed cream').requirements, [{
+    type: 'add_ingredient',
+    note: 'Add veluntra seed cream',
+    ingredient: 'veluntra seed cream',
+  }]);
+  assert.deepEqual(parseCorrectionIntent('Add black garlic'), {
+    type: 'add_ingredient', note: 'Add black garlic', ingredient: 'black garlic',
+  });
+  assert.deepEqual(parseCorrectionIntent('No peanuts because of an allergy'), {
+    type: 'remove_ingredient', note: 'No peanuts because of an allergy', ingredient: 'peanuts',
+  });
+});
+
+test('compound punctuation, constraints, and subjective clauses remain separate', () => {
+  const plan = parseCorrectionRequirements(
+    'No Oreo, use strawberries instead, make it dairy-free, double the servings, and add more protein',
+  );
+  assert.deepEqual(plan.requirements.map((requirement) => requirement.type), [
+    'replace_ingredient',
+    'dietary_restriction',
+    'servings_scale',
+    'nutrition_goal',
+  ]);
+  assert.equal(parseCorrectionIntent('Use only one pan').type, 'equipment_constraint');
+  assert.deepEqual(parseCorrectionIntent('serve 8'), {
+    type: 'servings_adjustment', note: 'serve 8', servings: 8,
+  });
+  assert.deepEqual(parseCorrectionIntent('under 500 calories'), {
+    type: 'nutrition_constraint', note: 'under 500 calories', nutrient: 'calorie', targetMaximum: 500,
+  });
+  assert.deepEqual(
+    parseCorrectionRequirements('Make it spicier but not sweeter').requirements
+      .map((requirement) => requirement.type === 'sensory_adjustment' ? requirement.adjustment : requirement.type),
+    ['spicy', 'not sweet'],
+  );
+});
+
+test('obvious contradictory correction plans are understood and rejected before generation', () => {
+  const sameTarget = parseCorrectionRequirements('No kala namak and add kala namak');
+  assert.deepEqual(getCorrectionPlanConflictIssues(sameTarget.requirements).map((issue) => issue.code), [
+    'correction_conflict',
+  ]);
+  const emptyRecipe = parseCorrectionRequirements('Remove every ingredient');
+  assert.deepEqual(getCorrectionPlanConflictIssues(emptyRecipe.requirements).map((issue) => issue.code), [
+    'correction_unsatisfiable',
+  ]);
+});
 
 test('compound nutrition intent order and fuzzy spelling normalize identically', () => {
   for (const note of ['less fat and more protein', 'more protein and less fat', 'more protien and less fatt']) {

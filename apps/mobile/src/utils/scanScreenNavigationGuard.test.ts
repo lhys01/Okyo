@@ -100,13 +100,20 @@ test('SavingsDashboardScreen routes to Home', () => {
 test('ResultSummaryScreen never references ScanScreen in any branch', () => {
   const source = readScreenSource('ResultSummaryScreen.tsx');
   assert.equal(source.includes('ScanScreen'), false);
-  assert.match(source, /screen:\s*'HomeScreen'/);
+  assert.match(source, /getHomeResetState/);
+  assert.match(source, /navigation\.reset\(getFreshDescribeMealResetState\(\)\)/);
+  assert.match(source, /navigation\.reset\(getHomeResetState\(\)\)/);
+});
+
+test('fresh scan-entry screens reset to Home on Back or cancel', () => {
+  assert.match(readScreenSource('DescribeMealScreen.tsx'), /navigation\.reset\(getHomeResetState\(\)\)/);
+  assert.match(readScreenSource('AnalysisLoadingScreen.tsx'), /navigation\.reset\(getHomeResetState\(\)\)/);
 });
 
 test('AnalysisLoadingScreen back button and failure actions target HomeScreen, never ScanScreen', () => {
   const source = readScreenSource('AnalysisLoadingScreen.tsx');
   assert.equal(source.includes('ScanScreen'), false);
-  assert.match(source, /screen:\s*'HomeScreen'/);
+  assert.match(source, /getHomeResetState/);
 });
 
 test('AnalysisLoadingScreen terminal-status navigation only fires for a successful outcome', () => {

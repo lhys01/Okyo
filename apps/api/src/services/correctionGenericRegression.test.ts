@@ -89,6 +89,26 @@ test('production correction behavior contains no acceptance-fixture recipes or i
   );
 });
 
+test('normal Edit Recipe uses the AI-native complete-recipe path without patch or quality-repair stages', () => {
+  const aiService = read('apps/api/src/services/aiService.ts');
+  const provider = read('apps/api/src/services/openRouterProvider.ts');
+  const normalEditPath = between(
+    aiService,
+    'async function createAiRecipeCorrectionWithMetrics',
+    'function createRecipeEditAnalysis',
+  );
+  const providerEditPath = between(
+    provider,
+    'export async function generateRecipeEditWithOpenRouter',
+    'function hasStructuredCorrectionPatchOutput',
+  );
+
+  assert.match(normalEditPath, /generateRecipeEditWithOpenRouter/);
+  assert.match(normalEditPath, /storeGeneratedRecipeRevision/);
+  assert.doesNotMatch(normalEditPath, /generateRecipeFromDish|applyCorrectionPatch|focusedRepair|fallbackRan/);
+  assert.doesNotMatch(providerEditPath, /ingredientOperations|stepOperations|PATCH-FIRST|ONE FOCUSED REPAIR/);
+});
+
 test('active V1 quality checks do not require removed teaching-card fields', () => {
   const aiService = read('apps/api/src/services/aiService.ts');
   const provider = read('apps/api/src/services/openRouterProvider.ts');

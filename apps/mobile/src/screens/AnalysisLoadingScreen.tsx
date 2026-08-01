@@ -14,7 +14,7 @@ import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getRealScanImageUri } from '../utils/recipeImages';
 import { getLastPreparedImage, startScan } from '../utils/scanController';
-import { getAnalysisScreenOutcome } from '../utils/scanControllerUtils';
+import { getAnalysisScreenOutcome, getFreshDescribeMealResetState, getHomeResetState } from '../utils/scanControllerUtils';
 import { isUsableScan } from '../utils/scanDecision';
 import { getInlineFailureCopy, getScanFailureCategory } from '../utils/scanFailureCopy';
 import { preparePickedImage } from '../utils/scanImageProcessing';
@@ -252,7 +252,7 @@ export function AnalysisLoadingScreen() {
   const goHome = (reason: string) => {
     didNavigate.current = true;
     clearLatestScan({ reason, source: 'AnalysisLoadingScreen.goHome' });
-    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
+    navigation.reset(getHomeResetState());
   };
 
   const handleTryAgain = () => {
@@ -321,7 +321,7 @@ export function AnalysisLoadingScreen() {
   const handleEditDescription = () => {
     didNavigate.current = true;
     clearLatestScan({ reason: 'user_editing_description_after_failure', source: 'AnalysisLoadingScreen.editDescription' });
-    navigation.navigate('DescribeMealScreen', { initialDescription: mealDescription ?? undefined });
+    navigation.reset(getFreshDescribeMealResetState(mealDescription ?? undefined));
   };
 
   const isFailure = outcome === 'inline_failure' && failureCopy;

@@ -11,6 +11,7 @@ import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { MAX_MEAL_DESCRIPTION_LENGTH, validateMealDescription } from '../utils/mealDescription';
 import { startScan } from '../utils/scanController';
+import { getHomeResetState } from '../utils/scanControllerUtils';
 
 type Navigation = NativeStackNavigationProp<RootStackParamList, 'DescribeMealScreen'>;
 type DescribeMealRoute = RouteProp<RootStackParamList, 'DescribeMealScreen'>;
@@ -49,7 +50,7 @@ export function DescribeMealScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.content}>
-        <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={styles.back}>
+        <Pressable accessibilityRole="button" onPress={() => navigation.reset(getHomeResetState())} style={styles.back}>
           <NavArrowLeft color={colors.charcoal} height={22} width={22} />
           <Text style={styles.backText}>Back</Text>
         </Pressable>

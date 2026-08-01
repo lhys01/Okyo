@@ -10,8 +10,14 @@ export type CorrectionIntent =
   | { type: 'quantity_adjustment'; note: string; ingredient: string; direction: 'more' | 'less' | 'double' }
   | { type: 'sensory_adjustment'; note: string; adjustment: string }
   | { type: 'nutrition_goal'; note: string; direction: 'more' | 'less'; nutrient: string }
+  | { type: 'nutrition_constraint'; note: string; nutrient: string; targetMinimum?: number; targetMaximum?: number }
   | { type: 'cooking_method_adjustment'; note: string; method: string }
   | { type: 'servings_adjustment'; note: string; servings: number }
+  | { type: 'servings_scale'; note: string; multiplier: number }
+  | { type: 'time_constraint'; note: string; targetMaximumMinutes: number }
+  | { type: 'cost_adjustment'; note: string; direction: 'cheaper' | 'more_premium' }
+  | { type: 'cuisine_or_style'; note: string; target: string }
+  | { type: 'equipment_constraint'; note: string; target: string }
   | { type: 'general'; note: string };
 
 export type CorrectionRequirementPlan = {
@@ -84,7 +90,14 @@ export type CorrectionMetadataPatch = {
   prepTimeMinutes?: number | null;
   cookTimeMinutes?: number | null;
   totalTimeMinutes?: number | null;
+  servings?: number | null;
+  difficulty?: Recipe['difficulty'] | null;
+  estimatedHomemadeCost?: number | null;
   equipment?: string[] | null;
+  substitutions?: string[] | null;
+  spicePairings?: string[] | null;
+  pantryNote?: string | null;
+  storageAndReheating?: string | null;
 };
 
 export type CorrectionRecipePatch = {
@@ -145,6 +158,7 @@ export type CorrectionGenerationContext = {
   previousIngredientChanges?: IngredientChange[];
   previousPatch?: CorrectionRecipePatch;
   previousPatchIssues?: string[];
+  forceCompleteRecipe?: boolean;
 };
 
 export type CorrectionValidationIssue = {
@@ -326,12 +340,13 @@ export function parseCorrectionRequirements(value: string): CorrectionRequiremen
   const note = value.trim();
   const normalizedNote = normalizeCorrectionText(note);
   const clauses = splitCompoundCorrection(normalizedNote);
-  const requirements = clauses
-    .map((clause) => parseSingleCorrectionIntent(clause, note))
-    .filter((intent, index, intents) =>
-      intents.findIndex((candidate) =>
+  const parsedRequirements = clauses
+    .map((clause) => ({ clause, intent: parseSingleCorrectionIntent(clause, note) }))
+    .filter(({ intent }, index, entries) =>
+      entries.findIndex(({ intent: candidate }) =>
         candidate.type === intent.type &&
         getCorrectionTargetConcept(candidate) === getCorrectionTargetConcept(intent)) === index);
+  const requirements = coalesceAdjacentReplacement(parsedRequirements);
 
   return {
     note,
@@ -355,6 +370,45 @@ function hasMeaningfulGeneralCorrection(note: string): boolean {
 
 export function parseCorrectionIntent(value: string): CorrectionIntent {
   return parseCorrectionRequirements(value).requirements[0];
+}
+
+export function getCorrectionPlanConflictIssues(
+  requirements: CorrectionIntent[],
+): CorrectionValidationIssue[] {
+  const issues: CorrectionValidationIssue[] = [];
+  const removed = requirements
+    .filter((requirement): requirement is Extract<CorrectionIntent, { type: 'remove_ingredient' }> =>
+      requirement.type === 'remove_ingredient')
+    .map((requirement) => normalizeFoodText(requirement.ingredient));
+  const added = requirements
+    .filter((requirement): requirement is Extract<CorrectionIntent, { type: 'add_ingredient' }> =>
+      requirement.type === 'add_ingredient')
+    .map((requirement) => normalizeFoodText(requirement.ingredient));
+
+  if (removed.some((target) => ['all ingredient', 'every ingredient', 'everything'].includes(target))) {
+    issues.push({
+      code: 'correction_unsatisfiable',
+      message: 'A cookable recipe cannot remove every ingredient.',
+    });
+  }
+  if (removed.some((target) => added.includes(target)) || requirements.some((requirement) =>
+    requirement.type === 'replace_ingredient' &&
+    normalizeFoodText(requirement.removeIngredient) === normalizeFoodText(requirement.addIngredient))) {
+    issues.push({
+      code: 'correction_conflict',
+      message: 'The same concept cannot be both removed and required in one correction.',
+    });
+  }
+
+  const explicitServings = new Set(requirements.flatMap((requirement) =>
+    requirement.type === 'servings_adjustment' ? [requirement.servings] : []));
+  if (explicitServings.size > 1) {
+    issues.push({
+      code: 'correction_conflict',
+      message: 'The correction requests conflicting serving counts.',
+    });
+  }
+  return issues;
 }
 
 function parseSingleCorrectionIntent(value: string, originalNote = value.trim()): CorrectionIntent {
@@ -407,6 +461,36 @@ function parseSingleCorrectionIntent(value: string, originalNote = value.trim())
     };
   }
 
+  match = normalizedNote.match(/^(?:(?:make|keep)\s+(?:it|this|the recipe)\s+)?(?:under|below|no more than|max(?:imum)?(?: of)?)\s+(\d+(?:\.\d+)?)\s+(calories?|kcal|grams?\s+(?:protein|fiber|fat|carbohydrates?|carbs?))$/);
+  if (match) {
+    return {
+      type: 'nutrition_constraint',
+      note,
+      nutrient: normalizeNutritionConstraintTarget(match[2]),
+      targetMaximum: Number(match[1]),
+    };
+  }
+
+  match = normalizedNote.match(/^(?:(?:make|keep)\s+(?:it|this|the recipe)\s+)?(?:at least|minimum(?: of)?)\s+(\d+(?:\.\d+)?)\s+(grams?\s+(?:protein|fiber|fat|carbohydrates?|carbs?))$/);
+  if (match) {
+    return {
+      type: 'nutrition_constraint',
+      note,
+      nutrient: normalizeNutritionConstraintTarget(match[2]),
+      targetMinimum: Number(match[1]),
+    };
+  }
+
+  match = normalizedNote.match(/^(?:make\s+(?:it|this|the recipe)\s+(?:take\s+)?|take\s+)?(?:under|within|no more than|max(?:imum)?(?: of)?)\s+(\d+)\s*(?:minutes?|mins?)$/);
+  if (match) {
+    return { type: 'time_constraint', note, targetMaximumMinutes: Number(match[1]) };
+  }
+
+  match = normalizedNote.match(/^(?:double|halve)\s+(?:the\s+)?(?:servings?|yield|batch)$/);
+  if (match) {
+    return { type: 'servings_scale', note, multiplier: normalizedNote.startsWith('double') ? 2 : 0.5 };
+  }
+
   match = normalizedNote.match(/^(more|less|fewer|higher|lower)\s+(.+)$/);
   if (match) {
     const direction = /^(?:less|fewer|lower)$/.test(match[1]) ? 'less' : 'more';
@@ -433,6 +517,12 @@ function parseSingleCorrectionIntent(value: string, originalNote = value.trim())
         adjustment: `${direction} ${target}`,
       };
     }
+    return {
+      type: 'quantity_adjustment',
+      note,
+      direction,
+      ingredient: target,
+    };
   }
 
   match = normalizedNote.match(/^(?:use)\s+(.+?)\s+instead\s+of\s+(.+)$/);
@@ -518,6 +608,29 @@ function parseSingleCorrectionIntent(value: string, originalNote = value.trim())
     };
   }
 
+  match = normalizedNote.match(/^(?:no|without)\s+(.+)$/);
+  if (match) {
+    return {
+      type: 'remove_ingredient',
+      note,
+      ingredient: cleanRemovalTarget(match[1]),
+    };
+  }
+
+  match = normalizedNote.match(/^not\s+(.+)$/);
+  if (match && containsSensoryConcept(match[1])) {
+    return {
+      type: 'sensory_adjustment',
+      note,
+      adjustment: `not ${cleanCorrectionTarget(match[1])}`,
+    };
+  }
+
+  match = normalizedNote.match(/^(?:use\s+)?(?:only\s+)?(?:one|1)\s+(.+)$/);
+  if (match && /\b(?:pan|pot|bowl|sheet|skillet|appliance|tool)\b/.test(match[1])) {
+    return { type: 'equipment_constraint', note, target: `one ${cleanCorrectionTarget(match[1])}` };
+  }
+
   match = normalizedNote.match(/^(?:add|include)\s+(a|an|some|something)\s+(.+)$/);
   if (match) {
     return {
@@ -536,6 +649,15 @@ function parseSingleCorrectionIntent(value: string, originalNote = value.trim())
     };
   }
 
+  match = normalizedNote.match(/^use\s+(.+?)(?:\s+instead)?$/);
+  if (match) {
+    return {
+      type: 'add_ingredient',
+      note,
+      ingredient: cleanCorrectionTarget(match[1]),
+    };
+  }
+
   match = normalizedNote.match(/^(?:remove|omit|exclude|leave\s+out)\s+(?:the\s+)?(.+)$/);
   if (match) {
     return {
@@ -545,9 +667,23 @@ function parseSingleCorrectionIntent(value: string, originalNote = value.trim())
     };
   }
 
-  match = normalizedNote.match(/^(?:make|scale|adjust)\s+(?:it|this|the recipe)?\s*(?:enough for|to serve|serves?)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:people|servings?|persons?)?$/);
+  match = normalizedNote.match(/^(?:(?:make|scale|adjust)\s+(?:it|this|the recipe)?\s*(?:enough for|to serve|serves?)|serve)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)(?:\s+(?:people|servings?|persons?))?$/);
   if (match) {
     return { type: 'servings_adjustment', note, servings: parseServingCount(match[1]) };
+  }
+
+  if (/^(?:make\s+(?:it|this|the recipe)\s+)?cheaper$/.test(normalizedNote)) {
+    return { type: 'cost_adjustment', note, direction: 'cheaper' };
+  }
+
+  match = normalizedNote.match(/^(?:make\s+(?:it|this|the recipe)\s+(?:taste\s+)?more\s+|make\s+(?:it|this|the recipe)\s+)([a-z][a-z\s]+?)(?:\s+style)?$/);
+  if (match && !containsSensoryConcept(match[1]) && !getNutritionGoal(match[1], 'more')) {
+    return { type: 'cuisine_or_style', note, target: cleanCorrectionTarget(match[1]) };
+  }
+
+  match = normalizedNote.match(/^turn\s+(?:it|this|the recipe)\s+into\s+(.+)$/);
+  if (match) {
+    return { type: 'cuisine_or_style', note, target: cleanCorrectionTarget(match[1]) };
   }
 
   match = normalizedNote.match(/^(?:make)\s+(?:it|this|the recipe)\s+(.+)$/);
@@ -609,6 +745,36 @@ function parseSingleCorrectionIntent(value: string, originalNote = value.trim())
   }
 
   return { type: 'general', note };
+}
+
+function coalesceAdjacentReplacement(
+  requirements: Array<{ clause: string; intent: CorrectionIntent }>,
+): CorrectionIntent[] {
+  const result: CorrectionIntent[] = [];
+  for (let index = 0; index < requirements.length; index += 1) {
+    const current = requirements[index]?.intent;
+    const nextEntry = requirements[index + 1];
+    const next = nextEntry?.intent;
+    if (current?.type === 'remove_ingredient' && next?.type === 'add_ingredient' &&
+        /^use\b/.test(nextEntry.clause)) {
+      result.push({
+        type: 'replace_ingredient',
+        note: current.note,
+        removeIngredient: current.ingredient,
+        addIngredient: next.ingredient,
+      });
+      index += 1;
+      continue;
+    }
+    if (current) result.push(current);
+  }
+  return result;
+}
+
+function cleanRemovalTarget(value: string): string {
+  return cleanCorrectionTarget(value)
+    .replace(/\s+because\s+(?:of\s+)?(?:an?\s+)?(?:allergy|intolerance|restriction).*$/i, '')
+    .trim();
 }
 
 function parseServingCount(value: string): number {
@@ -703,6 +869,16 @@ export function getMandatoryCorrectionRequirements(
         'Preserve unrelated ingredients, servings, dish identity, and cooking method.',
       ];
       }
+    case 'nutrition_constraint': {
+      const target = intent.targetMaximum === undefined
+        ? `at least ${intent.targetMinimum} ${intent.nutrient}`
+        : `no more than ${intent.targetMaximum} ${intent.nutrient}`;
+      return [
+        `Make the final per-serving nutrition ${target}.`,
+        'Use coherent ingredient or quantity changes rather than editing nutrition metadata alone.',
+        'Update affected instructions and preserve unrelated recipe content.',
+      ];
+    }
     case 'cooking_method_adjustment':
       return [
         `Use this cooking-method adjustment: ${intent.method}.`,
@@ -715,6 +891,38 @@ export function getMandatoryCorrectionRequirements(
         `Make the recipe yield ${intent.servings} servings.`,
         'Scale ingredient quantities and update instructions only where the quantities are explicitly mentioned.',
         'Preserve the dish identity and unrelated recipe data.',
+      ];
+    case 'servings_scale': {
+      const targetServings = originalRecipe
+        ? Math.max(1, Math.round(originalRecipe.servings * intent.multiplier))
+        : undefined;
+      return [
+        targetServings
+          ? `Make the recipe yield ${targetServings} servings.`
+          : `Scale the recipe servings by ${intent.multiplier}.`,
+        `Scale every measurable ingredient quantity by ${intent.multiplier}.`,
+        'Update explicit quantities in instructions and preserve the dish identity.',
+      ];
+    }
+    case 'time_constraint':
+      return [
+        `Make the reconciled total recipe time no more than ${intent.targetMaximumMinutes} minutes.`,
+        'Adjust only the necessary method, preparation, equipment, and timing fields while keeping the recipe cookable.',
+      ];
+    case 'cost_adjustment':
+      return [
+        `Make the recipe ${intent.direction === 'cheaper' ? 'cheaper' : 'more premium'}.`,
+        'Make at least one meaningful ingredient, quantity, or method change and keep the dish recognizable.',
+      ];
+    case 'cuisine_or_style':
+      return [
+        `Apply this cuisine or style direction: ${intent.target}.`,
+        'Make a coherent ingredient, flavor, or method change that visibly supports the requested style.',
+      ];
+    case 'equipment_constraint':
+      return [
+        `Respect this equipment constraint: ${intent.target}.`,
+        'Update equipment and affected instructions without making the recipe incomplete.',
       ];
     case 'general':
       return [
@@ -759,8 +967,14 @@ export function getCorrectionIngredientHints(
     case 'quantity_adjustment':
     case 'sensory_adjustment':
     case 'nutrition_goal':
+    case 'nutrition_constraint':
     case 'cooking_method_adjustment':
     case 'servings_adjustment':
+    case 'servings_scale':
+    case 'time_constraint':
+    case 'cost_adjustment':
+    case 'cuisine_or_style':
+    case 'equipment_constraint':
     case 'general':
       return ingredientNames;
   }
@@ -822,6 +1036,8 @@ export function validateCorrectedRecipe(
     intent.type === 'replace_ingredient' ||
     intent.type === 'correct_dish_identity' ||
     intent.type === 'dietary_restriction');
+  const planAllowsServingChange = intents.some((intent) =>
+    intent.type === 'servings_adjustment' || intent.type === 'servings_scale');
   const planIngredientChangeLimit = Math.max(2, intents.length * 2);
 
   if (
@@ -873,7 +1089,7 @@ export function validateCorrectedRecipe(
       if (ingredientDelta.changed.length > Math.max(1, intents.length)) {
         issues.push('Too many existing ingredient quantities changed for an additive request.');
       }
-      if (candidate.servings !== original.servings) {
+      if (!planAllowsServingChange && candidate.servings !== original.servings) {
         issues.push('Servings changed even though the additive request did not require it.');
       }
       break;
@@ -944,7 +1160,7 @@ export function validateCorrectedRecipe(
       ) {
         issues.push(`The ${intent.restriction} request rewrote too many unrelated ingredients.`);
       }
-      if (candidate.servings !== original.servings) {
+      if (!planAllowsServingChange && candidate.servings !== original.servings) {
         issues.push('Servings changed even though the dietary request did not require it.');
       }
       break;
@@ -987,7 +1203,7 @@ export function validateCorrectedRecipe(
       if (ingredientDelta.changed.length > planIngredientChangeLimit) {
         issues.push('Too many existing ingredients changed for the requested sensory adjustment.');
       }
-      if (candidate.servings !== original.servings) {
+      if (!planAllowsServingChange && candidate.servings !== original.servings) {
         issues.push('Servings changed even though the sensory adjustment did not require it.');
       }
       break;
@@ -1018,8 +1234,20 @@ export function validateCorrectedRecipe(
       if (ingredientDelta.changed.length > planIngredientChangeLimit) {
         issues.push('Too many existing ingredients changed for the requested nutrition goal.');
       }
-      if (candidate.servings !== original.servings) {
+      if (!planAllowsServingChange && candidate.servings !== original.servings) {
         issues.push('Servings changed even though the nutrition goal did not require it.');
+      }
+      break;
+    }
+    case 'nutrition_constraint': {
+      const value = getNutritionConstraintValue(candidate, intent.nutrient);
+      if (value === null ||
+          (intent.targetMinimum !== undefined && value < intent.targetMinimum) ||
+          (intent.targetMaximum !== undefined && value > intent.targetMaximum)) {
+        issues.push(`Per-serving ${intent.nutrient} does not meet the requested numeric target.`);
+      }
+      if (!hasIngredientOrInstructionChange(original, candidate)) {
+        issues.push(`The ${intent.nutrient} target changed metadata without changing the recipe.`);
       }
       break;
     }
@@ -1039,13 +1267,40 @@ export function validateCorrectedRecipe(
       if (ingredientDelta.changed.length > planIngredientChangeLimit) {
         issues.push('Too many ingredient quantities changed for the cooking-method adjustment.');
       }
-      if (candidate.servings !== original.servings) {
+      if (!planAllowsServingChange && candidate.servings !== original.servings) {
         issues.push('Servings changed even though the cooking method did not require it.');
       }
       break;
     case 'servings_adjustment':
       if (candidate.servings !== intent.servings) {
         issues.push(`The recipe does not yield ${intent.servings} servings.`);
+      }
+      break;
+    case 'servings_scale':
+      if (candidate.servings !== Math.max(1, Math.round(original.servings * intent.multiplier))) {
+        issues.push(`The recipe servings were not scaled by ${intent.multiplier}.`);
+      }
+      break;
+    case 'time_constraint':
+      if (!candidate.totalTimeMinutes || candidate.totalTimeMinutes > intent.targetMaximumMinutes) {
+        issues.push(`The recipe exceeds ${intent.targetMaximumMinutes} minutes.`);
+      }
+      break;
+    case 'cost_adjustment':
+      if (intent.direction === 'cheaper'
+        ? candidate.estimatedHomemadeCost >= original.estimatedHomemadeCost
+        : candidate.estimatedHomemadeCost <= original.estimatedHomemadeCost) {
+        issues.push('The requested cost adjustment was not applied.');
+      }
+      break;
+    case 'cuisine_or_style':
+      if (!hasMeaningfulRecipeChange(original, candidate) || !containsConcept(completeText, intent.target)) {
+        issues.push(`The recipe does not demonstrate ${intent.target}.`);
+      }
+      break;
+    case 'equipment_constraint':
+      if (!containsConcept(`${(candidate.equipment ?? []).join(' ')} ${stepText}`, intent.target.replace(/^one\s+/, ''))) {
+        issues.push(`The recipe does not respect ${intent.target}.`);
       }
       break;
     case 'general': {
@@ -1060,7 +1315,7 @@ export function validateCorrectedRecipe(
       if (hasAddedIngredientMissingFromSteps(ingredientDelta, stepText)) {
         issues.push('An ingredient added by the general edit is missing from the affected instructions.');
       }
-      if (!requestsServingChange(intent.note) && candidate.servings !== original.servings) {
+      if (!planAllowsServingChange && !requestsServingChange(intent.note) && candidate.servings !== original.servings) {
         issues.push('Servings changed even though the correction did not request it.');
       }
       break;
@@ -1111,7 +1366,14 @@ function validateUnrelatedRecipePreservation(
     intent.type === 'abstract_ingredient_addition' ||
     intent.type === 'sensory_adjustment' ||
     intent.type === 'nutrition_goal' ||
-    intent.type === 'cooking_method_adjustment')) {
+    intent.type === 'nutrition_constraint' ||
+    intent.type === 'cooking_method_adjustment' ||
+    intent.type === 'servings_adjustment' ||
+    intent.type === 'servings_scale' ||
+    intent.type === 'time_constraint' ||
+    intent.type === 'cost_adjustment' ||
+    intent.type === 'cuisine_or_style' ||
+    intent.type === 'equipment_constraint')) {
     return [];
   }
 
@@ -1152,8 +1414,14 @@ function getAllowedIngredientChanges(intent: CorrectionIntent): string[] {
     case 'add_ingredient':
     case 'sensory_adjustment':
     case 'nutrition_goal':
+    case 'nutrition_constraint':
     case 'cooking_method_adjustment':
     case 'servings_adjustment':
+    case 'servings_scale':
+    case 'time_constraint':
+    case 'cost_adjustment':
+    case 'cuisine_or_style':
+    case 'equipment_constraint':
     case 'general':
       return [];
   }
@@ -2277,6 +2545,17 @@ function getNutritionValue(recipe: Recipe, nutrient: SupportedNutritionTarget): 
   }
 }
 
+function getNutritionConstraintValue(recipe: Recipe, nutrient: string): number | null {
+  const normalized = normalizeFoodText(nutrient);
+  if (!recipe.nutritionEstimate) return null;
+  if (normalized === 'calorie' || normalized === 'kcal') return recipe.nutritionEstimate.calories;
+  if (normalized === 'protein') return recipe.nutritionEstimate.proteinGrams;
+  if (normalized === 'fiber') return recipe.nutritionEstimate.fiberGrams ?? 0;
+  if (normalized === 'fat') return recipe.nutritionEstimate.fatGrams;
+  if (normalized === 'carbohydrate' || normalized === 'carb') return recipe.nutritionEstimate.carbohydratesGrams;
+  return null;
+}
+
 function formatNutritionValue(value: number, nutrient: SupportedNutritionTarget): string {
   const rounded = Math.round(value * 10) / 10;
   return `${rounded}${nutrient === 'calorie' ? ' kcal' : ' g'}`;
@@ -2360,6 +2639,7 @@ export function normalizeCorrectionText(value: string): string {
     .toLowerCase()
     .replace(/[’]/g, "'")
     .replace(/\b(it|this)'s\b/g, '$1 is')
+    .replace(/[,;]\s*(?:and\s+)?/g, ' and ')
     .replace(/[-–—]/g, ' ')
     .replace(/[^a-z0-9\s']/g, ' ')
     .replace(/[']/g, '')
@@ -2371,8 +2651,14 @@ export function normalizeCorrectionText(value: string): string {
 
 function splitCompoundCorrection(normalizedNote: string): string[] {
   const requirementStart =
-    '(?:add|include|remove|omit|exclude|leave|replace|swap|use|make|increase|decrease|reduce|double|more|less|fewer|higher|lower|lighter|spicy|sweet|salty|sour|acidic|crunchy|crispy|creamy|dairy|gluten|vegan|vegetarian)';
+    '(?:add|include|remove|omit|exclude|leave|replace|swap|use|make|increase|decrease|reduce|double|halve|more|less|fewer|higher|lower|lighter|spicy|sweet|salty|sour|acidic|crunchy|crispy|creamy|dairy|gluten|vegan|vegetarian|no|without|not|under|within|keep|turn|only)';
   const separator = '\u0000';
+  const identityCorrection = normalizedNote.match(
+    /^(?:(?:this|it) is|(?:these|those) are)\s+.+?\s+and\s+not\s+.+$/,
+  );
+  if (identityCorrection) {
+    return [normalizedNote.replace(/\s+and\s+not\s+/, ' not ')];
+  }
   return normalizedNote
     .replace(
       new RegExp(`\\s+(?:and|but)\\s+(?=${requirementStart}\\b)`, 'g'),
@@ -2418,10 +2704,23 @@ export function getCorrectionTargetConcept(intent: CorrectionIntent): string {
       return intent.adjustment;
     case 'nutrition_goal':
       return `${intent.direction} ${intent.nutrient}`;
+    case 'nutrition_constraint':
+      return intent.targetMaximum === undefined
+        ? `${intent.nutrient} at least ${intent.targetMinimum}`
+        : `${intent.nutrient} under ${intent.targetMaximum}`;
     case 'cooking_method_adjustment':
       return intent.method;
     case 'servings_adjustment':
       return 'servings';
+    case 'servings_scale':
+      return `servings x${intent.multiplier}`;
+    case 'time_constraint':
+      return `under ${intent.targetMaximumMinutes} minutes`;
+    case 'cost_adjustment':
+      return intent.direction;
+    case 'cuisine_or_style':
+    case 'equipment_constraint':
+      return intent.target;
     case 'general':
       return 'general_edit';
   }
@@ -2444,6 +2743,9 @@ function normalizeCorrectionConceptToken(token: string): string {
   for (const [canonical, aliases] of correctionConceptAliases) {
     for (const alias of aliases) {
       if (Math.abs(alias.length - token.length) > 1) {
+        continue;
+      }
+      if (alias.startsWith(token) || token.startsWith(alias)) {
         continue;
       }
       const distance = getRestrictedDamerauLevenshteinDistance(token, alias);
@@ -2575,6 +2877,12 @@ function getDietaryRestriction(note: string): string | null {
     (nonSubstituteMatch?.[1] ? `${nonSubstituteMatch[1]} free` : undefined) ??
     abstractVegetarianReplacement?.[1];
   return restriction ? cleanCorrectionTarget(restriction).replace(/\s+free$/i, '-free') : null;
+}
+
+function normalizeNutritionConstraintTarget(value: string): string {
+  return normalizeFoodText(value)
+    .replace(/^gram\s+/, '')
+    .replace(/^kcal$/, 'calorie');
 }
 
 function cleanAbstractAdditionTarget(prefix: string, value: string): string {

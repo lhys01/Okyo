@@ -18,6 +18,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Image,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -36,9 +37,7 @@ import {
   getSafeRecipeMode,
   isRecipeMode,
   type Recipe,
-  type RecipeIngredient,
   type RecipeMode,
-  type RecipeStep,
 } from '../mocks';
 import type { MainTabParamList, RootStackParamList } from '../navigation/types';
 import {
@@ -47,8 +46,11 @@ import {
   type RecipePresentationMode,
 } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { resolveActiveCookingStep } from '../state/activeCooking';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { formatRecipeDuration, getRecipeTiming } from '../utils/recipeIntegrity';
+import { buildGuidedCookingSteps } from '../utils/guidedCookingSteps';
 import { getNextGuidedCookingPreview } from '../utils/guidedCookingPreview';
 import { getConciseGuidedInstruction } from '../utils/guidedInstruction';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
@@ -65,55 +67,6 @@ type RecipeStepsNavigation = CompositeNavigationProp<
   NativeStackNavigationProp<RootStackParamList>
 >;
 type RecipeStepsRoute = RouteProp<MainTabParamList, 'RecipeStepsScreen'>;
-type DisplayRecipeStep = {
-  phase?: number;
-  title?: string;
-  text: string;
-  lookFor?: string;
-  doneWhen?: string;
-  chefTip?: string;
-  ingredientsUsed?: string[];
-  toolsUsed?: string[];
-  stepImagePrompt?: string;
-  commonQuestion?: string;
-  commonQuestionAnswer?: string;
-  decisionPoint?: string;
-  ifYes?: string;
-  ifNo?: string;
-  why?: string;
-  commonMistake?: string;
-  estimatedMinutes?: number;
-  timeEstimate?: string;
-  visualCue?: string;
-  whyItMatters?: string;
-  safetyNote?: string;
-  flavorBoost?: string;
-  cookingTerm?: NonNullable<Recipe['cookingTerms']>[number];
-};
-type GuidedCookingStep = {
-  chefTip?: string;
-  estimatedMinutes: number | null;
-  ingredientsUsed: RecipeIngredient[];
-  instruction: string;
-  phase: string;
-  phaseStepIndex: number;
-  phaseStepCount: number;
-  why?: string;
-  commonMistake?: string;
-  commonQuestion?: string;
-  commonQuestionAnswer?: string;
-  decisionPoint?: string;
-  ifYes?: string;
-  ifNo?: string;
-  doneWhen?: string;
-  safetyNote?: string;
-  stepNumber: number;
-  tip?: { title: string; body: string };
-  title: string;
-  toolsUsed: string[];
-  visualCue?: string;
-};
-
 export function RecipeDetailScreen() {
   const navigation = useNavigation<RecipeDetailNavigation>();
   const route = useRoute<RecipeDetailRoute>();
@@ -126,9 +79,12 @@ export function RecipeDetailScreen() {
   const recipesById = useOkyoStore((state) => state.recipesById);
   const addRecipeToGrocery = useOkyoStore((state) => state.addRecipeToGrocery);
   const startCookingRecipe = useOkyoStore((state) => state.startCookingRecipe);
+  const activeCookingSession = useOkyoStore((state) => state.activeCookingSession);
+  const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId);
+  const activeCookingRecipe = resolveCanonicalRecipe(recipesById, activeCookingSession?.recipeId);
   const selectedMode = getSafeRecipeMode(recipe?.selectedMode ?? routeMode ?? storeSelectedMode);
   const scanResult = recipe?.scanResult ?? null;
   const selectedScanImage = recipe?.originalImage ?? null;
@@ -147,7 +103,7 @@ export function RecipeDetailScreen() {
     : fallbackIngredients.length > 0
       ? [{ component: '', items: fallbackIngredients }]
       : [];
-  const totalTime = recipe ? recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes : 0;
+  const recipeTiming = recipe ? getRecipeTiming(recipe) : { handsOnMinutes: 0, waitingMinutes: 0, totalMinutes: 0 };
   const perServingCost = recipe && recipe.servings > 0 ? recipe.estimatedHomemadeCost / recipe.servings : null;
   const recipeImageUrl = getRecipeImageUrl(recipe);
   const recipeImageStatus = getRecipeImageStatus(recipe);
@@ -258,12 +214,34 @@ export function RecipeDetailScreen() {
       return;
     }
 
-    startCookingRecipe(recipe.id);
-    navigation.navigate('RecipeStepsScreen', {
+    const navigateToCooking = () => navigation.navigate('RecipeStepsScreen', {
       completion: false,
       mode: selectedMode,
       recipeId: recipe.id,
     });
+    if (activeCookingSession && activeCookingSession.recipeId !== recipe.id) {
+      Alert.alert(
+        'Another recipe is in progress',
+        'Choose whether to keep cooking it or end that session before starting this recipe.',
+        [
+          { text: 'Continue Current', style: 'cancel', onPress: () => navigation.navigate('RecipeStepsScreen', {
+            completion: false,
+            mode: activeCookingRecipe?.selectedMode ?? selectedMode,
+            recipeId: activeCookingSession.recipeId,
+          }) },
+          { text: 'End & Start This', style: 'destructive', onPress: () => {
+            endCookingRecipe(activeCookingSession.recipeId);
+            startCookingRecipe(recipe.id, buildGuidedCookingSteps(recipe).length);
+            navigateToCooking();
+          } },
+        ],
+      );
+      return;
+    }
+    if (!activeCookingSession) {
+      startCookingRecipe(recipe.id, buildGuidedCookingSteps(recipe).length);
+    }
+    navigateToCooking();
   };
 
   if (!recipe) {
@@ -332,10 +310,10 @@ export function RecipeDetailScreen() {
             </View>
 
             <View style={styles.quickStatsRow}>
-              <QuickStat label="Total Time" value={`${totalTime} min`} icon={<Clock color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
-              <QuickStat label="Difficulty" value={recipe.skillLevel ?? recipe.difficulty} icon={<FireFlame color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
+              <QuickStat label="Total" value={formatRecipeDuration(recipeTiming.totalMinutes)} icon={<Clock color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
+              <QuickStat label="Hands-on" value={formatRecipeDuration(recipeTiming.handsOnMinutes)} icon={<FireFlame color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
+              <QuickStat label="Waiting" value={formatRecipeDuration(recipeTiming.waitingMinutes)} icon={<Clock color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
               <QuickStat label="Servings" value={`${recipe.servings}`} icon={<User color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
-              <QuickStat label="Per Serving" value={perServingCost ? formatCurrency(perServingCost) : formatCurrency(recipe.estimatedHomemadeCost)} icon={<MoneySquare color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
             </View>
 
             <Text style={styles.description}>{displayDescription}</Text>
@@ -427,7 +405,7 @@ export function RecipeDetailScreen() {
               </View>
             </View>
 
-            <PrimaryAction label="Start Cooking" onPress={openCookingSteps} />
+            <PrimaryAction label={activeCookingSession?.recipeId === recipe.id ? 'Continue Cooking' : 'Start Cooking'} onPress={openCookingSteps} />
             <View style={styles.secondaryActionsRow}>
               <RecipeLikeButton isLiked={isLiked} onToggle={toggleSelectedRecipeLike} />
               <SecondaryIconAction icon={<Cart color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Add to Grocery" onPress={openGroceryList} />
@@ -449,7 +427,12 @@ export function RecipeStepsScreen() {
   const toggleRecipeLiked = useOkyoStore((state) => state.toggleRecipeLiked);
   const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
   const recipesById = useOkyoStore((state) => state.recipesById);
+  const hasHydrated = useOkyoStore((state) => state.hasHydrated);
   const completeRecipe = useOkyoStore((state) => state.completeRecipe);
+  const updateCookingStep = useOkyoStore((state) => state.updateCookingStep);
+  const syncCookingStepCount = useOkyoStore((state) => state.syncCookingStepCount);
+  const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
+  const activeCookingSession = useOkyoStore((state) => state.activeCookingSession);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId);
@@ -458,26 +441,24 @@ export function RecipeStepsScreen() {
   const selectedScanImage = recipe?.originalImage ?? null;
   const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
   const canShowSavings = Boolean(recipe) && restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
-  const spicePairings = getSafeTextList(recipe?.spicePairings);
-  const cookingTerms = getSafeCookingTerms(recipe?.cookingTerms);
-  const guidedSteps = useMemo(
-    () => getGuidedCookingSteps(recipe, cookingTerms, spicePairings),
-    [cookingTerms, recipe, spicePairings],
-  );
+  const guidedSteps = useMemo(() => buildGuidedCookingSteps(recipe), [recipe]);
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
   const recipeImageUrl = getRecipeImageUrl(recipe);
   const completionImageUri = recipe?.origin === 'scan'
     ? getRealScanImageUri(recipe.originalImage)
     : null;
-  const [activeStepIndex, setActiveStepIndex] = useState(0);
+  const [activeStepIndex, setActiveStepIndex] = useState(() => activeCookingSession?.recipeId === routeRecipeId
+    ? activeCookingSession?.currentStepIndex ?? 0
+    : 0);
   const [showCompletion, setShowCompletion] = useState(route.params?.completion === true);
   const isLiked = Boolean(recipe && savedRecipeIds.includes(recipe.id));
-  const activeStep = guidedSteps[Math.min(activeStepIndex, Math.max(guidedSteps.length - 1, 0))];
-  const nextStepPreview = getNextGuidedCookingPreview(guidedSteps, activeStepIndex);
-  const progress = guidedSteps.length > 0 ? ((activeStepIndex + 1) / guidedSteps.length) * 100 : 0;
-  const guidedTotalTime = recipe
-    ? recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes
+  const safeActiveStepIndex = guidedSteps.length > 0
+    ? Math.max(0, Math.min(activeStepIndex, guidedSteps.length - 1))
     : 0;
+  const activeStep = resolveActiveCookingStep(guidedSteps, safeActiveStepIndex);
+  const nextStepPreview = getNextGuidedCookingPreview(guidedSteps, safeActiveStepIndex);
+  const progress = guidedSteps.length > 0 ? ((safeActiveStepIndex + 1) / guidedSteps.length) * 100 : 0;
+  const guidedTotalTime = recipe ? getRecipeTiming(recipe).totalMinutes : 0;
 
   useEffect(() => {
     uiLog('RecipeStepsScreen', 'enter', { recipeId: routeRecipeId, routeMode, selectedMode });
@@ -515,6 +496,25 @@ export function RecipeStepsScreen() {
       setActiveStepIndex(Math.max(guidedSteps.length - 1, 0));
     }
   }, [activeStepIndex, guidedSteps.length]);
+
+  useEffect(() => {
+    if (!hasHydrated) {
+      return;
+    }
+    const restoredIndex = activeCookingSession?.recipeId === recipe?.id
+      ? activeCookingSession?.currentStepIndex ?? 0
+      : 0;
+    const clampedIndex = Math.max(0, Math.min(restoredIndex, Math.max(guidedSteps.length - 1, 0)));
+    setActiveStepIndex((previousIndex) => previousIndex === clampedIndex ? previousIndex : clampedIndex);
+  }, [activeCookingSession?.currentStepIndex, activeCookingSession?.recipeId, guidedSteps.length, hasHydrated, recipe?.id, routeRecipeId]);
+
+  useEffect(() => {
+    if (hasHydrated && recipe && activeCookingSession?.recipeId === recipe.id &&
+      activeCookingSession.totalStepCount !== guidedSteps.length) {
+      // Revision synchronization changes only the session count; progress remains untouched.
+      syncCookingStepCount(recipe.id, guidedSteps.length);
+    }
+  }, [activeCookingSession?.recipeId, activeCookingSession?.totalStepCount, guidedSteps.length, hasHydrated, recipe?.id, syncCookingStepCount]);
 
   useEffect(() => {
     setShowCompletion(route.params?.completion === true);
@@ -570,14 +570,17 @@ export function RecipeStepsScreen() {
     const clampedIndex = Math.max(0, Math.min(guidedSteps.length - 1, nextIndex));
     setCompletionVisible(false);
     setActiveStepIndex(clampedIndex);
+    if (recipe && activeCookingSession?.recipeId === recipe.id) {
+      updateCookingStep(recipe.id, clampedIndex, guidedSteps.length);
+    }
   };
 
   const goPreviousStep = () => {
-    goToStep(activeStepIndex - 1);
+    goToStep(safeActiveStepIndex - 1);
   };
 
   const goNextStep = () => {
-    if (activeStepIndex >= guidedSteps.length - 1) {
+    if (safeActiveStepIndex >= guidedSteps.length - 1) {
       if (recipe) {
         completeRecipe(recipe.id);
       }
@@ -585,7 +588,7 @@ export function RecipeStepsScreen() {
       return;
     }
 
-    goToStep(activeStepIndex + 1);
+    goToStep(safeActiveStepIndex + 1);
   };
 
   if (!recipe) {
@@ -674,17 +677,41 @@ export function RecipeStepsScreen() {
             style={({ pressed }) => [styles.smallBackButton, pressed ? styles.pressed : null]}
           >
             <NavArrowLeft color={colors.charcoal} height={22} strokeWidth={2.35} width={22} />
-            <Text style={styles.smallBackText}>Back</Text>
-          </Pressable>
-        </View>
+              <Text style={styles.smallBackText}>Back</Text>
+            </Pressable>
+            {!showCompletion && recipe ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="End Cooking"
+                onPress={() => Alert.alert(
+                  'End cooking session?',
+                  'Your current step will be cleared, but the recipe will remain available.',
+                  [
+                    { text: 'Keep Cooking', style: 'cancel' },
+                    { text: 'End Session', style: 'destructive', onPress: () => {
+                      endCookingRecipe(recipe.id);
+                      navigation.navigate('HomeScreen');
+                    } },
+                  ],
+                )}
+                style={({ pressed }) => [styles.smallBackButton, pressed ? styles.pressed : null]}
+              >
+                <Text style={styles.smallBackText}>End</Text>
+              </Pressable>
+            ) : null}
+          </View>
 
         <View style={styles.guidedHeader}>
           <View style={styles.guidedHeaderCopy}>
             <Text numberOfLines={2} style={styles.guidedRecipeTitle}>{displayTitle}</Text>
             <View style={styles.guidedProgressRow}>
               <Text style={styles.guidedProgressText}>
-                Step {activeStepIndex + 1} of {guidedSteps.length}
-                {guidedTotalTime > 0 ? ` · ${guidedTotalTime} min total` : ''}
+                Step {safeActiveStepIndex + 1} of {guidedSteps.length}
+                {guidedTotalTime > 0
+                  ? guidedTotalTime >= 60
+                    ? ` · ${formatRecipeDuration(guidedTotalTime)} total`
+                    : ` · ${guidedTotalTime} min total`
+                  : ''}
               </Text>
             </View>
           </View>
@@ -699,9 +726,14 @@ export function RecipeStepsScreen() {
             <View style={styles.guidedStepCardContent}>
               <View style={styles.guidedStepTopRow}>
                 <Text style={styles.guidedStepNumber}>Step {activeStep.stepNumber}</Text>
-                {activeStep.estimatedMinutes ? (
+                {activeStep.timing ? (
                   <View style={styles.guidedTimeChipWrap}>
-                    <Text style={styles.guidedTimeChipText}>~{activeStep.estimatedMinutes} min</Text>
+                    {activeStep.timing.handsOnMinutes > 0 ? (
+                      <Text style={styles.guidedTimeChipText}>Hands-on · ~{formatRecipeDuration(activeStep.timing.handsOnMinutes)}</Text>
+                    ) : null}
+                    {activeStep.timing.passiveMinutes > 0 ? (
+                      <Text style={styles.guidedTimeChipText}>Waiting · ~{formatRecipeDuration(activeStep.timing.passiveMinutes)}</Text>
+                    ) : null}
                   </View>
                 ) : null}
               </View>
@@ -742,15 +774,15 @@ export function RecipeStepsScreen() {
           <View style={styles.guidedNavRow}>
             <Pressable
               accessibilityRole="button"
-              disabled={activeStepIndex === 0}
+              disabled={safeActiveStepIndex === 0}
               onPress={goPreviousStep}
               style={({ pressed }) => [
                 styles.guidedNavButton,
-                activeStepIndex === 0 ? styles.guidedNavButtonDisabled : null,
+                safeActiveStepIndex === 0 ? styles.guidedNavButtonDisabled : null,
                 pressed ? styles.pressed : null,
               ]}
             >
-              <Text style={[styles.guidedNavText, activeStepIndex === 0 ? styles.guidedNavTextDisabled : null]}>
+              <Text style={[styles.guidedNavText, safeActiveStepIndex === 0 ? styles.guidedNavTextDisabled : null]}>
                 Previous
               </Text>
             </Pressable>
@@ -761,7 +793,7 @@ export function RecipeStepsScreen() {
               style={({ pressed }) => [styles.guidedNavButton, styles.guidedNavButtonPrimary, pressed ? styles.pressed : null]}
             >
               <Text style={styles.guidedNavPrimaryText}>
-                {activeStepIndex >= guidedSteps.length - 1 ? 'Finish' : 'Next'}
+                {safeActiveStepIndex >= guidedSteps.length - 1 ? 'Finish' : 'Next'}
               </Text>
             </Pressable>
           </View>
@@ -781,16 +813,16 @@ function ScreenFrame({ children, onBack }: ScreenFrameProps) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.simpleTopBar}>
-          <Pressable
+          <View style={styles.simpleTopBar}>
+            <Pressable
             accessibilityRole="button"
             onPress={onBack}
             style={({ pressed }) => [styles.smallBackButton, pressed ? styles.pressed : null]}
           >
             <NavArrowLeft color={colors.charcoal} height={22} strokeWidth={2.35} width={22} />
-            <Text style={styles.smallBackText}>Back</Text>
-          </Pressable>
-        </View>
+              <Text style={styles.smallBackText}>Back</Text>
+            </Pressable>
+          </View>
         {children}
       </ScrollView>
     </SafeAreaView>
@@ -2130,43 +2162,6 @@ function getSafeTextList(values: string[] | undefined) {
     .slice(0, 6);
 }
 
-function getSafeCookingTerms(recipeTerms: Recipe['cookingTerms']) {
-  return (Array.isArray(recipeTerms) ? recipeTerms : [])
-    .map((term) => ({
-      term: cleanDisplayText(term.term),
-      meaning: cleanDisplayText(term.meaning),
-    }))
-    .filter((term) => term.term && term.meaning)
-    .slice(0, 5);
-}
-
-function getStepCookingTerms(step: string, terms: NonNullable<Recipe['cookingTerms']>) {
-  const normalizedStep = step.toLowerCase();
-  return terms.filter((term) => normalizedStep.includes(term.term.toLowerCase()));
-}
-
-function getStepBoosters(step: string, index: number, stepCount: number, pairings: string[]) {
-  if (pairings.length === 0) {
-    return [];
-  }
-
-  const normalizedStep = step.toLowerCase();
-  const isFlavorStep = [
-    'sauce',
-    'season',
-    'taste',
-    'finish',
-    'serve',
-    'garnish',
-  ].some((keyword) => normalizedStep.includes(keyword));
-
-  if (!isFlavorStep && index !== stepCount - 1) {
-    return [];
-  }
-
-  return [pairings[index % pairings.length]].filter((b): b is string => typeof b === 'string' && b.length >= 25);
-}
-
 function getSafeIngredientGroups(recipe: Recipe | null) {
   return (Array.isArray(recipe?.ingredientGroups) ? recipe.ingredientGroups : [])
     .map((group) => ({
@@ -2175,59 +2170,6 @@ function getSafeIngredientGroups(recipe: Recipe | null) {
     }))
     .filter((group) => group.component && group.items.length > 0)
     .slice(0, 6);
-}
-
-// Known meta-copy strings generated by fallback paths that must never appear in the UI.
-const GENERIC_WHY_TEXTS = new Set([
-  'A flexible starter keeps the result useful without pretending to know the exact restaurant recipe.',
-  'This step is important for the final dish.',
-  'This ensures the best result.',
-  'This is a key step in the recipe.',
-  'This helps the dish come together.',
-  'This step matters for the overall dish.',
-  'Proper technique here improves the final result.',
-]);
-
-function getRecipeDisplaySteps(recipe: Recipe | null): DisplayRecipeStep[] {
-  const structuredSteps = (Array.isArray(recipe?.structuredSteps) ? recipe.structuredSteps : [])
-    .map((step) => ({
-      phase: step.phase,
-      title: step.title,
-      text: cleanDisplayText(step.text),
-      lookFor: step.lookFor,
-      doneWhen: step.doneWhen,
-      chefTip: step.chefTip,
-      ingredientsUsed: step.ingredientsUsed,
-      toolsUsed: step.toolsUsed,
-      stepImagePrompt: step.stepImagePrompt,
-      commonQuestion: step.commonQuestion,
-      commonQuestionAnswer: step.commonQuestionAnswer,
-      why: step.why ?? (step.whyItMatters && !GENERIC_WHY_TEXTS.has(step.whyItMatters) ? cleanDisplayText(step.whyItMatters) : undefined),
-      commonMistake: step.commonMistake ?? (step.safetyNote ? cleanDisplayText(step.safetyNote) : undefined),
-      estimatedMinutes: step.estimatedMinutes,
-      timeEstimate: step.timeEstimate?.trim(),
-      visualCue: step.visualCue ? cleanDisplayText(step.visualCue) : undefined,
-      whyItMatters: step.whyItMatters ? cleanDisplayText(step.whyItMatters) : undefined,
-      safetyNote: step.safetyNote ? cleanDisplayText(step.safetyNote) : undefined,
-      flavorBoost: step.flavorBoost ? cleanDisplayText(step.flavorBoost) : undefined,
-      cookingTerm: step.cookingTerm && step.cookingTerm.term.trim() && step.cookingTerm.meaning.trim()
-        ? {
-          term: cleanDisplayText(step.cookingTerm.term),
-          meaning: cleanDisplayText(step.cookingTerm.meaning),
-        }
-        : undefined,
-    }))
-    .filter((step) => step.text)
-    .slice(0, 20);
-
-  if (structuredSteps.length > 0) {
-    return structuredSteps;
-  }
-
-  return (Array.isArray(recipe?.steps) ? recipe.steps : [])
-    .map((step) => ({ text: cleanDisplayText(step) }))
-    .filter((step) => step.text)
-    .slice(0, 20);
 }
 
 function getIngredientCount(recipe: Recipe | null) {
@@ -2239,337 +2181,6 @@ function getIngredientCount(recipe: Recipe | null) {
   const ingredients = groupedItems.length > 0 ? groupedItems : Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
 
   return ingredients.length;
-}
-
-function getStepCopy(step: DisplayRecipeStep, index: number) {
-  const text = cleanDisplayText(step.text);
-
-  // Use AI-generated title when available (new recipes)
-  if (step.title) {
-    return { title: step.title, body: text };
-  }
-
-  // Fallback for old recipes: use first sentence as title if short and there's more text
-  const [firstSentence, ...remainingSentences] = text.split(/(?<=\.)\s+/);
-  const first = firstSentence?.trim() ?? '';
-  if (first && first.length <= 72 && remainingSentences.length > 0) {
-    return {
-      title: first.replace(/\.$/, ''),
-      body: remainingSentences.join(' ').trim(),
-    };
-  }
-
-  // Last resort: derive a 2-word title from the first verb phrase of the instruction
-  const derived = deriveTitleFromInstruction(text);
-  return {
-    title: derived || `Step ${index + 1}`,
-    body: text,
-  };
-}
-
-// Extracts a 2-word title from an instruction string by taking the first two
-// non-article words. Used as a fallback when the AI didn't supply a title.
-function deriveTitleFromInstruction(instruction: string): string {
-  const SKIP = new Set(['a', 'an', 'the', 'and', 'or', 'to', 'in', 'on', 'at', 'of', 'up', 'with', 'then', 'into', 'your', 'both', 'until', 'all', 'its', 'by', 'for', 'from']);
-  const words = instruction.replace(/[.,!?;:]+/g, ' ').split(/\s+/).slice(0, 12);
-  const key = words
-    .map((w) => w.replace(/[^a-zA-Z]/g, ''))
-    .filter((w) => w.length > 1 && !SKIP.has(w.toLowerCase()))
-    .slice(0, 2);
-  return key.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-}
-
-function getStepTip(
-  step: DisplayRecipeStep,
-  index: number,
-  stepCount: number,
-  cookingTerms: NonNullable<Recipe['cookingTerms']>,
-  spicePairings: string[],
-) {
-  if (step.flavorBoost) {
-    return { title: 'Flavor booster', body: step.flavorBoost };
-  }
-  if (step.safetyNote && !step.commonMistake) {
-    return { title: 'Safety note', body: step.safetyNote };
-  }
-  const stepTerms = step.cookingTerm ? [step.cookingTerm] : getStepCookingTerms(step.text, cookingTerms);
-  if (stepTerms[0]) {
-    return { title: stepTerms[0].term, body: stepTerms[0].meaning };
-  }
-  const boosters = getStepBoosters(step.text, index, stepCount, spicePairings);
-  if (boosters[0]) {
-    return { title: 'Optional boost', body: boosters[0] };
-  }
-
-  return null;
-}
-
-// Phase label lookup — maps AI-assigned phase integers to display names.
-const RECIPE_PHASE_NAMES: Record<number, string> = {
-  1: 'Preparation',
-  2: 'Setup',
-  3: 'Cooking',
-  4: 'Assembly',
-  5: 'Finishing',
-  6: 'Serving',
-};
-
-// Returns the display phase name for a recipe step.
-// Uses the AI-assigned phase integer when available (new recipes).
-// Falls back to keyword classification for old saved recipes without phase data.
-function getStepPhaseName(step: RecipeStep): string {
-  if (step.phase && step.phase >= 1 && step.phase <= 6) {
-    return RECIPE_PHASE_NAMES[step.phase];
-  }
-  // Keyword fallback for recipes generated before the phase field was added
-  const t = step.text.toLowerCase();
-  if (/\b(serve|plate and serve|enjoy immediately|serve immediately|serve warm)\b/.test(t)) {
-    return 'Serving';
-  }
-  if (/\bdrizzle\b|\bgarnish\b|\bfinish(?:ing)? with\b|\badd fresh (herbs?|basil|cilantro|parsley)\b/.test(t)) {
-    return 'Finishing';
-  }
-  if (/\b(combine|build|assemble|layer|arrange|top with)\b/.test(t)) {
-    return 'Assembly';
-  }
-  if (/\b(cook|fry|boil|roast|bake|sear|sauté|saute|grill|steam)\b/.test(t)) {
-    return 'Cooking';
-  }
-  if (/\b(preheat|heat skillet|bring.*boil|bring.*to a boil)\b/.test(t)) {
-    return 'Setup';
-  }
-  if (/\b(slice|chop|dice|mince|grate|shred|peel|trim|measure|wash|rinse)\b/.test(t)) {
-    return 'Preparation';
-  }
-  return '';
-}
-
-function getGuidedCookingSteps(
-  recipe: Recipe | null,
-  cookingTerms: NonNullable<Recipe['cookingTerms']>,
-  spicePairings: string[],
-): GuidedCookingStep[] {
-  const displaySteps = getRecipeDisplaySteps(recipe);
-  const recipeIngredients = getRecipeIngredients(recipe);
-  const recipeTools = getSafeTextList(recipe?.equipment);
-
-  if (!recipe || displaySteps.length === 0) {
-    return [{
-      estimatedMinutes: null,
-      ingredientsUsed: [],
-      instruction: 'Okyo could not find detailed cooking steps for this recipe yet. Review the overview, then try another scan when you are ready.',
-      phase: '',
-      phaseStepIndex: 1,
-      phaseStepCount: 1,
-      stepNumber: 1,
-      title: 'Review the recipe',
-      toolsUsed: [],
-    }];
-  }
-
-  // Pre-compute per-phase step counts so each step knows its position within its phase.
-  const phaseTotals = new Map<string, number>();
-  displaySteps.forEach((step) => {
-    const p = getStepPhaseName(step);
-    phaseTotals.set(p, (phaseTotals.get(p) ?? 0) + 1);
-  });
-  const phaseRunning = new Map<string, number>();
-
-  return displaySteps.map((step, index) => {
-    const parsedStep = getStepCopy(step, index);
-    const tip = getStepTip(step, index, displaySteps.length, cookingTerms, spicePairings);
-    const instruction = parsedStep.body || step.text;
-    const phaseName = getStepPhaseName(step);
-    const phaseIdx = (phaseRunning.get(phaseName) ?? 0) + 1;
-    phaseRunning.set(phaseName, phaseIdx);
-
-    return {
-      chefTip: step.chefTip ? cleanDisplayText(step.chefTip) : undefined,
-      estimatedMinutes: step.estimatedMinutes ?? parseEstimatedMinutes(step.timeEstimate) ?? null,
-      ingredientsUsed: step.ingredientsUsed?.length
-        ? resolveIngredientsFromNames(step.ingredientsUsed, recipeIngredients)
-        : getStepIngredients(step.text, recipeIngredients),
-      instruction,
-      phase: phaseName,
-      phaseStepIndex: phaseIdx,
-      phaseStepCount: phaseTotals.get(phaseName) ?? 1,
-      why: step.why,
-      commonMistake: step.commonMistake,
-      commonQuestion: step.commonQuestion,
-      commonQuestionAnswer: step.commonQuestionAnswer,
-      // Only surface a decisionPoint when both branches exist — a question with no
-      // yes/no guidance would leave the cook stuck.
-      decisionPoint: (step.decisionPoint && step.ifYes && step.ifNo) ? step.decisionPoint : undefined,
-      ifYes: (step.decisionPoint && step.ifYes && step.ifNo) ? step.ifYes : undefined,
-      ifNo: (step.decisionPoint && step.ifYes && step.ifNo) ? step.ifNo : undefined,
-      doneWhen: step.doneWhen,
-      safetyNote: step.safetyNote,
-      stepNumber: index + 1,
-      tip: tip ?? undefined,
-      title: parsedStep.title || `Step ${index + 1}`,
-      toolsUsed: step.toolsUsed?.length
-        ? step.toolsUsed.slice(0, 4)
-        : getStepTools(step.text, recipeTools),
-      visualCue: step.lookFor ?? step.visualCue,
-    };
-  });
-}
-
-function getRecipeIngredients(recipe: Recipe | null) {
-  if (!recipe) {
-    return [];
-  }
-
-  const groupedIngredients = getSafeIngredientGroups(recipe).flatMap((group) => group.items);
-  const ingredients = groupedIngredients.length > 0
-    ? groupedIngredients
-    : Array.isArray(recipe.ingredients)
-      ? recipe.ingredients
-      : [];
-
-  return ingredients
-    .filter((ingredient) => ingredient?.name?.trim())
-    .slice(0, 40);
-}
-
-function getStepIngredients(stepText: string, ingredients: RecipeIngredient[]) {
-  const normalizedStep = normalizeForMatching(stepText);
-  // Use a word set for boundary-safe matching — prevents "oil" matching "foil", "pan" matching "expand"
-  const stepWords = new Set(normalizedStep.split(/\s+/).filter(Boolean));
-  const matchedIngredients = ingredients.filter((ingredient) => {
-    const name = normalizeForMatching(ingredient.name);
-    if (normalizedStep.includes(name)) return true;
-    // >= 3 chars captures short but important words like "egg", "oil", "soy"
-    const nameParts = name.split(' ').filter((part) => part.length >= 3);
-    return nameParts.some((part) => {
-      if (stepWords.has(part)) return true;
-      // singular → plural and plural → singular
-      if (stepWords.has(`${part}s`)) return true;
-      if (part.endsWith('s') && stepWords.has(part.slice(0, -1))) return true;
-      return false;
-    });
-  });
-
-  return matchedIngredients.slice(0, 5);
-}
-
-// Common culinary synonyms — AI may use one name while the recipe uses another.
-const INGREDIENT_SYNONYMS: Record<string, string[]> = {
-  scallion: ['green onion', 'spring onion'],
-  'green onion': ['scallion', 'spring onion'],
-  'spring onion': ['scallion', 'green onion'],
-  cilantro: ['coriander', 'fresh coriander'],
-  coriander: ['cilantro', 'fresh coriander'],
-  cornstarch: ['corn starch', 'corn flour'],
-  'corn starch': ['cornstarch', 'corn flour'],
-  chickpea: ['garbanzo bean', 'garbanzo'],
-  garbanzo: ['chickpea', 'garbanzo bean'],
-  'garbanzo bean': ['chickpea', 'garbanzo'],
-  'bell pepper': ['capsicum', 'sweet pepper'],
-  capsicum: ['bell pepper', 'sweet pepper'],
-  zucchini: ['courgette'],
-  courgette: ['zucchini'],
-  eggplant: ['aubergine'],
-  aubergine: ['eggplant'],
-};
-
-function resolveIngredientsFromNames(names: string[], recipeIngredients: RecipeIngredient[]): RecipeIngredient[] {
-  return names
-    .map((name) => {
-      const normalized = normalizeForMatching(name);
-      // 1. Exact match
-      const exact = recipeIngredients.find((ing) => normalizeForMatching(ing.name) === normalized);
-      if (exact) return exact;
-      // 2. Substring match (either direction)
-      const sub = recipeIngredients.find((ing) => {
-        const n = normalizeForMatching(ing.name);
-        return n.includes(normalized) || normalized.includes(n);
-      });
-      if (sub) return sub;
-      // 3. All significant words present (handles "garlic" matching "2 cloves garlic, minced")
-      const words = normalized.split(' ').filter((w) => w.length >= 3);
-      if (words.length > 0) {
-        const wordMatch = recipeIngredients.find((ing) => {
-          const n = normalizeForMatching(ing.name);
-          return words.every((w) => n.includes(w) || n.includes(`${w}s`) || (w.endsWith('s') && n.includes(w.slice(0, -1))));
-        });
-        if (wordMatch) return wordMatch;
-      }
-      // 3.5. Synonym lookup — handles scallions↔green onions, cilantro↔coriander, etc.
-      // Also tries the singular form so "scallions" resolves via the "scallion" key.
-      const singularNormalized = normalized.endsWith('s') ? normalized.slice(0, -1) : normalized;
-      const synonyms = INGREDIENT_SYNONYMS[normalized] ?? INGREDIENT_SYNONYMS[singularNormalized] ?? [];
-      if (synonyms.length > 0) {
-        const synonymMatch = recipeIngredients.find((ing) => {
-          const n = normalizeForMatching(ing.name);
-          return synonyms.some((syn) => n.includes(normalizeForMatching(syn)));
-        });
-        if (synonymMatch) return synonymMatch;
-      }
-      // 4. No match — use AI-declared name directly, no quantity
-      return { name, quantity: '' };
-    })
-    .slice(0, 5);
-}
-
-const STEP_TOOL_PATTERNS: Array<[RegExp, string]> = [
-  [/\b(chop|slice|dice|mince|trim|halve|quarter)\b/, 'cutting board'],
-  [/\b(chop|slice|dice|mince|julienne)\b/, "chef's knife"],
-  [/\b(whisk|beat)\b/, 'whisk'],
-  [/\b(drain|strain)\b/, 'colander'],
-  [/\b(grate|shred|zest)\b/, 'grater'],
-  [/\b(sear|sauté|saute|pan.?fry|stir.?fry|fry|brown)\b/, 'skillet'],
-  [/\bpreheat\b|\bheat oven\b/, 'oven'],
-  [/\b(bake|roast|broil)\b/, 'baking dish'],
-  [/\b(boil|simmer|blanch|poach|reduce)\b/, 'saucepan'],
-  [/\b(blend|blitz|puree|purée)\b/, 'blender'],
-  [/\b(stir|fold|combine|toss)\b/, 'wooden spoon'],
-  [/\b(marinate|soak|coat)\b/, 'mixing bowl'],
-];
-
-function getStepTools(stepText: string, equipment: string[]): string[] {
-  const normalizedStep = normalizeForMatching(stepText);
-  const stepWordSet = new Set(normalizedStep.split(/\s+/).filter(Boolean));
-
-  // Match from the recipe's declared equipment list using word-boundary checks.
-  // Using a word-set prevents "pan" from matching "expand" or "pot" from matching "potential".
-  const fromEquipment = equipment.filter((tool) => {
-    const normalizedTool = normalizeForMatching(tool);
-    if (stepWordSet.has(normalizedTool)) return true;
-    const toolParts = normalizedTool.split(/\s+/).filter((part) => part.length > 2);
-    return toolParts.length > 0 && toolParts.every((part) => stepWordSet.has(part));
-  });
-
-  // Detect common tools from step verb patterns not always in equipment list
-  const builtIn = STEP_TOOL_PATTERNS
-    .filter(([pattern]) => pattern.test(normalizedStep))
-    .map(([, tool]) => tool);
-
-  return [...new Set([...fromEquipment, ...builtIn])].slice(0, 4);
-}
-
-function parseEstimatedMinutes(value?: string) {
-  if (!value) {
-    return null;
-  }
-
-  const numbers = value.match(/\d+/g)?.map((number) => Number(number)).filter((number) => Number.isFinite(number)) ?? [];
-  if (numbers.length === 0) {
-    return null;
-  }
-  if (numbers.length === 1) {
-    return Math.max(1, numbers[0]);
-  }
-
-  return Math.max(1, Math.round((numbers[0] + numbers[1]) / 2));
-}
-
-function normalizeForMatching(value: string) {
-  return cleanDisplayText(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function cleanDisplayText(value: string) {

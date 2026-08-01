@@ -22,6 +22,41 @@ export type CorrectionValidationResult = {
   derivedChanges: RecipeChange[];
 };
 
+export function reconcileRemovedCorrectionMetadata(
+  recipe: Recipe,
+  intents: CorrectionIntent[],
+): Recipe {
+  const removedTargets = intents.flatMap((intent) => {
+    if (intent.type === 'remove_ingredient') return [intent.ingredient];
+    if (intent.type === 'replace_ingredient' || intent.type === 'correct_dish_identity') {
+      return [intent.removeIngredient];
+    }
+    return [];
+  });
+  if (removedTargets.length === 0) return recipe;
+  const containsRemovedTarget = (value: string | undefined) => Boolean(
+    value && removedTargets.some((target) => containsConcept(value, target)),
+  );
+  const keepText = (value: string | undefined) => containsRemovedTarget(value) ? '' : value;
+  return {
+    ...recipe,
+    ingredientGroups: recipe.ingredientGroups?.map((group) => ({
+      ...group,
+      items: group.items.filter((ingredient) => !containsRemovedTarget(ingredient.name)),
+    })),
+    substitutions: recipe.substitutions?.filter((value) => !containsRemovedTarget(value)),
+    spicePairings: recipe.spicePairings?.filter((value) => !containsRemovedTarget(value)),
+    groceryItems: recipe.groceryItems?.filter((item) =>
+      !containsRemovedTarget(`${item.name} ${item.sourceIngredient ?? ''} ${item.shoppingNote ?? ''}`)),
+    pantryNote: keepText(recipe.pantryNote) ?? '',
+    avoidMistake: keepText(recipe.avoidMistake),
+    mistakeWarning: keepText(recipe.mistakeWarning),
+    storageAndReheating: keepText(recipe.storageAndReheating),
+    storage: keepText(recipe.storage),
+    mainIngredientsSummary: keepText(recipe.mainIngredientsSummary),
+  };
+}
+
 type CanonicalIngredient = RecipeIngredient & {
   base: string;
   amount: string;
@@ -52,6 +87,9 @@ export function validateCorrectionCandidate(
   const derivedChanges = deriveRecipeChanges(source, candidate);
   const sourceIngredients = source.ingredients.map(canonicalizeIngredient);
   const candidateIngredients = candidate.ingredients.map(canonicalizeIngredient);
+  const candidateIngredientText = candidateIngredients.map((ingredient) => ingredient.base).join(' ');
+  const candidateStepText = getStepText(candidate);
+  const candidateSearchText = getRecipeSearchText(candidate);
 
   blockingIssues.push(...validateRecipeStructure(candidate));
   blockingIssues.push(...validateNutrition(candidate));
@@ -74,6 +112,26 @@ export function validateCorrectionCandidate(
           });
         }
         break;
+      case 'nutrition_constraint': {
+        const value = getNutritionConstraintValue(candidate, requirement.nutrient);
+        if (value === null ||
+            (requirement.targetMinimum !== undefined && value < requirement.targetMinimum) ||
+            (requirement.targetMaximum !== undefined && value > requirement.targetMaximum)) {
+          blockingIssues.push({
+            code: 'nutrition_constraint_not_met',
+            message: `The corrected recipe does not meet the requested ${requirement.nutrient} target.`,
+            requirementIndex,
+          });
+        }
+        if (substantiveChanges.length === 0) {
+          blockingIssues.push({
+            code: 'nutrition_ingredient_change_missing',
+            message: 'Nutrition changed without a substantive ingredient or formulation change.',
+            requirementIndex,
+          });
+        }
+        break;
+      }
       case 'servings_adjustment':
         if (candidate.servings !== requirement.servings) {
           blockingIssues.push({
@@ -84,20 +142,76 @@ export function validateCorrectionCandidate(
         }
         break;
       case 'add_ingredient':
-        if (!containsConcept(candidateIngredients.map((ingredient) => ingredient.base).join(' '), requirement.ingredient)) {
+        if (!containsConcept(candidateIngredientText, requirement.ingredient)) {
           blockingIssues.push({ code: 'ingredient_add_not_applied', message: `${requirement.ingredient} is missing from ingredients.`, requirementIndex });
+        }
+        if (!containsConcept(candidateStepText, requirement.ingredient)) {
+          blockingIssues.push({ code: 'ingredient_add_not_used', message: `${requirement.ingredient} is not used in the cooking instructions.`, requirementIndex });
         }
         break;
       case 'remove_ingredient':
-        if (containsConcept(candidateIngredients.map((ingredient) => ingredient.base).join(' '), requirement.ingredient)) {
-          blockingIssues.push({ code: 'ingredient_remove_not_applied', message: `${requirement.ingredient} is still present in ingredients.`, requirementIndex });
+        if (containsConcept(candidateSearchText, requirement.ingredient)) {
+          blockingIssues.push({ code: 'removed_concept_still_present', message: `${requirement.ingredient} is still present in user-visible recipe content.`, requirementIndex });
         }
         break;
       case 'replace_ingredient':
       case 'correct_dish_identity':
-        if (!containsConcept(candidateIngredients.map((ingredient) => ingredient.base).join(' '), requirement.addIngredient) ||
-            containsConcept(candidateIngredients.map((ingredient) => ingredient.base).join(' '), requirement.removeIngredient)) {
+        if (!containsConcept(candidateIngredientText, requirement.addIngredient) ||
+            !containsConcept(candidateStepText, requirement.addIngredient) ||
+            containsConcept(candidateSearchText, requirement.removeIngredient)) {
           blockingIssues.push({ code: 'ingredient_substitution_not_applied', message: `The requested ingredient substitution was not applied.`, requirementIndex });
+        }
+        break;
+      case 'dietary_restriction':
+        if (!containsConcept(`${candidate.title} ${candidate.description}`, requirement.restriction) ||
+            substantiveChanges.length === 0 || !hasInstructionChange(source, candidate)) {
+          blockingIssues.push({ code: 'dietary_constraint_not_met', message: `The corrected recipe does not demonstrate the requested ${requirement.restriction} constraint.`, requirementIndex });
+        }
+        break;
+      case 'sensory_adjustment':
+        if (!hasMeaningfulCandidateChange(source, candidate) ||
+            !containsConcept(candidateSearchText, requirement.adjustment)) {
+          blockingIssues.push({ code: 'sensory_constraint_not_met', message: `The corrected recipe does not demonstrate ${requirement.adjustment}.`, requirementIndex });
+        }
+        break;
+      case 'cooking_method_adjustment':
+        if (!hasInstructionChange(source, candidate) ||
+            !containsConcept(`${candidateStepText} ${(candidate.equipment ?? []).join(' ')}`, requirement.method)) {
+          blockingIssues.push({ code: 'method_constraint_not_met', message: `The corrected recipe does not use ${requirement.method}.`, requirementIndex });
+        }
+        break;
+      case 'servings_scale': {
+        const targetServings = Math.max(1, Math.round(source.servings * requirement.multiplier));
+        if (candidate.servings !== targetServings || !quantitiesScaleCoherently(source, candidate, requirement.multiplier)) {
+          blockingIssues.push({ code: 'servings_scale_not_met', message: `Servings or measurable ingredient quantities were not scaled by ${requirement.multiplier}.`, requirementIndex });
+        }
+        break;
+      }
+      case 'time_constraint':
+        if (!Number.isFinite(candidate.totalTimeMinutes) || (candidate.totalTimeMinutes ?? Infinity) > requirement.targetMaximumMinutes) {
+          blockingIssues.push({ code: 'time_constraint_not_met', message: `The corrected recipe exceeds ${requirement.targetMaximumMinutes} minutes.`, requirementIndex });
+        }
+        break;
+      case 'cost_adjustment':
+        if (requirement.direction === 'cheaper'
+          ? candidate.estimatedHomemadeCost >= source.estimatedHomemadeCost
+          : candidate.estimatedHomemadeCost <= source.estimatedHomemadeCost) {
+          blockingIssues.push({ code: 'cost_constraint_not_met', message: `The requested cost adjustment was not applied.`, requirementIndex });
+        }
+        break;
+      case 'cuisine_or_style':
+        if (!hasMeaningfulCandidateChange(source, candidate) || !containsConcept(candidateSearchText, requirement.target)) {
+          blockingIssues.push({ code: 'style_constraint_not_met', message: `The corrected recipe does not demonstrate ${requirement.target}.`, requirementIndex });
+        }
+        break;
+      case 'equipment_constraint':
+        if (!containsConcept(`${(candidate.equipment ?? []).join(' ')} ${candidateStepText}`, requirement.target.replace(/^one\s+/, ''))) {
+          blockingIssues.push({ code: 'equipment_constraint_not_met', message: `The corrected recipe does not respect ${requirement.target}.`, requirementIndex });
+        }
+        break;
+      case 'general':
+        if (!hasMeaningfulCandidateChange(source, candidate)) {
+          blockingIssues.push({ code: 'correction_no_op', message: 'The general correction did not meaningfully change the recipe.', requirementIndex });
         }
         break;
       default:
@@ -105,7 +219,8 @@ export function validateCorrectionCandidate(
     }
   });
 
-  const hasNutritionCorrection = requirements.some((requirement) => requirement.type === 'nutrition_goal');
+  const hasNutritionCorrection = requirements.some((requirement) =>
+    requirement.type === 'nutrition_goal' || requirement.type === 'nutrition_constraint');
   if (hasNutritionCorrection && (!nutritionTargetsPass || substantiveChanges.length === 0)) {
     if (substantiveChanges.length === 0) {
       blockingIssues.push({
@@ -123,7 +238,7 @@ export function validateCorrectionCandidate(
     });
   }
 
-  if (!requirements.some((requirement) => requirement.type === 'servings_adjustment') &&
+  if (!requirements.some((requirement) => requirement.type === 'servings_adjustment' || requirement.type === 'servings_scale') &&
       candidate.servings !== source.servings) {
     blockingIssues.push({
       code: 'servings_changed',
@@ -138,6 +253,7 @@ export function validateCorrectionCandidate(
     source,
     candidate,
   ));
+  blockingIssues.push(...validateRemovedIngredientMetadata(derivedChanges, candidate));
 
   blockingIssues.push(...validateRecipeContinuity(
     source,
@@ -175,7 +291,7 @@ function validateRecipeContinuity(
   const hasRemoval = changes.some((change) => change.kind === 'removed');
   const hasSubstitution = changes.some((change) => change.kind === 'substituted');
   const isNutritionCorrection = requirements.some((requirement) =>
-    requirement.type === 'nutrition_goal');
+    requirement.type === 'nutrition_goal' || requirement.type === 'nutrition_constraint');
 
   // A nutrition correction may legitimately change many ingredients, including
   // a complete formulation substitution. It becomes destructive only when it
@@ -207,6 +323,118 @@ function hasSharedStepConcept(source: Recipe, candidate: Recipe): boolean {
     const sharedTerms = candidateStep.split(' ').filter((term) => sourceTerms.has(term));
     return sharedTerms.length >= Math.min(2, sourceTerms.size);
   }));
+}
+
+function hasInstructionChange(source: Recipe, candidate: Recipe): boolean {
+  return JSON.stringify({ steps: source.steps, structuredSteps: source.structuredSteps }) !==
+    JSON.stringify({ steps: candidate.steps, structuredSteps: candidate.structuredSteps });
+}
+
+function hasMeaningfulCandidateChange(source: Recipe, candidate: Recipe): boolean {
+  return JSON.stringify({
+    title: source.title,
+    description: source.description,
+    ingredients: source.ingredients,
+    steps: source.steps,
+    equipment: source.equipment,
+    servings: source.servings,
+    totalTimeMinutes: source.totalTimeMinutes,
+    estimatedHomemadeCost: source.estimatedHomemadeCost,
+  }) !== JSON.stringify({
+    title: candidate.title,
+    description: candidate.description,
+    ingredients: candidate.ingredients,
+    steps: candidate.steps,
+    equipment: candidate.equipment,
+    servings: candidate.servings,
+    totalTimeMinutes: candidate.totalTimeMinutes,
+    estimatedHomemadeCost: candidate.estimatedHomemadeCost,
+  });
+}
+
+function getRecipeSearchText(recipe: Recipe): string {
+  return [
+    recipe.title,
+    recipe.description,
+    ...recipe.ingredients.flatMap((ingredient) => [ingredient.name, ingredient.quantity]),
+    ...(recipe.ingredientGroups ?? []).flatMap((group) => [
+      group.component,
+      ...group.items.flatMap((ingredient) => [ingredient.name, ingredient.quantity]),
+    ]),
+    ...recipe.steps,
+    ...(recipe.structuredSteps ?? []).flatMap((step) => [
+      step.title ?? '',
+      step.text,
+      ...(step.ingredientsUsed ?? []),
+      step.flavorBoost ?? '',
+      step.chefTip ?? '',
+      step.doneWhen ?? '',
+    ]),
+    ...(recipe.substitutions ?? []),
+    ...(recipe.spicePairings ?? []),
+    ...(recipe.equipment ?? []),
+    recipe.pantryNote,
+    recipe.avoidMistake ?? '',
+    recipe.mistakeWarning ?? '',
+    recipe.storageAndReheating ?? '',
+    recipe.storage ?? '',
+    recipe.mainIngredientsSummary ?? '',
+    ...(recipe.groceryItems ?? []).flatMap((item) => [item.name, item.sourceIngredient ?? '', item.shoppingNote ?? '']),
+  ].join(' ');
+}
+
+function validateRemovedIngredientMetadata(changes: RecipeChange[], candidate: Recipe): ValidationIssue[] {
+  const metadataText = [
+    candidate.title,
+    candidate.description,
+    ...(candidate.substitutions ?? []),
+    ...(candidate.spicePairings ?? []),
+    candidate.pantryNote,
+    candidate.avoidMistake ?? '',
+    candidate.mistakeWarning ?? '',
+    candidate.storageAndReheating ?? '',
+    candidate.storage ?? '',
+    candidate.mainIngredientsSummary ?? '',
+  ].join(' ');
+  return changes.flatMap((change) => {
+    if ((change.kind !== 'removed' && change.kind !== 'substituted') || !change.before) return [];
+    const removedName = canonicalizeIngredient(change.before).base;
+    return containsConcept(metadataText, removedName)
+      ? [{ code: 'stale_removed_metadata_reference', message: `Removed ingredient ${removedName} remains in recipe metadata.` }]
+      : [];
+  });
+}
+
+function quantitiesScaleCoherently(source: Recipe, candidate: Recipe, multiplier: number): boolean {
+  const candidateByBase = new Map(candidate.ingredients.map((ingredient) => {
+    const canonical = canonicalizeIngredient(ingredient);
+    return [canonical.base, canonical] as const;
+  }));
+  let measurableCount = 0;
+  for (const sourceIngredient of source.ingredients.map(canonicalizeIngredient)) {
+    const candidateIngredient = candidateByBase.get(sourceIngredient.base);
+    if (!candidateIngredient) continue;
+    const before = parseQuantityNumber(sourceIngredient.amount);
+    const after = parseQuantityNumber(candidateIngredient.amount);
+    if (before === null || after === null) continue;
+    measurableCount += 1;
+    const expected = before * multiplier;
+    if (Math.abs(after - expected) > Math.max(0.02, expected * 0.02)) return false;
+  }
+  return measurableCount > 0;
+}
+
+function parseQuantityNumber(value: string): number | null {
+  const match = value.trim().match(/^(?:(\d+)\s+)?(\d+\/\d+|\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const whole = Number(match[1] ?? 0);
+  const part = match[2].includes('/')
+    ? (() => {
+        const [numerator, denominator] = match[2].split('/').map(Number);
+        return denominator ? numerator / denominator : NaN;
+      })()
+    : Number(match[2]);
+  return Number.isFinite(whole + part) ? whole + part : null;
 }
 
 function normalizeStepConcept(value: string): string {
@@ -365,6 +593,18 @@ function getNutritionValue(recipe: Recipe, nutrient: NutritionRequirementTarget[
     case 'fiber': return nutrition.fiberGrams ?? 0;
     case 'calorie': return nutrition.calories;
   }
+}
+
+function getNutritionConstraintValue(recipe: Recipe, nutrient: string): number | null {
+  const normalized = normalizeWords(nutrient).join(' ');
+  const nutrition = recipe.nutritionEstimate;
+  if (!nutrition) return null;
+  if (normalized === 'calorie' || normalized === 'kcal') return nutrition.calories;
+  if (normalized === 'protein') return nutrition.proteinGrams;
+  if (normalized === 'fiber') return nutrition.fiberGrams ?? 0;
+  if (normalized === 'fat') return nutrition.fatGrams;
+  if (normalized === 'carbohydrate' || normalized === 'carb') return nutrition.carbohydratesGrams;
+  return null;
 }
 
 function hasFiniteNutrition(nutrition: NonNullable<Recipe['nutritionEstimate']>): boolean {

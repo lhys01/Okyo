@@ -4,9 +4,9 @@ import {
   type StyleProp,
 } from 'react-native';
 
-import { mascotAssets } from '../../assets/mascot';
+import { getKikoAsset, kikoAssets, type KikoAssetPose } from '../assets/kikoAssets';
 
-export type KikoMascotPose = keyof typeof mascotAssets;
+export type KikoMascotPose = KikoAssetPose;
 
 type KikoMascotProps = {
   pose?: KikoMascotPose | string;
@@ -18,7 +18,7 @@ type KikoMascotProps = {
 const defaultSize = 120;
 
 function getSafePose(pose?: KikoMascotPose | string): KikoMascotPose {
-  if (pose && Object.prototype.hasOwnProperty.call(mascotAssets, pose)) {
+  if (pose && Object.prototype.hasOwnProperty.call(kikoAssets, pose)) {
     return pose as KikoMascotPose;
   }
 
@@ -32,7 +32,7 @@ export function KikoMascot({
   style,
 }: KikoMascotProps) {
   const safePose = getSafePose(pose);
-  const imageSource = mascotAssets[safePose] ?? mascotAssets.default;
+  const imageSource = getKikoAsset(safePose);
 
   const baseStyle = [{ height: size, width: size }, style];
 

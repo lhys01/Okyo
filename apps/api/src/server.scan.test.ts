@@ -283,7 +283,7 @@ test('POST /v1/scans retries truncated JSON once then normalizes malformed retry
   }
 });
 
-test('POST /v1/scans uses one combined repair call and maps unrecoverable validation to recipe_validation_failed', async () => {
+test('POST /v1/scans delivers a usable short recipe after one optional repair', async () => {
   const originalFetch = globalThis.fetch;
   const originalLog = console.log;
   const logs: unknown[][] = [];
@@ -313,17 +313,15 @@ test('POST /v1/scans uses one combined repair call and maps unrecoverable valida
       },
     });
 
-    assert.equal(response.status, 422);
-    assert.equal(response.body.ok, false);
-    assert.equal(response.body.error.code, 'recipe_validation_failed');
-    assert.notEqual(response.body.error.code, 'internal_error');
-    assert.match(response.body.error.details.validationMessage, /too_few_steps/);
-    assert.equal(calls, 3);
+    assert.equal(response.status, 201);
+    assert.equal(response.body.ok, true);
+    assert.ok(response.body.data?.recipe);
+    assert.equal(calls, 2);
     const logText = logs.map((entry) => entry.map((value) => typeof value === 'string' ? value : JSON.stringify(value)).join(' ')).join('\n');
-    assert.match(logText, /recipe_combined_repair/);
+    assert.doesNotMatch(logText, /recipe_combined_repair/);
     assert.doesNotMatch(logText, /recipe_structure_repair|recipe_quality_repair/);
     const timing = logs.find((entry) => entry[0] === '[scan_timing]')?.[1] as { providerCallCount?: number; combinedRepairMs?: number } | undefined;
-    assert.equal(timing?.providerCallCount, 3);
+    assert.equal(timing?.providerCallCount, 2);
     assert.equal(typeof timing?.combinedRepairMs, 'number');
   } finally {
     globalThis.fetch = originalFetch;

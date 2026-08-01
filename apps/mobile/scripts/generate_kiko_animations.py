@@ -65,7 +65,7 @@ ANIMATIONS = [
         slug="kiko-cooking-pan-saute",
         title="Kiko cooking with a pan",
         purpose="Use for active cooking, sauteing, or recipe-in-progress moments.",
-        source_asset="kiko-cooking.png",
+        source_asset="40b4aa9b-1feb-4b6b-b4dc-c1af7c11b9ee.png",
         renderer_name="pan_saute",
         notes="Transparent GIF/PNG frames with Kiko bounce, pan tilt, food flip, and steam. MP4 uses warm cream background.",
     ),
@@ -73,7 +73,7 @@ ANIMATIONS = [
         slug="kiko-cutting-vegetables",
         title="Kiko cutting vegetables",
         purpose="Use for prep, chopping, ingredient, or mise en place moments.",
-        source_asset="kiko-side-profile.png",
+        source_asset="626a7f44-4f69-4f44-b779-72ee18ca2491.png",
         renderer_name="cutting",
         notes="Transparent GIF/PNG frames with cutting board, vegetable pieces, and knife motion. MP4 uses warm cream background.",
     ),
@@ -81,7 +81,7 @@ ANIMATIONS = [
         slug="kiko-scanning",
         title="Kiko scanning",
         purpose="Use while Okyo analyzes an uploaded food or drink photo.",
-        source_asset="kiko-scanning.png",
+        source_asset="384183e9-8ebb-4d77-9c80-afae5aed6102.png",
         renderer_name="scanning",
         notes="Transparent GIF/PNG frames with scanning glow, scan line, pulse, and sparkles. MP4 uses warm cream background.",
     ),
@@ -89,7 +89,7 @@ ANIMATIONS = [
         slug="kiko-cooking-stirring",
         title="Kiko cooking and stirring",
         purpose="Use for simmering, stirring, and recipe-building moments.",
-        source_asset="kiko-cooking.png",
+        source_asset="40b4aa9b-1feb-4b6b-b4dc-c1af7c11b9ee.png",
         renderer_name="stirring",
         notes="Transparent GIF/PNG frames with pot, spoon motion, Kiko bounce, and cooking steam. MP4 uses warm cream background.",
     ),
@@ -97,7 +97,7 @@ ANIMATIONS = [
         slug="kiko-success-celebration",
         title="Kiko success celebration",
         purpose="Use for scan success, recipe saved, challenge complete, or progress wins.",
-        source_asset="kiko-celebrating.png",
+        source_asset="2a6be0ee-fc9c-4764-a9a6-4b986e7abe58.png",
         renderer_name="celebration",
         notes="Transparent GIF/PNG frames with celebration bounce, confetti, and sparkles. MP4 uses warm cream background.",
     ),
@@ -105,7 +105,7 @@ ANIMATIONS = [
         slug="kiko-grocery-bag",
         title="Kiko grocery bag",
         purpose="Use for grocery list, shopping, and pantry planning moments.",
-        source_asset="kiko-grocery-list.png",
+        source_asset="bb5aa691-ce28-43ae-a353-8bc73f3ca365.png",
         renderer_name="grocery",
         notes="Transparent GIF/PNG frames with grocery bag bounce and small sparkles. MP4 uses warm cream background.",
     ),
@@ -114,8 +114,7 @@ ANIMATIONS = [
 
 def main() -> None:
     mobile_root = Path(__file__).resolve().parents[1]
-    mascot_dir = mobile_root / "assets" / "mascot" / "kiko_transparent_backgrounds_careful"
-    fallback_mascot_dir = mobile_root / "assets" / "mascot"
+    mascot_dir = mobile_root / "assets" / "kiko-static"
     output_dir = mobile_root / "assets" / "animations"
     frames_root = output_dir / "frames"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -124,8 +123,6 @@ def main() -> None:
     generated = []
     for spec in ANIMATIONS:
         source_path = mascot_dir / spec.source_asset
-        if not source_path.exists():
-            source_path = fallback_mascot_dir / spec.source_asset
         if not source_path.exists():
             raise FileNotFoundError(f"Missing Kiko source asset: {spec.source_asset}")
 
