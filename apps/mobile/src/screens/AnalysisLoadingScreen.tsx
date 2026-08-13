@@ -1,15 +1,16 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
-import { NavArrowLeft } from 'iconoir-react-native';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Alert, Animated, Easing, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { Check, NavArrowLeft } from 'iconoir-react-native';
+import { useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Alert, Animated, Easing, Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
-import { KikoMascot } from '../components/KikoMascot';
-import { colors, PrimaryButton } from '../components/OkyoUI';
+import { colors, fontFamilies, PrimaryButton } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getRealScanImageUri } from '../utils/recipeImages';
@@ -18,17 +19,27 @@ import { getAnalysisScreenOutcome, getFreshDescribeMealResetState, getHomeResetS
 import { isUsableScan } from '../utils/scanDecision';
 import { getInlineFailureCopy, getScanFailureCategory } from '../utils/scanFailureCopy';
 import { preparePickedImage } from '../utils/scanImageProcessing';
-import { createStatusSequenceForScan } from '../utils/scanLoadingMessages';
-import { INITIAL_SCAN_PROGRESS_STATE, nextScanProgress, type ScanProgressState } from '../utils/scanProgress';
+import { getPendingAnalysisPresentation } from '../utils/scanProgress';
 import { uiLog } from '../utils/uiDebug';
 
 type AnalysisNavigation = NativeStackNavigationProp<RootStackParamList, 'AnalysisLoadingScreen'>;
 type AnalysisRoute = RouteProp<RootStackParamList, 'AnalysisLoadingScreen'>;
+const loadingProgressVideo = require('../../assets/button background/loading-progress-gradient.mp4');
+const okyoAppIcon = require('../../assets/icon.png');
+
+const ANALYSIS_STAGES = [
+  'Identifying the image',
+  'Finding ingredients',
+  'Making the recipe',
+  'Calculating the macros',
+  'Adding the finishing touches',
+] as const;
 
 export function AnalysisLoadingScreen() {
   const navigation = useNavigation<AnalysisNavigation>();
   const route = useRoute<AnalysisRoute>();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const scanSessionId = useOkyoStore((state) => state.scanSessionId);
   const latestScanStatus = useOkyoStore((state) => state.latestScanStatus);
   const latestScanResult = useOkyoStore((state) => state.latestScanResult);
@@ -41,21 +52,22 @@ export function AnalysisLoadingScreen() {
   const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const scanImageUri = getRealScanImageUri(selectedScanImage);
-  const [pulseIndex, setPulseIndex] = useState(0);
+  const [analysisElapsed, setAnalysisElapsed] = useState(0);
+  const [finishState, setFinishState] = useState<{ durationMs: number; startElapsedMs: number; startProgress: number } | null>(null);
   const [timedOut, setTimedOut] = useState(false);
   const isDescriptionScan = scanSource === 'description';
-  const statusMessages = useMemo(
-    () => createStatusSequenceForScan(scanSource, Math.random),
-    [activeScanSessionId, scanSource],
-  );
   const statusSequenceKey = `${activeScanSessionId}:${scanSource}`;
   const [reduceMotion, setReduceMotion] = useState(false);
   const didNavigate = useRef(false);
   const didTrackCompletion = useRef(false);
-  const pulseSequenceKey = useRef(statusSequenceKey);
   const scanLineProgress = useRef(new Animated.Value(0)).current;
   const progressValue = useRef(new Animated.Value(0)).current;
-  const scanProgressStateRef = useRef<ScanProgressState>(INITIAL_SCAN_PROGRESS_STATE);
+  const stagePulseValue = useRef(new Animated.Value(1)).current;
+  const progressVideoPlayer = useVideoPlayer(loadingProgressVideo, (player) => {
+    player.loop = true;
+    player.muted = true;
+    player.play();
+  });
   const uploadInFlight = useRef(false);
 
   // The photo must never move or remount for the life of a scan session — only
@@ -99,9 +111,12 @@ export function AnalysisLoadingScreen() {
   const failureCopy = failureCategory ? getInlineFailureCopy(failureCategory, isDescriptionScan) : null;
 
   useEffect(() => {
-    pulseSequenceKey.current = statusSequenceKey;
-    setPulseIndex(0);
-  }, [statusSequenceKey]);
+    setAnalysisElapsed(0);
+    setFinishState(null);
+    const startedAt = Date.now();
+    const timer = setInterval(() => setAnalysisElapsed(Date.now() - startedAt), 100);
+    return () => clearInterval(timer);
+  }, [activeScanSessionId]);
 
   useEffect(() => {
     let mounted = true;
@@ -134,55 +149,47 @@ export function AnalysisLoadingScreen() {
   }, [isDescriptionScan, reduceMotion, scanLineProgress, outcome]);
 
   useEffect(() => {
-    if (outcome !== 'pending' || reduceMotion) {
-      return;
-    }
-
     uiLog('AnalysisLoadingScreen', 'enter');
-    const pulse = setInterval(() => {
-      setPulseIndex((currentIndex) => Math.min(currentIndex + 1, statusMessages.length - 1));
-    }, 2000);
+  }, [statusSequenceKey]);
 
-    return () => clearInterval(pulse);
-  }, [statusMessages.length, statusSequenceKey, outcome, reduceMotion]);
+  const pendingPresentation = getPendingAnalysisPresentation(analysisElapsed);
 
   useEffect(() => {
-    const isPending = outcome === 'pending';
-    const nextState = nextScanProgress({
-      hasPreparedImage: Boolean(selectedScanImage) || isDescriptionScan,
-      hasValidatedRecipe: outcome === 'success',
-      previous: scanProgressStateRef.current,
-      scanSessionId: activeScanSessionId,
-      status: outcome === 'inline_failure' ? 'failed' : isPending ? 'pending' : 'success',
+    if (outcome !== 'success' || finishState) {
+      return;
+    }
+
+    setFinishState({
+      durationMs: reduceMotion ? 250 : analysisElapsed < 3_500 ? 800 : analysisElapsed < 8_000 ? 1_000 : 1_200,
+      startElapsedMs: analysisElapsed,
+      startProgress: pendingPresentation.progress,
     });
-    const isNewSession = nextState.scanSessionId !== scanProgressStateRef.current.scanSessionId;
-    const previousValue = scanProgressStateRef.current.value;
-    scanProgressStateRef.current = nextState;
+  }, [analysisElapsed, finishState, outcome, pendingPresentation.progress, reduceMotion]);
 
-    // No forward movement to animate — skip restarting an identical
-    // Animated.timing on every unrelated re-render (e.g. a rotating message
-    // or an unchanged store update). This is what keeps the bar from
-    // repeatedly re-running 0 -> 100 for a single scan.
-    if (!isNewSession && nextState.value === previousValue) {
+  const finishProgress = finishState
+    ? Math.min(1, Math.max(0, (analysisElapsed - finishState.startElapsedMs) / finishState.durationMs))
+    : 0;
+  const easedFinishProgress = Easing.out(Easing.cubic)(finishProgress);
+  const presentationProgress = outcome === 'success' && finishState
+    ? finishState.startProgress + (1 - finishState.startProgress) * easedFinishProgress
+    : pendingPresentation.progress;
+
+  useEffect(() => {
+    if (outcome === 'inline_failure') {
+      progressValue.stopAnimation();
       return;
     }
-
-    if (isNewSession) {
-      progressValue.setValue(0);
-    }
-
     if (reduceMotion) {
-      progressValue.setValue(nextState.value);
+      progressValue.setValue(presentationProgress);
       return;
     }
-
     Animated.timing(progressValue, {
-      duration: isPending ? 12000 : 360,
+      duration: 140,
       easing: Easing.out(Easing.quad),
-      toValue: nextState.value,
+      toValue: presentationProgress,
       useNativeDriver: false,
     }).start();
-  }, [activeScanSessionId, isDescriptionScan, outcome, progressValue, reduceMotion, selectedScanImage]);
+  }, [outcome, presentationProgress, progressValue, reduceMotion]);
 
   useEffect(() => {
     if (didTrackCompletion.current || outcome === 'pending') {
@@ -215,21 +222,24 @@ export function AnalysisLoadingScreen() {
   useEffect(() => {
     const routeScanSessionId = route.params?.scanSessionId;
     const isCurrentRouteSession = !routeScanSessionId || routeScanSessionId === scanSessionId;
-    if (didNavigate.current || outcome !== 'success' || !isCurrentRouteSession) {
+    if (didNavigate.current || outcome !== 'success' || !finishState || !isCurrentRouteSession) {
       return;
     }
 
     const finish = setTimeout(() => {
       didNavigate.current = true;
       uiLog('AnalysisLoadingScreen', 'navigate_result', { status: latestScanStatus });
-      navigation.navigate('ResultSummaryScreen', {
-        recipeId: latestScanRecipe?.id,
-        scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined,
+      navigation.navigate('MainTabs', {
+        screen: 'ResultSummaryScreen',
+        params: {
+          recipeId: latestScanRecipe?.id,
+          scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined,
+        },
       });
-    }, 750);
+    }, finishState.durationMs + 220);
 
     return () => clearTimeout(finish);
-  }, [outcome, navigation, route.params?.scanSessionId, scanSessionId, latestScanRecipe?.id, latestScanStatus]);
+  }, [finishState, outcome, navigation, route.params?.scanSessionId, scanSessionId, latestScanRecipe?.id, latestScanStatus]);
 
   // Safety net: the scan store always receives a terminal write (the API client
   // times out at 60s), but if anything ever hangs past that, resolve to the
@@ -325,6 +335,25 @@ export function AnalysisLoadingScreen() {
   };
 
   const isFailure = outcome === 'inline_failure' && failureCopy;
+  const stageIndex = outcome === 'success' ? 4 : pendingPresentation.stageIndex;
+  const isFinishingComplete = outcome === 'success' && finishProgress >= 1;
+  const heroImageHeight = Math.min(380, Math.max(326, windowHeight * 0.41));
+
+  useEffect(() => {
+    if (reduceMotion || isFailure || isFinishingComplete) {
+      stagePulseValue.setValue(1);
+      return;
+    }
+
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(stagePulseValue, { duration: 700, easing: Easing.inOut(Easing.quad), toValue: 0.35, useNativeDriver: true }),
+        Animated.timing(stagePulseValue, { duration: 700, easing: Easing.inOut(Easing.quad), toValue: 1, useNativeDriver: true }),
+      ]),
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [isFailure, isFinishingComplete, reduceMotion, stagePulseValue]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -332,38 +361,46 @@ export function AnalysisLoadingScreen() {
         contentContainerStyle={[styles.screenContent, { paddingBottom: 40 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.topBar}>
-          <Pressable
-            accessibilityLabel="Back to Home"
-            accessibilityRole="button"
-            onPress={() => goHome('user_aborted_scan_from_loading')}
-            style={({ pressed }) => [styles.backPill, pressed ? styles.pressed : null]}
-          >
-            <NavArrowLeft color={colors.charcoal} height={24} strokeWidth={2.35} width={24} />
-            <Text style={styles.backPillText}>Home</Text>
-          </Pressable>
-        </View>
-
         <View style={[styles.hero, isDescriptionScan ? styles.descriptionHero : null]}>
           {!isDescriptionScan && stableScanImageUri ? (
-            <View style={styles.scanImageWrap}>
+            <View style={[styles.scanImageWrap, { height: heroImageHeight }]}>
               <Image resizeMode="cover" source={{ uri: stableScanImageUri }} style={styles.scanImage} />
+              <Pressable
+                accessibilityLabel="Back to Home"
+                accessibilityRole="button"
+                onPress={() => goHome('user_aborted_scan_from_loading')}
+                style={({ pressed }) => [styles.backPill, pressed ? styles.pressed : null]}
+              >
+                <View pointerEvents="none" style={styles.backPillBackdrop}>
+                  <BlurView intensity={42} style={StyleSheet.absoluteFill} tint="light" />
+                </View>
+                <NavArrowLeft color={colors.charcoal} height={21} strokeWidth={2.4} width={21} />
+                <Text style={styles.backPillText}>Home</Text>
+              </Pressable>
               {!isFailure ? (
                 <Animated.View
                   pointerEvents="none"
                   style={[
                     styles.scanLine,
-                    { transform: [{ translateY: scanLineProgress.interpolate({ inputRange: [0, 1], outputRange: [8, 298] }) }] },
+                    { transform: [{ translateY: scanLineProgress.interpolate({ inputRange: [0, 1], outputRange: [8, heroImageHeight - 14] }) }] },
                   ]}
                 />
               ) : null}
             </View>
-          ) : null}
-          <KikoMascot
-            pose={isFailure ? 'thinking' : 'scanning'}
-            size={isDescriptionScan ? 48 : 72}
-            style={styles.heroMascot}
-          />
+          ) : (
+            <Pressable
+              accessibilityLabel="Back to Home"
+              accessibilityRole="button"
+              onPress={() => goHome('user_aborted_scan_from_loading')}
+              style={({ pressed }) => [styles.descriptionBackPill, pressed ? styles.pressed : null]}
+            >
+              <NavArrowLeft color={colors.charcoal} height={21} strokeWidth={2.4} width={21} />
+              <Text style={styles.backPillText}>Home</Text>
+            </Pressable>
+          )}
+          <View style={styles.appIconFrame}>
+            <Image accessibilityIgnoresInvertColors resizeMode="contain" source={okyoAppIcon} style={styles.appIcon} />
+          </View>
           {isFailure ? (
             <>
               <Text style={styles.title}>{failureCopy.title}</Text>
@@ -372,16 +409,21 @@ export function AnalysisLoadingScreen() {
           ) : (
             <>
               <Text style={[styles.title, isDescriptionScan ? styles.descriptionTitle : null]}>
-                {isDescriptionScan ? 'Kiko is building your recipe' : 'Kiko is studying your food'}
+                Okyo is scanning your food
               </Text>
               <Text numberOfLines={2} style={styles.statusText}>
-                {statusMessages[pulseSequenceKey.current === statusSequenceKey ? pulseIndex : 0] ?? statusMessages[0]}
+                {ANALYSIS_STAGES[stageIndex]}
               </Text>
             </>
           )}
         </View>
 
-        <View accessibilityLabel={isDescriptionScan ? 'Building your recipe' : 'Scanning your food'} accessibilityRole="progressbar" style={styles.progressTrack}>
+        <View
+          accessibilityLabel={isDescriptionScan ? 'Building your recipe' : 'Scanning your food'}
+          accessibilityRole="progressbar"
+          accessibilityValue={{ max: 100, min: 0, now: Math.round(presentationProgress * 100) }}
+          style={styles.progressTrack}
+        >
           <Animated.View
             style={[
               styles.progressFill,
@@ -389,8 +431,32 @@ export function AnalysisLoadingScreen() {
                 width: progressValue.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
               },
             ]}
-          />
+          >
+            <VideoView contentFit="cover" nativeControls={false} player={progressVideoPlayer} style={StyleSheet.absoluteFill} surfaceType="textureView" />
+          </Animated.View>
         </View>
+
+        {!isFailure ? (
+          <View style={styles.stageSection}>
+            <View accessibilityLabel="Analysis stages" style={styles.stageList}>
+              {ANALYSIS_STAGES.map((stage, index) => {
+                const complete = index < stageIndex || (index === 4 && isFinishingComplete);
+                const current = index === stageIndex && !complete;
+                return (
+                  <View key={stage} style={styles.stageRow}>
+                    <View style={[styles.stageMarker, complete ? styles.stageMarkerComplete : null, current ? styles.stageMarkerCurrent : null]}>
+                      {complete ? <Check color="#FFFFFF" height={14} strokeWidth={3} width={14} /> : null}
+                      {current ? <Animated.View style={[styles.stageMarkerActiveDot, { opacity: stagePulseValue }]} /> : null}
+                    </View>
+                    <Text style={[styles.stageLabel, complete ? styles.stageLabelComplete : null, current ? styles.stageLabelCurrent : null]}>
+                      {stage}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
 
         {isFailure ? (
           <View style={styles.failureActions}>
@@ -427,44 +493,58 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     flexGrow: 1,
-    paddingHorizontal: 22,
-  },
-  topBar: {
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    marginTop: 8,
-    minHeight: 64,
-    position: 'relative',
+    paddingHorizontal: 18,
   },
   backPill: {
     alignItems: 'center',
-    backgroundColor: '#fffdf8',
+    backgroundColor: 'rgba(255, 255, 255, 0.58)',
+    borderColor: 'rgba(255, 255, 255, 0.72)',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    left: 14,
+    minHeight: 42,
+    overflow: 'hidden',
+    paddingHorizontal: 12,
+    position: 'absolute',
+    top: 14,
+    zIndex: 3,
+  },
+  backPillBackdrop: {
+    borderRadius: 21,
+    bottom: 0,
+    left: 0,
+    overflow: 'hidden',
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  backPillText: {
+    color: colors.body,
+    fontFamily: fontFamilies.bold,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  descriptionBackPill: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.surface,
     borderColor: colors.border,
     borderRadius: 999,
     borderWidth: 1,
     flexDirection: 'row',
-    gap: 8,
-    left: 0,
-    minHeight: 48,
-    opacity: 0.72,
-    paddingHorizontal: 14,
-    position: 'absolute',
-    top: 8,
-  },
-  backPillText: {
-    color: colors.body,
-    fontSize: 17,
-    fontWeight: '700',
+    gap: 6,
+    minHeight: 42,
+    paddingHorizontal: 12,
   },
   hero: {
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: 2,
   },
   descriptionHero: {
     marginTop: 8,
-  },
-  heroMascot: {
-    marginTop: 4,
+    width: '100%',
   },
   scanImageWrap: {
     alignItems: 'center',
@@ -474,6 +554,21 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
     width: '100%',
+  },
+  appIconFrame: {
+    alignItems: 'center',
+    height: 120,
+    justifyContent: 'center',
+    marginBottom: 16,
+    marginTop: 20,
+    overflow: 'hidden',
+    width: 120,
+  },
+  appIcon: {
+    height: 120,
+    maxHeight: 120,
+    maxWidth: 120,
+    width: 120,
   },
   scanImage: {
     height: '100%',
@@ -486,13 +581,16 @@ const styles = StyleSheet.create({
     opacity: 0.9,
     position: 'absolute',
     right: 14,
-    top: 82,
+    top: 0,
   },
   title: {
     color: colors.charcoal,
+    fontFamily: fontFamilies.extraBold,
     fontSize: 29,
-    fontWeight: '700',
+    fontWeight: '900',
+    letterSpacing: -0.45,
     lineHeight: 35,
+    maxWidth: 340,
     textAlign: 'center',
   },
   descriptionTitle: {
@@ -502,17 +600,68 @@ const styles = StyleSheet.create({
   },
   statusText: {
     color: colors.coral,
+    fontFamily: fontFamilies.bold,
     fontSize: 19,
     fontWeight: '700',
-    height: 52,
+    minHeight: 28,
     lineHeight: 26,
-    marginTop: 8,
+    marginTop: 5,
     maxWidth: 300,
     textAlign: 'center',
     textAlignVertical: 'center',
   },
+  stageSection: {
+    marginTop: 16,
+    width: '100%',
+  },
+  stageList: {
+    gap: 9,
+  },
+  stageRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    minHeight: 24,
+  },
+  stageMarker: {
+    alignItems: 'center',
+    backgroundColor: '#F2E8E5',
+    borderRadius: 999,
+    height: 22,
+    justifyContent: 'center',
+    width: 22,
+  },
+  stageMarkerCurrent: {
+    backgroundColor: colors.coralSoft,
+    borderColor: colors.coral,
+    borderWidth: 1,
+  },
+  stageMarkerComplete: {
+    backgroundColor: colors.coral,
+  },
+  stageMarkerActiveDot: {
+    backgroundColor: colors.coral,
+    borderRadius: 999,
+    height: 8,
+    width: 8,
+  },
+  stageLabel: {
+    color: '#A7A1A5',
+    flex: 1,
+    fontFamily: fontFamilies.semibold,
+    fontSize: 15,
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+  stageLabelCurrent: {
+    color: colors.charcoal,
+    fontWeight: '800',
+  },
+  stageLabelComplete: {
+    color: colors.body,
+  },
   failureBody: {
     color: colors.body,
+    fontFamily: fontFamilies.body,
     fontSize: 16,
     lineHeight: 23,
     marginTop: 10,
@@ -524,7 +673,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cream,
     borderRadius: 999,
     height: 8,
-    marginTop: 22,
+    marginTop: 14,
     overflow: 'hidden',
     width: '72%',
   },
@@ -548,6 +697,7 @@ const styles = StyleSheet.create({
   },
   secondaryActionText: {
     color: colors.charcoal,
+    fontFamily: fontFamilies.bold,
     fontSize: 16,
     fontWeight: '700',
   },

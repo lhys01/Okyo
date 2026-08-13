@@ -52,9 +52,18 @@ export type ScanResult = {
 };
 
 export type RecipeIngredient = {
+  id?: string;
   name: string;
   quantity: string;
+  optional?: boolean;
   pantryItem?: boolean;
+};
+
+export type RecipeSubstitution = {
+  ingredientId?: string;
+  ingredientName: string;
+  replacement: string;
+  reason?: string;
 };
 
 export type RecipeIngredientGroup = {
@@ -77,6 +86,7 @@ export type StepImagePromptData = {
 };
 
 export type RecipeStep = {
+  id?: string;
   phase?: number; // 1-6 AI-assigned cooking phase (1=Prep, 2=Setup, 3=Cook, 4=Assemble, 5=Finish, 6=Serve)
   title?: string;
   text: string;
@@ -147,12 +157,16 @@ export type Recipe = {
   skillLevel?: Difficulty;
   difficulty: Difficulty;
   estimatedHomemadeCost: number;
+  // Comparable prepared-dish price, generated as an estimate rather than a
+  // live menu price. Optional so recipes saved before this field still load.
+  restaurantPriceEstimate?: number;
   estimatedSavings: number;
   ingredients: RecipeIngredient[];
   ingredientGroups?: RecipeIngredientGroup[];
   steps: string[];
   structuredSteps?: RecipeStep[];
   substitutions: string[];
+  structuredSubstitutions?: RecipeSubstitution[];
   pantryNote: string;
   confidenceNote: string;
   mainIngredientsSummary?: string;

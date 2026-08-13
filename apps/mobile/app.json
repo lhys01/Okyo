@@ -2,22 +2,31 @@
   "expo": {
     "name": "Okyo",
     "slug": "okyo",
+    "scheme": "okyo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/onboarding ex/onboarding1.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#fffdfe"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.okyo"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#111013",
+        "foregroundImage": "./assets/icon.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.anonymous.okyo"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -25,7 +34,24 @@
     "plugins": [
       "expo-sharing",
       "expo-notifications",
-      "expo-font"
+      "expo-font",
+      "expo-image",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#fffdfe",
+          "image": "./assets/onboarding ex/onboarding1.png",
+          "imageWidth": 430,
+          "resizeMode": "cover"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Okyo to access your photos so you can scan a dish."
+        }
+      ],
+      "expo-video"
     ]
   }
 }

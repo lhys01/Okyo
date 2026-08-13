@@ -1,56 +1,48 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  Camera,
-  Cart,
   Clock,
-  Cutlery,
-  HeartSolid,
-  MoneySquare,
   Search,
-  ThreePointsCircle,
 } from 'iconoir-react-native';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
+import { actionIcons } from '../assets/actionIcons';
 import { FoodImage } from '../components/FoodImage';
-import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
-import { getSafeRecipeMode, type Recipe } from '../mocks';
+import { fontFamilies } from '../theme/okyoTheme';
+import { type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
-import {
-  getRecipeIngredientPreview,
-  resolveCanonicalRecipes,
-  type CanonicalRecipe,
-} from '../state/canonicalRecipes';
+import { resolveCanonicalRecipes, type CanonicalRecipe } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { getModeChipPalette, getModeLabel } from '../utils/modeDisplay';
-import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { getRecipeImageSource, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { getSavedMealCategories, type SavedMealCategory } from '../utils/recipeMealCategories';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
 
 type LibraryNavigation = NativeStackNavigationProp<RootStackParamList>;
-type LibraryFilter = 'recent' | 'lighter' | 'fast';
+type LibraryFilter = 'all' | SavedMealCategory;
 
 const filters: Array<{ id: LibraryFilter; label: string }> = [
-  { id: 'recent', label: 'Recent' },
-  { id: 'lighter', label: 'Healthier' },
-  { id: 'fast', label: 'Fast meals' },
+  { id: 'all', label: 'All' },
+  { id: 'breakfast', label: 'Breakfast' },
+  { id: 'lunch', label: 'Lunch' },
+  { id: 'dinner', label: 'Dinner' },
+  { id: 'snacks', label: 'Snacks' },
+  { id: 'dessert', label: 'Dessert' },
 ];
 
 const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
-
 export function LibraryScreen() {
   const navigation = useNavigation<LibraryNavigation>();
   const recipesById = useOkyoStore((state) => state.recipesById);
   const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
-  const removeSavedRecipe = useOkyoStore((state) => state.removeSavedRecipe);
   const addRecipeToGrocery = useOkyoStore((state) => state.addRecipeToGrocery);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<LibraryFilter>('recent');
+  const [activeFilter, setActiveFilter] = useState<LibraryFilter>('all');
   const didTrackMalformedData = useRef(false);
 
   const safeSavedRecipes = useMemo(
@@ -63,8 +55,6 @@ export function LibraryScreen() {
     () => filterRecipes(sortedRecipes, activeFilter, searchQuery),
     [activeFilter, searchQuery, sortedRecipes],
   );
-  const totalHomemadeEstimate = safeSavedRecipes.reduce((total, recipe) => total + getFiniteNumber(recipe.estimatedHomemadeCost), 0);
-  const easyMeals = safeSavedRecipes.filter((recipe) => getDifficulty(recipe) === 'Easy').length;
 
   useEffect(() => {
     if (didTrackMalformedData.current || malformedRecipeCount === 0) {
@@ -126,27 +116,9 @@ export function LibraryScreen() {
     });
   };
 
-  const goToScan = () => {
-    uiLog('LibraryScreen', 'empty_scan_cta');
-    navigation.navigate('MainTabs', { screen: 'HomeScreen' });
-  };
-
-  const confirmRemove = (recipe: Recipe) => {
-    Alert.alert(
-      'Remove from Liked?',
-      `${cleanDisplayText(recipe.title)} will leave your liked recipes.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: () => {
-            uiLog('LibraryScreen', 'remove_saved_recipe', { recipeId: recipe.id });
-            removeSavedRecipe(recipe.id);
-          },
-        },
-      ],
-    );
+  const goToExplore = () => {
+    uiLog('LibraryScreen', 'empty_explore_cta');
+    navigation.navigate('MainTabs', { screen: 'RestaurantPacksScreen' });
   };
 
   if (safeSavedRecipes.length === 0) {
@@ -154,12 +126,10 @@ export function LibraryScreen() {
       <LibraryFrame>
         <TopBar title="Liked" />
         <View style={styles.emptyCard}>
-          <KikoMascot pose="wave" size={118} style={styles.emptyMascot} />
-          <Text style={styles.emptyTitle}>No liked recipes yet.</Text>
-          <Text style={styles.emptyBody}>
-            Tap the heart on a recipe and it will stay here for later.
-          </Text>
-          <PrimaryAction icon={<Camera color="#fffdf8" height={20} strokeWidth={2.2} width={20} />} label="Scan a meal" onPress={goToScan} />
+          <Image accessibilityIgnoresInvertColors resizeMode="contain" source={require('../../assets/food/liked-pasta-kiko.png')} style={styles.emptyArt} />
+          <Text style={styles.emptyTitle}>No liked recipes yet</Text>
+          <Text style={styles.emptyBody}>Save recipes you love and they'll show up here.</Text>
+          <PrimaryAction label="Explore recipes" onPress={goToExplore} />
         </View>
       </LibraryFrame>
     );
@@ -168,26 +138,6 @@ export function LibraryScreen() {
   return (
     <LibraryFrame>
       <TopBar title="Liked" />
-
-      <View style={styles.heroCard}>
-        <View style={styles.heroCopy}>
-          <Text style={styles.heroKicker}>Recipe shelf</Text>
-          <Text style={styles.heroTitle}>
-            Liked recipes worth <Text style={styles.heroAccent}>remaking</Text>
-          </Text>
-          <Text style={styles.heroBody}>
-            Your favorite homemade recipes, ready for an easy dinner repeat.
-          </Text>
-        </View>
-        <View style={styles.recipeMascotCard}>
-          <KikoMascot pose="recipe" size={76} />
-        </View>
-        <View style={styles.heroStats}>
-          <HeroStat icon={<HeartSolid color={colors.coral} height={18} width={18} />} value={safeSavedRecipes.length.toString()} label="liked" />
-          <HeroStat icon={<MoneySquare color={colors.green} height={18} strokeWidth={2} width={18} />} value={formatCurrency(totalHomemadeEstimate)} label="home est." />
-          <HeroStat icon={<Clock color="#d8800b" height={18} strokeWidth={2} width={18} />} value={easyMeals.toString()} label="easy" />
-        </View>
-      </View>
 
       <View style={styles.searchRow}>
         <View style={styles.searchBox}>
@@ -206,7 +156,7 @@ export function LibraryScreen() {
         </View>
       </View>
 
-      <View style={styles.filterList}>
+      <ScrollView horizontal contentContainerStyle={styles.filterList} showsHorizontalScrollIndicator={false}>
         {filters.map((filter) => {
           const selected = activeFilter === filter.id;
 
@@ -228,7 +178,7 @@ export function LibraryScreen() {
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
 
       <View style={styles.recipeList}>
         {filteredRecipes.length > 0 ? (
@@ -238,13 +188,12 @@ export function LibraryScreen() {
               recipe={recipe}
               onCook={() => openSavedRecipe(recipe)}
               onGroceries={() => openGroceries(recipe)}
-              onRemove={() => confirmRemove(recipe)}
             />
           ))
         ) : (
           <View style={styles.noMatchesCard}>
-            <Text style={styles.noMatchesTitle}>No liked recipes match that yet.</Text>
-            <Text style={styles.noMatchesBody}>Try another search or switch filters to see more of your recipe shelf.</Text>
+            <Text style={styles.noMatchesTitle}>{activeFilter === 'all' ? 'No recipes match that yet.' : `No ${filters.find((filter) => filter.id === activeFilter)?.label.toLowerCase()} recipes yet.`}</Text>
+            <Text style={styles.noMatchesBody}>Save one and it’ll show up here.</Text>
           </View>
         )}
       </View>
@@ -272,60 +221,33 @@ function TopBar({ title }: { title: string }) {
   );
 }
 
-function HeroStat({ icon, value, label }: { icon: ReactNode; value: string; label: string }) {
-  return (
-    <View style={styles.heroStat}>
-      <View style={styles.heroStatIcon}>{icon}</View>
-      <View style={styles.heroStatCopy}>
-        <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.heroStatValue}>{value}</Text>
-        <Text numberOfLines={1} style={styles.heroStatLabel}>{label}</Text>
-      </View>
-    </View>
-  );
-}
-
 function SavedRecipeCard({
   recipe,
   onCook,
   onGroceries,
-  onRemove,
 }: {
   recipe: CanonicalRecipe;
   onCook: () => void;
   onGroceries: () => void;
-  onRemove: () => void;
 }) {
-  const mode = recipe.selectedMode;
-  const modeLabel = getModeLabel(mode);
-  const modePalette = getModeChipPalette(mode);
+  const protein = getFiniteNumber(recipe.nutritionEstimate?.proteinGrams);
 
   return (
-    <View style={styles.recipeCard}>
+    <Pressable
+      accessibilityHint="Opens this recipe"
+      accessibilityRole="button"
+      style={({ pressed }) => [styles.recipeCard, pressed ? styles.recipeCardPressed : null]}
+      onPress={onCook}
+    >
       <View style={styles.recipeTop}>
         <RecipeThumb recipe={recipe} />
         <View style={styles.recipeContent}>
-          <View style={styles.cardTopRow}>
-            <View style={[styles.modePill, { backgroundColor: modePalette.bg }]}>
-              <Cutlery color={modePalette.text} height={13} strokeWidth={2.2} width={13} />
-              <Text numberOfLines={1} style={[styles.modePillText, { color: modePalette.text }]}>{modeLabel}</Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.moreButton, pressed ? styles.pressed : null]}
-              onPress={onRemove}
-            >
-              <ThreePointsCircle color={colors.body} height={20} strokeWidth={2.2} width={20} />
-            </Pressable>
-          </View>
           <Text numberOfLines={2} style={styles.recipeTitle}>{cleanDisplayText(recipe.title)}</Text>
-          <Text numberOfLines={1} style={styles.recipeSubtitle}>
-            {getRecipeIngredientPreview(recipe)}
-          </Text>
           <View style={styles.recipeMetaRow}>
-            <MetaChip icon={<Clock color={colors.charcoal} height={15} strokeWidth={2} width={15} />} label={`${getTotalTime(recipe)} min`} />
-            <MetaChip icon={<Cutlery color={colors.charcoal} height={15} strokeWidth={2} width={15} />} label={getDifficulty(recipe)} />
-            <MetaChip icon={<MoneySquare color={colors.green} height={15} strokeWidth={2} width={15} />} label={`Home est. ${formatCurrency(getFiniteNumber(recipe.estimatedHomemadeCost))}`} tone="green" />
+            <Clock color={colors.muted} height={14} strokeWidth={2} width={14} />
+            <Text numberOfLines={1} style={styles.recipeMetaText}>{getTotalTime(recipe)} min{protein > 0 ? ` · ${Math.round(protein)}g protein` : ''}</Text>
           </View>
+          <Text numberOfLines={1} style={styles.recipeCost}>Home est. {formatCurrency(getFiniteNumber(recipe.estimatedHomemadeCost))}</Text>
         </View>
       </View>
       <View style={styles.cardActions}>
@@ -341,17 +263,18 @@ function SavedRecipeCard({
           style={({ pressed }) => [styles.groceryButton, pressed ? styles.pressed : null]}
           onPress={onGroceries}
         >
-          <Cart color={colors.coral} height={16} strokeWidth={2.1} width={16} />
+          <Image accessibilityElementsHidden resizeMode="contain" source={actionIcons.grocery} style={styles.groceryIcon} />
           <Text style={styles.groceryButtonText}>Groceries</Text>
         </Pressable>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
 function RecipeThumb({ recipe }: { recipe: Recipe }) {
   return (
     <FoodImage
+      imageSource={getRecipeImageSource(recipe)}
       imageStatus={getRecipeImageStatus(recipe)}
       imageUrl={getRecipeImageUrl(recipe)}
       style={styles.recipeImage}
@@ -359,23 +282,13 @@ function RecipeThumb({ recipe }: { recipe: Recipe }) {
   );
 }
 
-function MetaChip({ icon, label, tone = 'default' }: { icon: ReactNode; label: string; tone?: 'default' | 'green' }) {
-  return (
-    <View style={styles.metaChip}>
-      {icon}
-      <Text numberOfLines={1} style={[styles.metaText, tone === 'green' ? styles.metaTextGreen : null]}>{label}</Text>
-    </View>
-  );
-}
-
-function PrimaryAction({ icon, label, onPress }: { icon: ReactNode; label: string; onPress: () => void }) {
+function PrimaryAction({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
       style={({ pressed }) => [styles.primaryAction, pressed ? styles.pressed : null]}
       onPress={onPress}
     >
-      {icon}
       <Text style={styles.primaryActionText}>{label}</Text>
     </Pressable>
   );
@@ -390,15 +303,7 @@ function filterRecipes(recipes: CanonicalRecipe[], activeFilter: LibraryFilter, 
       return false;
     }
 
-    switch (activeFilter) {
-      case 'lighter':
-        return recipe.selectedMode === 'Healthier';
-      case 'fast':
-        return getTotalTime(recipe) <= 30;
-      case 'recent':
-      default:
-        return true;
-    }
+    return activeFilter === 'all' || getSavedMealCategories(recipe).includes(activeFilter);
   });
 }
 
@@ -435,10 +340,6 @@ function getTotalTime(recipe: Recipe) {
   return total > 0 ? total : getFiniteNumber(recipe.prepTimeMinutes) + getFiniteNumber(recipe.cookTimeMinutes);
 }
 
-function getDifficulty(recipe: Recipe) {
-  return recipe.skillLevel ?? recipe.difficulty ?? 'Easy';
-}
-
 function getFiniteNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
@@ -461,109 +362,29 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   screenContent: {
-    gap: 12,
-    padding: 24,
-    paddingBottom: 132,
+    gap: 10,
+    padding: 20,
+    paddingBottom: 150,
+    paddingTop: 0,
   },
   topBar: {
     alignItems: 'center',
     flexDirection: 'row',
+    marginTop: 6,
     justifyContent: 'space-between',
     minHeight: 44,
   },
   topTitle: {
     color: colors.charcoal,
     flex: 1,
-    fontSize: 26,
-    fontWeight: '700',
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 28,
+    fontWeight: '900',
     letterSpacing: 0,
     textAlign: 'center',
   },
   topSpacer: {
     width: 48,
-  },
-  heroCard: {
-    minHeight: 142,
-    padding: 14,
-  },
-  heroCopy: {
-    paddingRight: 66,
-  },
-  heroKicker: {
-    color: colors.coral,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-  },
-  heroTitle: {
-    color: colors.charcoal,
-    fontSize: 23,
-    fontWeight: '700',
-    letterSpacing: 0,
-    lineHeight: 27,
-  },
-  heroAccent: {
-    color: colors.coral,
-  },
-  heroBody: {
-    color: colors.body,
-    fontSize: 12,
-    fontWeight: '500',
-    lineHeight: 17,
-    marginTop: 6,
-  },
-  recipeMascotCard: {
-    alignItems: 'center',
-    backgroundColor: '#fff1df',
-    borderRadius: 20,
-    justifyContent: 'center',
-    height: 82,
-    padding: 3,
-    position: 'absolute',
-    right: 12,
-    top: 18,
-    width: 82,
-  },
-  heroStats: {
-    alignItems: 'stretch',
-    flexDirection: 'row',
-    gap: 4,
-    justifyContent: 'space-between',
-    marginTop: 10,
-    padding: 10,
-  },
-  heroStat: {
-    alignItems: 'center',
-    flex: 1,
-    gap: 3,
-    minWidth: 0,
-  },
-  heroStatIcon: {
-    alignItems: 'center',
-    backgroundColor: '#fff1df',
-    borderRadius: 12,
-    height: 28,
-    justifyContent: 'center',
-    width: 28,
-  },
-  heroStatCopy: {
-    alignItems: 'center',
-    alignSelf: 'stretch',
-    minWidth: 0,
-  },
-  heroStatValue: {
-    color: colors.coral,
-    fontSize: 14,
-    fontVariant: ['tabular-nums'],
-    fontWeight: '800',
-  },
-  heroStatLabel: {
-    color: colors.body,
-    fontSize: 9,
-    fontWeight: '600',
-    textAlign: 'center',
   },
   searchRow: {
     alignItems: 'center',
@@ -572,12 +393,14 @@ const styles = StyleSheet.create({
   },
   searchBox: {
     alignItems: 'center',
-    backgroundColor: colors.card,
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 999,
     flex: 1,
     flexDirection: 'row',
     gap: 10,
-    minHeight: 50,
+    minHeight: 46,
     paddingHorizontal: 14,
   },
   searchInput: {
@@ -589,20 +412,21 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
   filterList: {
+    alignItems: 'center',
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    gap: 7,
+    paddingRight: 8,
   },
   filterChip: {
     alignItems: 'center',
-    backgroundColor: colors.cream,
+    backgroundColor: colors.surfaceMuted,
     borderRadius: 999,
     justifyContent: 'center',
-    minHeight: 36,
-    paddingHorizontal: 12,
+    minHeight: 34,
+    paddingHorizontal: 11,
   },
   filterChipSelected: {
-    backgroundColor: '#fff2e8',
+    backgroundColor: '#FFF0F4',
   },
   filterText: {
     color: colors.charcoal,
@@ -610,94 +434,64 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   filterTextSelected: {
-    color: colors.coral,
+    color: colors.coralDark,
   },
   recipeList: {
     gap: 12,
   },
   recipeCard: {
-    gap: 9,
-    padding: 8,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 10,
+    padding: 10,
+  },
+  recipeCardPressed: {
+    opacity: 0.86,
   },
   recipeTop: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 12,
     minWidth: 0,
   },
   recipeImage: {
     backgroundColor: colors.cream,
     borderRadius: 16,
-    height: 80,
-    width: 80,
+    height: 92,
+    width: 92,
   },
   recipeContent: {
     flex: 1,
     minWidth: 0,
-    paddingVertical: 2,
-  },
-  cardTopRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  modePill: {
-    alignItems: 'center',
-    backgroundColor: '#fff1df',
-    borderRadius: 999,
-    flexDirection: 'row',
-    gap: 5,
-    maxWidth: '82%',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-  },
-  modePillText: {
-    color: colors.coral,
-    flexShrink: 1,
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  moreButton: {
-    alignItems: 'center',
-    height: 28,
     justifyContent: 'center',
-    width: 28,
+    paddingVertical: 2,
   },
   recipeTitle: {
     color: colors.charcoal,
-    fontSize: 16,
-    fontWeight: '700',
+    fontFamily: fontFamilies.bold,
+    fontSize: 18,
+    fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 20,
-    marginTop: 5,
-  },
-  recipeSubtitle: {
-    color: colors.body,
-    fontSize: 12,
-    fontWeight: '500',
-    marginTop: 3,
+    lineHeight: 21,
   },
   recipeMetaRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 5,
+    alignItems: 'center',
+    gap: 4,
     marginTop: 6,
   },
-  metaChip: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 5,
-    maxWidth: '100%',
-  },
-  metaText: {
-    color: colors.charcoal,
-    fontSize: 11,
+  recipeMetaText: {
+    color: colors.body,
+    fontSize: 12,
     fontVariant: ['tabular-nums'],
     fontWeight: '700',
   },
-  metaTextGreen: {
-    color: colors.green,
-    fontWeight: '700',
+  recipeCost: {
+    color: colors.body,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 3,
   },
   cardActions: {
     alignItems: 'center',
@@ -711,7 +505,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     justifyContent: 'center',
     flex: 1,
-    minHeight: 38,
+    minHeight: 40,
     minWidth: 0,
     paddingHorizontal: 12,
   },
@@ -722,13 +516,15 @@ const styles = StyleSheet.create({
   },
   groceryButton: {
     alignItems: 'center',
-    backgroundColor: colors.cream,
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 999,
     flex: 1,
     flexDirection: 'row',
     gap: 6,
     justifyContent: 'center',
-    minHeight: 38,
+    minHeight: 40,
     minWidth: 0,
     paddingHorizontal: 8,
   },
@@ -737,6 +533,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  groceryIcon: { height: 24, width: 24 },
   noMatchesCard: {
     padding: 20,
   },
@@ -753,40 +550,44 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     alignItems: 'center',
-    gap: 14,
-    marginTop: 24,
-    padding: 24,
+    gap: 12,
+    marginTop: 28,
+    paddingHorizontal: 20,
   },
-  emptyMascot: {
-    marginBottom: 2,
+  emptyArt: {
+    height: 238,
+    marginBottom: 0,
+    width: '100%',
   },
   emptyTitle: {
     color: colors.charcoal,
-    fontSize: 26,
-    fontWeight: '700',
-    lineHeight: 31,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 22,
+    fontWeight: '900',
+    lineHeight: 26,
     textAlign: 'center',
   },
   emptyBody: {
     color: colors.body,
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 21,
     textAlign: 'center',
   },
   primaryAction: {
     alignItems: 'center',
-    alignSelf: 'stretch',
+    alignSelf: 'center',
     backgroundColor: colors.coral,
     borderRadius: 999,
     flexDirection: 'row',
     gap: 10,
     justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
+    minHeight: 50,
+    paddingHorizontal: 18,
+    width: '80%',
   },
   primaryActionText: {
     color: '#fffdf8',
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '700',
   },
   pressed: {

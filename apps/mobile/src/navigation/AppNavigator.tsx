@@ -18,7 +18,7 @@ import { RecommendationCategoryScreen } from '../screens/RecommendationCategoryS
 import { SavingsDashboardScreen } from '../screens/SavingsDashboardScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
-import { WelcomeScreen } from '../screens/WelcomeScreen';
+import { OnboardingV3 } from '../onboarding-v3/OnboardingV3';
 import { onboardingPersistence } from '../state/onboardingPersistence';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { uiLog } from '../utils/uiDebug';
@@ -28,7 +28,7 @@ import type { RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-export function AppNavigator() {
+export function AppNavigator({ appStartedAt, fontsLoaded }: { appStartedAt: number; fontsLoaded: boolean }) {
   const hasCompletedOnboarding = useOkyoStore((state) => state.hasCompletedOnboarding);
   const setOnboardingCompletionFromStorage = useOkyoStore((state) => state.setOnboardingCompletionFromStorage);
   const [persistedOnboardingCompleted, setPersistedOnboardingCompleted] = useState<boolean | null>(null);
@@ -102,7 +102,9 @@ export function AppNavigator() {
           headerShown: false,
         }}
       >
-        <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} />
+        <Stack.Screen name="WelcomeScreen">
+          {() => <OnboardingV3 appStartedAt={appStartedAt} fontsLoaded={fontsLoaded} />}
+        </Stack.Screen>
       </Stack.Navigator>
     );
   }

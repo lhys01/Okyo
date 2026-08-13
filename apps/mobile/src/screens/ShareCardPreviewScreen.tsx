@@ -4,20 +4,22 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
 import * as Sharing from 'expo-sharing';
 import {
-  ArrowRight,
   Camera,
   ClipboardCheck,
+  Check,
+  Coins,
   Clock,
   Crown,
   Cutlery,
-  FireFlame,
+  Droplet,
   NavArrowLeft,
   ShareAndroid,
-  Spark,
+  Star,
   TaskList,
+  User,
 } from 'iconoir-react-native';
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { Alert, Image, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Alert, Image, LayoutAnimation, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -31,7 +33,6 @@ import {
   getSafeRecipeMode,
   mockBadges,
   mockRestaurantPacks,
-  type Difficulty,
   type Recipe,
   type RecipeMode,
   type ScanResult,
@@ -39,6 +40,7 @@ import {
 import type { RootStackParamList, ShareCardType } from '../navigation/types';
 import { resolveCanonicalRecipe } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { getDefaultShareMetricKeys, getMetricRows, getShareMetrics, type ShareMetric, type ShareMetricKey } from '../utils/shareCardMetrics';
 import { getRecipeImageUrl } from '../utils/recipeImages';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
@@ -60,8 +62,6 @@ type ShareCardData = {
   caption: string;
 };
 
-const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
-
 export function ShareCardPreviewScreen() {
   const navigation = useNavigation<ShareCardNavigation>();
   const route = useRoute<ShareCardRoute>();
@@ -73,6 +73,8 @@ export function ShareCardPreviewScreen() {
   const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
   const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
+  const recipeServingOverrides = useOkyoStore((state) => state.recipeServingOverrides ?? {});
+  const recipeFeedbackById = useOkyoStore((state) => state.recipeFeedbackById ?? {});
   const requestedRecipeId = route.params?.recipeId;
   const canonicalRecipe = requestedRecipeId
     ? resolveCanonicalRecipe(recipesById, requestedRecipeId)
@@ -225,7 +227,14 @@ export function ShareCardPreviewScreen() {
     topLeaderboardEntry.value,
     unlockedBadge.name,
   ]);
-  const shareStats = useMemo(() => getShareStats(cardData.recipe), [cardData.recipe]);
+  const effectiveServings = recipeServingOverrides[cardData.recipe.id] ?? cardData.recipe.servings;
+  const availableMetrics = useMemo(
+    () => getShareMetrics(cardData.recipe, effectiveServings, recipeFeedbackById[cardData.recipe.id]),
+    [cardData.recipe, effectiveServings, recipeFeedbackById],
+  );
+  const [selectedMetricKeys, setSelectedMetricKeys] = useState<ShareMetricKey[] | null>(null);
+  const selectedKeys = selectedMetricKeys ?? getDefaultShareMetricKeys(availableMetrics);
+  const selectedMetrics = availableMetrics.filter((metric) => selectedKeys.includes(metric.key));
   const didTrackGenerated = useRef(false);
   const cardRef = useRef<View | null>(null);
 
@@ -361,6 +370,14 @@ export function ShareCardPreviewScreen() {
     }
   };
 
+  const toggleMetric = (key: ShareMetricKey) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSelectedMetricKeys((current) => {
+      const active = current ?? getDefaultShareMetricKeys(availableMetrics);
+      return active.includes(key) ? active.filter((item) => item !== key) : [...active, key];
+    });
+  };
+
   if (missingScanResult) {
     return (
       <ShareFrame>
@@ -382,9 +399,18 @@ export function ShareCardPreviewScreen() {
       <ShareTopBar onBack={goBack} />
 
       <View style={styles.previewIntro}>
-        <Text style={styles.previewKicker}>{cardData.eyebrow}</Text>
-        <Text style={styles.previewTitle}>Share preview</Text>
-        <Text style={styles.previewBody}>A post-ready card built from this Okyo recipe and your scan data.</Text>
+        <Text style={styles.previewTitle}>Share this recipe</Text>
+        <Text style={styles.previewBody}>A simple card to share with friends.</Text>
+      </View>
+
+      <View style={styles.customizeSection}>
+        <Text style={styles.customizeTitle}>Customize card</Text>
+        <Text style={styles.customizeBody}>Choose what to include on your card. Changes update instantly.</Text>
+        <View style={styles.chipList}>
+          {availableMetrics.map((metric) => (
+            <MetricChip key={metric.key} metric={metric} selected={selectedKeys.includes(metric.key)} onPress={() => toggleMetric(metric.key)} />
+          ))}
+        </View>
       </View>
 
       <View style={styles.cardShell}>
@@ -394,50 +420,24 @@ export function ShareCardPreviewScreen() {
           </Text>
           <View style={styles.remadeRow}>
             <View style={styles.remadeLine} />
-            <Text style={styles.remadeText}>remade at home</Text>
+            <Text style={styles.remadeText}>Dish → Recipe</Text>
             <View style={styles.remadeLine} />
           </View>
 
           <PhotoBlock
             dishName={cardData.dishName}
             imageUri={cardData.imageUri}
-            homemadeImageUri={cardData.homemadeImageUri}
           />
 
-          <View style={styles.transformPill}>
-            <Text style={styles.transformText}>Restaurant</Text>
-            <ArrowRight color={colors.coral} height={24} strokeWidth={2.4} width={24} />
-            <Text style={styles.transformText}>Homemade</Text>
-          </View>
-
-          <View style={styles.statGrid}>
-            {shareStats.map((stat) => (
-              <ShareStat key={stat.label} stat={stat} />
-            ))}
-          </View>
+          {selectedMetrics.length > 0 ? <MetricGrid metrics={selectedMetrics} /> : null}
 
           <View style={styles.cardFooter}>
-            <Text style={styles.cardFooterText}>Made with <Text style={styles.okyoText}>Okyo</Text></Text>
-            <View style={styles.footerBadge}>
-              <Spark color={colors.coral} height={20} strokeWidth={2} width={20} />
+            <Image accessibilityIgnoresInvertColors source={require('../../assets/icon.png')} style={styles.okyoIcon} />
+            <View style={styles.footerCopy}>
+              <Text style={styles.cardFooterText}>Made with <Text style={styles.okyoText}>Okyo</Text></Text>
+              <Text style={styles.cardFooterTagline}>Turn any dish into a recipe</Text>
             </View>
           </View>
-        </View>
-      </View>
-
-      <View style={styles.priceSummary}>
-        <View style={styles.priceColumn}>
-          <Text style={styles.priceLabel}>Restaurant estimate</Text>
-          <Text style={styles.priceValue}>{formatCurrency(cardData.restaurantPrice)}</Text>
-        </View>
-        <ArrowRight color={colors.green} height={22} strokeWidth={2.4} width={22} />
-        <View style={styles.priceColumn}>
-          <Text style={styles.priceLabel}>Home estimate</Text>
-          <Text style={styles.priceValue}>{formatCurrency(cardData.homemadeCost)}</Text>
-        </View>
-        <View style={styles.savingsPill}>
-          <Text style={styles.savingsPillLabel}>Saved</Text>
-          <Text style={styles.savingsPillValue}>{formatCurrency(cardData.estimatedSavings)}</Text>
         </View>
       </View>
 
@@ -479,25 +479,14 @@ function ShareTopBar({ onBack }: { onBack: () => void }) {
 function PhotoBlock({
   dishName,
   imageUri,
-  homemadeImageUri,
 }: {
   dishName: string;
   imageUri?: string | null;
-  homemadeImageUri?: string | null;
 }) {
-  if (imageUri && homemadeImageUri) {
-    return (
-      <View style={styles.comparisonBlock}>
-        <Image source={{ uri: imageUri }} style={styles.comparisonImageLeft} />
-        <Image source={{ uri: homemadeImageUri }} style={styles.comparisonImageRight} />
-      </View>
-    );
-  }
-
   if (imageUri) {
     return (
       <View style={styles.singlePhotoBlock}>
-        <Image source={{ uri: imageUri }} style={styles.singlePhoto} />
+        <Image resizeMode="cover" source={{ uri: imageUri }} style={styles.singlePhoto} />
       </View>
     );
   }
@@ -510,23 +499,60 @@ function PhotoBlock({
   );
 }
 
-function ShareStat({ stat }: { stat: ShareStatData }) {
+function MetricChip({ metric, onPress, selected }: { metric: ShareMetric; onPress: () => void; selected: boolean }) {
   return (
-    <View style={styles.shareStat}>
-      <View style={styles.shareStatTop}>
-        <View style={styles.shareStatIcon}>{stat.icon}</View>
-        <View style={styles.shareStatTextGroup}>
-          <Text numberOfLines={1} style={styles.shareStatLabel}>{stat.label}</Text>
-          <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.shareStatValue}>
-            {stat.value}
-          </Text>
+    <Pressable
+      accessibilityLabel={`${metric.label}, ${selected ? 'selected' : 'not selected'}`}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: selected }}
+      onPress={onPress}
+      style={({ pressed }) => [styles.metricChip, selected ? styles.metricChipSelected : null, pressed ? styles.pressed : null]}
+    >
+      {getMetricIcon(metric.key, selected ? colors.coralDark : colors.charcoal, 17)}
+      <Text style={[styles.metricChipText, selected ? styles.metricChipTextSelected : null]}>{metric.label}</Text>
+      {selected ? <Check color={colors.coralDark} height={15} strokeWidth={3} width={15} /> : null}
+    </Pressable>
+  );
+}
+
+function MetricGrid({ metrics }: { metrics: ShareMetric[] }) {
+  return (
+    <View style={styles.statGrid}>
+      {getMetricRows(metrics).map((row, index) => (
+        <View key={`${row.map((metric) => metric.key).join('-')}-${index}`} style={[styles.statRow, row.length < 3 ? styles.statRowPartial : null]}>
+          {row.map((metric) => <ShareStat key={metric.key} metric={metric} rowLength={row.length} />)}
         </View>
-      </View>
-      <View style={styles.shareStatTrack}>
-        <View style={[styles.shareStatFill, { width: `${stat.strength}%` }]} />
-      </View>
+      ))}
     </View>
   );
+}
+
+function ShareStat({ metric, rowLength }: { metric: ShareMetric; rowLength: number }) {
+  return (
+    <View style={[styles.shareStat, rowLength === 1 ? styles.shareStatSingle : null]}>
+      {getMetricIcon(metric.key, colors.coralDark, 21)}
+      <Text adjustsFontSizeToFit minimumFontScale={0.68} numberOfLines={1} style={styles.shareStatValue}>{metric.value}</Text>
+      <Text numberOfLines={1} style={styles.shareStatLabel}>{metric.label}</Text>
+    </View>
+  );
+}
+
+function getMetricIcon(key: ShareMetricKey, color: string, size: number) {
+  const iconProps = { color, height: size, strokeWidth: 2, width: size };
+  switch (key) {
+    case 'time': return <Clock {...iconProps} />;
+    case 'difficulty': return <Crown {...iconProps} />;
+    case 'calories': return <Cutlery {...iconProps} />;
+    case 'carbs': return <TaskList {...iconProps} />;
+    case 'fat': return <Droplet {...iconProps} />;
+    case 'servings': return <User {...iconProps} />;
+    case 'steps': return <TaskList {...iconProps} />;
+    case 'cuisine': return <Cutlery {...iconProps} />;
+    case 'cost': return <Coins {...iconProps} />;
+    case 'rating': return <Star {...iconProps} />;
+    case 'protein':
+    default: return <Cutlery {...iconProps} />;
+  }
 }
 
 function PrimaryAction({ icon, label, onPress }: { icon: ReactNode; label: string; onPress: () => void }) {
@@ -580,62 +606,16 @@ function getSafeCardType(cardType: unknown): ShareCardType {
 
 function buildCaption(data: Omit<ShareCardData, 'caption'>) {
   const dishName = cleanDisplayText(data.dishName);
-  const modeLabel = typeof data.selectedMode === 'string' ? getModeLabel(data.selectedMode) : String(data.selectedMode);
+  const totalTime = getTotalTime(data.recipe);
+  const calories = getNutritionValue(data.recipe.nutritionEstimate?.calories, 'kcal');
+  const protein = getNutritionValue(data.recipe.nutritionEstimate?.proteinGrams, 'g');
+  const details = [
+    totalTime > 0 ? formatDuration(totalTime) : null,
+    calories === '—' ? null : calories,
+    protein === '—' ? null : protein,
+  ].filter((value): value is string => Boolean(value));
 
-  return `${dishName} remade at home with Okyo. Restaurant estimate ${formatCurrency(data.restaurantPrice)} -> home estimate ${formatCurrency(data.homemadeCost)}. Saved about ${formatCurrency(data.estimatedSavings)} with a ${modeLabel} homemade version. Made with Okyo.`;
-}
-
-type ShareStatData = {
-  label: string;
-  value: string;
-  strength: number;
-  icon: ReactNode;
-};
-
-function getShareStats(recipe: Recipe): ShareStatData[] {
-  const totalTime = getTotalTime(recipe);
-  const stepsCount = getStepCount(recipe);
-  const difficultyLabel = getShareDifficulty(recipe.difficulty);
-  const rarity = getRarity(recipe);
-
-  return [
-    {
-      label: 'Cuisine',
-      value: getCuisineLabel(recipe),
-      strength: 76,
-      icon: <Cutlery color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-    {
-      label: 'Time',
-      value: totalTime > 0 ? formatDuration(totalTime) : 'Flexible',
-      strength: getTimeStrength(totalTime),
-      icon: <Clock color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-    {
-      label: 'Steps',
-      value: stepsCount > 0 ? `${stepsCount} step${stepsCount === 1 ? '' : 's'}` : 'Recipe plan',
-      strength: Math.min(92, 35 + stepsCount * 8),
-      icon: <TaskList color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-    {
-      label: 'Difficulty',
-      value: difficultyLabel,
-      strength: getDifficultyStrength(recipe.difficulty),
-      icon: <Crown color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-    {
-      label: 'Streak',
-      value: 'Start streak',
-      strength: 38,
-      icon: <FireFlame color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-    {
-      label: 'Rarity',
-      value: rarity,
-      strength: getRarityStrength(rarity),
-      icon: <Spark color={colors.coral} height={22} strokeWidth={1.9} width={22} />,
-    },
-  ];
+  return `${dishName} — turned into a recipe with Okyo.${details.length > 0 ? ` ${details.join(' · ')}.` : ''}`;
 }
 
 function getEstimatedRestaurantPrice(recipe: Recipe | null) {
@@ -647,151 +627,16 @@ function getTotalTime(recipe: Recipe) {
   return total > 0 ? total : getFiniteNumber(recipe.prepTimeMinutes) + getFiniteNumber(recipe.cookTimeMinutes);
 }
 
-function getStepCount(recipe: Recipe) {
-  return recipe.structuredSteps?.length ?? recipe.steps?.length ?? 0;
-}
-
 function formatDuration(minutes: number) {
-  if (minutes >= 120) {
-    const hours = minutes / 60;
-    return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)} hr`;
-  }
-
-  return `${minutes} min`;
+  return minutes >= 60 ? `${Math.floor(minutes / 60)} hr${minutes % 60 ? ` ${minutes % 60} min` : ''}` : `${minutes} min`;
 }
 
-function getShareDifficulty(difficulty: Difficulty) {
-  switch (difficulty) {
-    case 'Hard':
-      return 'Advanced';
-    case 'Medium':
-      return 'Intermediate';
-    case 'Easy':
-    default:
-      return 'Beginner';
-  }
-}
-
-function getDifficultyStrength(difficulty: Difficulty) {
-  switch (difficulty) {
-    case 'Hard':
-      return 86;
-    case 'Medium':
-      return 66;
-    case 'Easy':
-    default:
-      return 42;
-  }
-}
-
-function getRarity(recipe: Recipe) {
-  const totalTime = getTotalTime(recipe);
-  const stepsCount = getStepCount(recipe);
-  let score = 0;
-
-  if (recipe.difficulty === 'Hard') {
-    score += 3;
-  } else if (recipe.difficulty === 'Medium') {
-    score += 2;
-  } else {
-    score += 1;
-  }
-  if (totalTime >= 180) {
-    score += 3;
-  } else if (totalTime >= 75) {
-    score += 2;
-  } else if (totalTime >= 35) {
-    score += 1;
-  }
-  if (stepsCount >= 10) {
-    score += 2;
-  } else if (stepsCount >= 6) {
-    score += 1;
+function getNutritionValue(value: unknown, suffix: 'g' | 'kcal') {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return '—';
   }
 
-  if (score >= 8) {
-    return 'Mythical';
-  }
-  if (score >= 7) {
-    return 'Legendary';
-  }
-  if (score >= 6) {
-    return 'Epic';
-  }
-  if (score >= 4) {
-    return 'Rare';
-  }
-  if (score >= 3) {
-    return 'Uncommon';
-  }
-  return 'Common';
-}
-
-function getRarityStrength(rarity: string) {
-  switch (rarity) {
-    case 'Mythical':
-      return 96;
-    case 'Legendary':
-      return 88;
-    case 'Epic':
-      return 76;
-    case 'Rare':
-      return 64;
-    case 'Uncommon':
-      return 52;
-    case 'Common':
-    default:
-      return 38;
-  }
-}
-
-function getTimeStrength(totalTime: number) {
-  if (totalTime <= 0) {
-    return 42;
-  }
-
-  return Math.min(92, Math.max(34, 30 + totalTime / 2));
-}
-
-function getCuisineLabel(recipe: Recipe) {
-  const text = `${recipe.title} ${recipe.description} ${recipe.mainIngredientsSummary ?? ''}`.toLowerCase();
-
-  if (/(sushi|katsu|ramen|teriyaki|udon|miso)/.test(text)) {
-    return 'Japanese';
-  }
-  if (/(taco|burrito|quesadilla|enchilada|salsa)/.test(text)) {
-    return 'Mexican';
-  }
-  if (/(pasta|rigatoni|pizza|parmesan|gnocchi|alfredo)/.test(text)) {
-    return 'Italian';
-  }
-  if (/(burger|sandwich|bbq|mac and cheese|fries)/.test(text)) {
-    return 'American';
-  }
-  if (/(curry|masala|paneer|naan)/.test(text)) {
-    return 'Indian';
-  }
-  if (/(pho|banh mi|lemongrass)/.test(text)) {
-    return 'Vietnamese';
-  }
-  if (/(noodle|dumpling|fried rice|chow)/.test(text)) {
-    return 'Asian-inspired';
-  }
-
-  return 'Home Style';
-}
-
-function getModeLabel(mode: RecipeMode | string) {
-  switch (mode) {
-    case 'Lighter':
-      return 'Lighter';
-    case 'Healthier':
-      return 'Healthier';
-    case 'Normal':
-      return 'Normal';
-    default:
-      return String(mode);
-  }
+  return `${Math.round(value)}${suffix === 'kcal' ? ' kcal' : 'g'}`;
 }
 
 function getRecipeImageUri(recipe: Recipe) {
@@ -872,19 +717,12 @@ const styles = StyleSheet.create({
   },
   previewIntro: {
     alignItems: 'center',
-    gap: 3,
-  },
-  previewKicker: {
-    color: colors.coral,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
+    gap: 4,
   },
   previewTitle: {
     color: colors.charcoal,
-    fontSize: 23,
-    fontWeight: '700',
+    fontSize: 27,
+    fontWeight: '800',
   },
   previewBody: {
     color: colors.body,
@@ -894,25 +732,39 @@ const styles = StyleSheet.create({
     maxWidth: 300,
     textAlign: 'center',
   },
+  customizeSection: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 4,
+    padding: 16,
+  },
+  customizeTitle: { color: colors.charcoal, fontSize: 17, fontWeight: '800' },
+  customizeBody: { color: colors.body, fontSize: 13, lineHeight: 18 },
+  chipList: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  metricChip: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: 'row', gap: 5, minHeight: 40, paddingHorizontal: 11 },
+  metricChipSelected: { backgroundColor: colors.coralSoft, borderColor: '#FFC2D3' },
+  metricChipText: { color: colors.charcoal, fontSize: 13, fontWeight: '700' },
+  metricChipTextSelected: { color: colors.coralDark },
   cardShell: {
     alignItems: 'center',
   },
   shareCard: {
     backgroundColor: '#fffdf8',
     borderRadius: 24,
-    maxWidth: 326,
-    padding: 14,
-    shadowColor: '#3b2f20',
-    shadowOffset: { width: 0, height: 12 },
+    maxWidth: 340,
+    padding: 16,
+    shadowColor: colors.ink,
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.1,
-    shadowRadius: 24,
+    shadowRadius: 14,
     width: '100%',
   },
   cardTitle: {
     color: colors.charcoal,
-    fontFamily: undefined,
-    fontSize: 26,
-    fontWeight: '700',
+    fontSize: 27,
+    fontWeight: '800',
     letterSpacing: 0,
     lineHeight: 30,
     textAlign: 'center',
@@ -925,37 +777,20 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   remadeLine: {
-    backgroundColor: '#e8ad73',
+    backgroundColor: colors.coral,
     borderRadius: 999,
     height: 2,
     width: 38,
   },
   remadeText: {
-    color: '#6e755a',
+    color: colors.body,
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
-  comparisonBlock: {
-    aspectRatio: 1.82,
-    borderRadius: 18,
-    flexDirection: 'row',
-    marginTop: 12,
-    overflow: 'hidden',
-  },
-  comparisonImageLeft: {
-    backgroundColor: colors.cream,
-    borderRightColor: '#fff8ef',
-    borderRightWidth: 2,
-    flex: 1,
-  },
-  comparisonImageRight: {
-    backgroundColor: colors.cream,
-    flex: 1,
-  },
   singlePhotoBlock: {
-    aspectRatio: 1.82,
+    aspectRatio: 1.1,
     backgroundColor: colors.cream,
     borderRadius: 18,
     marginTop: 12,
@@ -968,7 +803,7 @@ const styles = StyleSheet.create({
   photoArt: {
     alignItems: 'center',
     aspectRatio: 1.82,
-    backgroundColor: '#fff1df',
+    backgroundColor: colors.coralSoft,
     borderRadius: 18,
     justifyContent: 'center',
     marginTop: 12,
@@ -986,57 +821,24 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: 'center',
   },
-  transformPill: {
-    alignItems: 'center',
-    alignSelf: 'center',
-    backgroundColor: '#fff8ef',
-    borderRadius: 999,
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: -18,
-    minHeight: 38,
-    paddingHorizontal: 12,
-  },
-  transformText: {
-    color: '#59634d',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
   statGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 7,
     marginTop: 12,
   },
+  statRow: { flexDirection: 'row', gap: 7, width: '100%' },
+  statRowPartial: { justifyContent: 'center' },
   shareStat: {
     backgroundColor: '#fffaf3',
     borderRadius: 14,
-    flexBasis: '48%',
     flexGrow: 1,
-    minHeight: 74,
-    padding: 8,
-  },
-  shareStatTop: {
     alignItems: 'center',
-    flexDirection: 'row',
-    gap: 7,
-  },
-  shareStatIcon: {
-    alignItems: 'center',
-    backgroundColor: '#fff0dd',
-    borderRadius: 999,
-    height: 32,
     justifyContent: 'center',
-    width: 32,
+    minHeight: 82,
+    padding: 9,
   },
-  shareStatTextGroup: {
-    flex: 1,
-    minWidth: 0,
-  },
+  shareStatSingle: { flexGrow: 0, minWidth: '58%' },
   shareStatLabel: {
-    color: '#68725d',
+    color: colors.body,
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 0.3,
@@ -1044,86 +846,28 @@ const styles = StyleSheet.create({
   },
   shareStatValue: {
     color: colors.charcoal,
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  shareStatTrack: {
-    backgroundColor: '#f5e6d3',
-    borderRadius: 999,
-    height: 6,
-    marginTop: 8,
-    overflow: 'hidden',
-  },
-  shareStatFill: {
-    backgroundColor: '#f47b21',
-    borderRadius: 999,
-    height: '100%',
+    fontSize: 16,
+    fontWeight: '800',
+    marginTop: 5,
   },
   cardFooter: {
     alignItems: 'center',
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    gap: 10,
     marginTop: 14,
   },
+  okyoIcon: { borderRadius: 14, height: 52, width: 52 },
+  footerCopy: { gap: 1 },
   cardFooterText: {
     color: colors.body,
     fontSize: 14,
     fontWeight: '700',
   },
+  cardFooterTagline: { color: colors.body, fontSize: 11, fontWeight: '600' },
   okyoText: {
     color: colors.coral,
     fontWeight: '800',
-  },
-  footerBadge: {
-    alignItems: 'center',
-    backgroundColor: '#fff1df',
-    borderRadius: 999,
-    height: 34,
-    justifyContent: 'center',
-    width: 34,
-  },
-  priceSummary: {
-    alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    justifyContent: 'space-between',
-    padding: 12,
-  },
-  priceColumn: {
-    flex: 1,
-    minWidth: 92,
-  },
-  priceLabel: {
-    color: colors.body,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  priceValue: {
-    color: colors.charcoal,
-    fontSize: 18,
-    fontWeight: '700',
-    marginTop: 3,
-  },
-  savingsPill: {
-    backgroundColor: colors.greenSoft,
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  savingsPillLabel: {
-    color: colors.green,
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  savingsPillValue: {
-    color: colors.green,
-    fontSize: 16,
-    fontWeight: '700',
   },
   actions: {
     gap: 10,

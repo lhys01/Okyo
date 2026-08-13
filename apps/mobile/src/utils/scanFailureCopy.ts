@@ -61,9 +61,9 @@ const descriptionBodyByCategory: Record<ScanFailureCategory, string> = {
   generic: 'Try describing the meal a different way.',
 };
 
-export function getInlineFailureCopy(category: ScanFailureCategory, isDescriptionScan: boolean): ScanFailureCopy {
+export function getInlineFailureCopy(category: ScanFailureCategory, isDescriptionScan: boolean, mascotName = 'Kiko'): ScanFailureCopy {
   return {
-    title: isDescriptionScan ? 'Kiko couldn’t build that one' : 'Kiko couldn’t read this one',
+    title: isDescriptionScan ? `${mascotName} couldn’t build that one` : `${mascotName} couldn’t read this one`,
     body: isDescriptionScan ? descriptionBodyByCategory[category] : photoBodyByCategory[category],
   };
 }

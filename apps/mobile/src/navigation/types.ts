@@ -19,7 +19,13 @@ export type RootStackParamList = {
   WelcomeScreen: undefined;
   GoalScreen: undefined;
   AnalysisLoadingScreen: { scanSessionId?: string } | undefined;
-  ResultSummaryScreen: { recipeId?: string; scanSessionId?: string } | undefined;
+  ResultSummaryScreen: {
+    recipeId?: string;
+    scanSessionId?: string;
+    customizeInstruction?: string;
+    transformationMode?: RecipeMode;
+    autoSubmitCustomizeInstruction?: boolean;
+  } | undefined;
   ShareCardPreviewScreen:
     | {
         cardType?: ShareCardType;
@@ -37,7 +43,7 @@ export type RootStackParamList = {
   SavingsDashboardScreen: undefined;
   RankingsScreen: undefined;
   SettingsScreen: undefined;
-  RecommendationCategoryScreen: { category?: string } | undefined;
+  RecommendationCategoryScreen: { category?: string; showAll?: boolean } | undefined;
   KitchenLetterScreen: undefined;
   DescribeMealScreen: { initialDescription?: string } | undefined;
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
@@ -49,7 +55,21 @@ export type MainTabParamList = {
   LibraryScreen: undefined;
   ProfileScreen: undefined;
   SettingsScreen: undefined;
+  DietaryPreferencesScreen: undefined;
+  NutritionTargetsScreen: undefined;
+  NotificationPreferencesScreen: undefined;
+  StatsProgressScreen: undefined;
+  PrivacyDataScreen: undefined;
+  HelpSupportScreen: undefined;
+  LegalScreen: undefined;
   RecipeDetailScreen: { recipeId?: string; mode?: RecipeMode } | undefined;
+  ResultSummaryScreen: {
+    recipeId?: string;
+    scanSessionId?: string;
+    customizeInstruction?: string;
+    transformationMode?: RecipeMode;
+    autoSubmitCustomizeInstruction?: boolean;
+  } | undefined;
   RecipeStepsScreen: { completion?: boolean; recipeId?: string; mode?: RecipeMode } | undefined;
   GroceryListScreen: { recipeId?: string; mode?: RecipeMode } | undefined;
 };

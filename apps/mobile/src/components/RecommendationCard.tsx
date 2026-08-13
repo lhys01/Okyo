@@ -2,9 +2,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { FoodImage } from './FoodImage';
 import { colors } from './OkyoUI';
-import { radius, shadows } from '../theme/okyoTheme';
+import { radius } from '../theme/okyoTheme';
 import type { RecommendationRecipe } from '../data/recommendedRecipes';
-import { getRecipeImageUrl } from '../utils/recipeImages';
+import { getRecipeImageSource, getRecipeImageUrl } from '../utils/recipeImages';
 
 type RecommendationCardProps = {
   compact?: boolean;
@@ -14,25 +14,19 @@ type RecommendationCardProps = {
 
 export function RecommendationCard({ compact = false, recipe, onPress }: RecommendationCardProps) {
   return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.card,
-        compact ? styles.compactCard : styles.regularCard,
-        pressed ? styles.pressed : null,
-      ]}
-    >
+    <View style={[styles.shadowWrap, compact ? styles.compactCard : styles.regularWrap]}>
+      <Pressable
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [styles.card, compact ? styles.compactCard : styles.regularCard, pressed ? styles.pressed : null]}
+      >
       <FoodImage
         fallbackLabel={recipe.category}
         imageStatus={recipe.imageStatus}
+        imageSource={getRecipeImageSource(recipe)}
         imageUrl={getRecipeImageUrl(recipe)}
         style={[styles.art, compact ? styles.compactArt : styles.regularArt]}
-      >
-        <View style={styles.categoryPill}>
-          <Text numberOfLines={1} style={styles.categoryPillText}>{recipe.category}</Text>
-        </View>
-      </FoodImage>
+      />
       <View style={[styles.body, compact ? styles.compactBody : null]}>
         <Text maxFontSizeMultiplier={1.3} numberOfLines={2} style={styles.title}>{recipe.title}</Text>
         {!compact ? <Text numberOfLines={2} style={styles.blurb}>{recipe.blurb}</Text> : null}
@@ -46,7 +40,8 @@ export function RecommendationCard({ compact = false, recipe, onPress }: Recomme
           {recipe.difficulty} · {recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes} min
         </Text>
       </View>
-    </Pressable>
+      </Pressable>
+    </View>
   );
 }
 
@@ -57,15 +52,24 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radius.card,
     overflow: 'hidden',
-    ...shadows.card,
+  },
+  shadowWrap: {
+    shadowColor: '#4A4850',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.24,
+    shadowRadius: 1,
+    elevation: 3,
   },
   regularCard: {
     minHeight: 278,
+    width: '100%',
+  },
+  regularWrap: {
     width: '48%',
   },
   compactCard: {
     flex: 1,
-    height: 214,
+    height: 222,
     minWidth: 0,
   },
   art: {
@@ -77,22 +81,8 @@ const styles = StyleSheet.create({
     aspectRatio: 1.4,
   },
   compactArt: {
-    height: 112,
-    minHeight: 112,
-  },
-  categoryPill: {
-    backgroundColor: 'rgba(255, 255, 255, 0.82)',
-    borderRadius: 999,
-    bottom: 8,
-    left: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    position: 'absolute',
-  },
-  categoryPillText: {
-    color: colors.charcoal,
-    fontSize: 10,
-    fontWeight: '700',
+    height: 138,
+    minHeight: 138,
   },
   body: {
     gap: 4,
@@ -100,15 +90,17 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   compactBody: {
-    justifyContent: 'space-between',
-    minHeight: 88,
-    padding: 10,
+    gap: 2,
+    justifyContent: 'flex-start',
+    minHeight: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   title: {
     color: colors.charcoal,
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: -0.2,
+    fontSize: 15.5,
+    fontWeight: '800',
+    letterSpacing: -0.25,
     lineHeight: 19,
   },
   blurb: {
@@ -118,10 +110,10 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   meta: {
-    color: colors.coral,
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 2,
+    color: colors.muted,
+    fontSize: 10.5,
+    fontWeight: '600',
+    marginTop: 1,
   },
   pressed: {
     opacity: 0.85,

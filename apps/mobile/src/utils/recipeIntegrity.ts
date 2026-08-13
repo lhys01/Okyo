@@ -1,4 +1,4 @@
-import type { Recipe, RecipeStep } from '../mocks';
+import type { Difficulty, Recipe, RecipeStep } from '../mocks';
 import { normalizeNutritionEstimate } from './nutrition';
 
 const MAX_RECIPE_MINUTES = 720;
@@ -22,8 +22,54 @@ export function normalizeRecipeForCanonicalStorage<T extends Recipe>(recipe: T):
   return {
     ...recipe,
     ...normalizeRecipeTime(recipe),
+    difficulty: getNormalizedRecipeDifficulty(recipe),
+    skillLevel: getNormalizedRecipeDifficulty(recipe),
+    ingredients: recipe.ingredients.map((ingredient, index) => ({
+      ...ingredient,
+      id: ingredient.id ?? stableRecipePartId('ingredient', ingredient.name, index),
+    })),
+    ingredientGroups: recipe.ingredientGroups?.map((group) => ({
+      ...group,
+      items: group.items.map((ingredient, index) => ({
+        ...ingredient,
+        id: ingredient.id ?? stableRecipePartId('ingredient', ingredient.name, index),
+      })),
+    })),
+    structuredSteps: recipe.structuredSteps?.map((step, index) => ({
+      ...step,
+      id: step.id ?? stableRecipePartId('step', step.title || step.text, index),
+    })),
     nutritionEstimate,
   };
+}
+
+const COMPLEX_TECHNIQUE_PATTERN = /\b(deep[- ]?fry|frying|dough|knead|ferment|proof|laminat|temper|emulsi|whip to peaks|water bath|sous vide|brais|reduce|flamb[eé]|julienne|caramelize)\b/i;
+const COORDINATION_PATTERN = /\b(while|meanwhile|at the same time|separate pan|two pans|batch)\b/i;
+
+/**
+ * Keeps AI-provided difficulty honest: Easy is reserved for genuinely simple,
+ * low-risk recipes, while meaningful technique or coordination raises the
+ * shared canonical recipe level everywhere it is rendered.
+ */
+export function getNormalizedRecipeDifficulty(recipe: Pick<Recipe, 'difficulty' | 'title' | 'ingredients' | 'steps' | 'structuredSteps' | 'equipment' | 'totalTimeMinutes' | 'prepTimeMinutes' | 'cookTimeMinutes'>): Difficulty {
+  const steps = recipe.structuredSteps?.length ?? recipe.steps?.length ?? 0;
+  const ingredients = recipe.ingredients?.length ?? 0;
+  const equipment = recipe.equipment?.length ?? 0;
+  const totalMinutes = recipe.totalTimeMinutes ?? (recipe.prepTimeMinutes || 0) + (recipe.cookTimeMinutes || 0);
+  const text = [recipe.title, ...(recipe.steps ?? []), ...(recipe.structuredSteps?.map((step) => step.text) ?? []), ...(recipe.equipment ?? [])].join(' ');
+  const complexTechniques = (text.match(new RegExp(COMPLEX_TECHNIQUE_PATTERN.source, 'gi')) ?? []).length;
+  const coordinatesTasks = COORDINATION_PATTERN.test(text);
+  const declared = recipe.difficulty;
+
+  if (declared === 'Hard' || steps >= 10 || complexTechniques >= 2 || (complexTechniques > 0 && steps >= 7 && coordinatesTasks)) return 'Hard';
+  const trulySimple = steps <= 4 && ingredients <= 6 && equipment <= 2 && totalMinutes <= 25 && complexTechniques === 0 && !coordinatesTasks;
+  if (declared === 'Easy' && trulySimple) return 'Easy';
+  return 'Medium';
+}
+
+function stableRecipePartId(kind: 'ingredient' | 'step', value: string, index: number) {
+  const slug = value.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+  return `${kind}-${index + 1}-${slug || kind}`;
 }
 
 export function normalizeRecipeTime(

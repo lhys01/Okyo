@@ -4,7 +4,8 @@ import {
   type StyleProp,
 } from 'react-native';
 
-import { getKikoAsset, kikoAssets, type KikoAssetPose } from '../assets/kikoAssets';
+import { kikoAssets, type KikoAssetPose } from '../assets/kikoAssets';
+import { getTransparentKikoAsset } from '../assets/kikoTransparentAssets';
 
 export type KikoMascotPose = KikoAssetPose;
 
@@ -32,7 +33,7 @@ export function KikoMascot({
   style,
 }: KikoMascotProps) {
   const safePose = getSafePose(pose);
-  const imageSource = getKikoAsset(safePose);
+  const imageSource = getTransparentKikoAsset(safePose);
 
   const baseStyle = [{ height: size, width: size }, style];
 

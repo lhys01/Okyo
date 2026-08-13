@@ -195,6 +195,7 @@ async function editStoredRecipe(input: {
   note: string;
   providerOutput: unknown;
   correctionRequestId?: string;
+  requestOverrides?: Record<string, unknown>;
 }) {
   storeGeneratedRecipe(input.source);
   const originalFetch = globalThis.fetch;
@@ -214,14 +215,120 @@ async function editStoredRecipe(input: {
       correctionRequestId: input.correctionRequestId,
       expectedSourceRecipeId: input.source.id,
       canonicalRecipeId: `canonical-${input.source.id}`,
+      currentRecipe: input.source,
       scanSessionId: input.source.scanResultId,
       mode: 'Normal',
+      ...input.requestOverrides,
     });
     return { response, calls, prompts };
   } finally {
     globalThis.fetch = originalFetch;
   }
 }
+
+test('mobile correction payload accepts dietary context and carries it into the edit prompt', async () => {
+  const source = sourceRecipe(`dietary-contract-${Date.now()}`);
+  const revised = providerRecipe({
+    title: 'Dairy-Free Tofu Rice Bowl',
+    ingredients: ['12 oz tofu', '2 cups cooked rice', '1 tbsp olive oil'],
+    instructions: ['Sear tofu in olive oil.', 'Serve tofu over cooked rice.'],
+  });
+
+  const { response, calls, prompts } = await editStoredRecipe({
+    source,
+    note: 'Replace the shrimp with tofu and make it dairy free',
+    providerOutput: revised,
+    requestOverrides: {
+      dietaryRestrictions: ['dairy'],
+      dietaryDislikes: [],
+    },
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(calls, 1);
+  assert.match(prompts[0], /HARD DIETARY RESTRICTION/);
+  assert.match(prompts[0], /dairy/);
+  assert.equal(userVisibleRecipeText(response.body.data.recipe as Recipe).includes('shrimp'), false);
+});
+
+test('Mango Sticky Rice can be corrected to strawberries as a complete persisted revision', async () => {
+  const source = sourceRecipe(`mango-sticky-rice-${Date.now()}`, {
+    title: 'Mango Sticky Rice',
+    description: 'Coconut sticky rice topped with ripe mango.',
+    ingredients: [
+      { name: 'glutinous rice', quantity: '1 cup' },
+      { name: 'coconut milk', quantity: '1 cup' },
+      { name: 'ripe mango', quantity: '1 large' },
+    ],
+    steps: [
+      'Cook the glutinous rice until tender.',
+      'Fold in coconut milk, then top with sliced mango.',
+    ],
+    structuredSteps: [
+      { title: 'Cook Rice', text: 'Cook the glutinous rice until tender.', ingredientsUsed: ['glutinous rice'], toolsUsed: ['pot'] },
+      { title: 'Finish', text: 'Fold in coconut milk, then top with sliced mango.', ingredientsUsed: ['coconut milk', 'ripe mango'], toolsUsed: ['bowl'] },
+    ],
+    equipment: ['pot', 'bowl'],
+    nutritionEstimate: { calories: 440, proteinGrams: 5, carbohydratesGrams: 82, fatGrams: 11 },
+  });
+  const original = structuredClone(source);
+  const revised = providerRecipe({
+    title: 'Strawberry Sticky Rice',
+    description: 'Coconut sticky rice topped with fresh strawberries.',
+    ingredients: ['1 cup glutinous rice', '1 cup coconut milk', '1 1/2 cups fresh strawberries'],
+    instructions: [
+      'Cook the glutinous rice until tender.',
+      'Fold in coconut milk, then top with sliced strawberries.',
+    ],
+    calories: 405,
+    proteinGrams: 6,
+    equipment: ['pot', 'bowl'],
+  });
+
+  const { response, calls, prompts } = await editStoredRecipe({
+    source,
+    note: 'Replace the mango with strawberries.',
+    providerOutput: revised,
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(calls, 1);
+  assert.match(prompts[0], /Replace the mango with strawberries\./);
+  const recipe = response.body.data.recipe as Recipe;
+  const visibleText = userVisibleRecipeText(recipe);
+  assert.equal(visibleText.includes('mango'), false);
+  assert.equal(visibleText.includes('strawberr'), true);
+  assert.equal(recipe.nutritionEstimate?.calories, 405);
+  assert.notEqual(recipe.id, source.id);
+  assert.deepEqual(getGeneratedRecipe(source.id), original);
+  assert.equal(getGeneratedRecipeRevisionMetadata(recipe.id)?.parentRevisionId, source.id);
+  assert.equal(getGeneratedRecipeRevisionMetadata(source.id)?.supersededBy, recipe.id);
+});
+
+test('a validated current recipe rehydrates customization after process-local recipe state is missing', async () => {
+  const source = sourceRecipe(`rehydrated-${Date.now()}`);
+  const revised = providerRecipe({
+    title: 'Strawberry Sticky Rice',
+    description: 'Sticky rice topped with fresh strawberries.',
+    ingredients: ['1 cup glutinous rice', '1 cup coconut milk', '1 1/2 cups strawberries'],
+    instructions: ['Cook the glutinous rice.', 'Top the rice with sliced strawberries.'],
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => providerResponse(revised);
+  try {
+    const response = await request('POST', `/v1/recipes/${source.id}/correct`, {
+      correctionNote: 'Replace the mango with strawberries.',
+      currentRecipe: source,
+      expectedSourceRecipeId: source.id,
+      mode: 'Normal',
+    });
+    assert.equal(response.status, 201);
+    assert.match(response.body.data.recipe.title, /Strawberry/);
+    assert.equal(getGeneratedRecipe(response.body.data.recipe.id)?.title, 'Strawberry Sticky Rice');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test('No Oreo and more protein succeeds as one complete recipe edit', async () => {
   const source = sourceRecipe(`edit-a-${Date.now()}`, {

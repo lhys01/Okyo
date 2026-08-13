@@ -76,6 +76,42 @@ test('enrichRecipeContext returns null when EPICURE_ENABLED is off (no provider 
   assert.equal(result, null);
 });
 
+test('enrichRecipeContext uses the provider when Epicure is explicitly enabled', async () => {
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            complementaryIngredients: ['fresh basil'],
+            healthySubstitutions: { cream: 'greek yogurt' },
+            budgetSubstitutions: { parmesan: 'pecorino' },
+          }),
+        },
+      }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  try {
+    const result = await enrichRecipeContext(
+      { dishName: 'Creamy Tomato Pasta', ingredients: ['pasta', 'tomato', 'cream'], mode: 'Normal' },
+      makeConfig({ epicureEnabled: true }),
+    );
+
+    assert.equal(providerCalls, 1);
+    assert.deepEqual(result, {
+      detectedIngredients: ['pasta', 'tomato', 'cream'],
+      complementaryIngredients: ['fresh basil'],
+      healthySubstitutions: { cream: 'greek yogurt' },
+      budgetSubstitutions: { parmesan: 'pecorino' },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // ── Requirement 11: missing API key handled gracefully ────────────────────────
 
 test('getEpicureSuggestions returns empty suggestions when the API key is missing', async () => {

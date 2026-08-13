@@ -9,6 +9,7 @@ import { shouldRejectScan } from './scanDecision';
 import { copyToDocuments } from './scanImageStorage';
 import { getSafeTerminalScanStatus, isCurrentScanSession } from './scanControllerUtils';
 import { normalizeOutboundRecipeMode } from './recipeModes';
+import { foodPreferencesPersistence, toApiFoodPreferences } from '../state/foodPreferences';
 import { uiLog } from './uiDebug';
 
 type StartScanInput = {
@@ -68,7 +69,14 @@ export async function startScan(input: StartScanInput) {
   uiLog('scanController', 'scan_started', { source: input.source, scanSessionId, uploadedImage });
   input.navigateToAnalysis(scanSessionId);
 
-  void createMockScan({ image, mealDescription: input.mealDescription, mode, source: input.source })
+  const foodPreferences = await foodPreferencesPersistence.read();
+  void createMockScan({
+    image,
+    mealDescription: input.mealDescription,
+    mode,
+    source: input.source,
+    ...toApiFoodPreferences(foodPreferences),
+  })
     .then((result) => {
       writeScanResult(scanSessionId, input.source, image, result, mode, mealDescription);
       input.onSettled?.();

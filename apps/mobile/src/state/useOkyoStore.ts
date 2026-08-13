@@ -14,10 +14,12 @@ import {
 } from '../mocks';
 import {
   addCanonicalRecipeToGrocery,
+  cacheCanonicalRecipePresentationVariant,
   commitSuccessfulScan,
   confirmCanonicalRecipeIdentification,
   correctCanonicalRecipe,
   getCanonicalScanRecipeId,
+  getCanonicalRecipePresentationVariant,
   getEmptyCanonicalRecipeCollections,
   isMockOrDemoRecipe,
   isUsableCanonicalRecipe,
@@ -36,6 +38,8 @@ import {
   type RecipePresentationMode,
 } from './canonicalRecipes';
 import { onboardingPersistence } from './onboardingPersistence';
+import { readPrimaryGoalFromProfile } from './primaryGoalBridge';
+import type { PrimaryGoal } from '../onboarding-v3/state/personalizedOnboarding';
 import { normalizeNutritionEstimate } from '../utils/nutrition';
 import {
   isCurrentRecipeMode,
@@ -50,6 +54,7 @@ import {
   updateActiveCookingSession,
   type ActiveCookingSession,
 } from './activeCooking';
+import { toggleGroceryIngredientSelection } from './groceryIngredientSelection';
 
 export type OnboardingGoal =
   | 'Save money'
@@ -80,6 +85,13 @@ export type CompletedChallenge = {
 };
 
 export type ChallengeRating = 'Nailed it' | 'Pretty close' | 'Needs work' | 'Not close';
+export type RecipeFeedback = {
+  rating: 'loved' | 'okay' | 'disliked';
+  reasons: string[];
+  note?: string;
+  createdAt: string;
+  updatedAt?: string;
+};
 
 export type LatestScanFailure = {
   status: Exclude<ScanStatus, 'success' | 'partial'>;
@@ -115,6 +127,7 @@ type OkyoState = {
   hasHydrated: boolean;
   hasSeenOnboarding: boolean;
   onboardingGoal: OnboardingGoal | null;
+  primaryGoal: PrimaryGoal | null;
   weeklyGoal: OnboardingWeeklyGoal | null;
   mealRoutinePreference: OnboardingMealRoutinePreference | null;
   notificationChoice: OnboardingNotificationChoice | null;
@@ -135,8 +148,11 @@ type OkyoState = {
   recentRecipeIds: string[];
   savedRecipeIds: string[];
   groceryRecipeIds: string[];
+  groceryIngredientSelections: Record<string, string[]>;
+  recipeServingOverrides: Record<string, number>;
   activeCookingSession: ActiveCookingSession | null;
   completedChallenges: CompletedChallenge[];
+  recipeFeedbackById: Record<string, RecipeFeedback>;
   totalMoneySaved: number;
   weeklyScanCount: number;
   isPremium: boolean;
@@ -150,6 +166,7 @@ type OkyoState = {
   setHasHydrated: (hydrated: boolean) => void;
   resetOnboarding: () => void;
   setGoal: (goal: OnboardingGoal) => void;
+  refreshPrimaryGoal: () => Promise<void>;
   setWeeklyGoal: (goal: OnboardingWeeklyGoal) => void;
   setMealRoutinePreference: (preference: OnboardingMealRoutinePreference) => void;
   setNotificationChoice: (choice: OnboardingNotificationChoice) => void;
@@ -167,6 +184,16 @@ type OkyoState = {
   ) => void;
   updateRecipe: (recipeId: string, update: Partial<Recipe>) => void;
   correctRecipe: (recipeId: string, recipe: Recipe, scan: ScanResult) => boolean;
+  getRecipePresentationVariant: (
+    recipeId: string,
+    mode: RecipePresentationMode,
+  ) => { recipe: Recipe; scanResult: ScanResult } | null;
+  cacheRecipePresentationVariant: (
+    recipeId: string,
+    mode: RecipePresentationMode,
+    recipe: Recipe,
+    scan: ScanResult,
+  ) => void;
   confirmRecipeIdentification: (recipeId: string) => void;
   setRecipeMode: (recipeId: string, mode: RecipeMode) => void;
   setRecipePresentationMode: (recipeId: string, mode: RecipePresentationMode) => void;
@@ -182,7 +209,11 @@ type OkyoState = {
   removeSavedRecipe: (recipeId: string) => void;
   toggleRecipeLiked: (recipeId: string) => void;
   addRecipeToGrocery: (recipeId: string) => void;
+  addIngredientToGrocery: (recipeId: string, ingredientId: string) => void;
+  toggleIngredientInGrocery: (recipeId: string, ingredientId: string) => void;
+  setRecipeServingOverride: (recipeId: string, servings: number) => void;
   completeChallenge: (challenge: CompletedChallenge) => void;
+  saveRecipeFeedback: (recipeId: string, feedback: Omit<RecipeFeedback, 'createdAt' | 'updatedAt'>) => void;
   incrementMoneySaved: (amount: number) => void;
   incrementWeeklyScanCount: () => void;
   addXP: (points: number) => void;
@@ -195,11 +226,12 @@ type OkyoState = {
 
 export const useOkyoStore = create<OkyoState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       hasCompletedOnboarding: false,
       hasHydrated: false,
       hasSeenOnboarding: false,
       onboardingGoal: null,
+      primaryGoal: null,
       weeklyGoal: null,
       mealRoutinePreference: null,
       notificationChoice: null,
@@ -217,8 +249,11 @@ export const useOkyoStore = create<OkyoState>()(
       mealDescription: null,
       selectedMode: 'Normal',
       ...getEmptyCanonicalRecipeCollections(),
+      groceryIngredientSelections: {},
+      recipeServingOverrides: {},
       activeCookingSession: null,
       completedChallenges: [],
+      recipeFeedbackById: {},
       totalMoneySaved: 0,
       weeklyScanCount: 0,
       isPremium: false,
@@ -229,9 +264,7 @@ export const useOkyoStore = create<OkyoState>()(
       leaderboardEntries: mockLeaderboardEntries,
       completeOnboarding: () => {
         set({ hasCompletedOnboarding: true, hasSeenOnboarding: true });
-        onboardingPersistence.writeCompleted().catch((error: unknown) => {
-          logDev('okyo_onboarding_completion_persist_failed', { error: String(error) });
-        });
+        void readPrimaryGoalFromProfile(AsyncStorage).then((primaryGoal) => set({ primaryGoal }));
       },
       setOnboardingCompletionFromStorage: (completed) => set({ hasCompletedOnboarding: completed }),
       setHasHydrated: (hydrated) => set({ hasHydrated: hydrated }),
@@ -252,6 +285,10 @@ export const useOkyoStore = create<OkyoState>()(
         });
       },
       setGoal: (goal) => set({ onboardingGoal: goal }),
+      refreshPrimaryGoal: async () => {
+        const primaryGoal = await readPrimaryGoalFromProfile(AsyncStorage);
+        set({ primaryGoal });
+      },
       setWeeklyGoal: (goal) => set({ weeklyGoal: goal, hasSeenOnboarding: true }),
       setMealRoutinePreference: (preference) => set({ mealRoutinePreference: preference }),
       setNotificationChoice: (choice) => set({ notificationChoice: choice }),
@@ -394,10 +431,37 @@ export const useOkyoStore = create<OkyoState>()(
             scan,
           );
           didCorrect = nextCollections !== collections;
-          return syncLatestScanRecipe(state, nextCollections, recipeId, true);
+          if (!didCorrect) return state;
+          const currentSelections = state.groceryIngredientSelections?.[recipeId] ?? [];
+          const revisedNames = new Set(recipe.ingredients.map((item) => item.name.trim().toLowerCase()));
+          const survivingSelections = currentSelections.filter((name) => revisedNames.has(name));
+          const nextState = syncLatestScanRecipe(state, nextCollections, recipeId, true);
+          if (currentSelections.length === 0 || survivingSelections.length > 0) {
+            return {
+              ...nextState,
+              groceryIngredientSelections: currentSelections.length > 0
+                ? { ...state.groceryIngredientSelections, [recipeId]: survivingSelections }
+                : state.groceryIngredientSelections,
+            };
+          }
+          const { [recipeId]: _staleSelection, ...remainingSelections } = state.groceryIngredientSelections;
+          return { ...nextState, groceryIngredientSelections: remainingSelections };
         });
         return didCorrect;
       },
+      getRecipePresentationVariant: (recipeId, mode) =>
+        getCanonicalRecipePresentationVariant(getCanonicalCollections(get()), recipeId, mode),
+      cacheRecipePresentationVariant: (recipeId, mode, recipe, scan) =>
+        set((state) => syncLatestScanRecipe(
+          state,
+          cacheCanonicalRecipePresentationVariant(
+            getCanonicalCollections(state),
+            recipeId,
+            mode,
+            { recipe, scanResult: scan },
+          ),
+          recipeId,
+        )),
       confirmRecipeIdentification: (recipeId) =>
         set((state) => {
           const nextCollections = confirmCanonicalRecipeIdentification(
@@ -497,7 +561,31 @@ export const useOkyoStore = create<OkyoState>()(
       toggleRecipeLiked: (recipeId) =>
         set((state) => toggleCanonicalRecipeLiked(getCanonicalCollections(state), recipeId)),
       addRecipeToGrocery: (recipeId) =>
-        set((state) => addCanonicalRecipeToGrocery(getCanonicalCollections(state), recipeId)),
+        set((state) => {
+          const { [recipeId]: _removedSelection, ...remainingSelections } = state.groceryIngredientSelections ?? {};
+          return {
+            ...addCanonicalRecipeToGrocery(getCanonicalCollections(state), recipeId),
+            groceryIngredientSelections: remainingSelections,
+          };
+        }),
+      addIngredientToGrocery: (recipeId, ingredientId) => set((state) => ({
+        ...addCanonicalRecipeToGrocery(getCanonicalCollections(state), recipeId),
+        groceryIngredientSelections: {
+          ...(state.groceryIngredientSelections ?? {}),
+          [recipeId]: [...new Set([...(state.groceryIngredientSelections?.[recipeId] ?? []), ingredientId])],
+        },
+      })),
+      toggleIngredientInGrocery: (recipeId, ingredientId) => set((state) => {
+        const recipe = resolveCanonicalRecipe(state.recipesById, recipeId);
+        if (!recipe) return state;
+        return toggleGroceryIngredientSelection(state, recipeId, ingredientId, recipe.ingredients);
+      }),
+      setRecipeServingOverride: (recipeId, servings) => set((state) => ({
+        recipeServingOverrides: {
+          ...(state.recipeServingOverrides ?? {}),
+          [recipeId]: Math.max(1, Math.min(12, Math.round(servings))),
+        },
+      })),
       completeChallenge: (challenge) =>
         set((state) => ({
           completedChallenges: state.completedChallenges.some(
@@ -506,6 +594,20 @@ export const useOkyoStore = create<OkyoState>()(
             ? state.completedChallenges
             : [...state.completedChallenges, challenge],
         })),
+      saveRecipeFeedback: (recipeId, feedback) => set((state) => {
+        const now = new Date().toISOString();
+        const previous = state.recipeFeedbackById[recipeId];
+        return {
+          recipeFeedbackById: {
+            ...state.recipeFeedbackById,
+            [recipeId]: {
+              ...feedback,
+              createdAt: previous?.createdAt ?? now,
+              updatedAt: now,
+            },
+          },
+        };
+      }),
       incrementMoneySaved: (amount) =>
         set((state) => ({
           totalMoneySaved: state.totalMoneySaved + amount,
@@ -564,7 +666,11 @@ export const useOkyoStore = create<OkyoState>()(
             ...getEmptyCanonicalRecipeCollections(),
             activeCookingSession: null,
             completedChallenges: [],
+            groceryIngredientSelections: {},
+            recipeServingOverrides: {},
+            recipeFeedbackById: {},
             totalMoneySaved: 0,
+            weeklyScanCount: 0,
             xp: 0,
             unlockedBadges: [],
             recentBadgeUnlock: null,
@@ -586,9 +692,10 @@ export const useOkyoStore = create<OkyoState>()(
         const normalizedState = state
           ? normalizePersistedRecipeModeState(state)
           : null;
-        useOkyoStore.setState(normalizedState
-          ? { ...normalizedState, hasHydrated: true }
-          : { hasHydrated: true });
+        useOkyoStore.setState(normalizedState ?? {});
+        void readPrimaryGoalFromProfile(AsyncStorage)
+          .then((primaryGoal) => useOkyoStore.setState({ hasHydrated: true, primaryGoal }))
+          .catch(() => useOkyoStore.setState({ hasHydrated: true, primaryGoal: null }));
       },
       partialize: (state) => ({
         hasSeenOnboarding: state.hasSeenOnboarding,
@@ -613,8 +720,11 @@ export const useOkyoStore = create<OkyoState>()(
         recentRecipeIds: state.recentRecipeIds,
         savedRecipeIds: state.savedRecipeIds,
         groceryRecipeIds: state.groceryRecipeIds,
+        groceryIngredientSelections: state.groceryIngredientSelections,
+        recipeServingOverrides: state.recipeServingOverrides,
         activeCookingSession: state.activeCookingSession,
         completedChallenges: state.completedChallenges,
+        recipeFeedbackById: state.recipeFeedbackById,
         totalMoneySaved: state.totalMoneySaved,
         weeklyScanCount: state.weeklyScanCount,
         isPremium: state.isPremium,

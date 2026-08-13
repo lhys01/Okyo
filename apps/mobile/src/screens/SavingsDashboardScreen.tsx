@@ -67,7 +67,7 @@ export function SavingsDashboardScreen() {
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeStoredMoneySaved = getFiniteNumber(storedMoneySaved);
   const recipeEntries = useMemo(
-    () => safeSavedRecipes.map((recipe) => toRecipeEntry(
+    () => safeSavedRecipes.filter((recipe) => recipe.completionState === 'completed').map((recipe) => toRecipeEntry(
       recipe,
       getRecipeImageUrl(recipe),
     )),
@@ -97,7 +97,7 @@ export function SavingsDashboardScreen() {
     : selectedEntries.reduce((total, entry) => total + entry.savings, 0);
   const weekSavings = filterEntriesForPeriod(timestampedEntries, 'week').reduce((total, entry) => total + entry.savings, 0);
   const monthSavings = filterEntriesForPeriod(timestampedEntries, 'month').reduce((total, entry) => total + entry.savings, 0);
-  const mealCount = safeSavedRecipes.length + safeCompletedChallenges.length;
+  const mealCount = recipeEntries.length + safeCompletedChallenges.length;
   const averageSavings = mealCount > 0 ? totalEstimatedSaved / mealCount : 0;
   const biggestWin = (selectedEntries.length > 0 ? selectedEntries : allEntries)
     .reduce<SavingsEntry | null>((bestEntry, entry) => !bestEntry || entry.savings > bestEntry.savings ? entry : bestEntry, null);
@@ -113,8 +113,8 @@ export function SavingsDashboardScreen() {
     ? 'Start remaking meals to track your savings.'
     : 'Your kitchen savings will stack up here.';
   const zeroSavingsBody = mealCount > 0
-    ? 'Okyo will keep real savings estimates here as your liked meals and cooking wins add up.'
-    : 'Like a homemade recipe or finish a cooking challenge to start tracking what you kept at home.';
+      ? 'Potential savings stay on each recipe. This dashboard counts meals marked cooked.'
+      : 'Finish a guided cooking session or cooking challenge to start tracking estimated kitchen wins.';
 
   const goToScan = () => {
     uiLog('SavingsDashboardScreen', 'scan_another_craving');
@@ -193,8 +193,8 @@ export function SavingsDashboardScreen() {
           </Text>
           <Text style={styles.heroBody}>
             {hasSelectedPeriodSavings
-              ? 'Estimated from meals you liked or cooked at home.'
-              : 'Like a recipe or switch to All time to review earlier wins.'}
+              ? 'Estimated from meals you marked cooked at home.'
+              : 'Finish a cooking session or switch to All time to review earlier wins.'}
           </Text>
         </View>
         <View style={styles.heroBadge}>

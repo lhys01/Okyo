@@ -18,6 +18,11 @@ export const RECIPE_PRESENTATION_MODES: RecipePresentationMode[] = [
   'More Protein',
 ];
 
+export type RecipePresentationVariant = {
+  recipe: Recipe;
+  scanResult: ScanResult;
+};
+
 export type CanonicalRecipe = Recipe & {
   recipeId: string;
   sourceRecipeId: string;
@@ -35,6 +40,11 @@ export type CanonicalRecipe = Recipe & {
   savedAt?: string;
   cookingCompletedAt?: string;
   scanResult: ScanResult | null;
+  // Keep the original successful scan result so switching back to Normal can
+  // restore it after any number of in-place adaptations or app resumes.
+  baseRecipe?: Recipe;
+  baseScanResult?: ScanResult | null;
+  presentationVariants?: Partial<Record<RecipePresentationMode, RecipePresentationVariant>>;
 };
 
 export type CanonicalRecipeCollections = {
@@ -152,6 +162,8 @@ export function registerCanonicalRecipe(
     createdAt,
     scanCompletedAt: createdAt,
     scanResult: null,
+    baseRecipe: recipe,
+    baseScanResult: null,
   };
 
   return {
@@ -326,6 +338,9 @@ export function correctCanonicalRecipe(
     savedAt: recipe.savedAt,
     cookingCompletedAt: recipe.cookingCompletedAt,
     scanResult: stableScan,
+    baseRecipe: recipe.baseRecipe,
+    baseScanResult: recipe.baseScanResult,
+    presentationVariants: recipe.presentationVariants,
   };
 
   return {
@@ -333,6 +348,40 @@ export function correctCanonicalRecipe(
     recipesById: {
       ...collections.recipesById,
       [recipeId]: merged,
+    },
+  };
+}
+
+export function getCanonicalRecipePresentationVariant(
+  collections: CanonicalRecipeCollections,
+  recipeId: string,
+  mode: RecipePresentationMode,
+): RecipePresentationVariant | null {
+  return resolveCanonicalRecipe(collections.recipesById, recipeId)?.presentationVariants?.[mode] ?? null;
+}
+
+export function cacheCanonicalRecipePresentationVariant(
+  collections: CanonicalRecipeCollections,
+  recipeId: string,
+  mode: RecipePresentationMode,
+  variant: RecipePresentationVariant,
+): CanonicalRecipeCollections {
+  const recipe = resolveCanonicalRecipe(collections.recipesById, recipeId);
+  if (!recipe) {
+    return collections;
+  }
+
+  return {
+    ...collections,
+    recipesById: {
+      ...collections.recipesById,
+      [recipeId]: {
+        ...recipe,
+        presentationVariants: {
+          ...recipe.presentationVariants,
+          [mode]: variant,
+        },
+      },
     },
   };
 }
@@ -515,6 +564,8 @@ function createCanonicalScanRecipe(input: {
     createdAt: input.completedAt,
     scanCompletedAt: input.completedAt,
     scanResult: stableScan,
+    baseRecipe: input.recipe,
+    baseScanResult: stableScan,
   };
 }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { getScanProgress, INITIAL_SCAN_PROGRESS_STATE, nextScanProgress } from './scanProgress';
+import { getPendingAnalysisPresentation, getScanProgress, INITIAL_SCAN_PROGRESS_STATE, nextScanProgress } from './scanProgress';
 
 test('progress does not reach 100 during server analysis', () => {
   assert.equal(getScanProgress({ hasPreparedImage: true, hasValidatedRecipe: false, status: 'pending' }), 0.62);
@@ -160,4 +160,30 @@ test('pending progress is always capped below 1 even if a stale target claims co
     status: 'pending',
   });
   assert.ok(state.value < 1);
+});
+
+test('analysis presentation advances through four honest pending stages', () => {
+  assert.deepEqual(getPendingAnalysisPresentation(0), {
+    progress: 0,
+    stageIndex: 0,
+    stageProgress: 0,
+  });
+  assert.equal(getPendingAnalysisPresentation(1_000).stageIndex, 1);
+  assert.equal(getPendingAnalysisPresentation(3_000).stageIndex, 2);
+  assert.equal(getPendingAnalysisPresentation(6_000).stageIndex, 3);
+});
+
+test('analysis presentation reaches milestones without completing while pending', () => {
+  assert.equal(getPendingAnalysisPresentation(1_000).progress, 0.25);
+  assert.equal(getPendingAnalysisPresentation(3_000).progress, 0.5);
+  assert.equal(getPendingAnalysisPresentation(6_000).progress, 0.72);
+  assert.equal(getPendingAnalysisPresentation(10_000).progress, 0.94);
+  assert.ok(getPendingAnalysisPresentation(120_000).progress <= 0.95);
+});
+
+test('slow analysis holds on macro calculation and never exposes finishing touches', () => {
+  const slow = getPendingAnalysisPresentation(90_000);
+  assert.equal(slow.stageIndex, 3);
+  assert.equal(slow.stageProgress, 0.98);
+  assert.ok(slow.progress < 1);
 });

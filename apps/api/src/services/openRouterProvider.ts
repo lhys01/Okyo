@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import type { AiConfig } from '../config/aiConfig.js';
 import type { Recipe, RecipeIngredient, RecipeMode, RecipeStep, ScanImageMetadata } from '../types.js';
-import type { FoodImageAnalysis } from './aiService.js';
+import type { FoodImageAnalysis, RecipeGenerationPreferences } from './aiService.js';
 import type { CorrectionGenerationContext } from './correctionIntent.js';
 import { formatCorrectionRecipeReferences } from './correctionPatch.js';
 import { isEpicureEnabled } from '../config/openRouter.js';
@@ -26,6 +26,9 @@ const RECIPE_FALLBACK_MODELS = [
   'google/gemini-3.5-flash',
 ];
 const RECIPE_FAILOVER_DELAYS_MS = [2000, 5000, 10000];
+
+const RICH_COOKING_INSTRUCTION_GUIDANCE =
+  'Write practical, user-facing cooking instructions. For complex steps, usually use 2–5 concise sentences; simple actions may stay short. State exactly what to do, including useful cuts or preparation, technique, heat or temperature when relevant, grounded timing, and when to move on. Include a concrete visual, texture, or consistency cue. Add one brief mistake or safety note only when genuinely useful. Do not pad, repeat ingredient-chip text, invent timing, or use vague phrases such as "cook until done", "season to taste", "prepare the ingredients", or "mix everything". Keep doneWhen as one concise observable cue.';
 
 export type OpenRouterFailureReason =
   | 'openrouter_missing_key'
@@ -231,6 +234,7 @@ function addNormalizationMs(durationMs: number) {
 }
 
 export const openRouterVisionOutputSchema = z.object({
+  inputKind: z.enum(['prepared_dish', 'raw_ingredients', 'not_food', 'unclear']).optional(),
   dishName: z.string().optional(),
   scanState: z.string().optional(),
   broadDishCategory: z.string().optional(),
@@ -494,6 +498,7 @@ const recipeVariantSchema = z.object({
   totalTime: z.union([z.string(), z.number()]).optional().default('').transform(String),
   activeTime: z.union([z.string(), z.number()]).optional().default('').transform(String),
   servings: z.union([z.number(), z.string()]).optional(),
+  restaurantPriceEstimate: z.union([z.number(), z.string()]).optional(),
   skillLevel: z.string().optional().default(''),
   difficulty: z.string().optional().default(''),
   nutritionEstimate: z.object({
@@ -890,6 +895,12 @@ export async function analyzeFoodImageWithOpenRouter(input: {
     });
   }
   const firstQuality = evaluateVisionQuality(firstOutput);
+  // Loose ingredients are a valid model classification, not a low-quality
+  // prepared-dish guess. Return it directly so the API can reject it without
+  // asking a retry model to invent a meal.
+  if (firstOutput.inputKind === 'raw_ingredients') {
+    return firstOutput;
+  }
   const retryReason = getVisionQualityRetryReason(firstQuality);
   logOpenRouterDebug('openrouter_scan_quality_check', {
     dishName: firstOutput.dishName,
@@ -1181,6 +1192,7 @@ export async function generateRecipeWithOpenRouter(input: {
   config: AiConfig;
   correction?: CorrectionGenerationContext;
   mode?: RecipeMode;
+  preferences?: RecipeGenerationPreferences;
 }) {
   // ── Epicure enrichment (additive) ───────────────────────────────────────────
   // Runs BEFORE recipe generation. When the feature flag is off, no key is set,
@@ -1191,7 +1203,12 @@ export async function generateRecipeWithOpenRouter(input: {
   // Corrections are original-recipe-specific and must never reuse an ordinary
   // scan result with the same dish/mode cache key.
   const cacheKey = getRecipeCacheKey(input.analysis, mode);
-  const cached = input.correction ? undefined : recipeCache.get(cacheKey);
+  // Never serve a cached recipe generated without the caller's dietary
+  // restrictions/dislikes to a request that has them — restrictions are a
+  // safety constraint, not a style preference the cache is allowed to ignore.
+  const hasPersonalization = hasMeaningfulPreferences(input.preferences);
+  const skipCache = Boolean(input.correction) || hasPersonalization;
+  const cached = skipCache ? undefined : recipeCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     logOpenRouterDebug('recipe_cache_hit', { key: cacheKey.slice(0, 8), dish: input.analysis.dishName, mode });
     return cached.recipe;
@@ -1229,7 +1246,7 @@ export async function generateRecipeWithOpenRouter(input: {
     }
   }
 
-  const recipePrompt = getRecipePrompt(input.analysis, enrichment, mode, input.correction);
+  const recipePrompt = getRecipePrompt(input.analysis, enrichment, mode, input.correction, input.preferences);
   const epicureSectionChars = enrichment ? buildEpicurePromptSection(enrichment, mode).length : 0;
   const fullPromptChars = recipePrompt.length;
   const basePromptChars = fullPromptChars - (epicureSectionChars > 0 ? epicureSectionChars + 1 : 0);
@@ -1347,7 +1364,7 @@ export async function generateRecipeWithOpenRouter(input: {
 
   const issues = getRecipeValidationIssues(firstOutput, isDrink, input.analysis);
   if (issues.length === 0) {
-    return finalizeGeneratedRecipe(firstOutput, cacheKey, input.analysis.dishName, Boolean(input.correction));
+    return finalizeGeneratedRecipe(firstOutput, cacheKey, input.analysis.dishName, skipCache);
   }
   const initialHardIssues = getHardRecipeValidationIssues(issues);
 
@@ -1374,7 +1391,7 @@ export async function generateRecipeWithOpenRouter(input: {
     });
     if (initialHardIssues.length === 0) {
       logRecipeQualityDiagnostic(input.analysis, issues, false);
-      return finalizeGeneratedRecipe(firstOutput, cacheKey, input.analysis.dishName, Boolean(input.correction));
+      return finalizeGeneratedRecipe(firstOutput, cacheKey, input.analysis.dishName, skipCache);
     }
     logRecipeQualityRejection(input.analysis, initialHardIssues, false, initialHardIssues);
     throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
@@ -1433,7 +1450,7 @@ export async function generateRecipeWithOpenRouter(input: {
     if (repairedHardIssues.length === 0) {
       logRecipeQualityDiagnostic(input.analysis, repairedIssues, true);
       const bestCandidate = usedRepair ? finalRepair : firstOutput;
-      return finalizeGeneratedRecipe(bestCandidate, cacheKey, input.analysis.dishName, Boolean(input.correction));
+      return finalizeGeneratedRecipe(bestCandidate, cacheKey, input.analysis.dishName, skipCache);
     }
     logRecipeQualityRejection(input.analysis, initialHardIssues, true, repairedHardIssues);
     throw createOpenRouterError(input.config, input.config.openRouterTextModel, 'openrouter_invalid_schema', {
@@ -1445,7 +1462,7 @@ export async function generateRecipeWithOpenRouter(input: {
     });
     if (initialHardIssues.length === 0) {
       logRecipeQualityDiagnostic(input.analysis, issues, true);
-      return finalizeGeneratedRecipe(firstOutput, cacheKey, input.analysis.dishName, Boolean(input.correction));
+      return finalizeGeneratedRecipe(firstOutput, cacheKey, input.analysis.dishName, skipCache);
     }
     throw repairError;
   }
@@ -1458,6 +1475,9 @@ export async function generateRecipeEditWithOpenRouter(input: {
   editMessage: string;
   previousCandidate?: Recipe;
   retryReason?: string;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  goalContext?: RecipeGenerationPreferences['goalContext'];
 }): Promise<OpenRouterRecipeOutput> {
   const editConfig = {
     ...input.config,
@@ -2831,7 +2851,7 @@ function getRecipeRepairPrompt(
     'Return exactly ONE recipe object: {"dishName":"...","title":"...", ...recipe fields..., "steps":[...]}. No modes, no variants, no "selectedMode".',
     'Fix every problem: NEVER write "the main ingredient" or "main ingredient" — name the actual food. Every ingredient must start with an exact amount and a real grocery name. Cooking steps should include grounded timing and a visual cue when they genuinely apply; prep, assembly, garnish, and serving steps must not invent durations. No "cook until done", "prepare the ingredients", "season to taste", or "mix everything".',
     'PHASE ORDER IS MANDATORY: Every step object MUST include "phase" (integer 1-6). Steps must be in phase order — 1 Preparation, 2 Setup, 3 Cooking, 4 Assembly, 5 Finishing, 6 Serving. Phase numbers must never decrease. Phase 6 Serving MUST be the final step and can NEVER appear before phase 3 Cooking.',
-    'STEP CONTRACT IS MANDATORY: Every step object MUST include "stepNumber" (integer, starts at 1, strictly sequential, no gaps), "title" (2-4 word action phrase), "step" (one clear instruction sentence), "ingredients" (array of ingredient names used in this step — never empty), and "tools" (array of tool names used in this step — never empty, no duplicates).',
+    `STEP CONTRACT IS MANDATORY: Every step object MUST include "stepNumber" (integer, starts at 1, strictly sequential, no gaps), "title" (2-4 word action phrase), "step" (a clear practical instruction; use 2–5 concise sentences for complex steps and shorter text for simple actions), "ingredients" (array of ingredient names used in this step — never empty), and "tools" (array of tool names used in this step — never empty, no duplicates). ${RICH_COOKING_INSTRUCTION_GUIDANCE}`,
     'Keep 6-12 ingredients and 8-14 steps (6-8 for drinks or salads).',
     `Food: ${JSON.stringify({
       dishName: analysis.dishName,
@@ -3208,6 +3228,46 @@ async function callOpenRouterJson(input: {
   }
 }
 
+export async function askOkyoWithOpenRouter(input: {
+  config: AiConfig;
+  question: string;
+  recipe: Recipe;
+  currentStep?: RecipeStep;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  goalContext?: RecipeGenerationPreferences['goalContext'];
+}): Promise<{ answer: string; suggestedCorrection?: string }> {
+  const result = await callOpenRouterJson({
+    config: input.config,
+    maxTokens: Math.min(input.config.maxOutputTokens, 500),
+    model: input.config.openRouterTextModel,
+    stage: 'ask_okyo',
+    messages: [
+      {
+        role: 'system',
+        content: 'You are Okyo, a concise cooking assistant. Answer only from the supplied recipe and current step. Prioritize immediate food safety and observable cues. Never claim certainty about doneness from time alone. Return JSON only: {"answer":"2-4 short practical sentences","suggestedCorrection":"optional recipe edit instruction"}. Include suggestedCorrection only when the recipe itself should change.',
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          question: input.question,
+          recipe: input.recipe,
+          currentStep: input.currentStep,
+          preferences: {
+            dietaryRestrictions: input.dietaryRestrictions ?? [],
+            dietaryDislikes: input.dietaryDislikes ?? [],
+            goals: input.goalContext ?? {},
+          },
+        }),
+      },
+    ],
+  });
+  const parsed = z.object({ answer: z.string().trim().min(1).max(1200), suggestedCorrection: z.string().trim().max(300).optional() }).parse(result);
+  return parsed.suggestedCorrection
+    ? parsed
+    : { answer: parsed.answer };
+}
+
 // ─── Model failover and backoff ───────────────────────────────────────────────
 
 type CallJsonBase = {
@@ -3304,22 +3364,24 @@ async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string
   throw lastError;
 }
 
-const visionJsonContract = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}';
+const visionJsonContract = '{"inputKind": "prepared_dish" | "raw_ingredients" | "not_food" | "unclear", "scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string}';
 
 // Extends the base contract with inline Epicure fields. Used only in the primary vision
 // call when Epicure is enabled — saves one sequential AI call (~8-12s) vs the old flow.
-const visionJsonContractWithEpicure = '{"scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string, "epicureSuggestions": {"complementaryIngredients": string[], "healthySubstitutions": {"ingredient": "substitute"}, "budgetSubstitutions": {"ingredient": "substitute"}}}';
+const visionJsonContractWithEpicure = '{"inputKind": "prepared_dish" | "raw_ingredients" | "not_food" | "unclear", "scanState": "clear_food" | "food_present_uncertain_dish" | "partial_food" | "not_food" | "too_unclear", "dishName": string, "possibleDishNames": string[], "broadDishCategory": string, "cuisine": string, "confidence": number, "isFoodImage": boolean, "isRestaurantMeal": boolean, "rejectionReason": string, "visibleIngredients": string[], "likelyIngredients": string[], "visibleComponents": {"protein": string, "sauce": string, "baseStarch": string, "vegetables": string, "toppingsGarnish": string, "cookingMethod": string}, "restaurantPriceEstimate": number, "homemadeCostEstimate": number, "confidenceReason": string, "epicureSuggestions": {"complementaryIngredients": string[], "healthySubstitutions": {"ingredient": "substitute"}, "budgetSubstitutions": {"ingredient": "substitute"}}}';
 
-function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode) {
+export function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode) {
   const epicureEnabled = isEpicureEnabled();
   const contract = epicureEnabled ? visionJsonContractWithEpicure : visionJsonContract;
   return [
-    'Analyze this real-world restaurant, cafe, or takeout food or drink photo for a testing-only Okyo prototype.',
+    'Analyze this photo as a prepared or completed dish the user wants to recreate with Okyo.',
     'Return ONLY valid JSON in the assistant message content. Do not put JSON in reasoning. Do not return markdown. Do not explain.',
     'Return JSON only with exactly these fields:',
     contract,
-    'First decide: is this food, a drink, or neither? Drinks count as scannable: smoothies, milkshakes, lattes, iced coffee, matcha, juices, lemonade, boba/bubble tea, and hot chocolate are all valid results, as are soups, desserts, and pastries.',
-    'If any visible food or drink exists, do not hard reject. Ignore table clutter, plates, utensils, hands, napkins, packaging, captions, UI chrome, and restaurant background unless they help identify the food or drink.',
+    'First classify inputKind. prepared_dish means an assembled dish, plated meal, finished snack/dessert, or finished drink ready to eat or serve. raw_ingredients means loose ingredients, a grocery haul, pantry/fridge contents, or separate uncooked components with no prepared dish.',
+    'For raw_ingredients, do not invent or suggest a meal. Set inputKind raw_ingredients, rejectionReason "Scan a prepared dish you would like to recreate.", and return the remaining contract fields conservatively.',
+    'Drinks count as prepared dishes: smoothies, milkshakes, lattes, iced coffee, matcha, juices, lemonade, boba/bubble tea, and hot chocolate are valid results, as are soups, desserts, and pastries.',
+    'When a prepared dish is visible, ignore table clutter, plates, utensils, hands, napkins, packaging, captions, UI chrome, and restaurant background unless they help identify it.',
     'Real restaurant photos are allowed to be messy: dim lighting, busy tables, multiple items, dark or charred food, shiny sauce, garnish, angled phone photos, partial plates, takeout containers, screenshots of food posts, hands, cups, napkins, menus, utensils, and cluttered backgrounds are normal.',
     'Ignore plates, utensils, table surfaces, cups, napkins, hands, menus, packaging, captions, UI chrome, and background unless they help identify the food. Focus on edible food.',
     'If multiple dishes or components are visible — platters, bento boxes, sushi boards, combo meals, tasting sets — enumerate EVERY distinct item in visibleIngredients. Do not collapse a platter into one dish name. List each component separately: "salmon nigiri", "tuna nigiri", "california roll", "spicy mayo", "pickled ginger", "wasabi", "edamame", etc. Prefer over-inclusion over under-inclusion.',
@@ -3337,14 +3399,14 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
     'When uncertain, include 2-4 possibleDishNames that are specific alternates of the same visible food, like ["Berry Smoothie", "Acai Smoothie", "Mixed Fruit Smoothie"] or ["Beef Burrito Bowl", "Chicken Rice Bowl", "Carnitas Bowl"]. Alternates must not be generic names.',
     'scanState rules: clear_food means food and dish are clear; food_present_uncertain_dish means food is clear but exact dish/cuisine is uncertain; partial_food means food is visible but partial/low-quality/ambiguous; not_food means clearly no food; too_unclear means too blurry/dark/blocked to identify food safely.',
     'Confidence score rules: 80-95 clear dish, 60-79 food clear but exact dish uncertain, 40-59 food visible but ambiguous or partial, below 40 retry/clarification needed. If food is visible and confidence is 40-79, keep isFoodImage true and use scanState food_present_uncertain_dish or partial_food.',
-    'Only reject when food is clearly absent or the image is too unclear to identify any visible food. Do not reject just because the exact dish name is uncertain.',
+    'Reject when food is clearly absent, the image is too unclear, or the image shows only raw/loose ingredients rather than a prepared dish. Do not reject a prepared dish just because its exact name is uncertain.',
     'Only use not_food when no food or drink is visible. If food or a drink is visible, not_food is wrong.',
     'Only use too_unclear when food cannot reasonably be identified at all because the image is truly blurry, blocked, or unreadable. If food is visible but the exact dish is unclear, use partial_food or food_present_uncertain_dish instead.',
     'If the image is not food, set scanState not_food, isFoodImage false, isRestaurantMeal false, and rejectionReason to a short user-friendly reason.',
     'If the image is too blurry/dark/blocked to know whether food is visible, set scanState too_unclear, isFoodImage false, confidence below 40, and rejectionReason to ask for a clearer food photo.',
     'If food is visible but uncertain, do NOT say "could not recognize" or "failed"; provide a broad best guess with lower confidence instead of failure.',
     'confidence may be 0-100. Use lower confidence when the image is unclear, partial, or screenshot-like.',
-    'Do not invent exact restaurant menu prices from a photo. Set restaurantPriceEstimate to 0 unless a menu, receipt, visible price, or user-provided price is available in metadata.',
+    'restaurantPriceEstimate is a cautious estimate for a comparable prepared dish at a typical restaurant or takeout counter, not an exact live menu price. Base it on the visible dish, likely portion, ingredients, and preparation complexity. Use 0 only when no responsible estimate is possible.',
     'homemadeCostEstimate may be a cautious grocery-cost estimate for making a similar recipe at home.',
     'Use cautious estimates. Never present food identification, cost, or ingredients as exact.',
     'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
@@ -3359,15 +3421,15 @@ function getVisionPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode)
 
 function getCompactVisionRetryPrompt(image: ScanImageMetadata | undefined, mode: RecipeMode) {
   return [
-    'Analyze this image for Okyo. Food and drinks are valid scans.',
+    'Analyze this image for Okyo as a prepared dish the user wants to recreate.',
     'Return ONLY valid JSON. No markdown. No explanation.',
     'Use exactly this JSON shape:',
     visionJsonContract,
-    'First decide whether visible food or drink exists. If no food or drink is visible, use scanState not_food. If the photo is too blurry or dark to identify anything, use too_unclear.',
-    'If any food or drink is visible, do not hard reject. Give the most specific honest dish or drink name supported by the image, with lower confidence if uncertain.',
+    'First classify inputKind. If the image contains only loose/raw ingredients, set raw_ingredients and do not invent a dish. If no food or drink is visible, use not_food. If too blurry or dark, use unclear and scanState too_unclear.',
+    'If a prepared dish or finished drink is visible, give the most specific honest name supported by the image, with lower confidence if uncertain.',
     'Drinks must be named as drinks, such as smoothie, latte, shake, juice, boba, coffee, or matcha. Never call a drink a plate or bowl.',
     'Avoid generic names like Food Plate, Restaurant Plate, Meal, Dish, Bowl, Drink, or Unknown Dish when a more specific visible guess is possible.',
-    'Set restaurantPriceEstimate to 0 unless a visible menu, receipt, or price is in the image.',
+    'restaurantPriceEstimate is a cautious comparable prepared-dish estimate, not a live menu price. Use 0 only when no responsible estimate is possible.',
     `Requested recipe mode: ${mode}.`,
     `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
   ].join('\n');
@@ -3393,7 +3455,7 @@ function getFocusedVisionRetryPrompt(
     'If the image shows a drink in a cup or glass (smoothie, milkshake, latte, iced coffee, juice, boba), the dishName MUST say so. Never call a drink a plate, bowl, or meal.',
     'Generic names like "Mixed Restaurant Plate", "Food Plate", "Meal", "Dish", "Plate", or "Bowl" are wrong when any specific food or drink is identifiable. Prefer a specific guess with lower confidence.',
     'Include 2-4 possibleDishNames that are specific alternates of the same visible food or drink.',
-    'Stay honest: keep scanState accurate, lower confidence instead of inventing details, set restaurantPriceEstimate to 0 unless a menu or receipt is visible, and use not_food only when no food or drink is visible at all.',
+    'Stay honest: keep scanState accurate, lower confidence instead of inventing details, return only a cautious comparable prepared-dish estimate (never a claimed live menu price), and use not_food only when no food or drink is visible at all.',
     `Requested recipe mode: ${mode}.`,
     `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
   ].join('\n');
@@ -3413,6 +3475,9 @@ function getRecipeEditPrompt(input: {
   editMessage: string;
   previousCandidate?: Recipe;
   retryReason?: string;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  goalContext?: RecipeGenerationPreferences['goalContext'];
 }): string {
   const currentRecipe = getEditableRecipeSnapshot(input.currentRecipe);
   const previousCandidate = input.previousCandidate
@@ -3423,6 +3488,11 @@ function getRecipeEditPrompt(input: {
     'Edit this recipe according to the user\'s request. Infer their intent naturally. Apply every requested change. Preserve everything that does not need to change.',
     `User\'s exact edit message: ${JSON.stringify(input.editMessage)}`,
     'Return the complete revised recipe. Apply all requested changes and preserve unrelated parts. Do not return a patch or persistent IDs.',
+    buildPreferencesPromptSection({
+      dietaryRestrictions: input.dietaryRestrictions,
+      dietaryDislikes: input.dietaryDislikes,
+      goalContext: input.goalContext,
+    }),
     'Use this simple JSON shape: {"title":"Recipe title","description":"Short description","servings":2,"ingredients":["1 cup ingredient"],"equipment":["bowl"],"steps":[{"title":"Mix","step":"Mix for 5 minutes.","activeMinutes":5,"passiveMinutes":0,"elapsedMinutes":5}],"prepTime":"5 minutes","cookTime":"0 minutes","totalTime":"5 minutes","nutritionEstimate":{"calories":250,"proteinGrams":20,"carbohydratesGrams":25,"fatGrams":8}}.',
     'Unknown culinary terms are valid. When nutrition changes, change ingredients or quantities plausibly and update the estimate.',
     `Current complete recipe: ${JSON.stringify(currentRecipe)}`,
@@ -3484,11 +3554,84 @@ function getRecipeEditOutputIssues(output: OpenRouterRecipeOutput): string[] {
   return issues;
 }
 
+function hasMeaningfulPreferences(preferences: RecipeGenerationPreferences | undefined): boolean {
+  if (!preferences) return false;
+  return Boolean(
+    preferences.recipePriority ||
+    preferences.cookingFrictionFollowUp ||
+    preferences.dietaryRestrictions?.length ||
+    Boolean(preferences.goalContext?.primaryGoal) ||
+    preferences.dietaryDislikes?.length,
+  );
+}
+
+const RECIPE_PRIORITY_GUIDANCE: Record<string, string> = {
+  spend_less: 'The user wants to spend less on food — favor cheaper, common ingredients over premium ones.',
+  recreate_dishes: 'The user most values a faithful, practical reconstruction of the identified dish.',
+  know_ingredients: 'The user most values a complete, clear ingredient list with usable amounts.',
+  simpler_steps: 'The user most values straightforward instructions with each action easy to follow.',
+  cook_faster_or_easier: 'The user wants to cook faster or easier — favor fewer steps and simpler technique.',
+};
+
+const FOLLOW_UP_GUIDANCE: Record<string, string> = {
+  too_many_steps: 'Minimize step count specifically — combine steps where safe.',
+  too_much_cleanup: 'Minimize dishes/cookware and cleanup — favor one-pan or one-pot approaches when it fits the dish.',
+  too_much_time: 'Minimize total active + cook time — favor quicker cooking methods.',
+};
+
+// Builds the personalization block appended to the recipe-generation prompt.
+// Restrictions are stated as a hard, non-negotiable safety constraint;
+// dislikes are a soft preference the model may override only if there's no
+// reasonable alternative. Returns '' when there's nothing to say, so the
+// base prompt is byte-identical to today's for requests without preferences.
+function buildPreferencesPromptSection(preferences: RecipeGenerationPreferences | undefined): string {
+  if (!hasMeaningfulPreferences(preferences)) {
+    return '';
+  }
+
+  const lines: string[] = [];
+
+  if (preferences?.dietaryRestrictions?.length) {
+    lines.push(
+      `HARD DIETARY RESTRICTION — SAFETY CRITICAL: the recipe MUST NOT include, or be cooked using equipment cross-contaminated with, any of: ${preferences.dietaryRestrictions.join(', ')}. This is a non-negotiable allergy/restriction constraint, not a preference. If the dish cannot be made safely, substitute ingredients rather than including a restricted one.`,
+    );
+  }
+
+  if (preferences?.dietaryDislikes?.length) {
+    lines.push(
+      `Soft preference — avoid if reasonably possible: ${preferences.dietaryDislikes.join(', ')}. Only include one of these if there is no reasonable substitute for the dish to work.`,
+    );
+  }
+
+  if (preferences?.recipePriority && RECIPE_PRIORITY_GUIDANCE[preferences.recipePriority]) {
+    lines.push(RECIPE_PRIORITY_GUIDANCE[preferences.recipePriority]);
+  }
+
+  if (preferences?.cookingFrictionFollowUp && FOLLOW_UP_GUIDANCE[preferences.cookingFrictionFollowUp]) {
+    lines.push(FOLLOW_UP_GUIDANCE[preferences.cookingFrictionFollowUp]);
+  }
+
+  if (preferences?.goalContext) {
+    const context = preferences.goalContext;
+    if (context.primaryGoal) lines.push(`Primary goal: ${context.primaryGoal.replace(/_/g, ' ')}.`);
+    if (context.handsOnTimeMinutes) lines.push(`Prefer no more than about ${context.handsOnTimeMinutes} minutes of hands-on cooking.`);
+    if (context.defaultServings) lines.push(`Default serving size: ${context.defaultServings}.`);
+    if (context.cookingPriority) lines.push(`Cooking priority: ${context.cookingPriority.replace(/_/g, ' ')}.`);
+    if (context.orderingFriction) lines.push(`The user commonly orders food because: ${context.orderingFriction.replace(/_/g, ' ')}. Solve for that friction when practical.`);
+    if (context.healthPriorities?.length) lines.push(`Health priorities: ${context.healthPriorities.map((value) => value.replace(/_/g, ' ')).join(', ')}.`);
+    if (context.trackingPreference) lines.push(`Nutrition detail preference: ${context.trackingPreference.replace(/_/g, ' ')}.`);
+    if (context.nutritionTargets) lines.push(`Nutrition context: around ${context.nutritionTargets.calories} calories, ${context.nutritionTargets.proteinGrams}g protein, ${context.nutritionTargets.carbsGrams}g carbs, and ${context.nutritionTargets.fatGrams}g fat per day. Use this to suggest practical portions or swaps; do not make medical claims.`);
+  }
+
+  return lines.join(' ');
+}
+
 function getRecipePrompt(
   analysis: FoodImageAnalysis,
   enrichment: EnrichedRecipeContext | null = null,
   mode: RecipeMode = 'Normal',
   correction?: CorrectionGenerationContext,
+  preferences?: RecipeGenerationPreferences,
 ) {
   const isUncertainFood = analysis.scanState === 'food_present_uncertain_dish' || analysis.scanState === 'partial_food';
   const isPlatter = isPlatterAnalysis(analysis);
@@ -3509,6 +3652,7 @@ function getRecipePrompt(
     ? (analysis.detectedComponents ?? []).map((c) => c.name).filter(Boolean).slice(0, 8)
     : [];
   const correctionSection = getCorrectionPromptSection(correction);
+  const preferencesSection = buildPreferencesPromptSection(preferences);
 
   if (correction) {
     return [
@@ -3526,12 +3670,16 @@ function getRecipePrompt(
   return [
     ...(correctionSection ? [correctionSection] : []),
     `Create a compact homemade recipe JSON for "${analysis.dishName}".`,
+    analysis.mealDescription
+      ? 'The user description names the prepared dish they want to recreate. Treat it as a dish request, never as pantry inventory or a request to invent a meal from ingredients.'
+      : 'Reconstruct the prepared dish identified in the photo. Do not optimize around assumed pantry, fridge, leftover, or ingredient inventory.',
     correction
       ? 'The mandatory user correction overrides conflicting scan assumptions. Preserve the original recipe everywhere the correction does not require a change.'
       : `The recipe MUST be a homemade version of "${analysis.dishName}" as scanned. Do not switch dishes or add alcohol.`,
     'Return ONLY valid minified JSON. No markdown, no prose, no reasoning, no extra text.',
     'Return exactly ONE recipe object starting with {. One recipe only — no modes, variants, or multiple recipes.',
-    `Recipe fields: dishName, title, description, ingredients, equipment, steps, avoidMistake, substitutions, storageAndReheating, spicePairings, prepTime, cookTime, totalTime, servings, skillLevel, nutritionEstimate${correction ? ', appliedChanges' : ''}${isPlatter ? ', ingredientGroups' : ''}.`,
+    `Recipe fields: dishName, title, description, ingredients, equipment, steps, avoidMistake, substitutions, storageAndReheating, spicePairings, prepTime, cookTime, totalTime, servings, skillLevel, restaurantPriceEstimate, nutritionEstimate${correction ? ', appliedChanges' : ''}${isPlatter ? ', ingredientGroups' : ''}.`,
+    'restaurantPriceEstimate: a cautious number for a comparable prepared dish at a restaurant or takeout counter, not a live menu price. Base it on the dish, portion, ingredients, and complexity; omit it if no responsible estimate is possible.',
     correction
       ? 'nutritionEstimate is REQUIRED. Use cautious numeric per-serving estimates: calories, proteinGrams, carbohydratesGrams, fatGrams, and optional fiberGrams.'
       : 'nutritionEstimate is optional. When included, use cautious numeric per-serving estimates: calories, proteinGrams, carbohydratesGrams, fatGrams, and optional fiberGrams. Omit it when the description does not support a reasonable estimate.',
@@ -3551,13 +3699,14 @@ function getRecipePrompt(
     'SIMPLE FOODS: Plain fruit (watermelon cubes, berries, grapes, banana, sliced melon) = the fruit itself only. Do NOT add feta, mint, honey, nuts, granola, yogurt, dressing, or any chef addition unless clearly visible in the scan or named in the title. Watermelon cubes → ["4 cups watermelon, cubed"], optionally ["1 lime", "1/4 tsp Tajín or salt"]. Never create a salad from a plain fruit scan. Same rule for plain boiled eggs and plain toast.',
     'Ingredients: STRINGS ONLY — ["2 large eggs", "1 tbsp olive oil"]. Each element is a plain string starting with an exact amount. Never output ingredient objects.',
     'COOKING PHASES: 1=Prep, 2=Setup, 3=Cook, 4=Assembly, 5=Finish, 6=Serve. Phases MUST NOT decrease. Phase 6 = ONLY the final serve/plate action — garnish, fresh herbs, and cheese are phase 5.',
-    'Steps shape: {"stepNumber":1,"phase":1,"title":"Mince Garlic","step":"Mince 4 garlic cloves into 1mm pieces, about 30 seconds.","ingredients":["garlic"],"tools":["chef knife","cutting board"]}',
-    'Every step requires only those 6 keys. stepNumber starts 1 and increments by 1. step ≤22 words with amount and an action-appropriate timing or visual cue; do not invent timing for prep, assembly, garnish, or serving. ingredients/tools are non-empty arrays.',
+    'Steps shape: {"stepNumber":1,"phase":1,"title":"Sear Chicken","step":"Sear the chicken 3–4 minutes per side.","ingredients":["chicken","oil"],"tools":["skillet"],"lookFor":"Deep golden edges","doneWhen":"Center reaches 165°F/74°C","commonMistake":"Do not crowd the pan.","cookingTerm":{"term":"sear","meaning":"Brown food quickly over fairly high heat."}}',
+    `Every step requires the core 6 keys: stepNumber, phase, title, step, ingredients, tools. stepNumber starts 1 and increments by 1. Cooking steps should also include lookFor and doneWhen when an observable cue is useful; include at most one high-relevance commonMistake or chefTip, and cookingTerm only for genuinely unfamiliar technique words. The step text must be concise but may use 2–5 sentences for complex actions, with exact actions, grounded timing or temperature, and visual or texture cues; do not invent timing for prep, assembly, garnish, or serving. ingredients/tools are non-empty arrays. ${RICH_COOKING_INSTRUCTION_GUIDANCE}`,
     'Never write vague steps. Say exactly what to do, the time, and a visual/textural cue.',
     isDrink
       ? 'DRINK: title must say smoothie/latte/shake/juice. Steps: measure, blend or brew, taste, adjust, pour, garnish. No oven, no meat temperatures.'
       : 'Meat and seafood: include safe internal temperature (165°F/74°C chicken, 160°F/71°C ground meat, 145°F/63°C pork/fish).',
     'Text limits: description 1-2 sentences (concise and direct, with no source-attribution claims). avoidMistake 1 sentence. storageAndReheating 1 sentence.',
+    'ACCESSIBLE, ECONOMICAL, LOW-WASTE: Prefer ordinary grocery-store ingredients and common kitchen tools. Avoid expensive niche ingredients used only once unless essential to the dish. Reuse overlapping ingredients where sensible, and make garnish optional rather than required when it does not affect the dish.',
     isUncertainFood
       ? 'Scan uncertain — make a best-guess recipe based only on visible components.'
       : 'Scan is clear — keep the recipe wording honest and direct.',
@@ -3573,6 +3722,9 @@ function getRecipePrompt(
     // Appended only when Epicure produced suggestions; otherwise absent entirely.
     ...(epicureSection ? [epicureSection] : []),
     ...(correctionSection ? [correctionSection] : []),
+    // Appended only when the caller collected onboarding preferences; older
+    // requests without them see a byte-identical prompt to before.
+    ...(preferencesSection ? [preferencesSection] : []),
   ].join('\n');
 }
 
@@ -3595,9 +3747,9 @@ function getCompactRecipeRetryPrompt(
   return [
     ...(correctionSection ? [correctionSection] : []),
     'JSON only. No markdown. No explanations. Write real recipe text in every field; never output placeholder dots.',
-    'Return ONE recipe object: {"dishName","title","description","ingredients","steps","prepTime","cookTime","totalTime","servings","skillLevel","avoidMistake","substitutions","storageAndReheating","spicePairings"}.',
+    'Return ONE recipe object: {"dishName","title","description","ingredients","steps","prepTime","cookTime","totalTime","servings","skillLevel","restaurantPriceEstimate","avoidMistake","substitutions","storageAndReheating","spicePairings"}. restaurantPriceEstimate is a cautious comparable prepared-dish estimate, never a live menu price.',
     'ingredients: 6 strings, each an exact amount plus grocery name like "2 large eggs" or "1 cup all-purpose flour" — use real ingredients for this specific dish, not examples.',
-    'steps: 6-8 step OBJECTS. Exact shape: {"stepNumber":1,"phase":3,"title":"Sear Chicken","step":"instruction ≤22 words with time+visual cue","ingredients":["names used in this step"],"tools":["tools used"]}. stepNumber starts 1, sequential. phase 1-6. ingredients/tools never empty.',
+    `steps: 6-8 step OBJECTS. Exact shape: {"stepNumber":1,"phase":3,"title":"Sear Chicken","step":"Detailed beginner-friendly instruction with exact action, grounded cue, and transition cue","ingredients":["names used in this step"],"tools":["tools used"]}. stepNumber starts 1, sequential. phase 1-6. ingredients/tools never empty. ${RICH_COOKING_INSTRUCTION_GUIDANCE}`,
     'spicePairings: up to 2 strings.',
     `Dish: ${analysis.dishName}. Visible: ${analysis.visibleIngredients.slice(0, 4).join(', ')}.`,
     ...(correctionSection ? [correctionSection] : []),
@@ -3609,7 +3761,7 @@ function getRecipeStructureRepairPrompt(analysis: FoodImageAnalysis, issues: str
     `Your previous recipe JSON for "${analysis.dishName}" had structural problems: ${issues.join(', ')}.`,
     'Return ONLY valid minified JSON — ONE recipe object, no modes or variants.',
     'The "steps" field MUST be an array of 8-14 step OBJECTS (6-8 for drinks or salads). Copy this exact step shape: {"stepNumber":1,"phase":1,"title":"Prep Onion","step":"Finely dice 1 medium onion on a cutting board into 5mm pieces.","ingredients":["onion"],"tools":["chef knife","cutting board"]}',
-    'Every step object MUST include all 6 keys: "stepNumber" (integer — starts at 1, sequential, no gaps), "phase" (integer 1-6: 1=Prep,2=Setup,3=Cook,4=Assembly,5=Finish,6=Serve), "title" (2-4 word action phrase), "step" (one clear instruction with amount and an action-appropriate time or visual cue; never invented timing), "ingredients" (non-empty array), "tools" (non-empty array).',
+    `Every step object MUST include all 6 keys: "stepNumber" (integer — starts at 1, sequential, no gaps), "phase" (integer 1-6: 1=Prep,2=Setup,3=Cook,4=Assembly,5=Finish,6=Serve), "title" (2-4 word action phrase), "step" (a clear practical instruction with amount where relevant and an action-appropriate time, temperature, visual, or texture cue; use 2–5 concise sentences for complex steps), "ingredients" (non-empty array), "tools" (non-empty array). ${RICH_COOKING_INSTRUCTION_GUIDANCE}`,
     'Never output a step as a plain string. Never leave ingredients or tools empty. Keep ingredients specific and tools real.',
     `Food: ${JSON.stringify({
       dishName: analysis.dishName,

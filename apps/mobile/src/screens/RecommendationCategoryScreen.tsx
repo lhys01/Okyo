@@ -1,16 +1,16 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { NavArrowLeft, Spark } from 'iconoir-react-native';
+import { NavArrowLeft } from 'iconoir-react-native';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RecommendationCard } from '../components/RecommendationCard';
 import { colors, typography } from '../components/OkyoUI';
 import {
-  getCategoryArt,
   getRecommendationsByCategory,
   recommendationCategories,
+  recommendedRecipes,
   type RecommendationCategory,
 } from '../data/recommendedRecipes';
 import type { RootStackParamList } from '../navigation/types';
@@ -28,11 +28,11 @@ export function RecommendationCategoryScreen() {
   const navigation = useNavigation<CategoryNavigation>();
   const route = useRoute<CategoryRoute>();
   const openRecommendation = useOpenRecommendation();
+  const showAll = route.params?.showAll === true;
   const category: RecommendationCategory = isCategory(route.params?.category)
     ? route.params.category
-    : 'Dinner Ideas';
-  const recipes = getRecommendationsByCategory(category);
-  const art = getCategoryArt(category);
+    : 'Dinner & Cooking Methods';
+  const recipes = showAll ? recommendedRecipes : getRecommendationsByCategory(category);
 
   const goBack = () => {
     if (navigation.canGoBack()) {
@@ -57,15 +57,7 @@ export function RecommendationCategoryScreen() {
           </Pressable>
         </View>
 
-        <View style={[styles.hero, { backgroundColor: art.tint }]}>
-          <Spark color={colors.coral} height={58} strokeWidth={1.8} width={58} />
-        </View>
-        <Text style={styles.kicker}>Food inspiration</Text>
-        <Text style={styles.title}>{category}</Text>
-        <Text style={styles.subtitle}>
-          {recipes.length} {recipes.length === 1 ? 'idea' : 'ideas'} to remake at home — tap one to see the full recipe.
-        </Text>
-
+        <Text style={styles.title}>{showAll ? 'All dishes' : category}</Text>
         <View style={styles.grid}>
           {recipes.map((recipe) => (
             <RecommendationCard key={recipe.id} recipe={recipe} onPress={() => openRecommendation(recipe)} />
@@ -100,8 +92,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: radius.hero,
     justifyContent: 'center',
-    paddingVertical: 28,
+    height: 190,
+    overflow: 'hidden',
   },
+  heroArt: { height: '100%', width: '100%' },
   kicker: {
     ...typography.caption,
     color: colors.coral,

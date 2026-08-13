@@ -26,14 +26,25 @@ import {
   getXpDefinitions,
   saveRecipe,
 } from './store.js';
-import { createAiRecipeCorrection, createAiScan, createAiTextRecipe, enrichRecipeCoaching, FoodRejectionError } from './services/aiService.js';
+import {
+  AnalysisExpiredError,
+  AnalysisNotFoundError,
+  analyzePreparedDish,
+  createAiRecipeCorrection,
+  createAiScan,
+  createAiTextRecipe,
+  enrichRecipeCoaching,
+  FoodRejectionError,
+  generateRecipeForAnalysis,
+  type RecipeGenerationPreferences,
+} from './services/aiService.js';
 import { CorrectionValidationError } from './services/correctionIntent.js';
 import {
   createCorrectionDiagnostics,
   getCorrectionHttpStatus,
   logCorrectionRequest,
 } from './services/correctionReliability.js';
-import { isRecipeValidationFailure } from './services/openRouterProvider.js';
+import { askOkyoWithOpenRouter, isRecipeValidationFailure } from './services/openRouterProvider.js';
 import {
   CURRENT_RECIPE_MODES,
   isLegacyRecipeMode,
@@ -47,6 +58,39 @@ const maxImageDataUrlChars = 12_000_000;
 const jsonBodyLimit = '16mb';
 
 const recipeModeSchema = z.enum(['Normal', 'Lighter', 'Healthier', 'More Protein']);
+const correctionRecipeSchema = z.object({
+  id: z.string().trim().min(1).max(240),
+  scanResultId: z.string().trim().min(1).max(240),
+  title: z.string().trim().min(1).max(180),
+  mode: recipeModeInputSchema,
+  description: z.string().max(2000),
+  prepTimeMinutes: z.number().nonnegative(),
+  cookTimeMinutes: z.number().nonnegative(),
+  totalTimeMinutes: z.number().nonnegative().optional(),
+  activeTimeMinutes: z.number().nonnegative().optional(),
+  passiveTimeMinutes: z.number().nonnegative().optional(),
+  servings: z.number().int().min(1).max(100),
+  skillLevel: z.enum(['Easy', 'Medium', 'Hard']).optional(),
+  difficulty: z.enum(['Easy', 'Medium', 'Hard']),
+  estimatedHomemadeCost: z.number().nonnegative(),
+  restaurantPriceEstimate: z.number().nonnegative().optional(),
+  estimatedSavings: z.number(),
+  ingredients: z.array(z.object({
+    id: z.string().optional(), name: z.string().min(1), quantity: z.string().min(1),
+    optional: z.boolean().optional(), pantryItem: z.boolean().optional(),
+  }).passthrough()).min(1).max(100),
+  steps: z.array(z.string().min(1)).min(1).max(100),
+  structuredSteps: z.array(z.object({ text: z.string().min(1) }).passthrough()).max(100).optional(),
+  substitutions: z.array(z.string()).max(100),
+  pantryNote: z.string(),
+  confidenceNote: z.string(),
+  equipment: z.array(z.string()).max(100).optional(),
+  nutritionEstimate: z.object({
+    calories: z.number().nonnegative(), proteinGrams: z.number().nonnegative(),
+    carbohydratesGrams: z.number().nonnegative(), fatGrams: z.number().nonnegative(),
+    fiberGrams: z.number().nonnegative().optional(),
+  }).optional(),
+}).passthrough();
 const scanSourceSchema = z.enum(['camera', 'photos', 'description']);
 const imageDataUrlSchema = z.string()
   .min(1)
@@ -72,6 +116,12 @@ const scanRequestSchema = z.object({
   mode: recipeModeInputSchema.optional().default('Normal'),
   image: scanImageMetadataSchema.optional(),
   mealDescription: z.string().trim().min(1).max(240).optional(),
+  // Onboarding-collected personalization — all optional so older clients
+  // keep working unchanged. See RecipeGenerationPreferences in aiService.ts.
+  recipePriority: z.string().trim().min(1).max(60).optional(),
+  cookingFrictionFollowUp: z.string().trim().min(1).max(60).optional(),
+  dietaryRestrictions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  dietaryDislikes: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
 }).superRefine((value, context) => {
   if (value.source === 'description' && !value.mealDescription) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'A meal description is required for description scans.', path: ['mealDescription'] });
@@ -83,6 +133,44 @@ const scanRequestSchema = z.object({
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'Meal descriptions require source description.', path: ['source'] });
   }
 });
+const analyzeScanRequestSchema = z.object({
+  source: scanSourceSchema,
+  mode: recipeModeInputSchema.optional().default('Normal'),
+  image: scanImageMetadataSchema.optional(),
+  mealDescription: z.string().trim().min(1).max(240).optional(),
+}).superRefine((value, context) => {
+  if (value.source === 'description' && !value.mealDescription) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'A meal description is required for description scans.', path: ['mealDescription'] });
+  }
+  if (value.source === 'description' && value.image) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Description scans cannot include an image.', path: ['image'] });
+  }
+  if (value.source !== 'description' && value.mealDescription) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Meal descriptions require source description.', path: ['source'] });
+  }
+});
+const analysisRecipeRequestSchema = z.object({
+  mode: recipeModeInputSchema.optional().default('Normal'),
+  dietaryRestrictions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  dietaryDislikes: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  recipeRequestId: z.string().trim().min(1).max(120).optional(),
+  goalContext: z.object({
+    primaryGoal: z.string().trim().min(1).max(60).optional(),
+    secondaryGoals: z.array(z.string().trim().min(1).max(60)).max(8).optional(),
+    handsOnTimeMinutes: z.number().int().min(5).max(180).optional(),
+    defaultServings: z.number().int().min(1).max(12).optional(),
+    cookingPriority: z.string().trim().min(1).max(80).optional(),
+    orderingFriction: z.string().trim().min(1).max(80).optional(),
+    healthPriorities: z.array(z.string().trim().min(1).max(80)).max(8).optional(),
+    trackingPreference: z.string().trim().min(1).max(80).optional(),
+    nutritionTargets: z.object({
+      calories: z.number().int().min(1000).max(5000),
+      proteinGrams: z.number().int().min(20).max(350),
+      carbsGrams: z.number().int().min(0).max(700),
+      fatGrams: z.number().int().min(20).max(250),
+    }).optional(),
+  }).optional(),
+}).strict();
 const challengeRequestSchema = z.object({
   recipeId: z.string().min(1),
   mode: recipeModeSchema.optional().default('Normal'),
@@ -103,6 +191,29 @@ const recipeCorrectionRequestSchema = z.object({
   canonicalRecipeId: z.string().trim().min(1).max(240).optional(),
   scanSessionId: z.string().trim().min(1).max(240).optional(),
   mode: recipeModeInputSchema.optional().default('Normal'),
+  currentRecipe: correctionRecipeSchema.optional(),
+  dietaryRestrictions: z.preprocess(
+    (value) => value == null ? undefined : value,
+    z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  ),
+  dietaryDislikes: z.preprocess(
+    (value) => value == null ? undefined : value,
+    z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  ),
+  goalContext: z.object({
+    primaryGoal: z.string().trim().min(1).max(60).optional(),
+    secondaryGoals: z.array(z.string().trim().min(1).max(60)).max(8).optional(),
+    handsOnTimeMinutes: z.number().int().min(5).max(180).optional(),
+    defaultServings: z.number().int().min(1).max(12).optional(),
+    cookingPriority: z.string().trim().min(1).max(80).optional(),
+    orderingFriction: z.string().trim().min(1).max(80).optional(),
+    healthPriorities: z.array(z.string().trim().min(1).max(80)).max(8).optional(),
+    trackingPreference: z.string().trim().min(1).max(80).optional(),
+    nutritionTargets: z.object({
+      calories: z.number().int().min(1000).max(5000), proteinGrams: z.number().int().min(20).max(350),
+      carbsGrams: z.number().int().min(0).max(700), fatGrams: z.number().int().min(20).max(250),
+    }).optional(),
+  }).optional(),
 }).strict();
 
 app.use(cors());
@@ -120,6 +231,29 @@ app.get('/health', (_request, response) => {
     timestamp: new Date().toISOString(),
   });
 });
+const askOkyoRequestSchema = z.object({
+  question: z.string().trim().min(1).max(500),
+  recipe: z.custom<import('./types.js').Recipe>((value) => Boolean(value && typeof value === 'object')),
+  currentStep: z.custom<import('./types.js').RecipeStep>((value) => value === undefined || Boolean(value && typeof value === 'object')).optional(),
+  dietaryRestrictions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  dietaryDislikes: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  goalContext: z.object({
+    primaryGoal: z.string().trim().min(1).max(60).optional(),
+    secondaryGoals: z.array(z.string().trim().min(1).max(60)).max(10).optional(),
+    handsOnTimeMinutes: z.number().int().min(5).max(180).optional(),
+    defaultServings: z.number().int().min(1).max(12).optional(),
+    cookingPriority: z.string().trim().min(1).max(80).optional(),
+    orderingFriction: z.string().trim().min(1).max(80).optional(),
+    healthPriorities: z.array(z.string().trim().min(1).max(80)).max(8).optional(),
+    trackingPreference: z.string().trim().min(1).max(80).optional(),
+    nutritionTargets: z.object({
+      calories: z.number().int().min(1000).max(5000),
+      proteinGrams: z.number().int().min(20).max(350),
+      carbsGrams: z.number().int().min(0).max(700),
+      fatGrams: z.number().int().min(20).max(250),
+    }).optional(),
+  }).strict().optional(),
+}).strict();
 
 app.get('/debug/ai-config', (_request, response) => {
   if (process.env.NODE_ENV === 'production') {
@@ -179,8 +313,10 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
       failClosed: false,
     });
 
+    const preferences = getScanPreferencesFromBody(body);
+
     if (body.mealDescription) {
-      const result = await createAiTextRecipe({ mealDescription: body.mealDescription, mode: body.mode, fableActive });
+      const result = await createAiTextRecipe({ mealDescription: body.mealDescription, mode: body.mode, fableActive, preferences });
       sendOk(response.status(201), { ...result, source: body.source });
       return;
     }
@@ -191,6 +327,7 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
       mode: body.mode,
       source: body.source,
       fableActive,
+      preferences,
     });
 
     sendOk(response.status(201), {
@@ -200,6 +337,85 @@ app.post('/v1/scans', scanRateLimitMiddleware, async (request, response, next) =
     });
   } catch (error) {
     next(error);
+  }
+});
+
+app.post('/v1/scans/analyze', scanRateLimitMiddleware, async (request, response, next) => {
+  try {
+    const body = parseRequest(analyzeScanRequestSchema, normalizeScanRequestInput(request.body));
+    logRecipeModeMigration('/v1/scans/analyze', getRequestMode(request.body), body.mode);
+
+    const imageSizeBytes = body.image?.dataUrlSizeBytes ?? body.image?.dataUrl?.length ?? 0;
+    const maxScanImageBytes = getCostControlConfig().maxScanImageBytes;
+    if (imageSizeBytes > maxScanImageBytes) {
+      logCostEvent('scan_image_too_large', { imageSizeBytes, maxScanImageBytes });
+      sendError(response.status(413), 'image_payload_too_large', 'This photo was too large to scan. Try a smaller image.');
+      return;
+    }
+
+    const isRealAiScan = Boolean(body.image) && !body.image?.placeholder;
+    if (isRealAiScan && !checkAndIncrementGlobalAiCap()) {
+      sendError(response.status(429), 'ai_daily_cap_exceeded', "Okyo has reached its daily scan limit. Try again tomorrow.");
+      return;
+    }
+
+    const fableRequested = request.get('x-okyo-model') === 'fable';
+    const fableEnabled = getAiConfig().fableEnabled;
+    if (fableRequested && !fableEnabled) {
+      sendError(response.status(403), 'fable_not_enabled', 'Fable 5 is not enabled.');
+      return;
+    }
+
+    let fableActive = false;
+    if (fableRequested && fableEnabled) {
+      if (!checkAndIncrementFableCap()) {
+        sendError(response.status(429), 'fable_daily_cap_exceeded', "Fable 5's daily limit has been reached. Try again tomorrow.");
+        return;
+      }
+      fableActive = true;
+    }
+
+    if (body.image) logScanRequest(body, request.get('content-type'));
+    const result = await analyzePreparedDish({
+      image: body.image,
+      mealDescription: body.mealDescription,
+      mode: body.mode,
+      source: body.source,
+      fableActive,
+    });
+    sendOk(response.status(201), result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/v1/scans/analyze/:analysisId/recipe', async (request, response, next) => {
+  try {
+    const body = parseRequest(analysisRecipeRequestSchema, request.body);
+    logRecipeModeMigration('/v1/scans/analyze/:analysisId/recipe', getRequestMode(request.body), body.mode);
+    const result = await generateRecipeForAnalysis({
+      analysisId: request.params.analysisId,
+      mode: body.mode,
+      dietaryRestrictions: body.dietaryRestrictions,
+      dietaryDislikes: body.dietaryDislikes,
+      recipeRequestId: body.recipeRequestId,
+      goalContext: body.goalContext,
+    });
+    sendOk(response.status(201), result);
+  } catch (error) {
+    if (error instanceof AnalysisExpiredError) {
+      sendError(response.status(410), 'analysis_expired', error.message);
+      return;
+    }
+    if (error instanceof AnalysisNotFoundError) {
+      sendError(response.status(404), 'analysis_not_found', error.message);
+      return;
+    }
+    if (error instanceof z.ZodError) {
+      next(error);
+      return;
+    }
+    sendError(response.status(502), 'recipe_generation_failed', "Okyo couldn't finish this recipe. Try again.");
   }
 });
 
@@ -284,6 +500,16 @@ app.post('/v1/recipes/:recipeId/coaching', async (request, response, next) => {
   }
 });
 
+app.post('/v1/recipes/:recipeId/ask', scanRateLimitMiddleware, async (request, response, next) => {
+  try {
+    const body = parseRequest(askOkyoRequestSchema, request.body);
+    const result = await askOkyoWithOpenRouter({ ...body, config: getAiConfig() });
+    sendOk(response, result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Regenerates a recipe from a user correction (e.g. wrong dish identified)
 // without requiring a new photo/scan. Reuses the existing OpenRouter recipe
 // pipeline via createAiRecipeCorrection — see aiService.ts for details.
@@ -312,7 +538,11 @@ app.post('/v1/recipes/:recipeId/correct', async (request, response, next) => {
       canonicalRecipeId: body.canonicalRecipeId,
       scanSessionId: body.scanSessionId,
       mode: body.mode,
+      currentRecipe: body.currentRecipe,
       recipeId: request.params.recipeId,
+      dietaryRestrictions: body.dietaryRestrictions,
+      dietaryDislikes: body.dietaryDislikes,
+      goalContext: body.goalContext,
     });
 
     if (!result) {
@@ -523,6 +753,24 @@ function getRecipeValidationErrorDetails(error: unknown) {
     };
   }
   return undefined;
+}
+
+function getScanPreferencesFromBody(body: z.infer<typeof scanRequestSchema>): RecipeGenerationPreferences | undefined {
+  if (
+    !body.recipePriority &&
+    !body.cookingFrictionFollowUp &&
+    !body.dietaryRestrictions?.length &&
+    !body.dietaryDislikes?.length
+  ) {
+    return undefined;
+  }
+
+  return {
+    recipePriority: body.recipePriority,
+    cookingFrictionFollowUp: body.cookingFrictionFollowUp,
+    dietaryRestrictions: body.dietaryRestrictions,
+    dietaryDislikes: body.dietaryDislikes,
+  };
 }
 
 function logScanRequest(body: z.infer<typeof scanRequestSchema>, contentType: string | undefined) {

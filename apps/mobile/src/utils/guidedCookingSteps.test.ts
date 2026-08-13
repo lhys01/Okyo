@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { Recipe } from '../mocks';
-import { buildGuidedCookingSteps } from './guidedCookingSteps';
+import { buildGuidedCookingSteps, getGuidedIngredientChipLabel } from './guidedCookingSteps';
 
 function recipeWithSteps(): Recipe {
   return {
@@ -52,4 +52,50 @@ test('the shared builder derives cooking terms and pairings internally', () => {
 
   assert.ok(sequence.some((step) => step.tip?.title === 'Optional boost'));
   assert.equal(buildGuidedCookingSteps(recipe).length, sequence.length);
+});
+
+test('ingredient chips retain real recipe quantities without inventing missing amounts', () => {
+  assert.equal(getGuidedIngredientChipLabel({ name: 'flour', quantity: '2 cups' }), '2 cups flour');
+  assert.equal(getGuidedIngredientChipLabel({ name: 'Dough', quantity: '' }), 'Dough');
+});
+
+test('a busy step keeps all resolved quantities and equipment for wrapping chips', () => {
+  const recipe = recipeWithSteps();
+  recipe.ingredients = [
+    { name: 'flour', quantity: '2 cups' },
+    { name: 'butter', quantity: '1/2 cup' },
+    { name: 'sugar', quantity: '2 tbsp' },
+    { name: 'salt', quantity: '1/4 tsp' },
+    { name: 'cream', quantity: '1/4 cup' },
+    { name: 'lemon juice', quantity: '1 tsp' },
+  ];
+  recipe.structuredSteps = [{
+    title: 'Mix',
+    text: 'Combine the filling ingredients.',
+    ingredientsUsed: recipe.ingredients.map((ingredient) => ingredient.name),
+    toolsUsed: ['mixing bowl', 'whisk'],
+  }];
+
+  const [step] = buildGuidedCookingSteps(recipe);
+
+  assert.deepEqual(step?.ingredientsUsed.map(getGuidedIngredientChipLabel), [
+    '2 cups flour',
+    '1/2 cup butter',
+    '2 tbsp sugar',
+    '1/4 tsp salt',
+    '1/4 cup cream',
+    '1 tsp lemon juice',
+  ]);
+  assert.deepEqual(step?.toolsUsed, ['mixing bowl', 'whisk']);
+});
+
+test('protein safety guidance stays with the relevant current step', () => {
+  const recipe = recipeWithSteps();
+  recipe.structuredSteps = [
+    { title: 'Prepare fries', text: 'Spread frozen fries on a baking sheet.', safetyNote: 'Ground beef or turkey should reach 160°F / 71°C inside.' },
+    { title: 'Grill beef patty', text: 'Season and grill the beef patty.', safetyNote: 'Ground beef or turkey should reach 160°F / 71°C inside.' },
+  ];
+  const steps = buildGuidedCookingSteps(recipe);
+  assert.equal(steps[0]?.safetyNote, undefined);
+  assert.equal(steps[1]?.safetyNote, 'Ground beef or turkey should reach 160°F / 71°C inside.');
 });

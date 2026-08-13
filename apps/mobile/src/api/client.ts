@@ -1,9 +1,32 @@
 import { OKYO_API_BASE_URL, OKYO_API_TIMEOUT_MS, OKYO_DEV_MODEL_OVERRIDE } from './config';
-import type { ApiResponse, CorrectRecipeRequest, CreateScanRequest, CreateScanResult } from './types';
+import type {
+  AnalyzeScanRequest,
+  AnalyzeScanResult,
+  AskOkyoRequest,
+  AskOkyoResult,
+  ApiResponse,
+  CorrectRecipeRequest,
+  CreateScanRequest,
+  CreateScanResult,
+  GenerateRecipeFromAnalysisRequest,
+  GenerateRecipeFromAnalysisResult,
+} from './types';
 import { normalizeOutboundRecipeMode } from '../utils/recipeModes';
 
 export const CORRECTION_FAILURE_MESSAGE = 'We couldn’t update the recipe. Try again.';
 const REQUEST_FAILURE_MESSAGE = 'Okyo couldn’t complete that request. Try again.';
+
+export class ApiClientError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status: number,
+    readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = 'ApiClientError';
+  }
+}
 
 export async function createMockScan(request: CreateScanRequest): Promise<CreateScanResult> {
   return postJson<CreateScanResult>('/v1/scans', request);
@@ -17,6 +40,26 @@ export async function createTextRecipe(mealDescription: string, mode: CreateScan
   });
 }
 
+export async function analyzeScan(
+  request: AnalyzeScanRequest,
+  signal?: AbortSignal,
+): Promise<AnalyzeScanResult> {
+  return postJson<AnalyzeScanResult>('/v1/scans/analyze', request, undefined, signal);
+}
+
+export async function generateRecipeFromAnalysis(
+  analysisId: string,
+  request: GenerateRecipeFromAnalysisRequest,
+  signal?: AbortSignal,
+): Promise<GenerateRecipeFromAnalysisResult> {
+  return postJson<GenerateRecipeFromAnalysisResult>(
+    `/v1/scans/analyze/${encodeURIComponent(analysisId)}/recipe`,
+    request,
+    undefined,
+    signal,
+  );
+}
+
 // Regenerates a recipe from a user correction (wrong dish identified) without
 // retaking the photo. Reuses the same scan-result shape as createMockScan so
 // callers can treat the response identically.
@@ -28,9 +71,21 @@ export async function correctScanRecipe(recipeId: string, request: CorrectRecipe
   );
 }
 
-async function postJson<T>(path: string, body: unknown, safeFailureMessage?: string): Promise<T> {
+export async function askOkyo(recipeId: string, request: AskOkyoRequest): Promise<AskOkyoResult> {
+  return postJson<AskOkyoResult>(`/v1/recipes/${encodeURIComponent(recipeId)}/ask`, request);
+}
+
+async function postJson<T>(
+  path: string,
+  body: unknown,
+  safeFailureMessage?: string,
+  externalSignal?: AbortSignal,
+): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OKYO_API_TIMEOUT_MS);
+  const abortFromExternalSignal = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true });
   const normalizedBody = normalizeRecipeApiRequestBody(path, body);
   const requestBody = JSON.stringify(normalizedBody);
   logApiRequest(path, requestBody, normalizedBody);
@@ -52,15 +107,24 @@ async function postJson<T>(path: string, body: unknown, safeFailureMessage?: str
     }
 
     if (!response.ok || !payload.ok) {
-      const message = safeFailureMessage ??
-        (payload.ok ? REQUEST_FAILURE_MESSAGE : payload.error.message);
-      throw new Error(message);
+      if (!payload.ok) {
+        throw new ApiClientError(
+          safeFailureMessage ?? payload.error.message,
+          payload.error.code,
+          response.status,
+          payload.error.details,
+        );
+      }
+      throw new Error(safeFailureMessage ?? REQUEST_FAILURE_MESSAGE);
     }
 
     return payload.data;
   } catch (error) {
     if (safeFailureMessage) {
-      throw new Error(safeFailureMessage);
+      if (error instanceof ApiClientError) {
+        throw new ApiClientError(safeFailureMessage, error.code, error.status, error.details);
+      }
+      throw new ApiClientError(safeFailureMessage, 'network_or_parse_failure', 0);
     }
     if (error instanceof Error) {
       throw error;
@@ -68,11 +132,14 @@ async function postJson<T>(path: string, body: unknown, safeFailureMessage?: str
     throw new Error(REQUEST_FAILURE_MESSAGE);
   } finally {
     clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort', abortFromExternalSignal);
   }
 }
 
 export function normalizeRecipeApiRequestBody(path: string, body: unknown): unknown {
   const isRecipeRequest = path === '/v1/scans' ||
+    path === '/v1/scans/analyze' ||
+    /^\/v1\/scans\/analyze\/[^/]+\/recipe$/.test(path) ||
     /^\/v1\/recipes\/[^/]+\/correct$/.test(path);
   if (
     !isRecipeRequest ||
@@ -122,7 +189,7 @@ function getJsonHeaders(path: string): Record<string, string> {
     'Content-Type': 'application/json',
   };
 
-  if (path === '/v1/scans' && OKYO_DEV_MODEL_OVERRIDE === 'fable') {
+  if ((path === '/v1/scans' || path === '/v1/scans/analyze') && OKYO_DEV_MODEL_OVERRIDE === 'fable') {
     headers['x-okyo-model'] = 'fable';
   }
 

@@ -1,284 +1,36 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import {
-  Crown,
-  NavArrowRight,
-  Settings,
-  StatsUpSquare,
-  Trophy,
-} from 'iconoir-react-native';
-import type { ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { NavArrowLeft, NavArrowRight } from 'iconoir-react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { KikoMascot } from '../components/KikoMascot';
-import { colors, typography } from '../components/OkyoUI';
-import type { RootStackParamList } from '../navigation/types';
-import { resolveCanonicalRecipes } from '../state/canonicalRecipes';
+import type { MainTabParamList } from '../navigation/types';
+import { onboardingV3Persistence } from '../onboarding-v3/state/onboardingV3Persistence';
+import { primaryGoalLabels, type PersonalizedOnboardingProfile } from '../onboarding-v3/state/personalizedOnboarding';
+import { foodPreferencesPersistence } from '../state/foodPreferences';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { radius, shadows, spacing } from '../theme/okyoTheme';
-import { uiLog } from '../utils/uiDebug';
+import { colors, fontFamilies, radius, spacing } from '../theme/okyoTheme';
 
-type ProfileNavigation = NativeStackNavigationProp<RootStackParamList>;
-
-const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
+type Navigation = NativeStackNavigationProp<MainTabParamList>;
 
 export function ProfileScreen() {
-  const navigation = useNavigation<ProfileNavigation>();
+  const navigation = useNavigation<Navigation>();
+  const refreshPrimaryGoal = useOkyoStore((state) => state.refreshPrimaryGoal);
   const recipesById = useOkyoStore((state) => state.recipesById);
-  const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
-  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
-  const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
-  const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
-  const xp = useOkyoStore((state) => state.xp);
-  const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
-  const isPremium = useOkyoStore((state) => state.isPremium);
-
-  const safeSavedRecipes = resolveCanonicalRecipes(recipesById, savedRecipeIds);
-  const safeChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
-  const safeXp = getFiniteNumber(xp);
-  const level = Math.floor(safeXp / 100) + 1;
-  const xpIntoLevel = safeXp % 100;
-  const recipeSavings = safeSavedRecipes.reduce((total, recipe) => total + getFiniteNumber(recipe.estimatedSavings), 0);
-  const challengeSavings = safeChallenges.reduce((total, challenge) => total + getFiniteNumber(challenge.moneySaved), 0);
-  const estimatedSaved = getFiniteNumber(totalMoneySaved) + recipeSavings + challengeSavings;
-  const badgeCount = Array.isArray(unlockedBadges) ? unlockedBadges.length : 0;
-
-  const goTo = (screen: 'SavingsDashboardScreen' | 'RankingsScreen' | 'SettingsScreen' | 'PaywallScreen') => {
-    uiLog('ProfileScreen', 'open_row', { screen });
-    navigation.navigate(screen);
-  };
-
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerCard}>
-          <View style={styles.avatar}>
-            <KikoMascot pose="happy" size={82} />
-          </View>
-          <View style={styles.headerCopy}>
-            <Text style={styles.kicker}>Profile</Text>
-            <Text style={styles.title}>Your Okyo kitchen</Text>
-            <Text style={styles.body}>Level {level} · {safeXp} XP · {weeklyScanCount} scans this week</Text>
-          </View>
-        </View>
-
-        <View style={styles.progressCard}>
-          <View style={styles.progressHeader}>
-            <Text style={styles.progressLabel}>Level {level} progress</Text>
-            <Text style={styles.progressValue}>{xpIntoLevel}/100 XP</Text>
-          </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${xpIntoLevel}%` }]} />
-          </View>
-        </View>
-
-        <View style={styles.statGrid}>
-          <ProfileStat label="Saved" value={formatCurrency(estimatedSaved)} />
-          <ProfileStat label="Recipes" value={safeSavedRecipes.length.toString()} />
-          <ProfileStat label="Wins" value={safeChallenges.length.toString()} />
-          <ProfileStat label="Badges" value={badgeCount.toString()} />
-        </View>
-
-        <View style={styles.menu}>
-          <ProfileRow
-            icon={<StatsUpSquare color={colors.green} height={22} strokeWidth={2} width={22} />}
-            label="Savings"
-            meta="Kitchen ledger"
-            onPress={() => goTo('SavingsDashboardScreen')}
-          />
-          <ProfileRow
-            icon={<Trophy color={colors.coral} height={22} strokeWidth={2} width={22} />}
-            label="Rankings"
-            meta="XP and badges"
-            onPress={() => goTo('RankingsScreen')}
-          />
-          <ProfileRow
-            icon={<Crown color={colors.charcoal} height={22} strokeWidth={2} width={22} />}
-            label={isPremium ? 'Okyo Plus active' : 'Okyo Plus'}
-            meta={isPremium ? 'Unlimited scans enabled' : 'Unlimited scans preview'}
-            onPress={() => goTo('PaywallScreen')}
-          />
-          <ProfileRow
-            icon={<Settings color={colors.charcoal} height={22} strokeWidth={2} width={22} />}
-            label="Settings"
-            meta="App and local data"
-            onPress={() => goTo('SettingsScreen')}
-          />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
-  );
+  const [profile, setProfile] = useState<PersonalizedOnboardingProfile | null>(null);
+  const [dietaryCount, setDietaryCount] = useState(0);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { void Promise.all([onboardingV3Persistence.readPersonalizedProfile(), foodPreferencesPersistence.read()]).then(([stored, dietary]) => { setProfile(stored); setDietaryCount(dietary.allergies.length + dietary.restrictions.length + dietary.avoidances.length + dietary.dislikes.length); }); }, []);
+  const goBack = () => { if (navigation.canGoBack()) navigation.goBack(); };
+  const save = async () => { if (!profile) return; setSaving(true); try { await onboardingV3Persistence.writePersonalizedProfile(profile); await refreshPrimaryGoal(); Alert.alert('Profile saved'); } catch { Alert.alert('Couldn’t save profile', 'Try again.'); } finally { setSaving(false); } };
+  const recipes = Object.values(recipesById);
+  const totalSavings = recipes.reduce((sum, recipe) => sum + Math.max(0, recipe.estimatedSavings || 0), 0);
+  const totalProtein = recipes.reduce((sum, recipe) => sum + (recipe.nutritionEstimate?.proteinGrams || 0), 0);
+  const totalCarbs = recipes.reduce((sum, recipe) => sum + (recipe.nutritionEstimate?.carbohydratesGrams || 0), 0);
+  const totalFat = recipes.reduce((sum, recipe) => sum + (recipe.nutritionEstimate?.fatGrams || 0), 0);
+  if (!profile) return <View accessibilityRole="progressbar" style={styles.loading}><ActivityIndicator color={colors.coral} /></View>;
+  return <SafeAreaView style={styles.safeArea}><View style={styles.header}><Pressable accessibilityLabel="Go back" accessibilityRole="button" onPress={goBack} style={styles.back}><NavArrowLeft color={colors.ink} height={25} width={25} /></Pressable><Text style={styles.headerTitle}>Profile</Text></View><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}><View style={styles.hero}><View style={styles.avatar}><Image accessibilityLabel="Profile avatar" resizeMode="contain" source={require('../../assets/profile-avatar-bob.png')} style={styles.avatarImage} /></View><Text style={styles.heroTitle}>{profile.name || 'Your Okyo profile'}</Text><Text style={styles.heroMeta}>{profile.primaryGoal ? primaryGoalLabels[profile.primaryGoal] : 'Choose what Okyo should optimize for'}</Text></View><Text style={styles.label}>NAME</Text><TextInput accessibilityLabel="Name" maxLength={30} onChangeText={(name) => setProfile({ ...profile, name })} placeholder="Your name" placeholderTextColor={colors.muted} style={styles.input} value={profile.name} /><Text style={styles.label}>PRIMARY GOAL</Text><View accessibilityLabel={`Primary goal: ${profile.primaryGoal ? primaryGoalLabels[profile.primaryGoal] : 'Not set'}`} style={styles.goalReadOnly}><Text style={styles.goalText}>{profile.primaryGoal ? primaryGoalLabels[profile.primaryGoal] : 'Not set'}</Text><Text style={styles.goalHint}>Set during onboarding</Text></View><Text style={styles.label}>YOUR OKYO TOTALS</Text><View style={styles.statsGrid}><Stat label="Estimated saved" value={`$${totalSavings.toFixed(0)}`} /><Stat label="Protein" value={`${Math.round(totalProtein)}g`} /><Stat label="Carbs" value={`${Math.round(totalCarbs)}g`} /><Stat label="Fat" value={`${Math.round(totalFat)}g`} /></View><Text style={styles.label}>FOOD PREFERENCES</Text><Pressable accessibilityRole="button" onPress={() => navigation.navigate('DietaryPreferencesScreen')} style={styles.row}><View><Text style={styles.rowTitle}>Dietary preferences</Text><Text style={styles.rowBody}>{dietaryCount ? `${dietaryCount} saved preferences` : 'None set'}</Text></View><NavArrowRight color={colors.muted} height={19} width={19} /></Pressable><Pressable accessibilityRole="button" disabled={saving} onPress={() => void save()} style={styles.save}>{saving ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.saveText}>Save profile</Text>}</Pressable></ScrollView></SafeAreaView>;
 }
-
-function ProfileStat({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.statCard}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text adjustsFontSizeToFit numberOfLines={1} style={styles.statValue}>{value}</Text>
-    </View>
-  );
-}
-
-function ProfileRow({
-  icon,
-  label,
-  meta,
-  onPress,
-}: {
-  icon: ReactNode;
-  label: string;
-  meta: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable accessibilityRole="button" style={({ pressed }) => [styles.row, pressed ? styles.pressed : null]} onPress={onPress}>
-      <View style={styles.rowIcon}>{icon}</View>
-      <View style={styles.rowCopy}>
-        <Text style={styles.rowLabel}>{label}</Text>
-        <Text style={styles.rowMeta}>{meta}</Text>
-      </View>
-      <NavArrowRight color={colors.muted} height={21} strokeWidth={2} width={21} />
-    </Pressable>
-  );
-}
-
-function getFiniteNumber(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-const styles = StyleSheet.create({
-  safeArea: {
-    backgroundColor: colors.background,
-    flex: 1,
-  },
-  screenContent: {
-    padding: spacing.screen,
-    paddingBottom: 132,
-  },
-  headerCard: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 16,
-    marginTop: 8,
-    padding: 20,
-  },
-  avatar: {
-    alignItems: 'center',
-    backgroundColor: colors.cream,
-    borderRadius: 32,
-    height: 104,
-    justifyContent: 'center',
-    width: 104,
-  },
-  headerCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  kicker: {
-    ...typography.caption,
-    color: colors.coral,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  title: {
-    ...typography.title,
-  },
-  body: {
-    ...typography.body,
-    marginTop: 8,
-  },
-  progressCard: {
-    marginTop: 18,
-    padding: 18,
-  },
-  progressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  progressLabel: {
-    color: colors.charcoal,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  progressValue: {
-    color: colors.muted,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  progressTrack: {
-    backgroundColor: colors.cream,
-    borderRadius: radius.pill,
-    height: 10,
-    marginTop: 14,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    backgroundColor: colors.coral,
-    borderRadius: radius.pill,
-    height: '100%',
-  },
-  statGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 18,
-  },
-  statCard: {
-    minHeight: 86,
-    padding: 16,
-    width: '48%',
-  },
-  statLabel: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.9,
-    textTransform: 'uppercase',
-  },
-  statValue: {
-    color: colors.charcoal,
-    fontSize: 25,
-    fontWeight: '800',
-    letterSpacing: -0.4,
-    marginTop: 9,
-  },
-  menu: {
-    marginTop: spacing.section,
-  },
-  row: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 14,
-    minHeight: 78,
-    paddingHorizontal: 16,
-  },
-  rowIcon: {
-    alignItems: 'center',
-    backgroundColor: colors.cream,
-    borderRadius: 18,
-    height: 38,
-    justifyContent: 'center',
-    width: 38,
-  },
-  rowCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  rowLabel: {
-    color: colors.charcoal,
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  rowMeta: {
-    ...typography.caption,
-    marginTop: 3,
-  },
-  pressed: {
-    opacity: 0.82,
-    transform: [{ scale: 0.99 }],
-  },
-});
+function Stat({ label, value }: { label: string; value: string }) { return <View style={styles.stat}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text></View>; }
+const styles = StyleSheet.create({ safeArea: { backgroundColor: colors.background, flex: 1 }, loading: { alignItems: 'center', backgroundColor: colors.background, flex: 1, justifyContent: 'center' }, header: { alignItems: 'center', flexDirection: 'row', gap: 8, paddingHorizontal: spacing.gutter, paddingVertical: 10 }, back: { alignItems: 'center', height: 44, justifyContent: 'center', marginLeft: -10, width: 44 }, headerTitle: { color: colors.ink, fontFamily: fontFamilies.extraBold, fontSize: 22 }, content: { paddingBottom: 150, paddingHorizontal: spacing.gutter }, hero: { alignItems: 'center', paddingVertical: 18 }, avatar: { alignItems: 'center', backgroundColor: colors.coralSoft, borderRadius: 42, height: 84, justifyContent: 'center', overflow: 'hidden', width: 84 }, avatarImage: { height: 84, width: 84 }, heroTitle: { color: colors.ink, fontFamily: fontFamilies.extraBold, fontSize: 24, marginTop: 10 }, heroMeta: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 14, marginTop: 3 }, label: { color: colors.muted, fontFamily: fontFamilies.bold, fontSize: 11.5, letterSpacing: 0.8, marginBottom: 8, marginLeft: 4, marginTop: 24 }, input: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.panel, borderWidth: 1, color: colors.ink, fontFamily: fontFamilies.body, fontSize: 16, minHeight: 52, paddingHorizontal: 15 }, goalReadOnly: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.panel, borderWidth: 1, minHeight: 64, justifyContent: 'center', paddingHorizontal: 15 }, goalHint: { color: colors.muted, fontFamily: fontFamilies.body, fontSize: 12, marginTop: 3 }, statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 }, stat: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 16, borderWidth: 1, flexBasis: '47%', flexGrow: 1, minHeight: 74, justifyContent: 'center', paddingHorizontal: 14 }, statValue: { color: colors.ink, fontFamily: fontFamilies.extraBold, fontSize: 22 }, statLabel: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 12, marginTop: 3 }, goalText: { color: colors.body, fontFamily: fontFamilies.bold, fontSize: 14 }, row: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.panel, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 64, padding: 15 }, rowTitle: { color: colors.ink, fontFamily: fontFamilies.bold, fontSize: 15 }, rowBody: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 12.5, marginTop: 3 }, save: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radius.button, justifyContent: 'center', marginTop: 28, minHeight: 52 }, saveText: { color: colors.surface, fontFamily: fontFamilies.extraBold, fontSize: 16 } });

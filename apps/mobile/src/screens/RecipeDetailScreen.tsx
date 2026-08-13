@@ -5,34 +5,50 @@ import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Cart,
+  CheckCircle,
   Clock,
-  Cutlery,
   FireFlame,
-  Leaf,
-  MoneySquare,
+  InfoCircle,
   NavArrowLeft,
+  NavArrowRight,
   ShareAndroid,
   User,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Animated,
   Image,
   Alert,
+  Keyboard,
+  LayoutAnimation,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
+import { useKeepAwake } from 'expo-keep-awake';
+
+const FEEDBACK_REASONS = {
+  okay: ['A little bland', 'Too rich', 'Took too long', 'Too complicated', 'Too expensive', 'Portions felt off', 'Texture wasn’t great', 'Instructions could be clearer', 'Something else'],
+  disliked: ['Didn’t taste good', 'Too spicy', 'Too salty', 'Too sweet', 'Too bland', 'Texture was wrong', 'Too complicated', 'Took too long', 'Too expensive', 'Ingredients were hard to find', 'Recipe didn’t turn out right', 'Something else'],
+} as const;
 
 import { analyticsEvents, track } from '../analytics/track';
+import { CORRECTION_FAILURE_MESSAGE, correctScanRecipe } from '../api/client';
 import { FoodImage } from '../components/FoodImage';
-import { KikoMascot } from '../components/KikoMascot';
 import { colors, fontFamilies } from '../components/OkyoUI';
 import { RecipeLikeButton } from '../components/RecipeLikeButton';
 import { RecipeNutritionCards } from '../components/RecipeNutritionCards';
+import { RecipeCostSummary, RecipeQuickFacts } from '../components/RecipeAssistantOverview';
+import { RecipeIngredientsAssistant } from '../components/RecipeIngredientsAssistant';
+import { RecipePrimaryActions } from '../components/RecipePrimaryActions';
+import { FoodSafetyNotice } from '../components/FoodSafetyNotice';
 import {
   getSafeRecipeMode,
   isRecipeMode,
@@ -46,15 +62,25 @@ import {
   type RecipePresentationMode,
 } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { findFoodPreferenceConflicts, useFoodPreferences } from '../state/foodPreferences';
+import { foodPreferencesPersistence, toApiFoodPreferences } from '../state/foodPreferences';
+import { onboardingV3Persistence } from '../onboarding-v3/state/onboardingV3Persistence';
+import { buildGoalContext } from '../onboarding-v3/state/goalContext';
 import { resolveActiveCookingStep } from '../state/activeCooking';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
-import { getRealScanImageUri, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { guidedCookingTypography } from '../theme/guidedCookingTypography';
+import { getRealScanImageUri, getRecipeImageSource, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { formatRecipeDuration, getRecipeTiming } from '../utils/recipeIntegrity';
-import { buildGuidedCookingSteps } from '../utils/guidedCookingSteps';
+import { buildGuidedCookingSteps, getGuidedIngredientChipLabel } from '../utils/guidedCookingSteps';
 import { getNextGuidedCookingPreview } from '../utils/guidedCookingPreview';
 import { getConciseGuidedInstruction } from '../utils/guidedInstruction';
+import { getGuidedStepDensity } from '../utils/guidedStepDensity';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
+import { getCompactRecipeDescription, getCookingCtaLabel } from '../utils/recipePresentation';
+import { getHomeResetState } from '../utils/scanControllerUtils';
+import { buildCorrectionRequest, getRecipeCorrectionSourceId } from '../utils/recipeCorrection';
+import { useReduceMotion } from '../hooks/useAccessibilityPreferences';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
 type RecipeDetailNavigation = CompositeNavigationProp<
@@ -74,27 +100,38 @@ export function RecipeDetailScreen() {
   const routeMode = route.params?.mode;
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
   const setRecipePresentationMode = useOkyoStore((state) => state.setRecipePresentationMode);
+  const correctRecipe = useOkyoStore((state) => state.correctRecipe);
+  const scanSessionId = useOkyoStore((state) => state.scanSessionId);
   const toggleRecipeLiked = useOkyoStore((state) => state.toggleRecipeLiked);
   const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
   const recipesById = useOkyoStore((state) => state.recipesById);
   const addRecipeToGrocery = useOkyoStore((state) => state.addRecipeToGrocery);
+  const toggleIngredientInGrocery = useOkyoStore((state) => state.toggleIngredientInGrocery);
+  const groceryRecipeIds = useOkyoStore((state) => state.groceryRecipeIds);
+  const groceryIngredientSelections = useOkyoStore((state) => state.groceryIngredientSelections ?? {});
+  const recipeServingOverrides = useOkyoStore((state) => state.recipeServingOverrides ?? {});
+  const setRecipeServingOverride = useOkyoStore((state) => state.setRecipeServingOverride);
   const startCookingRecipe = useOkyoStore((state) => state.startCookingRecipe);
   const activeCookingSession = useOkyoStore((state) => state.activeCookingSession);
-  const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
+  const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
+  const [isUpdatingStyle, setIsUpdatingStyle] = useState(false);
+  const [styleError, setStyleError] = useState<string | null>(null);
+  const getRecipePresentationVariant = useOkyoStore((state) => state.getRecipePresentationVariant);
+  const cacheRecipePresentationVariant = useOkyoStore((state) => state.cacheRecipePresentationVariant);
   const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId);
   const activeCookingRecipe = resolveCanonicalRecipe(recipesById, activeCookingSession?.recipeId);
   const selectedMode = getSafeRecipeMode(recipe?.selectedMode ?? routeMode ?? storeSelectedMode);
   const scanResult = recipe?.scanResult ?? null;
   const selectedScanImage = recipe?.originalImage ?? null;
-  const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
+  const restaurantPrice = recipe?.restaurantPriceEstimate ?? scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
   const canShowSavings = restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
   const selectedPresentationMode = recipe?.selectedPresentationMode ?? 'Normal';
   const ingredientGroups = getSafeIngredientGroups(recipe);
   const equipment = getSafeTextList(recipe?.equipment);
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
-  const displayDescription = cleanDisplayText(recipe?.description ?? '');
+  const displayDescription = getCompactRecipeDescription(cleanDisplayText(recipe?.description ?? ''));
   const ingredientCount = getIngredientCount(recipe);
   const fallbackIngredients = (Array.isArray(recipe?.ingredients) ? recipe.ingredients : [])
     .filter((ingredient) => ingredient.name.trim());
@@ -104,10 +141,18 @@ export function RecipeDetailScreen() {
       ? [{ component: '', items: fallbackIngredients }]
       : [];
   const recipeTiming = recipe ? getRecipeTiming(recipe) : { handsOnMinutes: 0, waitingMinutes: 0, totalMinutes: 0 };
-  const perServingCost = recipe && recipe.servings > 0 ? recipe.estimatedHomemadeCost / recipe.servings : null;
   const recipeImageUrl = getRecipeImageUrl(recipe);
   const recipeImageStatus = getRecipeImageStatus(recipe);
+  const displayServings = recipe ? (recipeServingOverrides[recipe.id] ?? recipe.servings) : 2;
+  const selectedIngredientIds = recipe
+    ? getSelectedIngredientIds(recipe, groceryRecipeIds, groceryIngredientSelections)
+    : [];
   const isLiked = Boolean(recipe && savedRecipeIds.includes(recipe.id));
+  const { preferences: foodPreferences } = useFoodPreferences();
+  const foodConflicts = useMemo(() => recipe && foodPreferences
+    ? findFoodPreferenceConflicts(recipe.ingredients.map((ingredient) => ingredient.name), foodPreferences)
+    : [], [foodPreferences, recipe]);
+  const seriousFoodConflicts = foodConflicts.filter((item) => item.category === 'allergy' || item.category === 'restriction');
 
   useEffect(() => {
     uiLog('RecipeDetailScreen', 'enter', { recipeId: routeRecipeId, routeMode });
@@ -149,9 +194,49 @@ export function RecipeDetailScreen() {
     navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 
-  const choosePresentationMode = (mode: RecipePresentationMode) => {
-    if (recipe && mode !== recipe.selectedPresentationMode) {
-      setRecipePresentationMode(recipe.id, mode);
+  const choosePresentationMode = async (mode: RecipePresentationMode) => {
+    if (recipe && mode !== recipe.selectedPresentationMode && !isUpdatingStyle) {
+      void Haptics.selectionAsync().catch(() => undefined);
+      setStyleError(null);
+      const baseRecipe = recipe.baseRecipe ?? recipe;
+      const baseScan = recipe.baseScanResult ?? recipe.scanResult;
+      if (mode === 'Normal') {
+        if (baseScan && correctRecipe(recipe.id, baseRecipe, baseScan)) {
+          setRecipePresentationMode(recipe.id, 'Normal');
+        } else {
+          setStyleError(CORRECTION_FAILURE_MESSAGE);
+        }
+      } else {
+        const cachedVariant = getRecipePresentationVariant(recipe.id, mode);
+        setIsUpdatingStyle(true);
+        try {
+          if (cachedVariant) {
+            if (!correctRecipe(recipe.id, cachedVariant.recipe, cachedVariant.scanResult)) throw new Error('style update failed');
+          } else {
+            const direction = mode === 'Lighter'
+              ? 'Create a lighter version of this recipe while preserving the core dish. Reduce calories where practical and update ingredients, quantities, instructions, nutrition, cost, and relevant metadata.'
+              : mode === 'More Protein'
+                ? 'Create a higher-protein version of this recipe while preserving its cuisine, dietary restrictions, allergies, and existing ingredient logic. Use context-appropriate proteins such as beans, tofu, dairy, eggs, seeds, or more of an existing protein where appropriate; do not blindly add meat. Update ingredients, quantities, instructions, nutrition, cost, and relevant metadata.'
+                : 'Create a healthier version of this recipe while preserving the identity of the dish. Update ingredients, quantities, instructions, nutrition, cost, and relevant metadata.';
+            // Always adapt from the immutable original, not the currently displayed
+            // variant, so switching styles repeatedly never compounds drift.
+            const preferences = await foodPreferencesPersistence.read();
+            const profile = await onboardingV3Persistence.readPersonalizedProfile();
+            const result = await correctScanRecipe(getRecipeCorrectionSourceId(baseRecipe), {
+              ...buildCorrectionRequest({ canonicalRecipeId: recipe.id, correctionNote: direction, currentRecipe: baseRecipe, expectedSourceRecipeId: getRecipeCorrectionSourceId(baseRecipe), goalContext: buildGoalContext(profile), mode: selectedMode, scanSessionId }),
+              ...toApiFoodPreferences(preferences),
+            });
+            const updatedRecipe = result.recipe ?? result.recipes?.[0];
+            if (!updatedRecipe || !result.scan || !correctRecipe(recipe.id, updatedRecipe, result.scan)) throw new Error('style update failed');
+            cacheRecipePresentationVariant(recipe.id, mode, updatedRecipe, result.scan);
+          }
+          setRecipePresentationMode(recipe.id, mode);
+        } catch {
+          setStyleError(CORRECTION_FAILURE_MESSAGE);
+        } finally {
+          setIsUpdatingStyle(false);
+        }
+      }
     }
     uiLog('RecipeDetailScreen', 'choose_mode', { mode });
     track(analyticsEvents.MODE_SELECTED, {
@@ -198,7 +283,7 @@ export function RecipeDetailScreen() {
     if (!recipe) {
       return;
     }
-    navigation.navigate('ResultSummaryScreen', { recipeId: recipe.id });
+    navigation.navigate('MainTabs', { screen: 'ResultSummaryScreen', params: { recipeId: recipe.id } });
   };
 
   const openGroceryList = () => {
@@ -211,6 +296,20 @@ export function RecipeDetailScreen() {
 
   const openCookingSteps = () => {
     if (!recipe) {
+      return;
+    }
+
+    if (seriousFoodConflicts.length > 0) {
+      const conflict = seriousFoodConflicts[0];
+      Alert.alert(
+        'Before you cook',
+        `This recipe still includes ${conflict.ingredient}. You marked ${conflict.preference} as ${conflict.category === 'allergy' ? 'an allergy' : 'a dietary restriction'}.`,
+        [
+          { text: 'Go back', style: 'cancel' },
+          { text: 'Review recipe' },
+          { text: 'Make this work for me', onPress: () => navigation.navigate('MainTabs', { screen: 'ResultSummaryScreen', params: { recipeId: recipe.id, customizeInstruction: `Replace every ingredient that conflicts with my ${conflict.preference} ${conflict.category}. Preserve the dish while updating ingredients, steps, nutrition, timing, and cost.` } }) },
+        ],
+      );
       return;
     }
 
@@ -271,6 +370,7 @@ export function RecipeDetailScreen() {
         <View style={styles.heroCard}>
           <FoodImage
             fallbackLabel="Recipe image"
+            imageSource={getRecipeImageSource(recipe)}
             imageStatus={recipeImageStatus}
             imageUrl={recipeImageUrl}
             showFallbackLabel
@@ -289,92 +389,61 @@ export function RecipeDetailScreen() {
               onToggle={toggleSelectedRecipeLike}
               style={styles.circleSaveButton}
             />
+            <Pressable accessibilityLabel="Share recipe" accessibilityRole="button" onPress={openShareRecipe} style={({ pressed }) => [styles.circleShareButton, pressed ? styles.pressed : null]}>
+              <ShareAndroid color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />
+            </Pressable>
           </FoodImage>
 
           <View style={styles.overviewPanel}>
             <Text
               adjustsFontSizeToFit
               minimumFontScale={0.82}
-              numberOfLines={2}
+              numberOfLines={1}
               style={styles.recipeTitle}
             >
               {displayTitle}
             </Text>
-            <View style={styles.savingsMiniPill}>
-              <Leaf color={colors.green} height={15} strokeWidth={2.2} width={15} />
-              <Text style={styles.savingsMiniText}>
-                {canShowSavings
-                  ? `You save ${formatCurrency(recipe.estimatedSavings)}`
-                  : `Home est. ${formatCurrency(recipe.estimatedHomemadeCost)}`}
-              </Text>
-            </View>
-
-            <View style={styles.quickStatsRow}>
-              <QuickStat label="Total" value={formatRecipeDuration(recipeTiming.totalMinutes)} icon={<Clock color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
-              <QuickStat label="Hands-on" value={formatRecipeDuration(recipeTiming.handsOnMinutes)} icon={<FireFlame color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
-              <QuickStat label="Waiting" value={formatRecipeDuration(recipeTiming.waitingMinutes)} icon={<Clock color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
-              <QuickStat label="Servings" value={`${recipe.servings}`} icon={<User color={colors.charcoal} height={19} strokeWidth={2.1} width={19} />} />
-            </View>
-
-            <Text style={styles.description}>{displayDescription}</Text>
-            <Pressable
-              accessibilityLabel="Edit recipe"
-              accessibilityRole="button"
-              onPress={openRecipeEditor}
-              style={({ pressed }) => [styles.editRecipeAction, pressed ? styles.pressed : null]}
-            >
-              <Text style={styles.editRecipeActionText}>Edit recipe</Text>
-            </Pressable>
+            <Text numberOfLines={2} style={styles.description}>{displayDescription}</Text>
+            <RecipeQuickFacts recipe={recipe} />
+            <FoodSafetyNotice
+              conflicts={foodConflicts}
+              onAdapt={() => navigation.navigate('MainTabs', { screen: 'ResultSummaryScreen', params: { recipeId: recipe.id, customizeInstruction: 'Replace every ingredient that conflicts with my saved allergies and dietary restrictions while preserving the dish. Update ingredients, steps, nutrition, timing, and cost.' } })}
+            />
+            <RecipePrimaryActions
+              onCook={openCookingSteps}
+              onCustomize={openRecipeEditor}
+              onGroceries={openGroceryList}
+            />
             <RecipeNutritionCards nutrition={recipe.nutritionEstimate} />
+            <RecipeCostSummary recipe={recipe} restaurantPrice={restaurantPrice || undefined} servings={displayServings} />
 
             <View style={styles.modeSection}>
               <Text style={styles.sectionSmallTitle}>Choose your style</Text>
               <RecipeModeTabs
                 selectedMode={selectedPresentationMode}
-                onSelectMode={choosePresentationMode}
+                isUpdating={isUpdatingStyle}
+                onSelectMode={(mode) => void choosePresentationMode(mode)}
               />
-              <Text style={styles.modeDisclosure}>
-                Recipe adaptations are coming soon. This choice does not change ingredients or nutrition yet.
-              </Text>
+              {styleError ? (
+                <Text accessibilityLiveRegion="polite" style={styles.modeError}>{styleError}</Text>
+              ) : null}
             </View>
 
-            <View style={styles.previewSection}>
-              <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionSmallTitle}>Ingredients</Text>
-                <Text style={styles.sectionCount}>{ingredientCount} items</Text>
-              </View>
-              {displayIngredientGroups.map((group) => (
-                <View key={`${recipe.id}-${group.component || 'all'}`} style={styles.ingredientGroupCard}>
-                  {group.component ? (
-                    <Text style={styles.ingredientGroupTitle}>{group.component}</Text>
-                  ) : null}
-                  {group.items.map((item, itemIndex) => (
-                    <View
-                      key={`${recipe.id}-${group.component}-${item.name}`}
-                      style={[
-                        styles.ingredientRow,
-                        itemIndex === group.items.length - 1 ? styles.ingredientRowLast : null,
-                      ]}
-                    >
-                      <IngredientAvatar name={item.name} />
-                      <View style={styles.ingredientTextBlock}>
-                        <Text style={styles.ingredientName}>{cleanDisplayText(item.name)}</Text>
-                      </View>
-                      {item.quantity?.trim() ? (
-                        <Text style={styles.ingredientQty}>{cleanDisplayText(item.quantity)}</Text>
-                      ) : null}
-                    </View>
-                  ))}
-                </View>
-              ))}
-            </View>
+            <RecipeIngredientsAssistant
+              recipe={recipe}
+              servings={displayServings}
+              selectedIngredientIds={selectedIngredientIds}
+              onServingsChange={(servings) => setRecipeServingOverride(recipe.id, servings)}
+              onAddIngredient={(ingredient) => {
+                toggleIngredientInGrocery(recipe.id, ingredient.name);
+              }}
+            />
 
             {equipment.length > 0 ? (
               <InfoCard title="Equipment you'll need">
-                <View style={styles.equipmentRow}>
-                  {equipment.slice(0, 4).map((item) => (
-                    <View key={item} style={styles.equipmentCard}>
-                      <Cutlery color={colors.coralDark} height={22} strokeWidth={2} width={22} />
+                <View style={styles.equipmentGrid}>
+                  {equipment.map((item) => (
+                    <View key={item} style={[styles.equipmentCard, { width: `${100 / equipmentColumns(equipment.length)}%` }]}>
                       <Text numberOfLines={2} style={styles.equipmentText}>{cleanDisplayText(item)}</Text>
                     </View>
                   ))}
@@ -382,35 +451,16 @@ export function RecipeDetailScreen() {
               </InfoCard>
             ) : null}
 
-            <View style={styles.savingsCard}>
-              <View style={styles.savingsCopy}>
-                <Text style={styles.savingsLabel}>{canShowSavings ? 'Estimated savings' : 'Homemade estimate'}</Text>
-                <Text style={styles.savingsSubLabel}>{canShowSavings ? 'You save' : 'Estimated grocery cost'}</Text>
-                <Text
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.75}
-                  numberOfLines={1}
-                  style={styles.savingsValue}
-                >
-                  {formatCurrency(canShowSavings ? recipe.estimatedSavings : recipe.estimatedHomemadeCost)}
-                </Text>
-                <Text style={styles.savingsNote}>
-                  {canShowSavings
-                    ? `vs. restaurant ${formatCurrency(restaurantPrice)}`
-                    : 'Add what you paid from the result screen to estimate savings.'}
-                </Text>
-              </View>
-              <View style={styles.savingsIconBubble}>
-                <MoneySquare color={colors.green} height={42} strokeWidth={1.9} width={42} />
-              </View>
-            </View>
+            <Pressable
+              accessibilityRole="button"
+              onPress={openCookingSteps}
+              style={({ pressed }) => [styles.bottomCookButton, pressed ? styles.pressed : null]}
+            >
+              <Text style={styles.bottomCookButtonText}>
+                {getCookingCtaLabel(recipe, activeCookingSession?.recipeId)}
+              </Text>
+            </Pressable>
 
-            <PrimaryAction label={activeCookingSession?.recipeId === recipe.id ? 'Continue Cooking' : 'Start Cooking'} onPress={openCookingSteps} />
-            <View style={styles.secondaryActionsRow}>
-              <RecipeLikeButton isLiked={isLiked} onToggle={toggleSelectedRecipeLike} />
-              <SecondaryIconAction icon={<Cart color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Add to Grocery" onPress={openGroceryList} />
-              <SecondaryIconAction icon={<ShareAndroid color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />} label="Share" onPress={openShareRecipe} />
-            </View>
           </View>
         </View>
       </ScrollView>
@@ -424,8 +474,6 @@ export function RecipeStepsScreen() {
   const routeRecipeId = route.params?.recipeId;
   const routeMode = route.params?.mode;
   const storeSelectedMode = useOkyoStore((state) => state.selectedMode);
-  const toggleRecipeLiked = useOkyoStore((state) => state.toggleRecipeLiked);
-  const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
   const recipesById = useOkyoStore((state) => state.recipesById);
   const hasHydrated = useOkyoStore((state) => state.hasHydrated);
   const completeRecipe = useOkyoStore((state) => state.completeRecipe);
@@ -433,33 +481,34 @@ export function RecipeStepsScreen() {
   const syncCookingStepCount = useOkyoStore((state) => state.syncCookingStepCount);
   const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
   const activeCookingSession = useOkyoStore((state) => state.activeCookingSession);
-  const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
-  const unlockBadge = useOkyoStore((state) => state.unlockBadge);
+  const recipeFeedbackById = useOkyoStore((state) => state.recipeFeedbackById ?? {});
+  const saveRecipeFeedback = useOkyoStore((state) => state.saveRecipeFeedback);
   const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId);
   const selectedMode = getSafeRecipeMode(routeMode ?? recipe?.selectedMode ?? storeSelectedMode);
-  const scanResult = recipe?.scanResult ?? null;
   const selectedScanImage = recipe?.originalImage ?? null;
-  const restaurantPrice = scanResult?.restaurantPrice ?? getEstimatedRestaurantPrice(recipe);
-  const canShowSavings = Boolean(recipe) && restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
   const guidedSteps = useMemo(() => buildGuidedCookingSteps(recipe), [recipe]);
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
   const recipeImageUrl = getRecipeImageUrl(recipe);
   const completionImageUri = recipe?.origin === 'scan'
     ? getRealScanImageUri(recipe.originalImage)
-    : null;
+    : recipeImageUrl;
   const [activeStepIndex, setActiveStepIndex] = useState(() => activeCookingSession?.recipeId === routeRecipeId
     ? activeCookingSession?.currentStepIndex ?? 0
     : 0);
   const [showCompletion, setShowCompletion] = useState(route.params?.completion === true);
-  const isLiked = Boolean(recipe && savedRecipeIds.includes(recipe.id));
+  const [feedbackRating, setFeedbackRating] = useState<'loved' | 'okay' | 'disliked' | null>(null);
+  const [feedbackReasons, setFeedbackReasons] = useState<string[]>([]);
+  const [feedbackNote, setFeedbackNote] = useState('');
+  const feedbackToastY = useRef(new Animated.Value(-64)).current;
+  const feedbackToastRun = useRef(0);
+  const [feedbackToastVisible, setFeedbackToastVisible] = useState(false);
   const safeActiveStepIndex = guidedSteps.length > 0
     ? Math.max(0, Math.min(activeStepIndex, guidedSteps.length - 1))
     : 0;
   const activeStep = resolveActiveCookingStep(guidedSteps, safeActiveStepIndex);
+  const stepDensity = activeStep ? getGuidedStepDensity(activeStep) : 'medium';
   const nextStepPreview = getNextGuidedCookingPreview(guidedSteps, safeActiveStepIndex);
   const progress = guidedSteps.length > 0 ? ((safeActiveStepIndex + 1) / guidedSteps.length) * 100 : 0;
-  const guidedTotalTime = recipe ? getRecipeTiming(recipe).totalMinutes : 0;
-
   useEffect(() => {
     uiLog('RecipeStepsScreen', 'enter', { recipeId: routeRecipeId, routeMode, selectedMode });
     const _traceUri = recipeImageUrl ?? null;
@@ -520,6 +569,69 @@ export function RecipeStepsScreen() {
     setShowCompletion(route.params?.completion === true);
   }, [route.params?.completion, routeRecipeId]);
 
+  useEffect(() => {
+    const savedFeedback = recipe ? recipeFeedbackById[recipe.id] : undefined;
+    setFeedbackRating(savedFeedback?.rating ?? null);
+    setFeedbackReasons(savedFeedback?.reasons ?? []);
+    setFeedbackNote(savedFeedback?.note ?? '');
+  }, [recipe?.id, recipeFeedbackById]);
+
+  const showFeedbackToast = useCallback(() => {
+    const run = ++feedbackToastRun.current;
+    setFeedbackToastVisible(true);
+    feedbackToastY.stopAnimation();
+    feedbackToastY.setValue(-64);
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(feedbackToastY, { duration: 220, toValue: 0, useNativeDriver: true }),
+      ]),
+      Animated.delay(1200),
+      Animated.timing(feedbackToastY, { duration: 220, toValue: -64, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished && feedbackToastRun.current === run) setFeedbackToastVisible(false);
+    });
+  }, [feedbackToastY]);
+
+  const persistFeedback = useCallback((rating: 'loved' | 'okay' | 'disliked', reasons: string[], note: string) => {
+    if (!recipe) return;
+    saveRecipeFeedback(recipe.id, { rating, reasons, note: note.trim() || undefined });
+  }, [recipe, saveRecipeFeedback]);
+
+  const selectFeedbackRating = (rating: 'loved' | 'okay' | 'disliked') => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const allowedReasons = rating === 'loved' ? [] : FEEDBACK_REASONS[rating];
+    const nextReasons = feedbackReasons.filter((reason) =>
+      allowedReasons.some((allowedReason) => allowedReason === reason),
+    );
+    const nextNote = rating === 'loved' ? '' : feedbackNote;
+    setFeedbackRating(rating);
+    setFeedbackReasons(nextReasons);
+    setFeedbackNote(nextNote);
+    persistFeedback(rating, nextReasons, nextNote);
+    if (rating === 'loved') showFeedbackToast();
+  };
+
+  const toggleFeedbackReason = (reason: string) => {
+    const rating = feedbackRating ?? (recipe ? recipeFeedbackById[recipe.id]?.rating : undefined);
+    if (!rating || rating === 'loved') return;
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const nextReasons = feedbackReasons.includes(reason)
+      ? feedbackReasons.filter((item) => item !== reason)
+      : [...feedbackReasons, reason];
+    const nextNote = reason === 'Something else' && feedbackReasons.includes(reason) ? '' : feedbackNote;
+    setFeedbackReasons(nextReasons);
+    setFeedbackNote(nextNote);
+    persistFeedback(rating, nextReasons, nextNote);
+  };
+
+  const saveCustomFeedback = () => {
+    const rating = feedbackRating ?? (recipe ? recipeFeedbackById[recipe.id]?.rating : undefined);
+    if (!rating || rating === 'loved' || !feedbackNote.trim()) return;
+    Keyboard.dismiss();
+    persistFeedback(rating, feedbackReasons, feedbackNote);
+    showFeedbackToast();
+  };
+
   const setCompletionVisible = (visible: boolean) => {
     setShowCompletion(visible);
     navigation.setParams({ completion: visible });
@@ -533,27 +645,6 @@ export function RecipeStepsScreen() {
     navigation.navigate('HomeScreen');
   };
 
-  const toggleSelectedRecipeLike = () => {
-    if (!recipe) {
-      return;
-    }
-
-    uiLog('RecipeStepsScreen', isLiked ? 'unlike_recipe' : 'like_recipe', {
-      recipeId: recipe.id,
-    });
-    toggleRecipeLiked(recipe.id);
-    if (!isLiked) {
-      awardXPOnce(`save-recipe-${recipe.id}`, 5);
-      unlockBadge('first-dupe');
-      track(analyticsEvents.RECIPE_SAVED, {
-        dishName: recipe.title,
-        mode: recipe.mode,
-        savings: canShowSavings ? recipe.estimatedSavings : 0,
-        screen: 'RecipeStepsScreen',
-      });
-    }
-  };
-
   const openShareRecipe = () => {
     if (!recipe) {
       return;
@@ -564,6 +655,21 @@ export function RecipeStepsScreen() {
       mode: selectedMode,
       recipeId: recipe.id,
     });
+  };
+
+  const resetToHome = () => {
+    const rootNavigation = navigation.getParent<NativeStackNavigationProp<RootStackParamList>>();
+    if (rootNavigation) {
+      rootNavigation.reset(getHomeResetState());
+      return;
+    }
+
+    navigation.navigate('HomeScreen');
+  };
+
+  const goHomeFromCompletion = () => {
+    setCompletionVisible(false);
+    resetToHome();
   };
 
   const goToStep = (nextIndex: number) => {
@@ -615,9 +721,18 @@ export function RecipeStepsScreen() {
   }
 
   if (showCompletion) {
+    const selectedFeedbackRating = feedbackRating ?? recipeFeedbackById[recipe.id]?.rating ?? null;
+    const visibleReasons = selectedFeedbackRating === 'okay' || selectedFeedbackRating === 'disliked'
+      ? FEEDBACK_REASONS[selectedFeedbackRating]
+      : [];
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.guidedScreenContent}>
+          {feedbackToastVisible ? (
+            <Animated.View pointerEvents="none" style={[styles.feedbackToast, { opacity: feedbackToastY.interpolate({ inputRange: [-64, 0], outputRange: [0, 1] }), transform: [{ translateY: feedbackToastY }] }]}>
+              <Text style={styles.feedbackToastText}>Saved!</Text>
+            </Animated.View>
+          ) : null}
           <View style={styles.simpleTopBar}>
             <Pressable
               accessibilityRole="button"
@@ -631,22 +746,52 @@ export function RecipeStepsScreen() {
 
           <ScrollView contentContainerStyle={styles.completionScrollContent} showsVerticalScrollIndicator={false}>
             <View style={styles.completionCard}>
-              <Text style={styles.completionEyebrow}>You made it.</Text>
               <CompletionRecipeImage uri={completionImageUri} />
-              <KikoMascot pose="celebrating" size={68} style={styles.completionMascot} />
-              <Text numberOfLines={2} style={styles.completionTitle}>{displayTitle}</Text>
-              <Text style={styles.completionBody}>
-                Nice work. Your recipe is ready to enjoy.
-              </Text>
-              <PrimaryAction
-                label="Back to Recipe"
-                onPress={() => navigation.navigate('RecipeDetailScreen', {
-                  mode: selectedMode,
-                  recipeId: recipe.id,
-                })}
+              <Image
+                accessibilityIgnoresInvertColors
+                accessibilityLabel="Kiko enjoying a bowl of pasta"
+                resizeMode="contain"
+                source={require('../../assets/kiko-static/completion/kiko-pasta-celebration.png')}
+                style={styles.completionMascotArt}
               />
+              <Text style={styles.completionEyebrow}>You made it!</Text>
+              <Text numberOfLines={2} style={styles.completionTitle}>{displayTitle}</Text>
+              <Text style={styles.completionBody}>Nice work — time to enjoy it.</Text>
+              <Text style={styles.feedbackTitle}>How was it?</Text>
+              <View style={styles.feedbackRow}>
+                {([['loved', 'Loved it'], ['okay', 'It was okay'], ['disliked', "Didn't like it"]] as const).map(([value, label]) => (
+                  <Pressable key={value} accessibilityRole="button" onPress={() => selectFeedbackRating(value)} style={[styles.feedbackChoice, selectedFeedbackRating === value ? styles.feedbackChoiceSelected : null]}>
+                    <Text style={styles.feedbackChoiceText}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              {visibleReasons.length > 0 ? (
+                <View style={styles.feedbackReasons}>
+                  {visibleReasons.map((reason) => (
+                    <Pressable key={reason} accessibilityRole="button" onPress={() => toggleFeedbackReason(reason)} style={[styles.feedbackReason, feedbackReasons.includes(reason) ? styles.feedbackReasonSelected : null]}>
+                      <Text style={styles.feedbackReasonText}>{reason}</Text>
+                    </Pressable>
+                  ))}
+                  {feedbackReasons.includes('Something else') ? (
+                    <View style={styles.feedbackNoteRow}>
+                      <TextInput
+                        accessibilityLabel="Custom feedback"
+                        onChangeText={setFeedbackNote}
+                        onSubmitEditing={saveCustomFeedback}
+                        placeholder="Tell us what happened…"
+                        placeholderTextColor={recipeColors.muted}
+                        returnKeyType="done"
+                        style={styles.feedbackNoteInput}
+                        value={feedbackNote}
+                      />
+                      <Pressable accessibilityRole="button" disabled={!feedbackNote.trim()} onPress={saveCustomFeedback} style={({ pressed }) => [styles.feedbackNoteSave, !feedbackNote.trim() ? styles.feedbackNoteSaveDisabled : null, pressed ? styles.pressed : null]}>
+                        <Text style={styles.feedbackNoteSaveText}>Save</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
               <View style={styles.completionActionsRow}>
-                <RecipeLikeButton isLiked={isLiked} onToggle={toggleSelectedRecipeLike} />
                 <Pressable
                   accessibilityLabel="Share recipe"
                   accessibilityRole="button"
@@ -656,8 +801,16 @@ export function RecipeStepsScreen() {
                     pressed ? styles.pressed : null,
                   ]}
                 >
-                  <ShareAndroid color={colors.charcoal} height={20} strokeWidth={2.1} width={20} />
+                  <ShareAndroid color={colors.charcoal} height={18} strokeWidth={2.1} width={18} />
                   <Text style={styles.completionShareText}>Share</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityLabel="Go home"
+                  accessibilityRole="button"
+                  onPress={goHomeFromCompletion}
+                  style={({ pressed }) => [styles.completionHomeAction, pressed ? styles.pressed : null]}
+                >
+                  <Text style={styles.completionHomeText}>Home</Text>
                 </Pressable>
               </View>
             </View>
@@ -669,6 +822,7 @@ export function RecipeStepsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <ActiveCookingKeepAwake />
       <View style={styles.guidedScreenContent}>
         <View style={styles.simpleTopBar}>
           <Pressable
@@ -690,7 +844,7 @@ export function RecipeStepsScreen() {
                     { text: 'Keep Cooking', style: 'cancel' },
                     { text: 'End Session', style: 'destructive', onPress: () => {
                       endCookingRecipe(recipe.id);
-                      navigation.navigate('HomeScreen');
+                      resetToHome();
                     } },
                   ],
                 )}
@@ -701,43 +855,16 @@ export function RecipeStepsScreen() {
             ) : null}
           </View>
 
-        <View style={styles.guidedHeader}>
-          <View style={styles.guidedHeaderCopy}>
-            <Text numberOfLines={2} style={styles.guidedRecipeTitle}>{displayTitle}</Text>
-            <View style={styles.guidedProgressRow}>
-              <Text style={styles.guidedProgressText}>
-                Step {safeActiveStepIndex + 1} of {guidedSteps.length}
-                {guidedTotalTime > 0
-                  ? guidedTotalTime >= 60
-                    ? ` · ${formatRecipeDuration(guidedTotalTime)} total`
-                    : ` · ${guidedTotalTime} min total`
-                  : ''}
-              </Text>
-            </View>
+        <View style={styles.guidedProgressRow}>
+          <View style={styles.guidedProgressTrack}>
+            <View style={[styles.guidedProgressFill, { width: `${progress}%` }]} />
           </View>
-        </View>
-
-        <View style={styles.guidedProgressTrack}>
-          <View style={[styles.guidedProgressFill, { width: `${progress}%` }]} />
+          <Text style={styles.guidedProgressText}>{safeActiveStepIndex + 1} of {guidedSteps.length}</Text>
         </View>
 
         {activeStep ? (
-          <View style={styles.guidedStepCard}>
-            <View style={styles.guidedStepCardContent}>
-              <View style={styles.guidedStepTopRow}>
-                <Text style={styles.guidedStepNumber}>Step {activeStep.stepNumber}</Text>
-                {activeStep.timing ? (
-                  <View style={styles.guidedTimeChipWrap}>
-                    {activeStep.timing.handsOnMinutes > 0 ? (
-                      <Text style={styles.guidedTimeChipText}>Hands-on · ~{formatRecipeDuration(activeStep.timing.handsOnMinutes)}</Text>
-                    ) : null}
-                    {activeStep.timing.passiveMinutes > 0 ? (
-                      <Text style={styles.guidedTimeChipText}>Waiting · ~{formatRecipeDuration(activeStep.timing.passiveMinutes)}</Text>
-                    ) : null}
-                  </View>
-                ) : null}
-              </View>
-
+          <View style={[styles.guidedStepCard, stepDensity === 'short' ? styles.guidedStepCardShort : null]}>
+            <View style={[styles.guidedStepCardContent, stepDensity === 'short' ? styles.guidedStepCardContentShort : null]}>
               <Text
                 numberOfLines={2}
                 style={styles.guidedStepTitle}
@@ -747,7 +874,8 @@ export function RecipeStepsScreen() {
               <ScrollView
                 nestedScrollEnabled
                 showsVerticalScrollIndicator={false}
-                style={styles.guidedInstructionScroll}
+                contentContainerStyle={stepDensity === 'short' ? styles.guidedInstructionContentShort : undefined}
+                style={[styles.guidedInstructionScroll, stepDensity === 'long' ? styles.guidedInstructionScrollLong : null]}
               >
                 <Text
                   maxFontSizeMultiplier={1.5}
@@ -755,25 +883,47 @@ export function RecipeStepsScreen() {
                 >
                   {getConciseGuidedInstruction(activeStep.instruction)}
                 </Text>
+                {activeStep.visualCue || activeStep.doneWhen ? (
+                  <GuidanceBlock
+                    label="Done when"
+                    text={activeStep.doneWhen ?? activeStep.visualCue ?? ''}
+                    tone="success"
+                  />
+                ) : null}
+                {activeStep.commonMistake || (activeStep.safetyNote && !isDuplicateSafetyCue(activeStep.doneWhen ?? activeStep.visualCue, activeStep.safetyNote)) || activeStep.chefTip ? (
+                  <GuidanceBlock
+                    label="Watch out"
+                    text={(activeStep.safetyNote && !isDuplicateSafetyCue(activeStep.doneWhen ?? activeStep.visualCue, activeStep.safetyNote)) ? activeStep.safetyNote : activeStep.commonMistake ?? activeStep.chefTip ?? ''}
+                    tone="warning"
+                  />
+                ) : null}
+                {activeStep.cookingTerm ? (
+                  <GuidanceBlock label={activeStep.cookingTerm.term} text={activeStep.cookingTerm.meaning} />
+                ) : activeStep.tip ? (
+                  <GuidanceBlock label={activeStep.tip.title} text={activeStep.tip.body} />
+                ) : null}
+                {activeStep.ingredientsUsed.length > 0 ? (
+                  <StepChips label="Ingredients" values={activeStep.ingredientsUsed.map(getGuidedIngredientChipLabel)} />
+                ) : null}
+                {activeStep.toolsUsed.length > 0 ? <StepChips label="Equipment" values={activeStep.toolsUsed} /> : null}
               </ScrollView>
             </View>
           </View>
         ) : null}
 
+        {nextStepPreview ? (
+          <View accessibilityLabel={`Up next, ${nextStepPreview}.`} accessible style={styles.guidedNextPreview}>
+            <Text style={styles.guidedNextPreviewLabel}>UP NEXT</Text>
+            <Text numberOfLines={1} style={styles.guidedNextPreviewText}>{nextStepPreview}</Text>
+            <NavArrowRight color={recipeColors.muted} height={16} strokeWidth={2.2} width={16} />
+          </View>
+        ) : null}
         <View style={styles.guidedControlArea}>
-          {nextStepPreview ? (
-            <View
-              accessibilityLabel={`Up next, ${nextStepPreview}.`}
-              accessible
-              style={styles.guidedNextPreview}
-            >
-              <Text style={styles.guidedNextPreviewLabel}>Up next</Text>
-              <Text numberOfLines={2} style={styles.guidedNextPreviewText}>{nextStepPreview}</Text>
-            </View>
-          ) : null}
           <View style={styles.guidedNavRow}>
             <Pressable
+              accessibilityLabel="Previous cooking step"
               accessibilityRole="button"
+              accessibilityState={{ disabled: safeActiveStepIndex === 0 }}
               disabled={safeActiveStepIndex === 0}
               onPress={goPreviousStep}
               style={({ pressed }) => [
@@ -788,6 +938,7 @@ export function RecipeStepsScreen() {
             </Pressable>
 
             <Pressable
+              accessibilityLabel={safeActiveStepIndex >= guidedSteps.length - 1 ? 'Finish cooking' : 'Next cooking step'}
               accessibilityRole="button"
               onPress={goNextStep}
               style={({ pressed }) => [styles.guidedNavButton, styles.guidedNavButtonPrimary, pressed ? styles.pressed : null]}
@@ -802,6 +953,59 @@ export function RecipeStepsScreen() {
 
     </SafeAreaView>
   );
+}
+
+function ActiveCookingKeepAwake() {
+  useKeepAwake('okyo-guided-cooking');
+  return null;
+}
+
+function GuidanceBlock({ label, text, tone = 'info' }: { label: string; text: string; tone?: 'info' | 'success' | 'warning' }) {
+  const isSuccess = tone === 'success';
+  const isWarning = tone === 'warning';
+
+  return (
+    <View style={[styles.guidanceBlock, tone === 'success' ? styles.guidanceSuccess : tone === 'warning' ? styles.guidanceWarning : null]}>
+      <View style={styles.guidanceHeading}>
+        {isSuccess
+          ? <CheckCircle color={recipeColors.green} height={16} strokeWidth={2.25} width={16} />
+          : <InfoCircle color={isWarning ? colors.coralDark : recipeColors.blue} height={16} strokeWidth={2.25} width={16} />}
+        <Text style={styles.guidanceLabel}>{label}</Text>
+      </View>
+      <Text style={styles.guidanceText}>{shortenGuidanceText(text)}</Text>
+    </View>
+  );
+}
+
+function StepChips({ label, values }: { label: string; values: string[] }) {
+  return (
+    <View style={styles.guidedChipGroup}>
+      <Text style={styles.guidedChipLabel}>{label}</Text>
+      <View style={styles.guidedChipRow}>
+        {values.map((value, index) => (
+          <View key={`${value}-${index}`} style={styles.guidedChipWrap}>
+            <Text style={styles.guidedChipText}>{value}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function shortenGuidanceText(text: string) {
+  return text
+    .replace(/^(The )/i, '')
+    .replace(/ should look /i, ' ')
+    .replace(/ and cling to the food\.?$/i, ' and thick enough to cling.')
+    .replace(/, not gray or pale spots\.?$/i, ', with no pale spots.')
+    .trim();
+}
+
+function isDuplicateSafetyCue(doneWhen: string | undefined, safetyNote: string | undefined) {
+  if (!doneWhen || !safetyNote) return false;
+  const temperatures = doneWhen.match(/\d{2,3}\s*°?\s*[fc]/gi) ?? [];
+  const normalizedSafety = safetyNote.replace(/\s+/g, '').toLowerCase();
+  return temperatures.some((temperature) => normalizedSafety.includes(temperature.replace(/\s+/g, '').toLowerCase()));
 }
 
 type ScreenFrameProps = {
@@ -872,40 +1076,98 @@ function QuickStat({ icon, label, value }: QuickStatProps) {
 }
 
 type RecipeModeTabsProps = {
+  isUpdating?: boolean;
   selectedMode: RecipePresentationMode;
   onSelectMode: (mode: RecipePresentationMode) => void;
 };
 
-function RecipeModeTabs({ selectedMode, onSelectMode }: RecipeModeTabsProps) {
+function RecipeModeTabs({ isUpdating = false, selectedMode, onSelectMode }: RecipeModeTabsProps) {
+  const reduceMotion = useReduceMotion();
+  const [pendingMode, setPendingMode] = useState<RecipePresentationMode | null>(null);
+  const selectionOpacity = useRef(new Animated.Value(1)).current;
+  const hasMounted = useRef(false);
+  const pendingUpdateStarted = useRef(false);
+
+  useEffect(() => {
+    if (isUpdating) {
+      pendingUpdateStarted.current = true;
+      return;
+    }
+
+    if (pendingUpdateStarted.current) {
+      pendingUpdateStarted.current = false;
+      setPendingMode(null);
+    }
+  }, [isUpdating]);
+
+  useEffect(() => {
+    if (pendingMode === selectedMode && !isUpdating) {
+      setPendingMode(null);
+    }
+  }, [isUpdating, pendingMode, selectedMode]);
+
+  useEffect(() => {
+    if (!hasMounted.current) {
+      hasMounted.current = true;
+      return;
+    }
+
+    selectionOpacity.stopAnimation();
+
+    if (reduceMotion) {
+      selectionOpacity.setValue(1);
+      return;
+    }
+
+    selectionOpacity.setValue(0.84);
+    Animated.timing(selectionOpacity, {
+      duration: 140,
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  }, [reduceMotion, selectedMode, selectionOpacity]);
+
   return (
-    <View style={styles.modeTabs}>
+    <Animated.View style={[styles.modeTabs, { opacity: selectionOpacity }]}>
       {RECIPE_PRESENTATION_MODES.map((mode) => {
-        const isSelected = selectedMode === mode;
+        const isSelected = pendingMode ? pendingMode === mode : selectedMode === mode;
+        const isSelectedUpdating = isUpdating && pendingMode === mode;
 
         return (
           <Pressable
             key={mode}
+            accessibilityLabel={isSelectedUpdating ? `${mode}, updating recipe` : mode}
             accessibilityRole="button"
-            accessibilityState={{ selected: isSelected }}
-            onPress={() => onSelectMode(mode)}
+            accessibilityState={{ disabled: isUpdating, selected: isSelected }}
+            disabled={isUpdating}
+            onPress={() => {
+              setPendingMode(mode);
+              onSelectMode(mode);
+            }}
             style={({ pressed }) => [
               styles.modeTab,
               isSelected ? styles.modeTabSelected : null,
               pressed ? styles.pressed : null,
             ]}
           >
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.78}
-              numberOfLines={1}
-              style={[styles.modeTabText, isSelected ? styles.modeTabTextSelected : null]}
-            >
-              {mode}
-            </Text>
+            {isSelectedUpdating ? (
+              <View accessibilityLabel="Updating recipe" accessibilityRole="progressbar">
+                <ActivityIndicator color={colors.coralDark} size="small" />
+              </View>
+            ) : (
+              <Text
+                adjustsFontSizeToFit
+                minimumFontScale={0.78}
+                numberOfLines={1}
+                style={[styles.modeTabText, isSelected ? styles.modeTabTextSelected : null]}
+              >
+                {mode}
+              </Text>
+            )}
           </Pressable>
         );
       })}
-    </View>
+    </Animated.View>
   );
 }
 
@@ -1056,14 +1318,14 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     flexGrow: 1,
-    paddingBottom: 150,
+    paddingBottom: 132,
     paddingHorizontal: 20,
   },
   heroCard: {
-    marginTop: 10,
+    marginTop: 2,
   },
   recipePhoto: {
-    aspectRatio: 1.04,
+    aspectRatio: 0.98,
     backgroundColor: recipeColors.cream,
     borderRadius: 32,
     justifyContent: 'center',
@@ -1092,6 +1354,10 @@ const styles = StyleSheet.create({
     top: 14,
     width: 42,
   },
+  circleShareButton: {
+    alignItems: 'center', backgroundColor: colors.card, borderRadius: 999, height: 42,
+    justifyContent: 'center', position: 'absolute', right: 64, top: 14, width: 42,
+  },
   inspiredPill: {
     alignItems: 'center',
     backgroundColor: recipeColors.card,
@@ -1114,8 +1380,8 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   overviewPanel: {
-    marginTop: 20,
-    paddingTop: 16,
+    marginTop: 12,
+    paddingTop: 0,
   },
   recipeTitle: {
     color: recipeColors.charcoal,
@@ -1125,23 +1391,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     lineHeight: 40,
     minWidth: 0,
-  },
-  savingsMiniPill: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: recipeColors.greenSoft,
-    borderRadius: 999,
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  savingsMiniText: {
-    color: recipeColors.green,
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
   },
   quickStatsRow: {
     flexDirection: 'row',
@@ -1179,24 +1428,9 @@ const styles = StyleSheet.create({
   description: {
     color: recipeColors.text,
     fontFamily: fontFamilies.body,
-    fontSize: 18,
-    lineHeight: 27,
-    marginTop: 18,
-  },
-  editRecipeAction: {
-    alignSelf: 'flex-start',
-    backgroundColor: recipeColors.orangeSoft,
-    borderRadius: 999,
-    justifyContent: 'center',
-    marginTop: 12,
-    minHeight: 44,
-    paddingHorizontal: 16,
-  },
-  editRecipeActionText: {
-    color: recipeColors.orangeDeep,
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 15,
+    lineHeight: 21,
+    marginTop: 8,
   },
   nutritionSummary: {
     marginTop: 24,
@@ -1229,8 +1463,8 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   modeSection: {
-    marginTop: 24,
-    paddingBottom: 16,
+    marginTop: 20,
+    paddingBottom: 8,
   },
   sectionSmallTitle: {
     color: recipeColors.charcoal,
@@ -1240,40 +1474,47 @@ const styles = StyleSheet.create({
     lineHeight: 23,
   },
   modeTabs: {
+    backgroundColor: '#FCF5F0',
+    borderRadius: 14,
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
+    gap: 2,
+    marginTop: 8,
     minWidth: 0,
+    padding: 3,
   },
   modeTab: {
     alignItems: 'center',
-    backgroundColor: recipeColors.cream,
-    borderRadius: 999,
+    borderRadius: 11,
     flex: 1,
     justifyContent: 'center',
-    minHeight: 42,
+    minHeight: 40,
     minWidth: 0,
-    paddingHorizontal: 8,
+    paddingHorizontal: 2,
   },
   modeTabSelected: {
-    backgroundColor: recipeColors.orange,
+    backgroundColor: colors.coralSoft,
+    elevation: 2,
+    shadowColor: colors.coralDark,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
   },
   modeTabText: {
     color: recipeColors.charcoal,
     fontFamily: fontFamilies.bold,
-    fontSize: 12,
+    fontSize: 10.25,
     fontWeight: '700',
     textAlign: 'center',
   },
   modeTabTextSelected: {
-    color: '#fffdf8',
+    color: colors.coralDark,
   },
-  modeDisclosure: {
-    color: recipeColors.muted,
+  modeError: {
+    color: colors.coralDark,
     fontFamily: fontFamilies.body,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 9,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 6,
   },
   previewSection: {
     marginTop: 22,
@@ -1410,15 +1651,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  equipmentRow: {
+  equipmentGrid: {
     flexDirection: 'row',
-    gap: 8,
+    flexWrap: 'wrap',
+    rowGap: 8,
     minWidth: 0,
   },
   equipmentCard: {
-    alignItems: 'center',
-    flex: 1,
+    alignItems: 'flex-start',
+    backgroundColor: recipeColors.cream,
+    borderRadius: 10,
     minWidth: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
   },
   equipmentText: {
     color: recipeColors.charcoal,
@@ -1426,56 +1671,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     lineHeight: 15,
-    marginTop: 6,
-    textAlign: 'center',
+    textAlign: 'left',
   },
-  savingsCard: {
+  bottomCookButton: {
     alignItems: 'center',
-    backgroundColor: recipeColors.greenSoft,
-    borderRadius: 12,
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 18,
-    padding: 18,
+    backgroundColor: colors.coral,
+    borderRadius: 22,
+    justifyContent: 'center',
+    marginHorizontal: 0,
+    marginTop: 20,
+    minHeight: 58,
+    paddingHorizontal: 18,
   },
-  savingsCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  savingsLabel: {
-    color: recipeColors.green,
+  bottomCookButtonText: {
+    color: '#fffdf8',
     fontFamily: fontFamilies.extraBold,
     fontSize: 17,
     fontWeight: '800',
-    lineHeight: 22,
-  },
-  savingsSubLabel: {
-    color: '#3f6a52',
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 10,
-  },
-  savingsValue: {
-    color: recipeColors.green,
-    fontFamily: fontFamilies.display,
-    fontSize: 34,
-    fontWeight: '800',
-    lineHeight: 43,
-    marginTop: 2,
-  },
-  savingsNote: {
-    color: '#3f6a52',
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 4,
-  },
-  savingsIconBubble: {
-    alignItems: 'center',
-    backgroundColor: '#d9efd9',
-    borderRadius: 999,
-    height: 76,
-    justifyContent: 'center',
-    width: 76,
   },
   primaryAction: {
     alignItems: 'center',
@@ -1525,14 +1737,15 @@ const styles = StyleSheet.create({
   },
   guidedScreenContent: {
     flex: 1,
-    paddingBottom: 18,
+    paddingBottom: 8,
     paddingHorizontal: 20,
   },
   guidedHeader: {
-    marginTop: 2,
-    minHeight: 62,
+    marginTop: 0,
+    minHeight: 0,
     paddingHorizontal: 4,
-    paddingVertical: 6,
+    paddingTop: 2,
+    paddingBottom: 4,
   },
   guidedHeaderCopy: {
     flex: 1,
@@ -1548,347 +1761,273 @@ const styles = StyleSheet.create({
   guidedProgressRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 4,
+    gap: 7,
+    marginTop: 2,
   },
   guidedProgressText: {
     color: recipeColors.muted,
-    fontFamily: fontFamilies.bold,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  compactBadge: {
-    backgroundColor: recipeColors.blueSoft,
-    borderRadius: 99,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  compactBadgeText: {
-    color: recipeColors.blue,
-    fontFamily: fontFamilies.bold,
-    fontSize: 11,
-    fontWeight: '700',
+    ...guidedCookingTypography.progress,
   },
   guidedProgressTrack: {
     backgroundColor: recipeColors.creamDeep,
     borderRadius: 999,
     height: 6,
-    marginTop: 6,
+    flex: 1,
     overflow: 'hidden',
   },
   guidedProgressFill: {
-    backgroundColor: recipeColors.orange,
+    backgroundColor: colors.coral,
     borderRadius: 999,
     height: '100%',
   },
   guidedStepCard: {
-    flex: 1,
-    marginTop: 10,
+    marginTop: 8,
+  },
+  guidedStepCardShort: {
+    minHeight: 340,
   },
   guidedStepCardContent: {
-    paddingHorizontal: 8,
-    paddingVertical: 14,
+    paddingHorizontal: 4,
+    paddingVertical: 0,
   },
-  guidedStepTopRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  guidedPhaseLabel: {
-    color: recipeColors.muted,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  guidedStepNumber: {
-    color: recipeColors.orange,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 13,
-    fontWeight: '900',
-    letterSpacing: 0,
-    textTransform: 'uppercase',
-  },
-  guidedTimeChipWrap: {
-    backgroundColor: recipeColors.orangeSoft,
-    borderRadius: 999,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-  },
-  guidedTimeChipText: {
-    color: recipeColors.orangeDeep,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 13,
-    fontWeight: '800',
+  guidedStepCardContentShort: {
+    flex: 1,
   },
   guidedStepTitle: {
     color: recipeColors.charcoal,
-    fontFamily: fontFamilies.display,
-    fontSize: 25,
-    fontWeight: '800',
+    ...guidedCookingTypography.title,
     letterSpacing: 0,
-    lineHeight: 31,
+    maxWidth: '96%',
   },
   guidedInstruction: {
     color: recipeColors.text,
-    fontFamily: fontFamilies.body,
-    fontSize: 20,
-    lineHeight: 29,
+    ...guidedCookingTypography.instruction,
+    maxWidth: 370,
   },
   guidedInstructionScroll: {
     flexGrow: 0,
-    marginTop: 10,
-    maxHeight: 174,
-  },
-  guidedCueBlock: {
-    backgroundColor: recipeColors.greenSoft,
-    borderRadius: 20,
-    marginTop: 18,
-    padding: 16,
-  },
-  guidedCueLabel: {
-    color: recipeColors.green,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0,
-    textTransform: 'uppercase',
-  },
-  guidedCueText: {
-    color: recipeColors.charcoal,
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 22,
     marginTop: 6,
+    maxHeight: 320,
   },
-  guidedDoneLabel: {
-    color: recipeColors.green,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0,
-    marginTop: 12,
-    opacity: 0.7,
-    textTransform: 'uppercase',
+  guidedInstructionScrollLong: { maxHeight: 270 },
+  guidedInstructionContentShort: {
+    gap: 10,
+    justifyContent: 'space-evenly',
+    minHeight: 272,
+    paddingBottom: 6,
   },
-  guidedDoneText: {
-    color: recipeColors.charcoal,
-    fontFamily: fontFamilies.body,
-    fontSize: 14,
-    fontWeight: '400',
-    lineHeight: 20,
-    marginTop: 4,
-    opacity: 0.85,
-  },
-  guidedSafetyBlock: {
-    backgroundColor: recipeColors.yellowSoft,
-    borderRadius: 20,
-    marginTop: 12,
-    padding: 14,
-  },
-  guidedSafetyLabel: {
-    color: recipeColors.orange,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0,
-    textTransform: 'uppercase',
-  },
-  guidedSafetyText: {
-    color: recipeColors.charcoal,
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
-    fontWeight: '700',
-    lineHeight: 20,
-    marginTop: 6,
-  },
-  guidedWhyBlock: {
-    backgroundColor: recipeColors.blueSoft,
-    borderRadius: 20,
-    marginTop: 12,
-    padding: 16,
-  },
-  guidedWhyLabel: {
-    color: recipeColors.blue,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0,
-    textTransform: 'uppercase',
-  },
-  guidedWhyText: {
-    color: recipeColors.charcoal,
-    fontFamily: fontFamilies.bold,
-    fontSize: 14,
-    fontWeight: '700',
-    lineHeight: 20,
-    marginTop: 6,
-  },
+  guidanceBlock: { backgroundColor: colors.macrosSoft, borderRadius: 13, marginTop: 7, paddingHorizontal: 10, paddingVertical: 7 },
+  guidanceSuccess: { backgroundColor: recipeColors.greenSoft },
+  guidanceWarning: { backgroundColor: colors.coralSoft },
+  guidanceHeading: { alignItems: 'center', flexDirection: 'row', gap: 6 },
+  guidanceLabel: { color: recipeColors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 12, fontWeight: '900' },
+  guidanceText: { color: recipeColors.text, fontFamily: fontFamilies.body, fontSize: 12.5, lineHeight: 17, marginTop: 2 },
+  feedbackTitle: { color: recipeColors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 16, fontWeight: '800', marginTop: 13 },
+  feedbackRow: { flexDirection: 'row', gap: 6, marginTop: 7, width: '100%' },
+  feedbackChoice: { alignItems: 'center', backgroundColor: colors.surfaceMuted, borderColor: colors.border, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, flex: 1, justifyContent: 'center', minHeight: 40, paddingHorizontal: 3 },
+  feedbackChoiceSelected: { backgroundColor: colors.coralSoft, borderColor: colors.coral },
+  feedbackChoiceText: { color: recipeColors.charcoal, fontFamily: fontFamilies.bold, fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  feedbackReasons: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, justifyContent: 'center', marginTop: 7 },
+  feedbackReason: { borderColor: colors.border, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 9, paddingVertical: 5 },
+  feedbackReasonSelected: { backgroundColor: recipeColors.yellowSoft, borderColor: colors.coral },
+  feedbackReasonText: { color: recipeColors.text, fontFamily: fontFamilies.body, fontSize: 11 },
+  feedbackNoteRow: { flexDirection: 'row', gap: 6, marginTop: 5, width: '100%' },
+  feedbackNoteInput: { backgroundColor: recipeColors.cream, borderColor: colors.border, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, color: recipeColors.charcoal, flex: 1, fontFamily: fontFamilies.body, fontSize: 12, minHeight: 38, paddingHorizontal: 10, paddingVertical: 7 },
+  feedbackNoteSave: { alignItems: 'center', backgroundColor: colors.coral, borderRadius: 10, justifyContent: 'center', minWidth: 54, paddingHorizontal: 10 },
+  feedbackNoteSaveDisabled: { opacity: 0.45 },
+  feedbackNoteSaveText: { color: '#FFFFFF', fontFamily: fontFamilies.extraBold, fontSize: 12, fontWeight: '800' },
+  feedbackToast: { alignItems: 'center', backgroundColor: colors.charcoal, borderRadius: 999, elevation: 4, left: 24, paddingHorizontal: 18, paddingVertical: 8, position: 'absolute', right: 24, top: 8, zIndex: 20 },
+  feedbackToastText: { color: '#FFFFFF', fontFamily: fontFamilies.extraBold, fontSize: 13, fontWeight: '800' },
   guidedChipGroup: {
-    marginTop: 14,
+    marginTop: 9,
   },
   guidedChipLabel: {
     color: recipeColors.muted,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0,
-    marginBottom: 8,
+    ...guidedCookingTypography.sectionLabel,
+    marginBottom: 5,
     textTransform: 'uppercase',
   },
   guidedChipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
   },
   guidedChipWrap: {
     backgroundColor: recipeColors.cream,
+    borderColor: colors.coralSoft,
     borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
     maxWidth: '100%',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
   guidedChipText: {
     color: recipeColors.charcoal,
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
+    ...guidedCookingTypography.chip,
   },
   guidedControlArea: {
-    gap: 12,
-    marginTop: 12,
+    backgroundColor: recipeColors.background,
+    marginHorizontal: -20,
+    marginTop: 'auto',
+    paddingHorizontal: 20,
+    paddingBottom: 4,
+    paddingTop: 12,
+    borderTopColor: 'rgba(238, 228, 214, 0.75)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    shadowColor: recipeColors.charcoal,
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   guidedNextPreview: {
-    paddingHorizontal: 4,
+    alignItems: 'center',
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 7,
+    marginTop: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
   },
   guidedNextPreviewLabel: {
-    color: recipeColors.muted,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.1,
+    color: colors.coralDark,
+    ...guidedCookingTypography.sectionLabel,
     textTransform: 'uppercase',
   },
   guidedNextPreviewText: {
     color: recipeColors.charcoal,
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 21,
-    marginTop: 3,
+    flex: 1,
+    flexShrink: 1,
+    ...guidedCookingTypography.upNext,
   },
   guidedNavRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
   },
   guidedNavButton: {
     alignItems: 'center',
-    backgroundColor: recipeColors.cream,
+    backgroundColor: colors.surfaceMuted,
     borderColor: 'rgba(232, 220, 203, 0.8)',
     borderRadius: 22,
     borderWidth: 1,
     flex: 1,
     justifyContent: 'center',
-    minHeight: 54,
+    minHeight: 50,
     paddingHorizontal: 14,
   },
   guidedNavButtonPrimary: {
-    backgroundColor: recipeColors.orange,
-    borderColor: recipeColors.orange,
-    shadowColor: recipeColors.orangeDeep,
-    shadowOffset: { height: 8, width: 0 },
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
+    backgroundColor: colors.coral,
+    borderColor: colors.coral,
+    shadowColor: colors.coralDark,
+    shadowOffset: { height: 6, width: 0 },
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
     elevation: 2,
   },
   guidedNavButtonDisabled: {
-    opacity: 0.45,
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    opacity: 1,
   },
   guidedNavText: {
     color: recipeColors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 15,
-    fontWeight: '800',
+    ...guidedCookingTypography.button,
   },
   guidedNavTextDisabled: {
     color: recipeColors.muted,
   },
   guidedNavPrimaryText: {
     color: '#fffdf8',
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 16,
-    fontWeight: '900',
+    ...guidedCookingTypography.primaryButton,
   },
   completionCard: {
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    flex: 1,
+    paddingHorizontal: 4,
+    paddingTop: 4,
   },
   completionScrollContent: {
     flexGrow: 1,
-    paddingTop: 12,
-    paddingBottom: 150,
+    paddingTop: 2,
+    paddingBottom: 104,
   },
   completionEyebrow: {
-    color: recipeColors.orange,
-    fontFamily: fontFamilies.display,
-    fontSize: 34,
+    color: colors.coralDark,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 24,
     fontWeight: '900',
     letterSpacing: 0,
-    marginBottom: 12,
+    lineHeight: 29,
+    marginTop: -8,
   },
   completionImage: {
-    aspectRatio: 1.22,
+    aspectRatio: 2.05,
     backgroundColor: recipeColors.cream,
-    borderRadius: 26,
+    borderRadius: 22,
     width: '100%',
   },
-  completionMascot: {
-    marginTop: 8,
+  completionMascotArt: {
+    height: 190,
+    marginBottom: 0,
+    marginTop: 4,
+    width: '100%',
   },
   completionTitle: {
     color: recipeColors.charcoal,
-    fontFamily: fontFamilies.display,
-    fontSize: 28,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 22,
     fontWeight: '800',
-    lineHeight: 33,
-    marginTop: 2,
+    lineHeight: 27,
+    marginTop: 1,
     textAlign: 'center',
   },
   completionBody: {
     color: recipeColors.muted,
     fontFamily: fontFamilies.body,
-    fontSize: 17,
-    lineHeight: 25,
-    marginTop: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
     textAlign: 'center',
   },
   completionActionsRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 12,
+    marginTop: 14,
     width: '100%',
   },
   completionShareAction: {
     alignItems: 'center',
     backgroundColor: recipeColors.cream,
     borderColor: 'rgba(232, 220, 203, 0.84)',
-    borderRadius: 22,
-    borderWidth: 1,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
     flex: 1,
     flexDirection: 'row',
     gap: 8,
     justifyContent: 'center',
-    minHeight: 54,
+    minHeight: 46,
     paddingHorizontal: 16,
   },
   completionShareText: {
     color: recipeColors.charcoal,
+    fontFamily: fontFamilies.extraBold,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  completionHomeAction: {
+    alignItems: 'center',
+    backgroundColor: colors.coral,
+    borderRadius: 16,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 46,
+    paddingHorizontal: 16,
+  },
+  completionHomeText: {
+    color: '#fffdf8',
     fontFamily: fontFamilies.extraBold,
     fontSize: 15,
     fontWeight: '800',
@@ -2095,9 +2234,7 @@ const styles = StyleSheet.create({
   },
   smallBackText: {
     color: recipeColors.charcoal,
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
-    fontWeight: '700',
+    ...guidedCookingTypography.nav,
   },
   issueCard: {
     marginTop: 18,
@@ -2152,7 +2289,16 @@ const styles = StyleSheet.create({
 });
 
 function getEstimatedRestaurantPrice(recipe: Recipe | null) {
-  return recipe ? recipe.estimatedHomemadeCost + recipe.estimatedSavings : 0;
+  if (!recipe || recipe.estimatedSavings <= 0) return 0;
+  return recipe.estimatedHomemadeCost + recipe.estimatedSavings;
+}
+
+function getSelectedIngredientIds(recipe: Recipe, groceryRecipeIds: string[], selections: Record<string, string[]>): string[] {
+  const selected = selections[recipe.id] ?? [];
+  if (selected.length > 0) return selected;
+  return groceryRecipeIds.includes(recipe.id)
+    ? recipe.ingredients.map((ingredient) => ingredient.name.trim().toLowerCase()).filter(Boolean)
+    : [];
 }
 
 function getSafeTextList(values: string[] | undefined) {
@@ -2160,6 +2306,15 @@ function getSafeTextList(values: string[] | undefined) {
     .map((value) => cleanDisplayText(value))
     .filter(Boolean)
     .slice(0, 6);
+}
+
+function equipmentColumns(count: number): number {
+  if (count <= 1) return 1;
+  if (count === 2) return 2;
+  if (count === 3) return 3;
+  if (count === 4) return 4;
+  if (count <= 6) return 3;
+  return 4;
 }
 
 function getSafeIngredientGroups(recipe: Recipe | null) {

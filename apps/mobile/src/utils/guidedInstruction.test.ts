@@ -10,13 +10,9 @@ test('a short Guided Cooking instruction remains unchanged', () => {
   );
 });
 
-test('an exceptional Guided Cooking instruction is shortened before layout', () => {
-  const instruction = Array.from(
-    { length: 50 },
-    (_, index) => `instruction-${index + 1}`,
-  ).join(' ');
-  const concise = getConciseGuidedInstruction(instruction);
+test('a detailed instruction keeps every useful cooking cue', () => {
+  const instruction =
+    'Keep the skillet over medium heat. Add the shredded carrots and sauté for 2 minutes until crisp-tender. Add the sliced mushrooms and cook for 2–3 minutes until lightly browned. Add spinach last and move on when it is just wilted.';
 
-  assert.ok(concise.length <= 218);
-  assert.ok(concise.endsWith('…'));
+  assert.equal(getConciseGuidedInstruction(instruction), instruction);
 });

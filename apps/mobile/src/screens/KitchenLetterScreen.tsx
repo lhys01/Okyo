@@ -9,6 +9,7 @@ import { KikoMascot } from '../components/KikoMascot';
 import { PrimaryButton, colors, typography } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
 import { radius, shadows } from '../theme/okyoTheme';
+import { useMascotName } from '../state/useMascotName';
 import { uiLog } from '../utils/uiDebug';
 
 type KitchenLetterNavigation = NativeStackNavigationProp<RootStackParamList, 'KitchenLetterScreen'>;
@@ -19,6 +20,7 @@ type KitchenLetterNavigation = NativeStackNavigationProp<RootStackParamList, 'Ki
 export function KitchenLetterScreen() {
   const navigation = useNavigation<KitchenLetterNavigation>();
   const [joined, setJoined] = useState(false);
+  const mascotName = useMascotName();
 
   const close = () => {
     if (navigation.canGoBack()) {
@@ -54,7 +56,7 @@ export function KitchenLetterScreen() {
 
         <Text style={styles.kicker}>The Kitchen Letter</Text>
         <Text style={styles.title}>
-          {joined ? 'You’re on the list!' : 'Weekly meal ideas from Kiko'}
+          {joined ? 'You’re on the list!' : `Weekly meal ideas from ${mascotName}`}
         </Text>
         <Text style={styles.subtitle}>
           {joined

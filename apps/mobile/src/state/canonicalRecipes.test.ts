@@ -366,7 +366,11 @@ test('correction updates the same canonical recipe without duplicating Recent, S
   assert.equal(recipe.correctedDishName, 'Grilled Lamb Chops');
   assert.equal(recipe.imageUri, originalImage);
   assert.deepEqual(recipe.originalImage, originalImageMetadata);
-  assert.deepEqual(recipe.ingredients, correctedRecipe.ingredients);
+  assert.deepEqual(
+    recipe.ingredients.map(({ name, quantity }) => ({ name, quantity })),
+    correctedRecipe.ingredients,
+  );
+  assert.ok(recipe.ingredients.every((ingredient) => ingredient.id?.startsWith('ingredient-')));
   assert.deepEqual(recipe.nutritionEstimate, correctedRecipe.nutritionEstimate);
   assert.equal(recipe.servings, correctedRecipe.servings);
   assert.equal(recipe.prepTimeMinutes, correctedRecipe.prepTimeMinutes);
@@ -461,6 +465,54 @@ test('sequential corrections replace one canonical recipe and advance the latest
   assert.deepEqual(third.groceryRecipeIds, [recipeId]);
 });
 
+test('the original scan snapshot survives adaptations so Normal can restore it in place', () => {
+  const initial = commitScan();
+  const recipeId = initial.recentRecipeIds[0];
+  const original = initial.recipesById[recipeId];
+  const adaptedProviderRecipe = makeRecipe({
+    id: 'provider-lighter-rigatoni',
+    title: 'Lighter Spicy Rigatoni',
+    estimatedHomemadeCost: 7,
+    nutritionEstimate: {
+      calories: 450,
+      proteinGrams: 24,
+      carbohydratesGrams: 61,
+      fatGrams: 14,
+      fiberGrams: 8,
+    },
+  });
+  const adapted = correctCanonicalRecipe(
+    initial,
+    recipeId,
+    adaptedProviderRecipe,
+    makeScan({
+      dishName: adaptedProviderRecipe.title,
+      homemadeCost: adaptedProviderRecipe.estimatedHomemadeCost,
+      recipeId: adaptedProviderRecipe.id,
+    }),
+  );
+  const adaptedRecipe = adapted.recipesById[recipeId];
+
+  assert.equal(adaptedRecipe.title, 'Lighter Spicy Rigatoni');
+  assert.equal(adaptedRecipe.nutritionEstimate?.calories, 450);
+  assert.equal(adaptedRecipe.scanResult?.homemadeCost, 7);
+  assert.equal(adaptedRecipe.baseRecipe?.title, original.title);
+  assert.equal(adaptedRecipe.baseScanResult?.dishName, 'Spicy Rigatoni');
+
+  const restored = correctCanonicalRecipe(
+    adapted,
+    recipeId,
+    adaptedRecipe.baseRecipe!,
+    adaptedRecipe.baseScanResult!,
+  );
+  const restoredRecipe = restored.recipesById[recipeId];
+
+  assert.equal(restoredRecipe.title, original.title);
+  assert.equal(restoredRecipe.scanResult?.dishName, original.scanResult?.dishName);
+  assert.equal(restoredRecipe.scanResult?.homemadeCost, original.scanResult?.homemadeCost);
+  assert.equal(restoredRecipe.baseRecipe?.title, original.title);
+});
+
 test('a failed later correction preserves the latest successful canonical version and references', () => {
   const initial = commitScan();
   const recipeId = initial.recentRecipeIds[0];
@@ -503,7 +555,7 @@ test('screen navigation passes recipeId and Home action order is stable', () => 
   const resultSource = readFileSync(path.join(srcDir, 'screens', 'ResultSummaryScreen.tsx'), 'utf8');
   const detailSource = readFileSync(path.join(srcDir, 'screens', 'RecipeDetailScreen.tsx'), 'utf8');
   const homeSource = readFileSync(path.join(srcDir, 'screens', 'HomeScreen.tsx'), 'utf8');
-  const entrySource = readFileSync(path.join(srcDir, 'components', 'ScanEntryOptions.tsx'), 'utf8');
+  const entrySource = readFileSync(path.join(srcDir, 'components', 'okyo', 'ScanFab.tsx'), 'utf8');
 
   assert.ok(resultSource.includes("screen: 'RecipeStepsScreen'"));
   assert.ok(resultSource.includes('recipeId: selectedRecipe.id'));
@@ -517,14 +569,17 @@ test('screen navigation passes recipeId and Home action order is stable', () => 
   assert.ok(detailSource.includes('recipeId: recipe.id'));
   assert.equal(homeSource.includes('latestScanRecipe'), false);
   assert.equal(homeSource.includes('savedRecipes'), false);
-  assert.ok(homeSource.includes('getRecipeIngredientPreview(recipe)'));
+  assert.ok(homeSource.includes('<RecentDishCard'));
   assert.ok(homeSource.includes('borderRadius: radius.card'));
-  assert.ok(homeSource.indexOf('<HomeScanSection') < homeSource.indexOf('Recent Recipes'));
-  assert.ok(homeSource.indexOf('Recent Recipes') < homeSource.indexOf('Today’s Ideas'));
+  assert.ok(homeSource.indexOf('<WeekStrip') < homeSource.indexOf('<MetricCarousel'));
+  assert.ok(homeSource.indexOf('<MetricCarousel') < homeSource.indexOf('Recent dishes'));
+  assert.ok(homeSource.indexOf('Recent dishes') < homeSource.indexOf('Today’s ideas'));
   assert.ok(homeSource.includes('getRecommendationsForMealTime'));
   assert.ok(homeSource.includes('getMealTimeForHour'));
   assert.ok(homeSource.includes('compact'));
-  assert.ok(homeSource.includes(', 4)'));
+  // Home now surfaces exactly two ideas; the rest live behind Explore.
+  assert.ok(homeSource.includes('HOME_IDEA_COUNT = 2'));
+  assert.ok(homeSource.includes('slice(0, HOME_IDEA_COUNT)'));
   assert.ok(entrySource.indexOf('label="Take photo"') < entrySource.indexOf('label="Upload photo"'));
-  assert.ok(entrySource.indexOf('label="Upload photo"') < entrySource.indexOf('label="Describe a meal"'));
+  assert.match(entrySource, /label="Upload photo"[\s\S]*label="Describe a dish"/);
 });

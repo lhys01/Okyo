@@ -7,6 +7,7 @@ import {
   View,
   type StyleProp,
   type ViewStyle,
+  type ImageSourcePropType,
 } from 'react-native';
 
 import { colors } from '../theme/okyoTheme';
@@ -15,6 +16,7 @@ type FoodImageProps = {
   children?: ReactNode;
   fallbackLabel?: string;
   imageStatus?: string | null;
+  imageSource?: ImageSourcePropType;
   imageUrl?: string | null;
   showFallbackLabel?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -24,6 +26,7 @@ export function FoodImage({
   children,
   fallbackLabel = 'Image coming soon',
   imageStatus,
+  imageSource,
   imageUrl,
   showFallbackLabel = false,
   style,
@@ -37,11 +40,11 @@ export function FoodImage({
 
   return (
     <View style={[styles.frame, style]}>
-      {safeImageUrl ? (
+      {imageSource || safeImageUrl ? (
         <Image
           onError={() => setErrorUrl(safeImageUrl)}
           resizeMode="cover"
-          source={{ uri: safeImageUrl }}
+          source={imageSource ?? { uri: safeImageUrl! }}
           style={styles.image}
         />
       ) : (

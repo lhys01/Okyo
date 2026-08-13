@@ -1,15 +1,15 @@
 import type { CorrectRecipeRequest } from '../api/types';
-import type { RecipeMode } from '../mocks';
+import type { Recipe, RecipeMode } from '../mocks';
 import { normalizeOutboundRecipeMode } from './recipeModes';
 
 export const MAX_CORRECTION_NOTE_LENGTH = 300;
 
 // Validates a user's free-text recipe correction. Returns a user-friendly
 // error, or null when the trimmed text is safe to submit.
-export function validateCorrectionNote(value: string): string | null {
+export function validateCorrectionNote(value: string, mascotName = 'Kiko'): string | null {
   const trimmed = value.trim();
   if (!trimmed) {
-    return "Tell Kiko what's different first.";
+    return `Tell ${mascotName} what's different first.`;
   }
   if (trimmed.length > MAX_CORRECTION_NOTE_LENGTH) {
     return `Keep the correction under ${MAX_CORRECTION_NOTE_LENGTH} characters.`;
@@ -39,6 +39,8 @@ export function buildCorrectionRequest(input: {
   dishNameOverride?: string | null;
   expectedSourceRecipeId: string;
   canonicalRecipeId?: string;
+  currentRecipe: Recipe;
+  goalContext?: CorrectRecipeRequest['goalContext'];
   scanSessionId?: string | null;
   mode: RecipeMode;
 }): CorrectRecipeRequest {
@@ -48,11 +50,13 @@ export function buildCorrectionRequest(input: {
   return {
     ...(input.correctionRequestId ? { correctionRequestId: input.correctionRequestId } : {}),
     correctionNote: trimmedNote,
+    currentRecipe: input.currentRecipe,
     ...(trimmedOverride ? { dishNameOverride: trimmedOverride } : {}),
     expectedSourceRecipeId: input.expectedSourceRecipeId,
     ...(input.canonicalRecipeId ? { canonicalRecipeId: input.canonicalRecipeId } : {}),
     ...(input.scanSessionId ? { scanSessionId: input.scanSessionId } : {}),
     mode: normalizeOutboundRecipeMode(input.mode),
+    ...(input.goalContext ? { goalContext: input.goalContext } : {}),
   };
 }
 

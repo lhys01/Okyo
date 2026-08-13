@@ -13,6 +13,7 @@ import {
   type CorrectionGenerationContext,
 } from './correctionIntent.js';
 import {
+  askOkyoWithOpenRouter,
   generateRecipeEditWithOpenRouter,
   generateRecipeWithOpenRouter,
   normalizeRecipeProviderOutputShape,
@@ -185,6 +186,7 @@ function analysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAnalysis
   return {
     candidateScanId: `test-${Math.random().toString(36).slice(2)}`,
     aiSource: 'openrouter_ai',
+    inputKind: 'prepared_dish',
     dishName: 'Creamy Tomato Pasta',
     cuisine: 'Homestyle',
     restaurantStyle: 'Homestyle',
@@ -227,6 +229,25 @@ function providerResponse(recipe: unknown): Promise<Response> {
     headers: { 'content-type': 'application/json' },
   }));
 }
+
+test('Ask Okyo keeps a valid answer when the provider returns an empty optional correction', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => providerResponse({
+    answer: 'Use nutritional yeast for a dairy-free savory finish.',
+    suggestedCorrection: '',
+  });
+  try {
+    const result = await askOkyoWithOpenRouter({
+      config: testConfig,
+      question: 'What can I use instead of Parmesan?',
+      recipe: buildEditSourceRecipe(),
+      dietaryRestrictions: ['dairy-free'],
+    });
+    assert.deepEqual(result, { answer: 'Use nutritional yeast for a dairy-free savory finish.' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 function correctionContext(
   note = 'Apply a relevant edit',

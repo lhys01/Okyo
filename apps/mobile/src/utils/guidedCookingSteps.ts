@@ -15,6 +15,7 @@ export type GuidedCookingStep = {
   commonMistake?: string;
   commonQuestion?: string;
   commonQuestionAnswer?: string;
+  cookingTerm?: { term: string; meaning: string };
   decisionPoint?: string;
   ifYes?: string;
   ifNo?: string;
@@ -26,6 +27,13 @@ export type GuidedCookingStep = {
   toolsUsed: string[];
   visualCue?: string;
 };
+
+export function getGuidedIngredientChipLabel(ingredient: Pick<RecipeIngredient, 'name' | 'quantity'>) {
+  const name = cleanDisplayText(ingredient.name);
+  const quantity = cleanDisplayText(ingredient.quantity);
+
+  return quantity ? `${quantity} ${name}`.trim() : name;
+}
 
 type DisplayRecipeStep = {
   phase?: number;
@@ -137,15 +145,16 @@ export function buildGuidedCookingSteps(recipe: Recipe | null): GuidedCookingSte
       commonMistake: step.commonMistake,
       commonQuestion: step.commonQuestion,
       commonQuestionAnswer: step.commonQuestionAnswer,
+      cookingTerm: step.cookingTerm,
       decisionPoint: hasDecision ? step.decisionPoint : undefined,
       ifYes: hasDecision ? step.ifYes : undefined,
       ifNo: hasDecision ? step.ifNo : undefined,
       doneWhen: step.doneWhen,
-      safetyNote: step.safetyNote,
+      safetyNote: getRelevantSafetyNote(step),
       stepNumber: index + 1,
       tip: getStepTip(step, index, displaySteps.length, cookingTerms, spicePairings) ?? undefined,
       title: parsedStep.title || `Step ${index + 1}`,
-      toolsUsed: step.toolsUsed?.length ? step.toolsUsed.slice(0, 4) : getStepTools(step.text, recipeTools),
+      toolsUsed: step.toolsUsed?.length ? step.toolsUsed.slice(0, 6) : getStepTools(step.text, recipeTools),
       visualCue: step.lookFor ?? step.visualCue,
     };
   });
@@ -158,7 +167,7 @@ function getRecipeDisplaySteps(recipe: Recipe | null): DisplayRecipeStep[] {
       doneWhen: step.doneWhen, chefTip: step.chefTip, ingredientsUsed: step.ingredientsUsed, toolsUsed: step.toolsUsed,
       commonQuestion: step.commonQuestion, commonQuestionAnswer: step.commonQuestionAnswer,
       why: step.why ?? (step.whyItMatters && !GENERIC_WHY_TEXTS.has(step.whyItMatters) ? cleanDisplayText(step.whyItMatters) : undefined),
-      commonMistake: step.commonMistake ?? (step.safetyNote ? cleanDisplayText(step.safetyNote) : undefined),
+      commonMistake: step.commonMistake,
       estimatedMinutes: step.estimatedMinutes, activeMinutes: step.activeMinutes, passiveMinutes: step.passiveMinutes,
       elapsedMinutes: step.elapsedMinutes, timeEstimate: step.timeEstimate?.trim(),
       visualCue: step.visualCue ? cleanDisplayText(step.visualCue) : undefined,
@@ -214,7 +223,6 @@ function getStepCopy(step: DisplayRecipeStep, index: number) {
 
 function getStepTip(step: DisplayRecipeStep, index: number, stepCount: number, terms: NonNullable<Recipe['cookingTerms']>, pairings: string[]) {
   if (step.flavorBoost) return { title: 'Flavor booster', body: step.flavorBoost };
-  if (step.safetyNote && !step.commonMistake) return { title: 'Safety note', body: step.safetyNote };
   const normalized = step.text.toLowerCase();
   const term = step.cookingTerm ?? terms.find((candidate) => normalized.includes(candidate.term.toLowerCase()));
   if (term) return { title: term.term, body: term.meaning };
@@ -224,6 +232,16 @@ function getStepTip(step: DisplayRecipeStep, index: number, stepCount: number, t
     if (pairing && pairing.length >= 25) return { title: 'Optional boost', body: pairing };
   }
   return null;
+}
+
+function getRelevantSafetyNote(step: DisplayRecipeStep): string | undefined {
+  const note = cleanDisplayText(step.safetyNote ?? '');
+  if (!note) return undefined;
+  const context = `${step.title ?? ''} ${step.text} ${(step.ingredientsUsed ?? []).join(' ')}`.toLowerCase();
+  const proteins = ['beef', 'turkey', 'chicken', 'pork', 'fish', 'shellfish', 'shrimp', 'patty'];
+  const mentioned = proteins.filter((protein) => note.toLowerCase().includes(protein));
+  if (mentioned.length > 0 && !mentioned.some((protein) => context.includes(protein) || (protein === 'beef' && /burger|hamburger/.test(context)))) return undefined;
+  return note;
 }
 
 function getStepPhaseName(step: RecipeStep | DisplayRecipeStep) {
@@ -245,7 +263,7 @@ function getStepIngredients(text: string, ingredients: RecipeIngredient[]) {
     const name = normalizeForMatching(ingredient.name);
     if (normalized.includes(name)) return true;
     return name.split(' ').filter((part) => part.length >= 3).some((part) => words.has(part) || words.has(`${part}s`) || (part.endsWith('s') && words.has(part.slice(0, -1))));
-  }).slice(0, 5);
+  }).slice(0, 12);
 }
 
 function resolveIngredientsFromNames(names: string[], ingredients: RecipeIngredient[]) {
@@ -268,7 +286,7 @@ function resolveIngredientsFromNames(names: string[], ingredients: RecipeIngredi
     const synonyms = INGREDIENT_SYNONYMS[normalized] ?? INGREDIENT_SYNONYMS[key] ?? [];
     const synonym = ingredients.find((ingredient) => synonyms.some((value) => normalizeForMatching(ingredient.name).includes(normalizeForMatching(value))));
     return synonym ?? { name, quantity: '' };
-  }).slice(0, 5);
+  }).slice(0, 12);
 }
 
 function getStepTools(text: string, equipment: string[]) {
@@ -279,7 +297,7 @@ function getStepTools(text: string, equipment: string[]) {
     return parts.length > 0 && parts.every((part) => words.has(part));
   });
   const builtIn = STEP_TOOL_PATTERNS.filter(([pattern]) => pattern.test(normalized)).map(([, tool]) => tool);
-  return [...new Set([...fromEquipment, ...builtIn])].slice(0, 4);
+  return [...new Set([...fromEquipment, ...builtIn])].slice(0, 6);
 }
 
 function parseEstimatedMinutes(value?: string) {

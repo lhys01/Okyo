@@ -1,13 +1,6 @@
 export function getConciseGuidedInstruction(value: string) {
-  const instruction = value.replace(/\s+/g, ' ').trim();
-  const sentences = instruction.match(/[^.!?]+[.!?]?/g) ?? [];
-  const concise = sentences.slice(0, 2).join(' ').trim();
-  const candidate = concise || instruction;
-
-  if (candidate.length <= 220) {
-    return candidate;
-  }
-
-  const shortened = candidate.slice(0, 217).replace(/\s+\S*$/, '').trim();
-  return `${shortened}…`;
+  // Guided Cooking renders this inside a scrollable region. Preserve the
+  // complete generated instruction so useful technique and finish cues are
+  // never silently removed before the user starts cooking.
+  return value.replace(/\s+/g, ' ').trim();
 }

@@ -1,11 +1,13 @@
-// Category-level fallback images (used by OnboardingUI, ScanScreen, etc.)
+// Category-level fallback images (used by OnboardingUI and inspiration views).
+// Keep these pointed at bundled recipe art so deleted legacy samples cannot
+// break Metro at compile time.
 export const foodAssets = {
-  bowl: require('./sample-bowl.png'),
-  breakfast: require('./sample-breakfast.png'),
-  burger: require('./sample-burger.png'),
-  dessert: require('./sample-dessert.png'),
-  pasta: require('./sample-pasta.png'),
-  salad: require('./sample-salad.png'),
+  bowl: require('./recipes/garlic-chicken-rice-bowl.png'),
+  breakfast: require('./recipes/breakfast-burrito.png'),
+  burger: require('./recipes/smash-cheeseburger.png'),
+  dessert: require('./recipes/chocolate-mug-cake.png'),
+  pasta: require('./recipes/creamy-tomato-rigatoni.png'),
+  salad: require('./recipes/greek-salad.png'),
 };
 
 // Per-recipe images for RecommendationsScreen and recipe cards.
@@ -39,11 +41,12 @@ export const recipeAssets: Record<string, number> = {
   'falafel-wrap': require('./recipes/falafel-wrap.png'),
   'fettuccine-alfredo': require('./recipes/fettuccine-alfredo.png'),
   'french-toast': require('./recipes/french-toast.png'),
-  'garlic-butter-spaghetti': require('./recipes/garlic-butter-spaghetti.png'),
   'garlic-chicken-rice-bowl': require('./recipes/garlic-chicken-rice-bowl.png'),
   'granola-yogurt-bowl': require('./recipes/granola-yogurt-bowl.png'),
   'greek-salad': require('./recipes/greek-salad.png'),
   'greek-yogurt-parfait': require('./recipes/greek-yogurt-parfait.png'),
+  // Use a pasta image for this pasta dish; never fall back to the rice-bowl art.
+  'garlic-butter-spaghetti': require('./recipes/spaghetti-carbonara.png'),
   'gyudon': require('./recipes/gyudon.png'),
   'huevos-rancheros': require('./recipes/huevos-rancheros.png'),
   'lamb-tagine': require('./recipes/lamb-tagine.png'),
@@ -79,3 +82,24 @@ export const recipeAssets: Record<string, number> = {
   'turkey-avocado-sandwich': require('./recipes/turkey-avocado-sandwich.png'),
   'vegetable-lo-mein': require('./recipes/vegetable-lo-mein.png'),
 };
+
+/**
+ * Built-in library art belongs to the app bundle, never to persisted user
+ * recipes. Recipe IDs are prefixed with `rec-` at runtime, while the static
+ * asset keys intentionally are not.
+ */
+export function getFoodLibraryImageAsset(recipeId: string | null | undefined): number | undefined {
+  if (typeof recipeId !== 'string' || recipeId.trim().length === 0) {
+    return undefined;
+  }
+
+  const normalizedId = recipeId.trim().replace(/^rec-/, '');
+  const asset = recipeAssets[normalizedId];
+  if (asset !== undefined) {
+    return asset;
+  }
+
+  // A built-in recipe without a dedicated image must still use app-owned art;
+  // never fall through to a deleted user URI or a network-only image.
+  return recipeId.startsWith('rec-') ? foodAssets.bowl : undefined;
+}

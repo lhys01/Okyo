@@ -14,6 +14,7 @@ function recipeAnalysis(overrides: Partial<FoodImageAnalysis> = {}): FoodImageAn
   return {
     candidateScanId: `scan-${Math.random().toString(36).slice(2)}`,
     aiSource: 'openrouter_ai',
+    inputKind: 'prepared_dish',
     dishName: 'Lemon Chicken',
     cuisine: 'Homestyle',
     restaurantStyle: 'Homestyle',
@@ -61,9 +62,16 @@ function withRecipeEnv<T>(run: () => Promise<T>): Promise<T> {
   const originalAiEnabled = process.env.AI_ENABLED;
   const originalApiKey = process.env.OPENROUTER_API_KEY;
   const originalMaxTokens = process.env.AI_MAX_OUTPUT_TOKENS;
+  const originalEpicureEnabled = process.env.EPICURE_ENABLED;
+  const originalEpicureAnalytics = process.env.EPICURE_ANALYTICS;
   process.env.AI_ENABLED = 'true';
   process.env.OPENROUTER_API_KEY = 'sk-test';
   process.env.AI_MAX_OUTPUT_TOKENS = '4096';
+  // These fixtures mock the recipe provider call sequence directly. Keep the
+  // optional Epicure provider call off so a developer's local .env cannot shift
+  // the response queue underneath the test.
+  process.env.EPICURE_ENABLED = 'false';
+  process.env.EPICURE_ANALYTICS = 'off';
 
   return run().finally(() => {
     if (originalAiEnabled === undefined) delete process.env.AI_ENABLED;
@@ -72,6 +80,10 @@ function withRecipeEnv<T>(run: () => Promise<T>): Promise<T> {
     else process.env.OPENROUTER_API_KEY = originalApiKey;
     if (originalMaxTokens === undefined) delete process.env.AI_MAX_OUTPUT_TOKENS;
     else process.env.AI_MAX_OUTPUT_TOKENS = originalMaxTokens;
+    if (originalEpicureEnabled === undefined) delete process.env.EPICURE_ENABLED;
+    else process.env.EPICURE_ENABLED = originalEpicureEnabled;
+    if (originalEpicureAnalytics === undefined) delete process.env.EPICURE_ANALYTICS;
+    else process.env.EPICURE_ANALYTICS = originalEpicureAnalytics;
   });
 }
 
@@ -133,7 +145,7 @@ test('normalizes dim cluttered restaurant food into an uncertain food result', (
   assert.ok(analysis.confidence >= 0.4 && analysis.confidence <= 0.85);
 });
 
-test('does not invent restaurant price when a photo has no visible price', () => {
+test('keeps a cautious comparable restaurant estimate when a prepared dish has no visible menu price', () => {
   const analysis = normalizeVisionOutput({
     dishName: 'saucy rice bowl',
     scanState: 'food_present_uncertain_dish',
@@ -153,11 +165,12 @@ test('does not invent restaurant price when a photo has no visible price', () =>
       vegetables: '',
     },
     homemadeCostEstimate: 8,
+    restaurantPriceEstimate: 18,
     confidenceReason: 'Food is visible, but no menu or receipt price appears in the photo.',
   });
 
   assert.equal(analysis.isFoodImage, true);
-  assert.equal(analysis.restaurantPriceEstimate, 0);
+  assert.equal(analysis.restaurantPriceEstimate, 18);
   assert.equal(analysis.homemadeCostEstimate, 8);
 });
 

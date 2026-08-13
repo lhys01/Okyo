@@ -69,3 +69,60 @@ export function nextScanProgress({
 
   return { scanSessionId, value };
 }
+
+export type AnalysisPresentationState = {
+  progress: number;
+  stageIndex: 0 | 1 | 2 | 3;
+  stageProgress: number;
+};
+
+/**
+ * Honest presentation-only progress for the single-request scan API.
+ *
+ * The API currently exposes only pending/success/failure, so this timeline
+ * creates useful motion without pretending that individual backend jobs have
+ * completed. It always holds on stage four and below 100% until the caller
+ * receives a validated successful recipe.
+ */
+export function getPendingAnalysisPresentation(elapsedMs: number): AnalysisPresentationState {
+  const elapsed = Math.max(0, elapsedMs);
+
+  if (elapsed < 1_000) {
+    return {
+      progress: 0.25 * (elapsed / 1_000),
+      stageIndex: 0,
+      stageProgress: elapsed / 1_000,
+    };
+  }
+
+  if (elapsed < 3_000) {
+    return {
+      progress: 0.25 + 0.25 * ((elapsed - 1_000) / 2_000),
+      stageIndex: 1,
+      stageProgress: (elapsed - 1_000) / 2_000,
+    };
+  }
+
+  if (elapsed < 6_000) {
+    return {
+      progress: 0.5 + 0.22 * ((elapsed - 3_000) / 3_000),
+      stageIndex: 2,
+      stageProgress: (elapsed - 3_000) / 3_000,
+    };
+  }
+
+  if (elapsed < 10_000) {
+    return {
+      progress: 0.72 + 0.22 * ((elapsed - 6_000) / 4_000),
+      stageIndex: 3,
+      stageProgress: (elapsed - 6_000) / 4_000,
+    };
+  }
+
+  const slowCreep = 0.01 * (1 - Math.exp(-(elapsed - 10_000) / 10_000));
+  return {
+    progress: Math.min(0.95, 0.94 + slowCreep),
+    stageIndex: 3,
+    stageProgress: 0.98,
+  };
+}

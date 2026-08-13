@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import type { AiConfig } from './config/aiConfig.js';
+import type { FoodImageAnalysis } from './services/aiService.js';
 import {
   mockBadges,
   mockGroceryLists,
@@ -15,6 +17,7 @@ import type {
   CompletedChallenge,
   Recipe,
   RecipeMode,
+  ScanSource,
   ScanResult,
   XpEventDefinition,
 } from './types.js';
@@ -34,6 +37,49 @@ type GeneratedRecipeEntry = {
   supersededBy?: string;
 };
 const generatedRecipeStore = new Map<string, GeneratedRecipeEntry>();
+
+export const ANALYSIS_TTL_MS = 15 * 60 * 1000;
+
+export type StoredAnalysisContext = {
+  analysis: FoodImageAnalysis;
+  config: AiConfig;
+  mode: RecipeMode;
+  source: ScanSource;
+  fableActive?: boolean;
+  uploadedImage: boolean;
+  visionMs: number;
+  scanStartedAt: number;
+  expiresAt: number;
+};
+
+const analysisStore = new Map<string, StoredAnalysisContext>();
+
+export function storeAnalysisContext(
+  context: Omit<StoredAnalysisContext, 'expiresAt'>,
+  now = Date.now(),
+): { analysisId: string; expiresAt: number } {
+  const analysisId = randomUUID();
+  const expiresAt = now + ANALYSIS_TTL_MS;
+  analysisStore.set(analysisId, { ...context, expiresAt });
+  return { analysisId, expiresAt };
+}
+
+export function getAnalysisContext(
+  analysisId: string,
+  now = Date.now(),
+): { status: 'found'; context: StoredAnalysisContext } | { status: 'expired' | 'missing' } {
+  const context = analysisStore.get(analysisId);
+  if (!context) return { status: 'missing' };
+  if (context.expiresAt <= now) {
+    analysisStore.delete(analysisId);
+    return { status: 'expired' };
+  }
+  return { status: 'found', context };
+}
+
+export function deleteAnalysisContext(analysisId: string): void {
+  analysisStore.delete(analysisId);
+}
 
 export class StaleRecipeRevisionError extends Error {
   readonly sourceRecipeId: string;

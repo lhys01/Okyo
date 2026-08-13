@@ -61,19 +61,27 @@ test('navigation registry no longer declares a ScanScreen route anywhere', () =>
 
 test('HomeScreen scan-entry controls never target ScanScreen', () => {
   const source = readScreenSource('HomeScreen.tsx');
+  const tabs = readNavigationSource('MainTabs.tsx');
   assert.equal(source.includes('ScanScreen'), false);
-  assert.match(source, /onOpenCamera=\{\(\) => void openCameraImmediately\(\)\}/);
-  assert.match(source, /onOpenPhotos=\{openPhotosImmediately\}/);
-  assert.match(source, /onDescribeMeal=\{\(\) => navigation\.navigate\('DescribeMealScreen'\)\}/);
-  assert.match(source, /void openCameraImmediately\(\)/);
+  assert.equal(tabs.includes('ScanScreen'), false);
+  assert.match(tabs, /onTakePhoto=\{\(\) => void startPickedScan\('camera'\)\}/);
+  assert.match(tabs, /onUpload=\{\(\) => void startPickedScan\('photos'\)\}/);
+  assert.match(tabs, /onDescribeMeal=\{\(\) => rootNavigation\?\.navigate\('DescribeMealScreen'\)\}/);
+  // The upload target now lives in the scan hook shared by the FAB and the
+  // Home first-use CTA, so both entry points route to the same screen.
+  assert.match(tabs, /useStartPickedScan/);
+  assert.match(
+    readFileSync(path.join(srcDir, 'hooks', 'useStartPickedScan.ts'), 'utf8'),
+    /HOME_UPLOAD_TARGET_SCREEN/,
+  );
 });
 
 test('ChallengeCompleteScreen empty-state routes to Home', () => {
   assert.match(readScreenSource('ChallengeCompleteScreen.tsx'), /screen:\s*'HomeScreen'/);
 });
 
-test('LibraryScreen empty-state routes to Home', () => {
-  assert.match(readScreenSource('LibraryScreen.tsx'), /screen:\s*'HomeScreen'/);
+test('LibraryScreen empty-state routes to Food Inspiration', () => {
+  assert.match(readScreenSource('LibraryScreen.tsx'), /screen:\s*'RestaurantPacksScreen'/);
 });
 
 test('GoalScreen routes to Home after goal selection', () => {
@@ -91,6 +99,16 @@ test('RecipeDetailScreen fallbacks (back, missing-recipe, missing-steps) never t
   assert.equal(source.includes('ScanScreen'), false);
   const matches = source.match(/screen:\s*'HomeScreen'/g) ?? [];
   assert.equal(matches.length >= 3, true, `expected at least 3 HomeScreen destinations, found ${matches.length}`);
+});
+
+test('Guided Cooking exits to a reset Home tab instead of leaving Recipe Steps active', () => {
+  const source = readScreenSource('RecipeDetailScreen.tsx');
+  const tabs = readFileSync(path.resolve(process.cwd(), 'src/navigation/MainTabs.tsx'), 'utf8');
+  assert.match(source, /import \{ getHomeResetState \} from '\.\.\/utils\/scanControllerUtils'/);
+  assert.match(source, /const resetToHome = \(\) => \{[\s\S]{0,320}rootNavigation\.reset\(getHomeResetState\(\)\)/);
+  assert.match(source, /const goHomeFromCompletion = \(\) => \{[\s\S]{0,120}resetToHome\(\)/);
+  assert.match(source, /End Session[\s\S]{0,240}resetToHome\(\)/);
+  assert.match(tabs, /routeName === 'HomeScreen'[\s\S]{0,220}focusedRoute\?\.name === 'RecipeStepsScreen'[\s\S]{0,200}rootNavigation\?\.reset\(getHomeResetState\(\)\)/);
 });
 
 test('SavingsDashboardScreen routes to Home', () => {

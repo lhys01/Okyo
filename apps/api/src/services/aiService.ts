@@ -66,16 +66,18 @@ import { deriveFlavorPlan, type FlavorPlan } from './flavorPlan.js';
 import { validateCanonicalRecipeQuality } from './recipeQualityValidator.js';
 import {
   getCurrentGeneratedRecipe,
+  getAnalysisContext,
   getGeneratedRecipe,
   getGeneratedRecipeRevisionMetadata,
   storeGeneratedRecipe,
   storeGeneratedRecipeRevision,
+  storeAnalysisContext,
   StaleRecipeRevisionError,
 } from '../store.js';
 
 // Bump when the vision/recipe prompt or post-processing pipeline changes substantially.
 // Any cached scan result with a different version is automatically stale.
-const RECIPE_PIPELINE_VERSION = 'v3';
+const RECIPE_PIPELINE_VERSION = 'v4-dish-first';
 const SCAN_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 h success cache
 const SCAN_REJECTION_CACHE_TTL_MS = 60 * 60 * 1000; // 1 h rejection cache
 
@@ -90,6 +92,12 @@ type CorrectionRequestOutcome =
 const correctionRequestResults = new Map<string, { outcome: CorrectionRequestOutcome; expiresAt: number }>();
 const correctionRequestInFlight = new Map<string, Promise<AiScanSuccessResult | null>>();
 const CORRECTION_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const RECIPE_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+type RecipeRequestOutcome =
+  | { kind: 'success'; result: AiScanSuccessResult }
+  | { kind: 'failure'; error: unknown };
+const recipeRequestResults = new Map<string, { outcome: RecipeRequestOutcome; expiresAt: number }>();
+const recipeRequestInFlight = new Map<string, Promise<AiScanSuccessResult>>();
 
 function createUniqueScanSourceRecipe(recipe: Recipe, scanId: string): Recipe {
   return {
@@ -209,6 +217,7 @@ export type FoodScanState = z.infer<typeof scanStateSchema>;
 export const foodImageAnalysisSchema = z.object({
   candidateScanId: z.string().min(1),
   aiSource: aiSourceSchema,
+  inputKind: z.enum(['prepared_dish', 'raw_ingredients', 'not_food', 'unclear']).default('prepared_dish'),
   dishName: z.string().min(1),
   cuisine: z.string().min(1),
   restaurantStyle: z.string().min(1),
@@ -290,6 +299,27 @@ export type GeneratedRecipeOutput = z.infer<typeof generatedRecipeOutputSchema> 
 };
 export type IngredientCostEstimate = z.infer<typeof ingredientCostEstimateSchema>;
 
+// Onboarding-collected personalization, threaded through to recipe generation.
+// dietaryRestrictions are hard safety constraints; dietaryDislikes are soft
+// preferences the model should avoid but may override if there's no other way.
+export type RecipeGenerationPreferences = {
+  recipePriority?: string;
+  cookingFrictionFollowUp?: string;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  goalContext?: {
+    primaryGoal?: string;
+    secondaryGoals?: string[];
+    handsOnTimeMinutes?: number;
+    defaultServings?: number;
+    cookingPriority?: string;
+    orderingFriction?: string;
+    healthPriorities?: string[];
+    trackingPreference?: string;
+    nutritionTargets?: { calories: number; proteinGrams: number; carbsGrams: number; fatGrams: number };
+  };
+};
+
 export type AnalyzeFoodImageInput = {
   image?: ScanImageMetadata;
   source: ScanSource;
@@ -298,6 +328,29 @@ export type AnalyzeFoodImageInput = {
   // cap have already been validated upstream (server.ts). getAiConfig()
   // still requires FABLE_ENABLED itself before honoring this.
   fableActive?: boolean;
+  preferences?: RecipeGenerationPreferences;
+};
+
+export type AnalyzePreparedDishInput = AnalyzeFoodImageInput & {
+  mealDescription?: string;
+};
+
+export type AnalyzePreparedDishResult = {
+  analysisId: string;
+  dishName: string;
+  confidence: number;
+  inputKind: FoodImageAnalysis['inputKind'];
+  scanState: ScanState;
+  expiresAt: string;
+};
+
+export type GenerateRecipeForAnalysisInput = {
+  analysisId: string;
+  mode?: RecipeMode;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  recipeRequestId?: string;
+  goalContext?: RecipeGenerationPreferences['goalContext'];
 };
 
 export type GenerateRecipeFromDishInput = {
@@ -306,6 +359,7 @@ export type GenerateRecipeFromDishInput = {
   mode: RecipeMode;
   fableActive?: boolean;
   storeResult?: boolean;
+  preferences?: RecipeGenerationPreferences;
 };
 
 export type EstimateIngredientCostsInput = {
@@ -330,7 +384,7 @@ export type AiScanSuccessResult = {
   uploadedImage: boolean;
 };
 
-export type FoodRejectionType = 'no_food_detected' | 'unclear_food';
+export type FoodRejectionType = 'ingredients_only' | 'no_food_detected' | 'unclear_food';
 
 export class FoodRejectionError extends Error {
   readonly rejectionType: FoodRejectionType;
@@ -339,12 +393,28 @@ export class FoodRejectionError extends Error {
   readonly dishName: string;
 
   constructor(args: { rejectionType: FoodRejectionType; scanState: ScanState; confidence: number; dishName: string }) {
-    super("I couldn't find a clear meal in this photo. Try scanning a plated dish, snack, or restaurant food.");
+    super(args.rejectionType === 'ingredients_only'
+      ? "Scan a prepared dish you'd like to recreate."
+      : "I couldn't find a clear meal in this photo. Try scanning a plated dish, snack, or restaurant food.");
     this.name = 'FoodRejectionError';
     this.rejectionType = args.rejectionType;
     this.scanState = args.scanState;
     this.confidence = args.confidence;
     this.dishName = args.dishName;
+  }
+}
+
+export class AnalysisExpiredError extends Error {
+  constructor() {
+    super("Let's scan that again.");
+    this.name = 'AnalysisExpiredError';
+  }
+}
+
+export class AnalysisNotFoundError extends Error {
+  constructor() {
+    super("Let's scan that again.");
+    this.name = 'AnalysisNotFoundError';
   }
 }
 
@@ -391,6 +461,7 @@ export async function analyzeFoodImage(input: AnalyzeFoodImageInput): Promise<Fo
     cuisine: normalized.cuisine,
     difficulty: getDifficultyFromConfidence(normalized.confidence),
     dishName: normalized.dishName,
+    inputKind: normalized.inputKind,
     epicureSuggestions: normalized.epicureSuggestions,
     homemadeCostEstimate: normalized.homemadeCostEstimate,
     isFoodImage: normalized.isFoodImage,
@@ -424,6 +495,7 @@ export async function generateRecipeFromDish(
       config,
       correction: input.correction,
       mode: input.mode,
+      preferences: input.preferences,
     });
     logAi('openrouter_ai', getAiLogDetails(config, config.openRouterTextModel, { stage: 'recipe' }));
     const result = createRecipeFromOpenRouterOutput(
@@ -536,8 +608,11 @@ export async function enrichRecipeCoaching(
 }
 
 export function estimateIngredientCosts(input: EstimateIngredientCostsInput): IngredientCostEstimate {
-  const restaurantPrice = normalizeRestaurantPrice(input.analysis.restaurantPriceEstimate);
-  const homemadeCost = normalizeHomemadeCost(input.recipe.estimatedHomemadeCost, restaurantPrice);
+  const { restaurantPrice, homemadeCost } = resolvePricing(
+    input.recipe.restaurantPriceEstimate || input.analysis.restaurantPriceEstimate,
+    input.recipe.estimatedHomemadeCost,
+    input.analysis.broadDishCategory,
+  );
   const estimate = ingredientCostEstimateSchema.safeParse({
     restaurantPrice,
     homemadeCost,
@@ -560,27 +635,159 @@ export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScan
   return runWithOpenRouterMetrics(() => createAiScanWithMetrics(input));
 }
 
-export async function createAiTextRecipe(input: { mealDescription: string; mode: RecipeMode; fableActive?: boolean }): Promise<AiScanSuccessResult> {
+export async function analyzePreparedDish(
+  input: AnalyzePreparedDishInput,
+): Promise<AnalyzePreparedDishResult> {
+  return runWithOpenRouterMetrics(() => analyzePreparedDishWithMetrics(input));
+}
+
+async function analyzePreparedDishWithMetrics(
+  input: AnalyzePreparedDishInput,
+): Promise<AnalyzePreparedDishResult> {
+  const config = getAiConfig({ fableActive: input.fableActive });
+  const uploadedImage = hasRealUploadedImage(input);
+  const scanStartedAt = Date.now();
+  let analysis: FoodImageAnalysis;
+  let visionMs = 0;
+
+  if (input.source === 'description') {
+    if (!input.mealDescription?.trim()) {
+      throw new Error('MEAL_DESCRIPTION_MISSING');
+    }
+    analysis = createDescriptionAnalysis(input.mealDescription, input.mode);
+  } else {
+    if (uploadedImage && !canUseOpenRouter(config)) {
+      throw new Error(`AI_UNAVAILABLE: ${getUnavailableAiReason(config)}`);
+    }
+    if (uploadedImage && !isProviderVisibleImage(input.image)) {
+      throw new Error(`IMAGE_NOT_AVAILABLE: ${getImageUnavailableReason(input.image)}`);
+    }
+    const visionStartedAt = Date.now();
+    analysis = await analyzeFoodImage(input);
+    visionMs = Date.now() - visionStartedAt;
+  }
+
+  const rejection = getFoodGateRejection(analysis, uploadedImage);
+  console.log('[food_gate]', {
+    passed: rejection === null,
+    scanState: analysis.scanState,
+    confidence: analysis.confidence,
+    dishName: analysis.dishName,
+    visionModel: config.openRouterVisionModel,
+    epicureSkipped: Boolean(rejection),
+    recipeSkipped: true,
+  });
+  if (rejection) throw rejection;
+
+  const stored = storeAnalysisContext({
+    analysis,
+    config,
+    mode: input.mode,
+    source: input.source,
+    fableActive: input.fableActive,
+    uploadedImage,
+    visionMs,
+    scanStartedAt,
+  });
+
+  return {
+    analysisId: stored.analysisId,
+    dishName: analysis.dishName,
+    confidence: analysis.confidence,
+    inputKind: analysis.inputKind,
+    scanState: analysis.scanState,
+    expiresAt: new Date(stored.expiresAt).toISOString(),
+  };
+}
+
+export async function generateRecipeForAnalysis(
+  input: GenerateRecipeForAnalysisInput,
+): Promise<AiScanSuccessResult> {
+  const requestId = input.recipeRequestId;
+  const completed = requestId ? recipeRequestResults.get(requestId) : undefined;
+  if (completed && completed.expiresAt > Date.now()) {
+    if (completed.outcome.kind === 'failure') throw completed.outcome.error;
+    return completed.outcome.result;
+  }
+  if (completed) recipeRequestResults.delete(requestId!);
+
+  const inFlight = requestId ? recipeRequestInFlight.get(requestId) : undefined;
+  if (inFlight) return inFlight;
+
+  const stored = getAnalysisContext(input.analysisId);
+  if (stored.status !== 'found') {
+    if (stored.status === 'expired' || isUuid(input.analysisId)) {
+      throw new AnalysisExpiredError();
+    }
+    throw new AnalysisNotFoundError();
+  }
+
+  const work = runWithOpenRouterMetrics(() => buildScanResultFromAnalysis(stored.context.analysis, {
+    config: stored.context.config,
+    mode: input.mode ?? stored.context.mode,
+    source: stored.context.source,
+    fableActive: stored.context.fableActive,
+    preferences: {
+      dietaryRestrictions: input.dietaryRestrictions,
+      dietaryDislikes: input.dietaryDislikes,
+      goalContext: input.goalContext,
+    },
+    uploadedImage: stored.context.uploadedImage,
+    visionMs: stored.context.visionMs,
+    scanStartedAt: stored.context.scanStartedAt,
+    scanCacheKey: null,
+  }));
+  if (!requestId) return work;
+
+  recipeRequestInFlight.set(requestId, work);
+  try {
+    const result = await work;
+    recipeRequestResults.set(requestId, {
+      outcome: { kind: 'success', result },
+      expiresAt: Date.now() + RECIPE_IDEMPOTENCY_TTL_MS,
+    });
+    return result;
+  } catch (error) {
+    recipeRequestResults.set(requestId, {
+      outcome: { kind: 'failure', error },
+      expiresAt: Date.now() + RECIPE_IDEMPOTENCY_TTL_MS,
+    });
+    throw error;
+  } finally {
+    recipeRequestInFlight.delete(requestId);
+  }
+}
+
+function createDescriptionAnalysis(mealDescription: string, mode: RecipeMode): FoodImageAnalysis {
+  const dishName = mealDescription.trim().slice(0, 120);
+  const parsedAnalysis = foodImageAnalysisSchema.parse({
+    candidateScanId: `text-${Date.now()}`,
+    aiSource: 'openrouter_ai', inputKind: 'prepared_dish', dishName, cuisine: 'home kitchen', restaurantStyle: 'home kitchen',
+    scanState: 'clear_food', broadDishCategory: 'meal described by user', confidence: 0.72,
+    confidenceReason: 'Based on the dish the user asked to recreate; ingredients and nutrition are estimates.',
+    isFoodImage: true, isRestaurantMeal: false, visibleIngredients: [], likelyIngredients: [], possibleDishNames: [dishName],
+    visibleComponents: {}, restaurantPriceEstimate: 0, homemadeCostEstimate: 0, matchScore: 7.2, difficulty: 'Easy', modes: [mode],
+    mealDescription: mealDescription.trim(),
+  });
+  return {
+    ...parsedAnalysis,
+    anatomy: deriveDishAnatomy(parsedAnalysis),
+    flavorPlan: deriveFlavorPlan(parsedAnalysis),
+  };
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+export async function createAiTextRecipe(input: { mealDescription: string; mode: RecipeMode; fableActive?: boolean; preferences?: RecipeGenerationPreferences }): Promise<AiScanSuccessResult> {
   const config = getAiConfig({ fableActive: input.fableActive });
   const dishName = input.mealDescription.trim().slice(0, 120);
   // The recipe pipeline still consumes FoodImageAnalysis internally. This adapter
   // is deliberately not exposed as photo metadata: the API response carries the
   // explicit `description` source and the mobile result suppresses image signals.
-  const parsedAnalysis = foodImageAnalysisSchema.parse({
-    candidateScanId: `text-${Date.now()}`,
-    aiSource: 'openrouter_ai', dishName, cuisine: 'home kitchen', restaurantStyle: 'home kitchen',
-    scanState: 'clear_food', broadDishCategory: 'meal described by user', confidence: 0.72,
-    confidenceReason: 'Based on the user description; ingredients and nutrition are estimates.',
-    isFoodImage: true, isRestaurantMeal: false, visibleIngredients: [], likelyIngredients: [], possibleDishNames: [dishName],
-    visibleComponents: {}, restaurantPriceEstimate: 0, homemadeCostEstimate: 0, matchScore: 7.2, difficulty: 'Easy', modes: [input.mode],
-    mealDescription: input.mealDescription.trim(),
-  });
-  const analysis = {
-    ...parsedAnalysis,
-    anatomy: deriveDishAnatomy(parsedAnalysis),
-    flavorPlan: deriveFlavorPlan(parsedAnalysis),
-  };
-  const generated = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive, storeResult: false });
+  const analysis = createDescriptionAnalysis(input.mealDescription, input.mode);
+  const generated = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive, storeResult: false, preferences: input.preferences });
   if (!generated.recipe) throw new Error('RECIPE_MISSING: Recipe object was not generated');
   const scanId = `scan-text-${Date.now()}-${randomUUID()}`;
   const recipe = createUniqueScanSourceRecipe(generated.recipe, scanId);
@@ -618,8 +825,12 @@ export async function createAiRecipeCorrection(input: {
   fableActive?: boolean;
   mode: RecipeMode;
   recipeId: string;
+  currentRecipe?: Recipe;
   canonicalRecipeId?: string;
   scanSessionId?: string;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  goalContext?: RecipeGenerationPreferences['goalContext'];
 }): Promise<AiScanSuccessResult | null> {
   const requestId = input.diagnostics.correctionRequestId;
   const completed = requestId ? correctionRequestResults.get(requestId) : undefined;
@@ -666,8 +877,12 @@ async function createAiRecipeCorrectionWithMetrics(input: {
   fableActive?: boolean;
   mode: RecipeMode;
   recipeId: string;
+  currentRecipe?: Recipe;
   canonicalRecipeId?: string;
   scanSessionId?: string;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  goalContext?: RecipeGenerationPreferences['goalContext'];
 }): Promise<AiScanSuccessResult | null> {
   const sourceMetadata = getGeneratedRecipeRevisionMetadata(input.recipeId);
   input.diagnostics.canonicalRecipeId = input.canonicalRecipeId;
@@ -694,6 +909,14 @@ async function createAiRecipeCorrectionWithMetrics(input: {
     }
     throw error;
   }
+  if (!existingRecipe && input.currentRecipe) {
+    // Generated recipes are cached in process memory. A deploy, expiry, or a
+    // request routed to another instance must not make a locally persisted
+    // mobile recipe impossible to customize, so rehydrate this exact revision
+    // from the validated request snapshot.
+    storeGeneratedRecipe({ ...input.currentRecipe, id: input.recipeId });
+    existingRecipe = getCurrentGeneratedRecipe(input.recipeId);
+  }
   if (!existingRecipe) return null;
 
   const config = getAiConfig({ fableActive: input.fableActive });
@@ -703,6 +926,9 @@ async function createAiRecipeCorrectionWithMetrics(input: {
     config,
     currentRecipe: existingRecipe,
     editMessage: input.correctionNote,
+    dietaryRestrictions: input.dietaryRestrictions,
+    dietaryDislikes: input.dietaryDislikes,
+    goalContext: input.goalContext,
   });
   let candidateAnalysis = createRecipeEditCandidateAnalysis(analysis, firstOutput);
   let recipe = createRecipeFromOpenRouterOutput(firstOutput, candidateAnalysis, input.mode).recipe;
@@ -723,6 +949,9 @@ async function createAiRecipeCorrectionWithMetrics(input: {
       editMessage: input.correctionNote,
       previousCandidate: recipe,
       retryReason: issues.map((issue) => `${issue.code}: ${issue.message}`).join('; '),
+      dietaryRestrictions: input.dietaryRestrictions,
+      dietaryDislikes: input.dietaryDislikes,
+      goalContext: input.goalContext,
     });
     candidateAnalysis = createRecipeEditCandidateAnalysis(analysis, retryOutput);
     const retryRecipe = createRecipeFromOpenRouterOutput(retryOutput, candidateAnalysis, input.mode).recipe;
@@ -942,6 +1171,131 @@ function getRecipeEditNutritionValue(recipe: Recipe, nutrient: string): number |
   return null;
 }
 
+async function buildScanResultFromAnalysis(
+  analysis: FoodImageAnalysis,
+  context: {
+    config: AiConfig;
+    mode: RecipeMode;
+    source: ScanSource;
+    fableActive?: boolean;
+    preferences?: RecipeGenerationPreferences;
+    uploadedImage: boolean;
+    visionMs: number;
+    scanStartedAt: number;
+    scanCacheKey: string | null;
+  },
+): Promise<AiScanSuccessResult> {
+  logScanDebug('api_scan_recipe_start', {
+    dishName: analysis.dishName,
+    mode: context.mode,
+    scanState: analysis.scanState,
+  });
+  const recipeStartedAt = Date.now();
+  const generatedRecipe = await generateRecipeFromDish({
+    analysis,
+    mode: context.mode,
+    fableActive: context.fableActive,
+    storeResult: false,
+    preferences: context.preferences,
+  });
+  const recipeMs = Date.now() - recipeStartedAt;
+  const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
+  logScanDebug('api_scan_recipe_result', {
+    aiSource: generatedRecipe.aiSource,
+    fallbackReason: recipeFallbackReason,
+    recipeGenerated: generatedRecipe.aiSource === 'openrouter_ai' && Boolean(generatedRecipe.recipe),
+    recipeId: generatedRecipe.recipeId,
+  });
+
+  if (context.uploadedImage && generatedRecipe.aiSource !== 'openrouter_ai') {
+    throw new Error(`RECIPE_GENERATION_FAILED: ${recipeFallbackReason || 'unknown reason'}`);
+  }
+  if (!generatedRecipe.recipe) {
+    throw new Error('RECIPE_MISSING: Recipe object was not generated');
+  }
+
+  const scanId = `scan-${Date.now()}-${randomUUID()}`;
+  const recipe = createUniqueScanSourceRecipe(generatedRecipe.recipe, scanId);
+  storeGeneratedRecipe(recipe);
+
+  const costEstimate = estimateIngredientCosts({ analysis, recipe });
+  const usedOpenRouterAnalysis = analysis.notes.includes('OpenRouter test output; verify before using.');
+  const fallbackReason = recipeFallbackReason;
+  const aiSource = 'openrouter_ai' as const;
+  const groceryListId = `grocery-${recipe.id}`;
+  const shareCardId = `share-${scanId}`;
+
+  const scan: ScanResult = {
+    id: scanId,
+    dishName: analysis.dishName,
+    bestGuessDishName: analysis.dishName,
+    bestGuessNote: getBestGuessNote(analysis),
+    possibleDishNames: analysis.possibleDishNames,
+    confidence: getBlendedConfidence(analysis.confidence, generatedRecipe.confidence, costEstimate.confidence),
+    difficulty: analysis.difficulty,
+    estimatedSavings: costEstimate.estimatedSavings,
+    homemadeCost: costEstimate.homemadeCost,
+    matchScore: analysis.matchScore,
+    modes: analysis.modes,
+    restaurantPrice: costEstimate.restaurantPrice,
+    restaurantStyle: analysis.restaurantStyle,
+    scanState: analysis.scanState,
+    recipeId: recipe.id,
+    groceryListId,
+    shareCardId,
+  };
+
+  const groceryList = getGroceryListForRecipe(recipe);
+  const shareCard: ShareCard = {
+    id: shareCardId,
+    scanResultId: scanId,
+    kind: 'scan-result',
+    headline: `${analysis.dishName} for $${costEstimate.homemadeCost.toFixed(2)}`,
+    subheadline: `Save ~$${costEstimate.estimatedSavings.toFixed(2)} vs restaurant`,
+    savedAmount: costEstimate.estimatedSavings,
+    matchScore: scan.matchScore,
+    footer: 'Made with Okyo',
+  };
+
+  const result: AiScanSuccessResult = {
+    status: 'success',
+    scan,
+    recipe,
+    groceryList,
+    shareCard,
+    note: usedOpenRouterAnalysis
+      ? 'AI provider output is for testing only. No image was stored; verify all food, cost, and recipe details.'
+      : 'AI provider generated this result.',
+    ...createAiDebugMetadata(context.config, aiSource, scan.confidence, fallbackReason),
+    scanState: analysis.scanState,
+    uploadedImage: context.uploadedImage,
+  };
+
+  void logScanEvaluationFromResult(result, context.config).catch(() => undefined);
+  logFinalScanResult(result);
+
+  console.log('[scan_timing]', {
+    dish: analysis.dishName,
+    scanState: analysis.scanState,
+    visionMs: context.visionMs,
+    recipeMs,
+    providerCallCount: getOpenRouterMetrics().providerCallCount,
+    deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
+    combinedRepairMs: getOpenRouterMetrics().combinedRepairMs,
+    normalizationMs: getOpenRouterMetrics().normalizationMs,
+    totalMs: Date.now() - context.scanStartedAt,
+  });
+
+  if (context.scanCacheKey) {
+    scanCache.set(context.scanCacheKey, {
+      kind: 'success',
+      result,
+      expiresAt: Date.now() + SCAN_CACHE_TTL_MS,
+    });
+  }
+  return result;
+}
+
 async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
   const config = getAiConfig({ fableActive: input.fableActive });
   const uploadedImage = hasRealUploadedImage(input);
@@ -1066,113 +1420,17 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
       throw rejection;
     }
 
-    logScanDebug('api_scan_recipe_start', {
-      dishName: analysis.dishName,
+    return await buildScanResultFromAnalysis(analysis, {
+      config,
       mode: input.mode,
-      scanState: analysis.scanState,
-    });
-    const recipeStartedAt = Date.now();
-    const generatedRecipe = await generateRecipeFromDish({ analysis, mode: input.mode, fableActive: input.fableActive, storeResult: false });
-    const recipeMs = Date.now() - recipeStartedAt;
-    const recipeFallbackReason = generatedRecipe.fallbackReason ?? analysis.fallbackReason;
-    logScanDebug('api_scan_recipe_result', {
-      aiSource: generatedRecipe.aiSource,
-      fallbackReason: recipeFallbackReason,
-      recipeGenerated: generatedRecipe.aiSource === 'openrouter_ai' && Boolean(generatedRecipe.recipe),
-      recipeId: generatedRecipe.recipeId,
-    });
-
-    if (
-      uploadedImage &&
-      generatedRecipe.aiSource !== 'openrouter_ai'
-    ) {
-      // Fail-closed: throw on recipe generation failure. Never return partial scans.
-      throw new Error(`RECIPE_GENERATION_FAILED: ${recipeFallbackReason || 'unknown reason'}`);
-    }
-
-    if (!generatedRecipe.recipe) {
-      // Fail-closed: throw when recipe is missing. Never return partial scans.
-      throw new Error('RECIPE_MISSING: Recipe object was not generated');
-    }
-
-    const scanId = `scan-${Date.now()}-${randomUUID()}`;
-    const recipe = createUniqueScanSourceRecipe(generatedRecipe.recipe, scanId);
-    storeGeneratedRecipe(recipe);
-
-    const costEstimate = estimateIngredientCosts({ analysis, recipe });
-    const usedOpenRouterAnalysis = analysis.notes.includes('OpenRouter test output; verify before using.');
-    const fallbackReason = recipeFallbackReason;
-    const aiSource = 'openrouter_ai' as const;
-
-    const groceryListId = `grocery-${recipe.id}`;
-    const shareCardId = `share-${scanId}`;
-
-    const scan: ScanResult = {
-      id: scanId,
-      dishName: analysis.dishName,
-      bestGuessDishName: analysis.dishName,
-      bestGuessNote: getBestGuessNote(analysis),
-      possibleDishNames: analysis.possibleDishNames,
-      confidence: getBlendedConfidence(analysis.confidence, generatedRecipe.confidence, costEstimate.confidence),
-      difficulty: analysis.difficulty,
-      estimatedSavings: costEstimate.estimatedSavings,
-      homemadeCost: costEstimate.homemadeCost,
-      matchScore: analysis.matchScore,
-      modes: analysis.modes,
-      restaurantPrice: costEstimate.restaurantPrice,
-      restaurantStyle: analysis.restaurantStyle,
-      scanState: analysis.scanState,
-      recipeId: recipe.id,
-      groceryListId,
-      shareCardId,
-    };
-
-    const groceryList = getGroceryListForRecipe(recipe);
-    const shareCard: ShareCard = {
-      id: shareCardId,
-      scanResultId: scanId,
-      kind: 'scan-result',
-      headline: `${analysis.dishName} for $${costEstimate.homemadeCost.toFixed(2)}`,
-      subheadline: `Save ~$${costEstimate.estimatedSavings.toFixed(2)} vs restaurant`,
-      savedAmount: costEstimate.estimatedSavings,
-      matchScore: scan.matchScore,
-      footer: 'Made with Okyo',
-    };
-
-    const result = {
-      status: 'success' as const,
-      scan,
-      recipe,
-      groceryList,
-      shareCard,
-      note: usedOpenRouterAnalysis
-        ? 'AI provider output is for testing only. No image was stored; verify all food, cost, and recipe details.'
-        : 'AI provider generated this result.',
-      ...createAiDebugMetadata(config, aiSource, scan.confidence, fallbackReason),
-      scanState: analysis.scanState,
+      source: input.source,
+      fableActive: input.fableActive,
+      preferences: input.preferences,
       uploadedImage,
-    };
-
-    // Fire-and-forget: analytics file I/O must not block the user's response.
-    void logScanEvaluationFromResult(result, config).catch(() => undefined);
-    logFinalScanResult(result);
-
-    console.log('[scan_timing]', {
-      dish: analysis.dishName,
-      scanState: analysis.scanState,
       visionMs,
-      recipeMs, // includes Epicure pre-call + recipe + structure/quality/component repairs
-      providerCallCount: getOpenRouterMetrics().providerCallCount,
-      deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
-      combinedRepairMs: getOpenRouterMetrics().combinedRepairMs,
-      normalizationMs: getOpenRouterMetrics().normalizationMs,
-      totalMs: Date.now() - scanStartedAt,
+      scanStartedAt,
+      scanCacheKey,
     });
-
-    if (scanCacheKey) {
-      scanCache.set(scanCacheKey, { kind: 'success', result, expiresAt: Date.now() + SCAN_CACHE_TTL_MS });
-    }
-    return result;
   } catch (error) {
     // Fail-closed: throw on any provider error. Never return rejected scans.
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1253,10 +1511,15 @@ function createRecipeFromVariant(
     idPrefix?: string;
   } = {},
 ): Recipe {
-  const restaurantPrice = normalizeRestaurantPrice(analysis.restaurantPriceEstimate);
   // Single canonical recipe: homemade cost is the AI estimate, normalized. No
   // per-mode cost multipliers because presentation labels are not recipe data.
-  const homemadeCost = normalizeHomemadeCost(analysis.homemadeCostEstimate, restaurantPrice);
+  // Prefer the recipe-generation call's own price estimate; fall back to the
+  // vision analysis, then to a category-based markup if neither AI call gave one.
+  const { restaurantPrice, homemadeCost } = resolvePricing(
+    variant.restaurantPriceEstimate || analysis.restaurantPriceEstimate,
+    analysis.homemadeCostEstimate,
+    analysis.broadDishCategory,
+  );
   const title = getRecipeTitle(variant.title, analysis.dishName, mode);
   const ingredients = getRecipeIngredients(variant.ingredients, analysis, mode);
   const prepTimeMinutes = parseMinutes(variant.prepTime, 15);
@@ -1326,11 +1589,15 @@ function createRecipeFromVariant(
     skillLevel,
     difficulty: skillLevel,
     estimatedHomemadeCost: homemadeCost,
+    restaurantPriceEstimate: restaurantPrice,
     estimatedSavings: Math.max(0, restaurantPrice - homemadeCost),
     ingredients,
     ingredientGroups,
     steps,
-    structuredSteps: timedStructuredSteps,
+    structuredSteps: timedStructuredSteps.map((step, index) => ({
+      ...step,
+      id: step.id ?? `step-${index + 1}-${slugify(step.title || step.text)}`,
+    })),
     substitutions: getSafeList(variant.substitutions, getDefaultSubstitutions(), 3).map(cleanRecipeCopy),
     pantryNote: 'Assumes salt, pepper, and basic oil are on hand.',
     confidenceNote: `${options.confidenceNotePrefix ?? 'AI-assisted testing output.'} Confidence: ${Math.round(analysis.confidence * 100)}%. ${analysis.confidenceReason}`,
@@ -1363,10 +1630,14 @@ async function logScanEvaluationFromResult(result: AiScanSuccessResult, config: 
 }
 
 
-// Returns a FoodRejectionError if the vision analysis indicates non-food or unclear food,
-// null if generation should proceed. Only gates real uploaded images — demo/mock mode passes through.
-function getFoodGateRejection(analysis: FoodImageAnalysis, uploadedImage: boolean): FoodRejectionError | null {
+// Returns a FoodRejectionError when the upload is not a prepared dish (raw
+// ingredients, non-food, or unreadable). Demo/mock mode passes through.
+export function getFoodGateRejection(analysis: FoodImageAnalysis, uploadedImage: boolean): FoodRejectionError | null {
   if (!uploadedImage) return null;
+
+  if (analysis.inputKind === 'raw_ingredients') {
+    return new FoodRejectionError({ rejectionType: 'ingredients_only', scanState: analysis.scanState, confidence: analysis.confidence, dishName: analysis.dishName });
+  }
 
   if (analysis.scanState === 'not_food') {
     return new FoodRejectionError({ rejectionType: 'no_food_detected', scanState: analysis.scanState, confidence: analysis.confidence, dishName: analysis.dishName });
@@ -1476,9 +1747,9 @@ function getBestGuessNote(analysis: FoodImageAnalysis) {
 
 export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
   const confidence = normalizeConfidence(output.confidence);
-  // A restaurant price guessed from a food photo is not real data. Savings must come
-  // from a user-entered price, so photo-derived price estimates are always dropped.
-  const restaurantPriceEstimate = 0;
+  // This is deliberately a comparable prepared-dish estimate, not a claim about
+  // a live menu. Invalid, missing, and non-food outputs remain unavailable.
+  const restaurantPriceEstimate = normalizeRestaurantPrice(output.restaurantPriceEstimate);
   const homemadeCostEstimate = normalizeHomemadeCost(output.homemadeCostEstimate, restaurantPriceEstimate);
   const explicitScanState = normalizeScanState(output.scanState);
   const foodDetected = normalizeBoolean(output.foodDetected, false);
@@ -1570,6 +1841,9 @@ export function normalizeVisionOutput(output: OpenRouterVisionOutput) {
     ),
     cuisine,
     dishName,
+    inputKind: output.inputKind ?? (
+      scanState === 'not_food' ? 'not_food' : scanState === 'too_unclear' ? 'unclear' : 'prepared_dish'
+    ),
     epicureSuggestions: output.epicureSuggestions,
     homemadeCostEstimate,
     isFoodImage: normalizedIsFoodImage,
@@ -1864,6 +2138,45 @@ function normalizeHomemadeCost(value: unknown, restaurantPrice: number) {
   const cappedCost = rawCost >= restaurantPrice ? Math.max(1, restaurantPrice * 0.45) : rawCost;
 
   return roundMoney(clampNumber(cappedCost, 1, Math.max(1, restaurantPrice - 0.5)));
+}
+
+// Typical restaurant/takeout markup over grocery cost, by dish category. Mirrors
+// the categories already produced by normalizeBroadDishCategory. Used only when
+// the AI gives no usable restaurant price, so the recipe never shows "—".
+const RESTAURANT_MARKUP_BY_CATEGORY: Record<string, number> = {
+  pizza: 2.2,
+  'pasta/noodles': 2.6,
+  'rice bowl': 2.4,
+  'burger/sandwich': 2.3,
+  'tacos/wrap': 2.5,
+  'grilled meat': 2.8,
+  'fried food': 2.4,
+  seafood: 3.2,
+  salad: 2.6,
+  'soup/stew': 2.5,
+  dessert: 2.8,
+  'breakfast item': 2.3,
+  'drink/beverage': 3.5,
+  'mixed platter': 2.6,
+  default: 2.6,
+};
+
+function estimateRestaurantPriceFallback(homemadeCost: number, broadDishCategory?: string) {
+  const multiplier = RESTAURANT_MARKUP_BY_CATEGORY[broadDishCategory ?? ''] ?? RESTAURANT_MARKUP_BY_CATEGORY.default;
+  return roundMoney(clampNumber(homemadeCost * multiplier, homemadeCost + 2, 120));
+}
+
+// Canonical pricing resolver: guarantees both numbers are known and positive.
+// AI values are used when valid; otherwise homemade cost falls back to the
+// existing default, and restaurant price is estimated from that homemade cost
+// via a category-based markup rather than left blank.
+function resolvePricing(rawRestaurantPrice: unknown, rawHomemadeCost: unknown, broadDishCategory?: string) {
+  const restaurantPriceFromAi = normalizeRestaurantPrice(rawRestaurantPrice);
+  const homemadeCost = normalizeHomemadeCost(rawHomemadeCost, restaurantPriceFromAi);
+  const restaurantPrice = restaurantPriceFromAi > 0
+    ? restaurantPriceFromAi
+    : estimateRestaurantPriceFallback(homemadeCost, broadDishCategory);
+  return { restaurantPrice, homemadeCost };
 }
 
 function normalizeDishName(value: unknown, cuisine: string, broadDishCategory: string, ingredients: string[]) {
@@ -2311,7 +2624,10 @@ function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mod
         !beforeNames.includes(name) &&
         beforeNames.some((beforeName) => ingredientsMatch(beforeName, name))),
   });
-  return finalList;
+  return finalList.map((ingredient, index) => ({
+    ...ingredient,
+    id: ingredient.id ?? `ingredient-${index + 1}-${slugify(ingredient.name)}`,
+  }));
 }
 
 // Replace "hot cheetos dust" with "chili powder or Tajín" unless the dish context

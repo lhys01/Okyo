@@ -2,8 +2,10 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import * as Clipboard from 'expo-clipboard';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Bag,
+  Camera,
   Check,
   Leaf,
   NavArrowLeft,
@@ -14,7 +16,7 @@ import {
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, Share, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Pressable, Share, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { analyticsEvents, track } from '../analytics/track';
@@ -37,8 +39,9 @@ import {
 } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getModeLabel } from '../utils/modeDisplay';
-import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { getRecipeImageSource, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
+import { scaleIngredient } from '../utils/servingScale';
 
 type GroceryListRoute = RouteProp<MainTabParamList, 'GroceryListScreen'>;
 type GroceryListNavigation = BottomTabNavigationProp<MainTabParamList, 'GroceryListScreen'>;
@@ -68,6 +71,7 @@ const sauceNames = ['mayo', 'mayonnaise', 'ketchup', 'mustard', 'sauce', 'condim
 const noodleGrainNames = ['pasta', 'rigatoni', 'spaghetti', 'noodle', 'noodles', 'rice', 'grain', 'grains', 'quinoa'];
 const garnishNames = ['cilantro', 'parsley', 'sesame', 'lime', 'lemon', 'herb', 'herbs'];
 const pantryNames = ['tomato paste', 'crushed tomato', 'canned tomato', 'biscuit mix', 'flour', 'sugar', 'broth'];
+const CHECKED_GROCERY_ITEMS_KEY = 'okyo:grocery-checked-items:v1';
 
 export function GroceryListScreen() {
   const navigation = useNavigation<GroceryListNavigation>();
@@ -77,18 +81,32 @@ export function GroceryListScreen() {
   const hasRecipeContext = Boolean(routeRecipeId);
   const recipesById = useOkyoStore((state) => state.recipesById);
   const groceryRecipeIds = useOkyoStore((state) => state.groceryRecipeIds);
+  const groceryIngredientSelections = useOkyoStore((state) => state.groceryIngredientSelections ?? {});
+  const recipeServingOverrides = useOkyoStore((state) => state.recipeServingOverrides ?? {});
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId);
   const selectedMode = getSafeRecipeMode(routeMode ?? recipe?.selectedMode ?? 'Normal');
   const recipeImageUrl = getRecipeImageUrl(recipe);
   const recipeImageStatus = getRecipeImageStatus(recipe);
-  const items = useMemo(() => (recipe ? buildItems(recipe) : []), [recipe]);
+  const items = useMemo(() => {
+    if (!recipe) return [];
+    const targetServings = recipeServingOverrides[recipe.id] ?? recipe.servings;
+    const scaledRecipe = targetServings === recipe.servings ? recipe : {
+      ...recipe,
+      groceryItems: undefined,
+      ingredients: recipe.ingredients.map((item) => scaleIngredient(item, recipe.servings, targetServings)),
+      ingredientGroups: recipe.ingredientGroups?.map((group) => ({ ...group, items: group.items.map((item) => scaleIngredient(item, recipe.servings, targetServings)) })),
+      servings: targetServings,
+    };
+    return filterSelectedItems(buildItems(scaledRecipe), groceryIngredientSelections[recipe.id]);
+  }, [groceryIngredientSelections, recipe, recipeServingOverrides]);
   const listText = useMemo(() => (recipe ? buildListText(recipe, items) : ''), [items, recipe]);
   const savedGroceryRecipes = useMemo(
     () => resolveCanonicalRecipes(recipesById, groceryRecipeIds).slice().reverse(),
     [groceryRecipeIds, recipesById],
   );
   const [checkedItemIds, setCheckedItemIds] = useState<string[]>([]);
+  const [checksHydrated, setChecksHydrated] = useState(false);
   const [expandedRecipeIds, setExpandedRecipeIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<GroceryTab>('buy');
   const awardXPOnce = useOkyoStore((state) => state.awardXPOnce);
@@ -99,6 +117,21 @@ export function GroceryListScreen() {
   const visibleItems = activeTab === 'buy' ? groceryItems : pantryItems;
   const groupedVisibleItems = getGroupedItems(visibleItems);
   const allVisibleChecked = visibleItems.length > 0 && visibleItems.every((item) => checkedItemIds.includes(item.id));
+
+  useEffect(() => {
+    void AsyncStorage.getItem(CHECKED_GROCERY_ITEMS_KEY).then((raw) => {
+      try {
+        const parsed = raw ? JSON.parse(raw) : [];
+        setCheckedItemIds(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+      } catch { setCheckedItemIds([]); }
+      setChecksHydrated(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!checksHydrated) return;
+    void AsyncStorage.setItem(CHECKED_GROCERY_ITEMS_KEY, JSON.stringify(checkedItemIds));
+  }, [checkedItemIds, checksHydrated]);
 
   useEffect(() => {
     if (didTrackView.current) {
@@ -231,14 +264,18 @@ export function GroceryListScreen() {
   if (!hasRecipeContext) {
     return (
       <ScreenFrame onBack={() => navigation.navigate('HomeScreen')} showBack={false} title="Grocery">
-        <Text style={styles.savedHubIntro}>
-          Recipes you explicitly add appear here, ready when you are.
-        </Text>
-
         {savedGroceryRecipes.length > 0 ? (
           <View style={styles.savedRecipeList}>
             {savedGroceryRecipes.map((savedRecipe) => {
-              const savedItems = buildItems(savedRecipe);
+              const targetServings = recipeServingOverrides[savedRecipe.id] ?? savedRecipe.servings;
+              const groceryRecipe = targetServings === savedRecipe.servings ? savedRecipe : {
+                ...savedRecipe,
+                groceryItems: undefined,
+                ingredients: savedRecipe.ingredients.map((item) => scaleIngredient(item, savedRecipe.servings, targetServings)),
+                ingredientGroups: savedRecipe.ingredientGroups?.map((group) => ({ ...group, items: group.items.map((item) => scaleIngredient(item, savedRecipe.servings, targetServings)) })),
+                servings: targetServings,
+              };
+              const savedItems = filterSelectedItems(buildItems(groceryRecipe), groceryIngredientSelections[savedRecipe.id]);
               const isExpanded = expandedRecipeIds.includes(savedRecipe.id);
 
               return (
@@ -257,11 +294,12 @@ export function GroceryListScreen() {
           </View>
         ) : (
           <View style={styles.savedEmptyCard}>
-            <KikoMascot pose="groceryList" size={100} style={styles.savedEmptyMascot} />
-            <Text style={styles.savedEmptyTitle}>Add a recipe to build your grocery list.</Text>
+            <Image accessibilityIgnoresInvertColors resizeMode="contain" source={require('../../assets/food/grocery-empty-kiko.png')} style={styles.savedEmptyArt} />
+            <Text style={styles.savedEmptyTitle}>Lookin a bit empty here?</Text>
             <Text style={styles.savedEmptyBody}>
-              Use “Add to Grocery” on a recipe when you want its ingredients here.
+              Scan your first meal and see best groceries.
             </Text>
+            <PrimaryAction compact icon={<Camera color="#fffdf8" height={20} strokeWidth={2.2} width={20} />} label="Scan a dish" onPress={() => navigation.navigate('HomeScreen')} />
           </View>
         )}
       </ScreenFrame>
@@ -452,7 +490,7 @@ function SavedRecipeGroceryCard({
         onPress={onToggle}
         style={({ pressed }) => [styles.savedRecipeHeader, pressed ? styles.pressed : null]}
       >
-        <FoodImage imageStatus={imageStatus} imageUrl={imageUrl} style={styles.savedRecipeImage} />
+        <FoodImage imageSource={getRecipeImageSource(recipe)} imageStatus={imageStatus} imageUrl={imageUrl} style={styles.savedRecipeImage} />
         <View style={styles.savedRecipeCopy}>
           <Text numberOfLines={2} style={styles.savedRecipeTitle}>{cleanDisplayText(recipe.title)}</Text>
           <Text style={styles.savedRecipeMeta}>
@@ -537,17 +575,18 @@ function ListTab({ count, isSelected, label, onPress }: ListTabProps) {
 }
 
 type PrimaryActionProps = {
+  compact?: boolean;
   icon?: ReactNode;
   label: string;
   onPress: () => void;
 };
 
-function PrimaryAction({ icon, label, onPress }: PrimaryActionProps) {
+function PrimaryAction({ compact = false, icon, label, onPress }: PrimaryActionProps) {
   return (
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.primaryAction, pressed ? styles.pressed : null]}
+      style={({ pressed }) => [styles.primaryAction, compact ? styles.emptyPrimaryAction : null, pressed ? styles.pressed : null]}
     >
       {icon}
       <Text style={styles.primaryActionText}>{label}</Text>
@@ -566,7 +605,7 @@ function RecipeSummaryRow({
 }) {
   return (
     <View style={styles.recipeSummaryRow}>
-      <FoodImage imageStatus={imageStatus} imageUrl={imageUrl} style={styles.recipeSummaryImage} />
+      <FoodImage imageSource={getRecipeImageSource(recipe)} imageStatus={imageStatus} imageUrl={imageUrl} style={styles.recipeSummaryImage} />
       <View style={styles.recipeSummaryCopy}>
         <Text style={styles.recipeSummaryKicker}>Shopping for</Text>
         <Text numberOfLines={2} style={styles.recipeSummaryTitle}>{cleanDisplayText(recipe.title)}</Text>
@@ -637,6 +676,12 @@ function buildItems(recipe: Recipe): GroceryItem[] {
   const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
 
   return ingredients.flatMap((ingredient) => toFallbackGroceryItems(recipe.id, ingredient));
+}
+
+function filterSelectedItems(items: GroceryItem[], selectedIds: string[] | undefined) {
+  if (!selectedIds?.length) return items;
+  const selected = new Set(selectedIds);
+  return items.filter((item) => selected.has(item.id) || selected.has(item.name) || selected.has(item.name.toLowerCase()));
 }
 
 function buildListText(recipe: Recipe, items: GroceryItem[]) {
@@ -841,6 +886,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     flexGrow: 1,
+    gap: 12,
     paddingBottom: 150,
     paddingHorizontal: 24,
   },
@@ -848,7 +894,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     marginTop: 6,
-    minHeight: 66,
+    minHeight: 44,
   },
   backButton: {
     alignItems: 'center',
@@ -870,7 +916,7 @@ const styles = StyleSheet.create({
   },
   topTitle: {
     color: colors.charcoal,
-    fontSize: 21,
+    fontSize: 26,
     fontWeight: '700',
     textAlign: 'center',
   },
@@ -988,12 +1034,18 @@ const styles = StyleSheet.create({
   },
   savedEmptyCard: {
     alignItems: 'center',
-    marginTop: 18,
-    paddingHorizontal: 24,
-    paddingVertical: 28,
+    gap: 14,
+    marginTop: 36,
+    padding: 28,
   },
   savedEmptyMascot: {
     marginBottom: 6,
+  },
+  savedEmptyArt: {
+    height: 300,
+    marginBottom: 2,
+    transform: [{ scale: 0.82 }],
+    width: '100%',
   },
   savedEmptyTitle: {
     color: colors.charcoal,
@@ -1006,7 +1058,6 @@ const styles = StyleSheet.create({
     color: colors.body,
     fontSize: 14,
     lineHeight: 21,
-    marginTop: 8,
     textAlign: 'center',
   },
   tabRow: {
@@ -1228,11 +1279,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.16,
     shadowRadius: 16,
     elevation: 2,
+    width: '88%',
   },
   primaryActionText: {
     color: '#fffdf8',
     fontSize: 17,
     fontWeight: '700',
+  },
+  emptyPrimaryAction: {
+    marginTop: 0,
   },
   issueCard: {
     marginTop: 18,

@@ -1,269 +1,276 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { NavArrowRight, Spark } from 'iconoir-react-native';
-import * as ImagePicker from 'expo-image-picker';
-import { useMemo, useRef } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { FoodImage } from '../components/FoodImage';
-import { KikoMascot } from '../components/KikoMascot';
 import { RecommendationCard } from '../components/RecommendationCard';
-import { ScanEntryOptions } from '../components/ScanEntryOptions';
-import { colors, typography } from '../components/OkyoUI';
-import { getMealTimeForHour, getRecommendationsForMealTime } from '../data/recommendedRecipes';
+import { MetricCarousel } from '../components/home/MetricCarousel';
+import { RecentDishCard } from '../components/home/RecentDishCard';
+import { WeekStrip } from '../components/home/WeekStrip';
+import { ScanActionSheet } from '../components/okyo/ScanFab';
+import { SectionHeader } from '../components/okyo/SectionHeader';
+import { recommendedRecipes } from '../data/recommendedRecipes';
+import { useStartPickedScan } from '../hooks/useStartPickedScan';
 import type { RootStackParamList } from '../navigation/types';
-import {
-  getRecipeIngredientPreview,
-  resolveCanonicalRecipe,
-  resolveRecentRecipes,
-  type CanonicalRecipe,
-} from '../state/canonicalRecipes';
+import { resolveCanonicalRecipe, resolveRecentRecipes, type CanonicalRecipe } from '../state/canonicalRecipes';
+import { getHomeActivityDates, getHomeMetricOrder, isFutureDateKey, selectHomeMetrics } from '../state/homeMetrics';
+import { readPersonalizedHomeProfile } from '../state/primaryGoalBridge';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { findFoodPreferenceConflicts, useFoodPreferences } from '../state/foodPreferences';
 import { resolveActiveCookingStep, type ActiveCookingSession } from '../state/activeCooking';
-import { classifyRecipeStepTiming, formatRecipeDuration, formatRecipeStepTimingLines, getRecipeTiming } from '../utils/recipeIntegrity';
+import { colors, radius, shadows, spacing, typography } from '../theme/okyoTheme';
 import { buildGuidedCookingSteps } from '../utils/guidedCookingSteps';
-import { radius, shadows, spacing } from '../theme/okyoTheme';
-import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { classifyRecipeStepTiming, formatRecipeDuration, formatRecipeStepTimingLines, getRecipeTiming } from '../utils/recipeIntegrity';
 import { uiLog } from '../utils/uiDebug';
 import { useOpenRecommendation } from '../utils/useOpenRecommendation';
-import { preparePickedImage } from '../utils/scanImageProcessing';
-import { startScan } from '../utils/scanController';
-import { HOME_UPLOAD_TARGET_SCREEN, shouldStartPickedUpload } from '../utils/scanControllerUtils';
 
 type HomeNavigation = NativeStackNavigationProp<RootStackParamList>;
+const HOME_START_DATE_KEY = 'okyo:home-start-date:v1';
+const HOME_FIRST_SEEN_AT_KEY = 'okyo:home-first-seen-at:v1';
+const scanButtonVideo = require('../../assets/button background/scan-button-gradient.mp4');
+
+/** Home surfaces two ideas; the rest live behind Explore. */
+const HOME_IDEA_COUNT = 2;
+
+// These have been visually reviewed for food-forward imagery without baked-in
+// text. Keep the Home row independent from dynamic scans and from cache-only
+// URLs so every hourly pairing stays appetizing and reliably visible.
+const HOME_IDEA_RECIPE_IDS = [
+  'rec-scrambled-eggs-toast',
+  'rec-berry-banana-smoothie',
+  'rec-breakfast-burrito',
+  'rec-crispy-tofu-power-bowl',
+  'rec-creamy-tomato-rigatoni',
+  'rec-greek-salad',
+  'rec-smash-cheeseburger',
+  'rec-sheet-pan-lemon-chicken',
+] as const;
+
+const HOME_IDEA_RECIPES = HOME_IDEA_RECIPE_IDS
+  .map((id) => recommendedRecipes.find((recipe) => recipe.id === id))
+  .filter((recipe): recipe is (typeof recommendedRecipes)[number] => Boolean(recipe));
+
+function getHourlyIdeas(hour: number, candidates = HOME_IDEA_RECIPES, limit = HOME_IDEA_COUNT) {
+  if (candidates.length === 0 || limit <= 0) {
+    return [];
+  }
+
+  const start = (Math.max(0, Math.floor(hour)) * limit) % candidates.length;
+  return Array.from({ length: Math.min(limit, candidates.length) }, (_, index) => candidates[(start + index) % candidates.length]);
+}
 
 export function HomeScreen() {
   const navigation = useNavigation<HomeNavigation>();
+  const { height, width } = useWindowDimensions();
+  const scanButtonPlayer = useVideoPlayer(scanButtonVideo, (player) => {
+    player.loop = true;
+    player.muted = true;
+    player.play();
+  });
   const recipesById = useOkyoStore((state) => state.recipesById);
   const recentRecipeIds = useOkyoStore((state) => state.recentRecipeIds);
   const activeCookingSession = useOkyoStore((state) => state.activeCookingSession);
+  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
+  const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
+  const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
+  const primaryGoal = useOkyoStore((state) => state.primaryGoal);
   const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
-  const uploadInFlight = useRef(false);
   const openRecommendation = useOpenRecommendation();
-  const mealIdeas = useMemo(() => getRecommendationsForMealTime(getMealTimeForHour(new Date().getHours()), 4), []);
+  const { preferences: foodPreferences } = useFoodPreferences();
+  const startPickedScan = useStartPickedScan(navigation as unknown as { navigate: (screen: string, params?: unknown) => void });
+  const compact = width < 380 || height < 700;
+  const gutter = width > 430 ? 24 : 20;
+  const cardWidth = width - 40;
+  // Larger than the initial compact state, with an explicit cap so it remains
+  // a supporting illustration rather than taking over the Home screen.
+  const firstUseKikoWidth = Math.min(300, Math.round(width * 0.72));
+  const metricHeight = compact ? 162 : 176;
+  const recentHeight = compact ? 96 : 108;
+  const [savedName, setSavedName] = useState<string | null>(null);
+  const [homeStartDateKey, setHomeStartDateKey] = useState<string | null>(null);
+  const [homeFirstSeenAt, setHomeFirstSeenAt] = useState<number | null>(null);
+  const [selectedDateKey, setSelectedDateKey] = useState<string>(() => toDateKey(new Date()));
+  const [scanOptionsVisible, setScanOptionsVisible] = useState(false);
+  const [ideaHour, setIdeaHour] = useState(() => new Date().getHours());
   const greeting = useMemo(() => getCompactGreeting(new Date().getHours()), []);
+  // Home shows exactly two safe, bundled ideas. The pairing advances at each
+  // local hour boundary instead of staying unchanged for an entire meal period.
+  const mealIdeas = useMemo(() => getHourlyIdeas(
+    ideaHour,
+    HOME_IDEA_RECIPES.filter((recipe) => !foodPreferences || findFoodPreferenceConflicts(recipe.ingredients.map((ingredient) => ingredient.name), foodPreferences).length === 0),
+  ), [foodPreferences, ideaHour]);
+  const metrics = useMemo(() => selectHomeMetrics({ completedChallenges, recipesById, selectedDayKey: selectedDateKey, totalMoneySaved }), [completedChallenges, recipesById, selectedDateKey, totalMoneySaved]);
+  const metricOrder = useMemo(() => getHomeMetricOrder(primaryGoal), [primaryGoal]);
+  const activityDates = useMemo(() => getHomeActivityDates(recipesById), [recipesById]);
+  const futureSelectedDay = isFutureDateKey(selectedDateKey);
+  const allRecentRecipes = useMemo(() => resolveRecentRecipes(recipesById, recentRecipeIds)
+    .filter((recipe) => homeFirstSeenAt === null || new Date(recipe.createdAt).getTime() >= homeFirstSeenAt), [homeFirstSeenAt, recentRecipeIds, recipesById]);
+  const activeCookingRecipe = useMemo(() => resolveCanonicalRecipe(recipesById, activeCookingSession?.recipeId), [activeCookingSession?.recipeId, recipesById]);
+  const recentRecipes = allRecentRecipes.filter((recipe) => recipe.id !== activeCookingSession?.recipeId).slice(0, 3);
 
-  const allRecentRecipes = useMemo(
-    () => resolveRecentRecipes(recipesById, recentRecipeIds),
-    [recentRecipeIds, recipesById],
-  );
-  const activeCookingRecipe = useMemo(
-    () => resolveCanonicalRecipe(recipesById, activeCookingSession?.recipeId),
-    [activeCookingSession?.recipeId, recipesById],
-  );
-  const recentRecipes = allRecentRecipes
-    .filter((recipe) => recipe.id !== activeCookingSession?.recipeId)
-    .slice(0, 3);
+  useEffect(() => {
+    let mounted = true;
+    void readPersonalizedHomeProfile(AsyncStorage).then((profile) => {
+      if (mounted) setSavedName(profile?.name ?? null);
+    });
+    return () => { mounted = false; };
+  }, []);
 
-  const openPhotosImmediately = async () => {
-    if (uploadInFlight.current) return;
-    uploadInFlight.current = true;
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        allowsEditing: false,
-        base64: false,
-        mediaTypes: ['images'],
-        quality: 1,
-      });
-      const assets = result.assets ?? [];
-      if (!shouldStartPickedUpload(result.canceled, assets.length) || !assets[0]) return;
-      const image = await preparePickedImage(assets[0], 'photos');
-      await startScan({
-        image, mode: useOkyoStore.getState().selectedMode,
-        navigateToAnalysis: (scanSessionId) => navigation.navigate(HOME_UPLOAD_TARGET_SCREEN, { scanSessionId }),
-        reason: 'Home.uploadPhoto', source: 'photos',
-      });
-    } catch {
-      Alert.alert('Photo upload unavailable', 'Okyo could not open your photo library. Try again.');
-    } finally {
-      uploadInFlight.current = false;
-    }
-  };
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-  const openCameraImmediately = async () => {
-    if (uploadInFlight.current) return;
-    uploadInFlight.current = true;
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        uiLog('HomeScreen', 'camera_permission_denied');
-        Alert.alert(
-          'Camera permission needed',
-          'Okyo needs camera permission to take a food photo. You can allow camera access in Settings or use Upload instead.',
-        );
+    const scheduleHourlyRefresh = () => {
+      const now = new Date();
+      const millisecondsUntilNextHour = ((60 - now.getMinutes()) * 60 - now.getSeconds()) * 1000 - now.getMilliseconds() + 50;
+      timer = setTimeout(() => {
+        setIdeaHour(new Date().getHours());
+        scheduleHourlyRefresh();
+      }, millisecondsUntilNextHour);
+    };
+
+    scheduleHourlyRefresh();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void AsyncStorage.getItem(HOME_FIRST_SEEN_AT_KEY).then(async (stored) => {
+      const existing = stored ? Number(stored) : NaN;
+      if (Number.isFinite(existing)) {
+        if (mounted) setHomeFirstSeenAt(existing);
         return;
       }
+      const now = Date.now();
+      await AsyncStorage.setItem(HOME_FIRST_SEEN_AT_KEY, String(now));
+      if (mounted) setHomeFirstSeenAt(now);
+    });
+    return () => { mounted = false; };
+  }, []);
 
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: false,
-        base64: false,
-        mediaTypes: ['images'],
-        quality: 1,
-      });
-      const assets = result.assets ?? [];
-      if (!shouldStartPickedUpload(result.canceled, assets.length) || !assets[0]) return;
-      const image = await preparePickedImage(assets[0], 'camera');
-      await startScan({
-        image, mode: useOkyoStore.getState().selectedMode,
-        navigateToAnalysis: (scanSessionId) => navigation.navigate(HOME_UPLOAD_TARGET_SCREEN, { scanSessionId }),
-        reason: 'Home.takePhoto', source: 'camera',
-      });
-    } catch {
-      Alert.alert('Camera unavailable', 'Okyo could not open the camera. Use Upload instead.');
-    } finally {
-      uploadInFlight.current = false;
-    }
-  };
-
-  const openDiscover = () => {
-    uiLog('HomeScreen', 'open_discover');
-    navigation.navigate('MainTabs', { screen: 'RestaurantPacksScreen' });
-  };
+  useEffect(() => {
+    let mounted = true;
+    void AsyncStorage.getItem(HOME_START_DATE_KEY).then(async (stored) => {
+      const storedKey = stored ? toDateKey(new Date(stored)) : null;
+      if (storedKey) {
+        if (mounted) setHomeStartDateKey(storedKey);
+        return;
+      }
+      const now = new Date();
+      const key = toDateKey(now);
+      await AsyncStorage.setItem(HOME_START_DATE_KEY, now.toISOString());
+      if (mounted) setHomeStartDateKey(key);
+    });
+    return () => { mounted = false; };
+  }, []);
 
   const openRecipe = (recipe: CanonicalRecipe) => {
-    const mode = recipe.selectedMode;
-    setSelectedMode(mode);
+    setSelectedMode(recipe.selectedMode);
     uiLog('HomeScreen', 'open_recent_recipe', { recipeId: recipe.id });
-    navigation.navigate('MainTabs', {
-      screen: 'RecipeDetailScreen',
-      params: { mode, recipeId: recipe.id },
-    });
+    navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: recipe.selectedMode, recipeId: recipe.id } });
+  };
+  const openDiscover = () => navigation.navigate('MainTabs', { screen: 'RestaurantPacksScreen' });
+  // Opens the same three-action scan chooser as the global FAB.
+  const openScanOptions = () => {
+    uiLog('HomeScreen', 'first_use_cta_scan');
+    setScanOptionsVisible(true);
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingHorizontal: gutter, paddingBottom: spacing.scrollClearance + 84 }]} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Text style={styles.kicker}>{greeting}</Text>
-          <Text style={styles.title}>What are we making today?</Text>
+          <Text maxFontSizeMultiplier={1.2} numberOfLines={1} style={styles.greeting}>{savedName ? `${greeting}, ${savedName}` : greeting}</Text>
         </View>
-        <HomeScanSection
-          onOpenCamera={() => void openCameraImmediately()}
-          onOpenPhotos={openPhotosImmediately}
-          onDescribeMeal={() => navigation.navigate('DescribeMealScreen')}
-        />
+
+        <WeekStrip activityDates={activityDates} installDateKey={homeStartDateKey} onDayPress={setSelectedDateKey} selectedDateKey={selectedDateKey} />
+        {homeStartDateKey && selectedDateKey < homeStartDateKey ? (
+          <View accessibilityLabel="Your Okyo week starts here" style={styles.dayEmpty}>
+            <Text style={styles.dayEmptyText}>Your Okyo week starts here.</Text>
+          </View>
+        ) : null}
+
+        <View style={[styles.carouselBleed, { marginHorizontal: -gutter }]}>
+          <MetricCarousel cardHeight={metricHeight} cardWidth={cardWidth} futureDay={futureSelectedDay} metrics={metrics} order={metricOrder} />
+        </View>
 
         {activeCookingRecipe && activeCookingSession ? (
           <ActiveCookingCard
             recipe={activeCookingRecipe}
             session={activeCookingSession}
-            onContinue={() => navigation.navigate('MainTabs', { screen: 'RecipeStepsScreen', params: {
-              completion: false,
-              mode: activeCookingRecipe.selectedMode,
-              recipeId: activeCookingRecipe.id,
-            } })}
-            onViewRecipe={() => navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: {
-              mode: activeCookingRecipe.selectedMode,
-              recipeId: activeCookingRecipe.id,
-            } })}
-            onEnd={() => Alert.alert(
-              'End cooking session?',
-              'Your current step will be cleared, but the recipe will remain in your recipes.',
-              [
-                { text: 'Keep Cooking', style: 'cancel' },
-                { text: 'End Session', style: 'destructive', onPress: () => endCookingRecipe(activeCookingRecipe.id) },
-              ],
-            )}
+            onContinue={() => navigation.navigate('MainTabs', { screen: 'RecipeStepsScreen', params: { completion: false, mode: activeCookingRecipe.selectedMode, recipeId: activeCookingRecipe.id } })}
+            onViewRecipe={() => navigation.navigate('MainTabs', { screen: 'RecipeDetailScreen', params: { mode: activeCookingRecipe.selectedMode, recipeId: activeCookingRecipe.id } })}
+            onEnd={() => Alert.alert('End cooking session?', 'Your current step will be cleared, but the recipe will remain in your recipes.', [
+              { text: 'Keep Cooking', style: 'cancel' },
+              { text: 'End Session', style: 'destructive', onPress: () => endCookingRecipe(activeCookingRecipe.id) },
+            ])}
           />
         ) : null}
 
-        {recentRecipes.length > 0 ? (
-          <View style={styles.recentSection}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Recent Recipes</Text>
-            </View>
-            <View style={styles.timeline}>
-              {recentRecipes.map((recipe, index) => (
-                <Pressable
-                  key={recipe.id}
-                  accessibilityRole="button"
-                  style={({ pressed }) => [styles.timelineItem, pressed ? styles.pressed : null]}
-                  onPress={() => openRecipe(recipe)}
-                >
-                  <View style={styles.timelineMarker}>
-                    <Text style={styles.timelineNumber}>{index + 1}</Text>
-                  </View>
-                  <FoodImage
-                    imageStatus={getRecipeImageStatus(recipe)}
-                    imageUrl={getRecipeImageUrl(recipe)}
-                    style={styles.timelineImage}
-                  />
-                  <View style={styles.timelineCopy}>
-                    <Text numberOfLines={2} style={styles.timelineTitle}>{recipe.title}</Text>
-                    <Text numberOfLines={2} style={styles.timelineIngredients}>
-                      {getRecipeIngredientPreview(recipe)}
-                    </Text>
-                    <Text style={styles.timelineMeta}>
-                      {recipe.totalTimeMinutes ?? recipe.prepTimeMinutes + recipe.cookTimeMinutes} min
-                    </Text>
-                  </View>
-                  <NavArrowRight color={colors.muted} height={20} strokeWidth={2} width={20} />
-                </Pressable>
-              ))}
+        {/* Returning users see their real activity; the first-use CTA is shown
+            only while there is genuinely nothing to list. */}
+        {homeFirstSeenAt !== null && recentRecipes.length > 0 ? (
+          <View style={styles.section}>
+            <SectionHeader title="Recent dishes" />
+            <View style={styles.recentList}>
+              {recentRecipes.map((recipe) => <RecentDishCard key={recipe.id} height={recentHeight} onPress={() => openRecipe(recipe)} recipe={recipe} />)}
             </View>
           </View>
-        ) : null}
-
-        {mealIdeas.length > 0 ? (
-          <View style={styles.ideasSection}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Today’s Ideas</Text>
-              <Pressable accessibilityRole="button" hitSlop={8} style={styles.sectionLink} onPress={openDiscover}>
-                <Text style={styles.sectionLinkText}>Explore</Text>
-                <NavArrowRight color={colors.charcoal} height={18} strokeWidth={2} width={18} />
-              </Pressable>
-            </View>
-            <View style={styles.ideasGrid}>
-              {[mealIdeas.slice(0, 2), mealIdeas.slice(2, 4)].map((row, rowIndex) => (
-                <View key={`idea-row-${rowIndex}`} style={styles.ideasRow}>
-                  {row.map((recipe) => (
-                    <RecommendationCard
-                      key={recipe.id}
-                      compact
-                      recipe={recipe}
-                      onPress={() => openRecommendation(recipe)}
-                    />
-                  ))}
-                </View>
-              ))}
-            </View>
+        ) : homeFirstSeenAt !== null && activityDates.length === 0 ? (
+          <View accessibilityLabel="Scan your first dish to get started" style={styles.firstUseCard}>
+            {/* Approved three-Kiko row — the only empty-state artwork Home
+                ever renders here; there is no single-fox fallback. The
+                responsive width keeps the artwork prominent while its native
+                3:1 aspect ratio keeps all three Kikos crisp and uncropped. */}
+            <Image
+              accessibilityIgnoresInvertColors
+              resizeMode="contain"
+              source={require('../../assets/food/recent-empty-kiko.png')}
+              style={[styles.firstUseKikos, { height: Math.round(firstUseKikoWidth / 3), width: firstUseKikoWidth }]}
+            />
+            <Text maxFontSizeMultiplier={1.3} style={styles.firstUseBody}>Scan your first dish to get started.</Text>
             <Pressable
+              accessibilityLabel="Scan a dish"
               accessibilityRole="button"
-              style={({ pressed }) => [styles.discoverPromptCard, pressed ? styles.pressed : null]}
-              onPress={openDiscover}
+              onPress={openScanOptions}
+              style={({ pressed }) => [styles.firstUseButton, pressed ? styles.pressed : null]}
             >
-              <View style={styles.discoverPromptIcon}>
-                <Spark color={colors.coral} height={18} strokeWidth={2.2} width={18} />
+              <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                <VideoView contentFit="cover" nativeControls={false} player={scanButtonPlayer} style={StyleSheet.absoluteFill} surfaceType="textureView" />
               </View>
-              <View style={styles.discoverPromptCopy}>
-                <Text style={styles.discoverPromptTitle}>Want more recommendations?</Text>
-                <Text style={styles.discoverPromptBody}>Browse more Okyo ideas in Discover.</Text>
-              </View>
-              <NavArrowRight color={colors.coral} height={20} strokeWidth={2.2} width={20} />
+              <Text style={styles.firstUseButtonText}>Scan a dish</Text>
             </Pressable>
           </View>
         ) : null}
 
+        {mealIdeas.length > 0 ? (
+          <View style={styles.section}>
+            <SectionHeader actionLabel="Explore" onAction={openDiscover} title="Today’s ideas" />
+            <View style={styles.ideasGrid}>
+              <View style={styles.ideasRow}>
+                {mealIdeas.map((recipe) => <RecommendationCard key={recipe.id} compact recipe={recipe} onPress={() => openRecommendation(recipe)} />)}
+              </View>
+            </View>
+          </View>
+        ) : null}
       </ScrollView>
+      <ScanActionSheet
+        onClose={() => setScanOptionsVisible(false)}
+        onDescribeMeal={() => navigation.navigate('DescribeMealScreen')}
+        onTakePhoto={() => void startPickedScan('camera')}
+        onUpload={() => void startPickedScan('photos')}
+        visible={scanOptionsVisible}
+      />
     </SafeAreaView>
   );
 }
 
-function ActiveCookingCard({
-  recipe,
-  session,
-  onContinue,
-  onViewRecipe,
-  onEnd,
-}: {
-  recipe: CanonicalRecipe;
-  session: ActiveCookingSession;
-  onContinue: () => void;
-  onViewRecipe: () => void;
-  onEnd: () => void;
-}) {
+function ActiveCookingCard({ onContinue, onEnd, onViewRecipe, recipe, session }: { onContinue: () => void; onEnd: () => void; onViewRecipe: () => void; recipe: CanonicalRecipe; session: ActiveCookingSession }) {
   const guidedSteps = buildGuidedCookingSteps(recipe);
   const totalSteps = guidedSteps.length;
   const currentIndex = totalSteps > 0 ? Math.max(0, Math.min(session.currentStepIndex, totalSteps - 1)) : 0;
@@ -271,57 +278,29 @@ function ActiveCookingCard({
   const currentStepTitle = guidedStep?.title || `Step ${currentIndex + 1}`;
   const currentStepTiming = guidedStep?.timing;
   const currentStepKind = currentStepTiming ? classifyRecipeStepTiming(currentStepTiming) : 'hands-on';
-  const currentStepState = currentStepKind === 'mixed' ? 'HANDS-ON + WAITING' : currentStepKind === 'waiting' ? 'WAITING' : 'HANDS-ON';
+  const currentStepState = currentStepKind === 'mixed' ? 'Hands-on + waiting' : currentStepKind === 'waiting' ? 'Waiting' : 'Hands-on';
   const progress = totalSteps > 0 ? ((currentIndex + 1) / totalSteps) * 100 : 0;
-  const recipeTiming = getRecipeTiming(recipe);
+  const timing = getRecipeTiming(recipe);
 
   return (
-    <View accessibilityLabel={`Cooking Now: ${recipe.title}, step ${currentIndex + 1} of ${totalSteps}`} style={styles.activeCookingCard}>
-      <View style={styles.activeCookingHeader}>
-        <View style={styles.activeCookingCopy}>
-          <Text style={styles.activeCookingKicker}>Cooking Now</Text>
-          <Text numberOfLines={2} style={styles.activeCookingTitle}>{recipe.title}</Text>
-          <Text style={styles.activeCookingStep}>Step {currentIndex + 1} of {totalSteps} · {currentStepTitle}</Text>
-          <Text style={styles.activeCookingState}>{currentStepState}</Text>
-          {currentStepTiming ? formatRecipeStepTimingLines(currentStepTiming).map((line) => (
-            <Text key={line} style={styles.activeCookingTiming}>{line}</Text>
-          )) : null}
+    <View accessibilityLabel={`Cooking now: ${recipe.title}, step ${currentIndex + 1} of ${totalSteps}`} style={styles.activeCard}>
+      <View style={styles.activeHeader}>
+        <View style={styles.activeCopy}>
+          <Text style={styles.activeLabel}>Cooking now</Text>
+          <Text numberOfLines={1} style={styles.activeTitle}>{recipe.title}</Text>
+          <Text style={styles.activeStep}>Step {currentIndex + 1} of {totalSteps} · {currentStepTitle}</Text>
+          <Text style={styles.activeState}>{currentStepState}</Text>
+          {currentStepTiming ? formatRecipeStepTimingLines(currentStepTiming).slice(0, 1).map((line) => <Text key={line} style={styles.activeTiming}>{line}</Text>) : null}
         </View>
-        <Text style={styles.activeCookingPercent}>{Math.round(progress)}%</Text>
+        <Text style={styles.activePercent}>{Math.round(progress)}%</Text>
       </View>
-      <View accessibilityLabel={`${Math.round(progress)} percent cooking progress`} style={styles.activeCookingTrack}>
-        <View style={[styles.activeCookingFill, { width: `${progress}%` }]} />
+      <View style={styles.track}><View style={[styles.fill, { width: `${progress}%` }]} /></View>
+      <Text style={styles.activeTiming}>Total {formatRecipeDuration(timing.totalMinutes)}</Text>
+      <View style={styles.actions}>
+        <Pressable accessibilityRole="button" onPress={onContinue} style={({ pressed }) => [styles.continueButton, pressed ? styles.pressed : null]}><Text style={styles.continueText}>Continue cooking</Text></Pressable>
+        <Pressable accessibilityRole="button" onPress={onViewRecipe} style={({ pressed }) => [styles.secondaryButton, pressed ? styles.pressed : null]}><Text style={styles.secondaryText}>Full recipe</Text></Pressable>
       </View>
-      <View accessibilityLabel={`Recipe timing: ${formatRecipeDuration(recipeTiming.handsOnMinutes)} hands-on, ${formatRecipeDuration(recipeTiming.waitingMinutes)} waiting, ${formatRecipeDuration(recipeTiming.totalMinutes)} total`} style={styles.activeCookingBreakdown}>
-        <Text style={styles.activeCookingTime}>Hands-on {formatRecipeDuration(recipeTiming.handsOnMinutes)}</Text>
-        <Text style={styles.activeCookingTime}>Waiting {formatRecipeDuration(recipeTiming.waitingMinutes)}</Text>
-        <Text style={styles.activeCookingTime}>Total {formatRecipeDuration(recipeTiming.totalMinutes)}</Text>
-      </View>
-      <View style={styles.activeCookingActions}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Continue Cooking" style={({ pressed }) => [styles.activeCookingPrimary, pressed ? styles.pressed : null]} onPress={onContinue}>
-          <Text style={styles.activeCookingPrimaryText}>Continue Cooking</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" onPress={onViewRecipe} style={({ pressed }) => [styles.activeCookingSecondary, pressed ? styles.pressed : null]}>
-          <Text style={styles.activeCookingSecondaryText}>Full recipe</Text>
-        </Pressable>
-      </View>
-      <Pressable accessibilityRole="button" accessibilityLabel="End Cooking" onPress={onEnd} style={({ pressed }) => [styles.activeCookingEnd, pressed ? styles.pressed : null]}>
-        <Text style={styles.activeCookingEndText}>End Cooking</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function HomeScanSection({ onOpenCamera, onOpenPhotos, onDescribeMeal }: { onOpenCamera: () => void; onOpenPhotos: () => void; onDescribeMeal: () => void }) {
-  return (
-    <View style={styles.scanSection}>
-      <View style={styles.scanSectionHeader}>
-        <View style={styles.scanSectionCopy}>
-          <Text style={styles.scanSectionBody}>Take or upload a photo, or describe a meal.</Text>
-        </View>
-        <KikoMascot pose="scanning" size={52} />
-      </View>
-      <ScanEntryOptions compact onTakePhoto={onOpenCamera} onUpload={onOpenPhotos} onDescribeMeal={onDescribeMeal} />
+      <Pressable accessibilityRole="button" hitSlop={8} onPress={onEnd} style={styles.endButton}><Text style={styles.endText}>End cooking</Text></Pressable>
     </View>
   );
 }
@@ -332,212 +311,65 @@ function getCompactGreeting(hour: number) {
   return 'Good evening';
 }
 
+function toDateKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 const styles = StyleSheet.create({
-  safeArea: {
-    backgroundColor: colors.background,
-    flex: 1,
-  },
-  screenContent: {
-    padding: spacing.screen,
-    paddingBottom: 150,
-  },
-  header: {
-    marginTop: 2,
-    paddingHorizontal: 2,
-  },
-  scanSection: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: 28,
-    borderWidth: 1,
-    marginTop: 16,
-    padding: 16,
-  },
-  activeCookingCard: {
-    backgroundColor: colors.coralSoft,
-    borderColor: colors.coral,
-    borderRadius: 24,
-    borderWidth: 1,
-    marginTop: 14,
-    padding: 16,
-  },
-  activeCookingHeader: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  activeCookingCopy: { flex: 1, paddingRight: 12 },
-  activeCookingKicker: { color: colors.coralDark, fontSize: 12, fontWeight: '800', letterSpacing: 0.5, textTransform: 'uppercase' },
-  activeCookingTitle: { color: colors.charcoal, fontSize: 19, fontWeight: '800', marginTop: 4 },
-  activeCookingStep: { color: colors.body, fontSize: 13, lineHeight: 19, marginTop: 5 },
-  activeCookingState: { color: colors.coralDark, fontSize: 11, fontWeight: '900', letterSpacing: 0.8, marginTop: 7 },
-  activeCookingTiming: { color: colors.body, fontSize: 12, lineHeight: 18, marginTop: 3 },
-  activeCookingPercent: { color: colors.coralDark, fontSize: 18, fontWeight: '800' },
-  activeCookingTrack: { backgroundColor: colors.card, borderRadius: 8, height: 7, marginTop: 13, overflow: 'hidden' },
-  activeCookingFill: { backgroundColor: colors.coral, borderRadius: 8, height: 7 },
-  activeCookingBreakdown: { marginTop: 8 },
-  activeCookingTime: { color: colors.body, fontSize: 12, lineHeight: 18 },
-  activeCookingActions: { alignItems: 'center', flexDirection: 'row', gap: 9, marginTop: 13 },
-  activeCookingPrimary: { backgroundColor: colors.charcoal, borderRadius: 14, flex: 1, paddingHorizontal: 13, paddingVertical: 11 },
-  activeCookingPrimaryText: { color: colors.background, fontSize: 13, fontWeight: '800', textAlign: 'center' },
-  activeCookingSecondary: { borderColor: colors.charcoal, borderRadius: 14, borderWidth: 1, paddingHorizontal: 13, paddingVertical: 10 },
-  activeCookingSecondaryText: { color: colors.charcoal, fontSize: 13, fontWeight: '700' },
-  activeCookingEnd: { alignSelf: 'flex-start', marginTop: 10, paddingVertical: 2 },
-  activeCookingEndText: { color: colors.coralDark, fontSize: 12, fontWeight: '700' },
-  scanSectionHeader: {
+  actions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  activeCard: { backgroundColor: colors.surface, borderRadius: radius.card, marginTop: spacing.xl, padding: 18, ...shadows.card },
+  activeCopy: { flex: 1, paddingRight: 12 },
+  activeHeader: { alignItems: 'flex-start', flexDirection: 'row' },
+  activeLabel: { ...typography.label, color: colors.coralDark },
+  activePercent: { ...typography.numericStat, color: colors.coralDark },
+  activeState: { ...typography.caption, color: colors.coralDark, marginTop: 5 },
+  activeStep: { ...typography.caption, color: colors.body, marginTop: 5 },
+  activeTiming: { ...typography.caption, color: colors.body, marginTop: 5 },
+  activeTitle: { ...typography.section, marginTop: 4 },
+  carouselBleed: { marginTop: spacing.sm },
+  content: { paddingTop: 2 },
+  dayEmpty: { backgroundColor: colors.surfaceMuted, borderRadius: radius.panel, marginTop: 4, paddingHorizontal: 16, paddingVertical: 11 },
+  dayEmptyText: { ...typography.caption, color: colors.body, textAlign: 'center' },
+  continueButton: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radius.button, flex: 1, justifyContent: 'center', minHeight: 48, paddingHorizontal: 14 },
+  continueText: { ...typography.bodySmall, color: colors.surface, fontFamily: typography.button.fontFamily },
+  endButton: { alignSelf: 'flex-start', marginTop: 12 },
+  endText: { ...typography.caption, color: colors.coralDark },
+  fill: { backgroundColor: colors.coral, borderRadius: 4, height: 7 },
+  // First-use section: a Kiko row, short line, and coral CTA without a tinted card.
+  firstUseCard: {
     alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    marginTop: spacing.lg,
+    paddingBottom: 4,
   },
-  scanSectionCopy: {
-    flex: 1,
-    paddingRight: 10,
-  },
-  scanSectionTitle: {
-    color: colors.charcoal,
-    fontSize: 20,
-    fontWeight: '800',
-  },
-  scanSectionBody: {
-    color: colors.body,
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 4,
-  },
-  kicker: {
-    ...typography.caption,
-    color: colors.muted,
-    fontSize: 13,
-    marginBottom: 3,
-  },
-  title: {
-    color: colors.charcoal,
-    fontSize: 26,
-    fontWeight: '800',
-    lineHeight: 32,
-    maxWidth: 330,
-  },
-  recentSection: {
-    marginTop: spacing.section,
-  },
-  ideasSection: {
-    marginTop: spacing.section,
-  },
-  ideasGrid: {
-    gap: 14,
-    marginTop: 14,
-  },
-  ideasRow: {
-    flexDirection: 'row',
-    gap: 12,
-    minWidth: 0,
-    width: '100%',
-  },
-  discoverPromptCard: {
+  // 3:1 matches the source artwork, so the three Kikos never crop or squash.
+  // Dimensions are provided by the screen so the artwork remains a small,
+  // uncropped supporting illustration on every phone width.
+  firstUseKikos: { alignSelf: 'center', marginVertical: 8 },
+  firstUseBody: { ...typography.bodySmall, color: colors.body, marginTop: 6, textAlign: 'center' },
+  firstUseButton: {
     alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 16,
-    padding: 14,
-  },
-  discoverPromptIcon: {
-    alignItems: 'center',
-    backgroundColor: '#fff0d7',
-    borderRadius: 999,
-    height: 34,
-    justifyContent: 'center',
-    width: 34,
-  },
-  discoverPromptCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  discoverPromptTitle: {
-    color: colors.charcoal,
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  discoverPromptBody: {
-    ...typography.caption,
-    marginTop: 2,
-  },
-  sectionHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: spacing.section,
-  },
-  sectionTitle: {
-    ...typography.heading,
-  },
-  sectionLink: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 2,
-  },
-  sectionLinkText: {
-    color: colors.charcoal,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  timeline: {
-    gap: 12,
-    marginTop: 14,
-  },
-  timelineItem: {
-    alignItems: 'center',
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 14,
-    minHeight: 104,
+    alignSelf: 'stretch',
+    backgroundColor: colors.coral,
+    borderRadius: radius.button,
     overflow: 'hidden',
-    padding: 16,
+    justifyContent: 'center',
+    marginTop: 12,
+    minHeight: 50,
+    paddingHorizontal: 20,
     ...shadows.card,
   },
-  timelineMarker: {
-    alignItems: 'center',
-    backgroundColor: colors.cream,
-    borderRadius: 18,
-    height: 36,
-    justifyContent: 'center',
-    width: 36,
-  },
-  timelineImage: {
-    backgroundColor: colors.cream,
-    borderRadius: 18,
-    height: 58,
-    width: 58,
-  },
-  timelineNumber: {
-    color: colors.charcoal,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  timelineCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  timelineTitle: {
-    color: colors.charcoal,
-    fontSize: 17,
-    fontWeight: '700',
-    lineHeight: 22,
-  },
-  timelineMeta: {
-    ...typography.caption,
-    marginTop: 4,
-  },
-  timelineIngredients: {
-    color: colors.body,
-    fontSize: 12,
-    lineHeight: 16,
-    marginTop: 4,
-  },
-  pressed: {
-    opacity: 0.82,
-    transform: [{ scale: 0.99 }],
-  },
+  firstUseButtonText: { ...typography.body, color: colors.surface, fontFamily: typography.button.fontFamily },
+  greeting: { ...typography.title, flex: 1, fontSize: 24, lineHeight: 30 },
+  header: { alignItems: 'center', flexDirection: 'row', height: 48, justifyContent: 'space-between' },
+  ideasGrid: { gap: 12, marginTop: 12 },
+  ideasRow: { flexDirection: 'row', gap: 12, minWidth: 0, width: '100%' },
+  pressed: { opacity: 0.82, transform: [{ scale: 0.98 }] },
+  recentList: { gap: 8, marginTop: 10 },
+  safeArea: { backgroundColor: colors.canvas, flex: 1 },
+  secondaryButton: { alignItems: 'center', borderColor: colors.border, borderRadius: radius.button, borderWidth: 1, justifyContent: 'center', minHeight: 48, paddingHorizontal: 14 },
+  secondaryText: { ...typography.bodySmall, color: colors.ink, fontFamily: typography.button.fontFamily },
+  section: { marginTop: spacing.lg },
+  track: { backgroundColor: colors.canvasSunk, borderRadius: 4, height: 7, marginTop: 14, overflow: 'hidden' },
 });

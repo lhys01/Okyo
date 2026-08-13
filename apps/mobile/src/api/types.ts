@@ -20,7 +20,7 @@ export type ScanSource = 'camera' | 'photos' | 'description' | 'mock';
 
 export type AiSource = 'openrouter_ai' | 'mock_ai' | 'fallback_ai';
 export type ScanStatus = 'success' | 'partial' | 'rejected' | 'failed';
-export type ScanRejectionType = 'not_food' | 'unclear_image' | 'ai_failed';
+export type ScanRejectionType = 'ingredients_only' | 'not_food' | 'unclear_image' | 'ai_failed';
 
 export type AiDebugMetadata = {
   aiSource: AiSource;
@@ -50,6 +50,48 @@ export type CreateScanRequest = {
   mode?: RecipeMode;
   image?: ScanImageMetadata;
   mealDescription?: string;
+  // Onboarding-collected personalization — all optional, mirrors the API's
+  // RecipeGenerationPreferences. Older requests omit these unchanged.
+  recipePriority?: string;
+  cookingFrictionFollowUp?: string;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  goalContext?: GoalContext;
+};
+
+export type GoalContext = {
+  primaryGoal?: string;
+  secondaryGoals?: string[];
+  handsOnTimeMinutes?: number;
+  defaultServings?: number;
+  cookingPriority?: string;
+  orderingFriction?: string;
+  healthPriorities?: string[];
+  trackingPreference?: string;
+  nutritionTargets?: { calories: number; proteinGrams: number; carbsGrams: number; fatGrams: number };
+};
+
+export type AnalyzeScanRequest = Pick<CreateScanRequest, 'source' | 'mode' | 'image' | 'mealDescription'>;
+
+export type AnalyzeScanResult = {
+  analysisId: string;
+  dishName: string;
+  confidence: number;
+  inputKind: 'prepared_dish' | 'raw_ingredients' | 'not_food' | 'unclear';
+  scanState: ScanState;
+  expiresAt: string;
+};
+
+export type GenerateRecipeFromAnalysisRequest = {
+  mode?: RecipeMode;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  recipeRequestId?: string;
+  goalContext?: GoalContext;
+};
+
+export type GenerateRecipeFromAnalysisResult = Omit<CreateScanResult, 'source'> & {
+  source?: ScanSource;
 };
 
 export type CorrectRecipeRequest = {
@@ -60,7 +102,22 @@ export type CorrectRecipeRequest = {
   canonicalRecipeId?: string;
   scanSessionId?: string;
   mode?: RecipeMode;
+  currentRecipe?: Recipe;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  goalContext?: GoalContext;
 };
+
+export type AskOkyoRequest = {
+  question: string;
+  recipe: Recipe;
+  currentStep?: Recipe['structuredSteps'] extends (infer T)[] | undefined ? T : never;
+  dietaryRestrictions?: string[];
+  dietaryDislikes?: string[];
+  goalContext?: GoalContext;
+};
+
+export type AskOkyoResult = { answer: string; suggestedCorrection?: string };
 
 export type CreateScanResult = {
   status?: ScanStatus;

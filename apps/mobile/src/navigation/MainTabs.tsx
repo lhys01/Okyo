@@ -15,14 +15,25 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, fontFamilies } from '../components/OkyoUI';
+import { ScanFab } from '../components/okyo/ScanFab';
+import { useStartPickedScan } from '../hooks/useStartPickedScan';
 import { GroceryListScreen } from '../screens/GroceryListScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { RecipeDetailScreen, RecipeStepsScreen } from '../screens/RecipeDetailScreen';
+import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
 import { RestaurantPacksScreen } from '../screens/RestaurantPacksScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
+import { DietaryPreferencesScreen } from '../screens/DietaryPreferencesScreen';
+import { NutritionTargetsScreen } from '../screens/NutritionTargetsScreen';
+import { PrivacyDataScreen } from '../screens/PrivacyDataScreen';
+import { HelpSupportScreen } from '../screens/HelpSupportScreen';
+import { LegalScreen } from '../screens/LegalScreen';
+import { NotificationPreferencesScreen } from '../screens/NotificationPreferencesScreen';
+import { StatsProgressScreen } from '../screens/StatsProgressScreen';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { getHomeResetState } from '../utils/scanControllerUtils';
 import type { MainTabParamList } from './types';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -35,7 +46,17 @@ const tabLabels: Record<MainTabRouteName, string> = {
   LibraryScreen: 'Liked',
   ProfileScreen: 'Profile',
   SettingsScreen: 'Settings',
+  // Settings sub-screens: reachable by navigation, deliberately absent from
+  // visibleTabOrder so they never appear in the bottom bar.
+  DietaryPreferencesScreen: 'Dietary',
+  NutritionTargetsScreen: 'Nutrition targets',
+  PrivacyDataScreen: 'Privacy',
+  HelpSupportScreen: 'Help',
+  LegalScreen: 'Legal',
+  NotificationPreferencesScreen: 'Notifications',
+  StatsProgressScreen: 'Progress',
   RecipeDetailScreen: 'Recipe',
+  ResultSummaryScreen: 'Result',
   RecipeStepsScreen: 'Steps',
   GroceryListScreen: 'Grocery',
 };
@@ -48,6 +69,12 @@ const visibleTabOrder: MainTabRouteName[] = [
 ];
 
 export function shouldHideMainTabBar(route: { name: string; params?: unknown } | undefined) {
+  // Keep detail screens clean. The floating nav/FAB can overlap the
+  // dietary-preferences content and appear as an unrelated dark circle.
+  if (route?.name === 'DietaryPreferencesScreen') {
+    return true;
+  }
+
   if (route?.name !== 'RecipeStepsScreen') {
     return false;
   }
@@ -86,6 +113,11 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
     state.routes.map((route) => [route.name as MainTabRouteName, route]),
   ) as Record<MainTabRouteName, (typeof state.routes)[number]>;
   const focusedRoute = state.routes[state.index];
+  const rootNavigation = navigation.getParent() as {
+    navigate: (screen: string, params?: unknown) => void;
+    reset: (state: ReturnType<typeof getHomeResetState>) => void;
+  } | undefined;
+  const startPickedScan = useStartPickedScan(rootNavigation);
 
   if (shouldHideMainTabBar(focusedRoute)) {
     return null;
@@ -95,6 +127,15 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
     const route = routesByName[routeName];
 
     if (!route) {
+      return;
+    }
+
+    if (
+      routeName === 'HomeScreen' &&
+      focusedRoute?.name === 'RecipeStepsScreen' &&
+      (focusedRoute.params as { completion?: unknown } | undefined)?.completion === true
+    ) {
+      rootNavigation?.reset(getHomeResetState());
       return;
     }
 
@@ -165,13 +206,26 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
   };
 
   return (
-    <View pointerEvents="box-none" style={[styles.tabBarRoot, { height: 122 + bottomInset }]}>
-      <View style={[styles.tabBarPill, { bottom: bottomInset + 8 }]}>
+    <View pointerEvents="box-none" style={[styles.tabBarRoot, { bottom: 0, height: 0, left: 0, position: 'absolute', right: 0 }]}>
+      <View style={[styles.tabBarPill, { bottom: 34 }]}>
         <BlurView intensity={34} pointerEvents="none" style={styles.tabBarBlur} tint="light" />
         <View style={styles.sideTabRow}>
           {visibleTabOrder.map(renderSideTab)}
         </View>
       </View>
+      <ScanFab
+        // Nav pill spans bottom:34 to bottom:104 (34 + height 70). The FAB
+        // sits lower than a fully-clear float, so its bottom edge rests on
+        // (intentionally overlaps ~14dp of) the pill's top — anchored to
+        // the nav, not floating disconnected — while most of the FAB is
+        // still clearly above the pill. Never as low as bottom:37, which
+        // nested the FAB almost entirely inside the pill's own band.
+        bottom={82}
+        right={8}
+        onDescribeMeal={() => rootNavigation?.navigate('DescribeMealScreen')}
+        onTakePhoto={() => void startPickedScan('camera')}
+        onUpload={() => void startPickedScan('photos')}
+      />
     </View>
   );
 }
@@ -202,12 +256,16 @@ export function MainTabs() {
         return <FloatingTabBar {...props} />;
       }}
       screenOptions={{
-        animation: 'none',
+        animation: 'shift',
         freezeOnBlur: false,
         headerShown: false,
         lazy: false,
         sceneStyle: { backgroundColor: colors.background },
         tabBarAllowFontScaling: true,
+        // The custom floating bar is positioned independently. Collapsing the
+        // native tab-bar container prevents its safe-area background from
+        // rendering as a rectangular strip beneath the rounded pill.
+        tabBarStyle: { backgroundColor: 'transparent', borderTopWidth: 0, elevation: 0, height: 0, minHeight: 0, padding: 0, position: 'absolute' },
       }}
     >
       <Tab.Screen name="HomeScreen" component={HomeScreen} options={{ title: 'Home' }} />
@@ -215,7 +273,15 @@ export function MainTabs() {
       <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Liked' }} />
       <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />
       <Tab.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
+      <Tab.Screen name="DietaryPreferencesScreen" component={DietaryPreferencesScreen} options={{ title: 'Dietary preferences' }} />
+      <Tab.Screen name="NutritionTargetsScreen" component={NutritionTargetsScreen} options={{ title: 'Nutrition targets' }} />
+      <Tab.Screen name="PrivacyDataScreen" component={PrivacyDataScreen} options={{ title: 'Privacy & data' }} />
+      <Tab.Screen name="HelpSupportScreen" component={HelpSupportScreen} options={{ title: 'Help & support' }} />
+      <Tab.Screen name="LegalScreen" component={LegalScreen} options={{ title: 'Terms & privacy' }} />
+      <Tab.Screen name="NotificationPreferencesScreen" component={NotificationPreferencesScreen} options={{ title: 'Notifications' }} />
+      <Tab.Screen name="StatsProgressScreen" component={StatsProgressScreen} options={{ title: 'Stats & progress' }} />
       <Tab.Screen name="RecipeDetailScreen" component={RecipeDetailScreen} options={{ title: 'Recipe' }} />
+      <Tab.Screen name="ResultSummaryScreen" component={ResultSummaryScreen} options={{ title: 'Result' }} />
       <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps' }} />
       <Tab.Screen name="GroceryListScreen" component={GroceryListScreen} options={{ title: 'Grocery' }} />
     </Tab.Navigator>
@@ -247,17 +313,17 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.76)',
     borderRadius: 34,
     borderWidth: StyleSheet.hairlineWidth,
-    height: 76,
+    height: 70,
     justifyContent: 'center',
-    left: 14,
+    left: 16,
     overflow: 'visible',
     paddingHorizontal: 8,
     position: 'absolute',
-    right: 14,
+    right: 16,
     shadowColor: '#3a2d1d',
-    shadowOffset: { width: 0, height: 12 },
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.12,
-    shadowRadius: 24,
+    shadowRadius: 10,
     elevation: 10,
   },
   // Glass layer behind the tab row. On Android BlurView falls back to a
@@ -275,6 +341,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     height: '100%',
+    // The old 68dp reserve left an empty block beside Settings; the FAB now
+    // sits beside the pill, so the previous paddingRight: 68 is unnecessary.
+    paddingRight: 8,
     width: '100%',
   },
   sideTab: {

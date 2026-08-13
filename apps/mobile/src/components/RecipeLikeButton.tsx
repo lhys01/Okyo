@@ -92,8 +92,10 @@ export function RecipeLikeButton({
 const styles = StyleSheet.create({
   button: {
     alignItems: 'center',
-    backgroundColor: colors.cream,
+    backgroundColor: '#FFFFFFB8',
+    borderColor: '#E9DDD5',
     borderRadius: 18,
+    borderWidth: 1,
     flex: 1,
     flexDirection: 'row',
     gap: 8,
@@ -111,7 +113,8 @@ const styles = StyleSheet.create({
     width: 44,
   },
   buttonLiked: {
-    backgroundColor: '#fff0ed',
+    backgroundColor: '#FFF0F4',
+    borderColor: '#F5DDE6',
   },
   copy: {
     minWidth: 0,

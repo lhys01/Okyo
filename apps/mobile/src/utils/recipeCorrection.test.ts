@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { Recipe } from '../mocks';
 
 import {
   buildCorrectionRequest,
@@ -8,6 +9,14 @@ import {
   isCurrentCorrectionRequest,
   validateCorrectionNote,
 } from './recipeCorrection';
+
+const currentRecipe = {
+  id: 'source-recipe', scanResultId: 'scan-1', title: 'Rice Bowl', mode: 'Normal',
+  description: 'A rice bowl.', prepTimeMinutes: 5, cookTimeMinutes: 15, servings: 2,
+  difficulty: 'Easy', estimatedHomemadeCost: 8, estimatedSavings: 12,
+  ingredients: [{ name: 'rice', quantity: '1 cup' }], steps: ['Cook the rice.'],
+  substitutions: [], pantryNote: '', confidenceNote: 'Estimated.',
+} satisfies Recipe;
 
 test('correction text is trimmed and validated', () => {
   assert.equal(validateCorrectionNote('  These are lamb chops, not chicken.  '), null);
@@ -30,6 +39,7 @@ test('an overly long correction does not submit', () => {
 test('building the request payload includes the exact "lamb chops, not chicken" example text', () => {
   const request = buildCorrectionRequest({
     correctionNote: 'These are lamb chops, not chicken.',
+    currentRecipe,
     expectedSourceRecipeId: 'source-1',
     mode: 'Normal',
   });
@@ -40,6 +50,7 @@ test('building the request payload includes the exact "lamb chops, not chicken" 
 test('building the request payload trims whitespace from the note and dish name override', () => {
   const request = buildCorrectionRequest({
     correctionNote: '  Lamb chops, not chicken.  ',
+    currentRecipe,
     dishNameOverride: '  Lamb Chops  ',
     expectedSourceRecipeId: 'source-2',
     mode: 'Lighter',
@@ -53,6 +64,7 @@ test('building the request payload trims whitespace from the note and dish name 
 test('an empty dish name override is omitted from the request payload', () => {
   const request = buildCorrectionRequest({
     correctionNote: 'Lamb chops, not chicken.',
+    currentRecipe,
     dishNameOverride: '   ',
     expectedSourceRecipeId: 'source-3',
     mode: 'Normal',
