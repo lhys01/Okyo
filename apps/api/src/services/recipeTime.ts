@@ -4,6 +4,21 @@ export type RecipeStepTime = {
   elapsedMinutes: number;
 };
 
+// Okyo favors the fastest believable version of a recipe. This biases an
+// active/hands-on duration downward (efficient home cook, low end of a
+// believable range) while leaving trivial durations (<=3 min) untouched and
+// never cutting more than half off a long duration. Passive waits (baking,
+// marinating, proofing) must never be passed through this — they are a
+// physical requirement, not a display choice.
+export function applyOptimisticTimeBias(realMinutes: number): number {
+  if (!Number.isFinite(realMinutes) || realMinutes <= 3) {
+    return Math.max(0, Math.round(realMinutes || 0));
+  }
+  const reduction = Math.min(50, Math.max(0, (realMinutes - 3) * 0.32));
+  const floor = Math.max(realMinutes * 0.55, realMinutes - 50);
+  return Math.max(1, Math.round(Math.max(floor, realMinutes - reduction)));
+}
+
 const durationPattern = /\b(\d+(?:\.\d+)?)\s*(?:-|–|to)?\s*(\d+(?:\.\d+)?)?\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/gi;
 const passivePattern = /\b(?:refrigerate|chill|chilling|rest|rise|proof|proofing|marinate|marinating|soak|soaking|stand|standing|cool|cooling|let\s+(?:it|them|the\s+\w+)\s+\w+|between)\b/i;
 const unattendedCookingPattern = /\b(?:bake|baking|roast|roasting|preheat|preheating|simmer|simmering)\b/i;

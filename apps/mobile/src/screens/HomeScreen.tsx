@@ -229,7 +229,7 @@ export function HomeScreen() {
             <Image
               accessibilityIgnoresInvertColors
               resizeMode="contain"
-              source={require('../../assets/food/recent-empty-kiko.png')}
+              source={require('../../assets/kiko-static/approved/kiko-soup.png')}
               style={[styles.firstUseKikos, { height: Math.round(firstUseKikoWidth / 3), width: firstUseKikoWidth }]}
             />
             <Text maxFontSizeMultiplier={1.3} style={styles.firstUseBody}>Scan your first dish to get started.</Text>

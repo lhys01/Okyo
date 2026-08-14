@@ -2,24 +2,23 @@ import type { ImageSourcePropType } from 'react-native';
 
 import { getKikoAsset } from './kikoAssets';
 
-// Transparent derivatives of the exact approved kiko-static originals. Keep
-// this list intentionally limited to poses used by active onboarding so a new
-// onboarding pose cannot silently fall back to unrelated mascot artwork.
+// Active mascot poses use the exact approved flat artwork. Keep this map
+// explicit because React Native requires statically analyzable asset paths.
 export const onboardingKikoTransparentAssets = {
-  default: require('../../assets/kiko-static/transparent-generated/kiko-default.png'),
-  wave: require('../../assets/kiko-static/transparent-generated/kiko-wave.png'),
-  happy: require('../../assets/kiko-static/transparent-generated/kiko-happy.png'),
-  thinking: require('../../assets/kiko-static/transparent-generated/kiko-thinking.png'),
-  cooking: require('../../assets/kiko-static/transparent-generated/kiko-cooking.png'),
-  scanning: require('../../assets/kiko-static/transparent-generated/kiko-scanning.png'),
-  celebrating: require('../../assets/kiko-static/transparent-generated/kiko-celebrating.png'),
-  success: require('../../assets/kiko-static/transparent-generated/kiko-success.png'),
-  pointing: require('../../assets/kiko-static/transparent-generated/kiko-pointing.png'),
-  groceryList: require('../../assets/kiko-static/transparent-generated/kiko-groceryList.png'),
-  recipe: require('../../assets/kiko-static/transparent-generated/kiko-recipe.png'),
-  recipeCard: require('../../assets/kiko-static/transparent-generated/kiko-recipeCard.png'),
-  waveAlt: require('../../assets/kiko-static/transparent-generated/kiko-waveAlt.png'),
-  sideProfile: require('../../assets/kiko-static/transparent-generated/kiko-sideProfile.png'),
+  default: require('../../assets/kiko-static/approved/kiko-soup.png'),
+  wave: require('../../assets/kiko-static/approved/kiko-flex.png'),
+  happy: require('../../assets/kiko-static/approved/kiko-soup.png'),
+  thinking: require('../../assets/kiko-static/approved/kiko-thinking.png'),
+  cooking: require('../../assets/kiko-static/approved/kiko-ramen.png'),
+  scanning: require('../../assets/kiko-static/approved/kiko-soup.png'),
+  celebrating: require('../../assets/kiko-static/approved/kiko-savings.png'),
+  success: require('../../assets/kiko-static/approved/kiko-savings.png'),
+  pointing: require('../../assets/kiko-static/approved/kiko-vegetables.png'),
+  groceryList: require('../../assets/kiko-static/approved/kiko-grocery-list.png'),
+  recipe: require('../../assets/kiko-static/approved/kiko-recipe.png'),
+  recipeCard: require('../../assets/kiko-static/approved/kiko-recipe.png'),
+  waveAlt: require('../../assets/kiko-static/approved/kiko-shopping-cart.png'),
+  sideProfile: require('../../assets/kiko-static/approved/kiko-grocery-tote.png'),
 } satisfies Record<string, ImageSourcePropType>;
 
 export type OnboardingTransparentKikoPose = keyof typeof onboardingKikoTransparentAssets;

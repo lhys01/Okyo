@@ -294,7 +294,7 @@ export function GroceryListScreen() {
           </View>
         ) : (
           <View style={styles.savedEmptyCard}>
-            <Image accessibilityIgnoresInvertColors resizeMode="contain" source={require('../../assets/food/grocery-empty-kiko.png')} style={styles.savedEmptyArt} />
+            <Image accessibilityIgnoresInvertColors resizeMode="contain" source={require('../../assets/kiko-static/approved/kiko-shopping-cart.png')} style={styles.savedEmptyArt} />
             <Text style={styles.savedEmptyTitle}>Lookin a bit empty here?</Text>
             <Text style={styles.savedEmptyBody}>
               Scan your first meal and see best groceries.

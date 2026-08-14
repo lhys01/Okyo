@@ -67,12 +67,20 @@ test('temporary assignment or evidence read failure fails closed to one V3 engin
   assert.equal((await resolve()).engine, 'v3');
 });
 
-test('live hydration normalizes every removed persisted route before rendering', () => {
+test('live hydration resumes every restored route directly; only the always-dead personalizedFuture still redirects', () => {
+  // V4 (Step 11) briefly removed nameFox/branchIntro/secondaryGoals and this
+  // test proved hydration redirected persisted routes for them. V4 was
+  // rejected and V3 was restored byte-for-byte, so those three are live
+  // steps again and resume directly. personalizedFuture is the one
+  // exception: it has no reachable forward transition even in the restored
+  // reducer (see its HYDRATE-branch ternary), so it always redirected to
+  // planReady — in the original pre-V4 source, not only during Step 11.
   const profile = { ...initialOnboardingV3State.profile, primaryGoal: 'save_money' as const, secondaryGoals: ['save_money' as const] };
-  const expected: Record<string, string> = { nameFox: 'name', branchIntro: 'question1', secondaryGoals: 'dietaryPreferences', personalizedFuture: 'planReady' };
-  for (const [route, destination] of Object.entries(expected)) {
-    assert.equal(mapLegacyResumeStep(route), destination);
+  const mapLegacyResumeStepExpected: Record<string, string> = { nameFox: 'nameFox', branchIntro: 'branchIntro', secondaryGoals: 'secondaryGoals', personalizedFuture: 'personalizedFuture' };
+  const hydratedStepExpected: Record<string, string> = { nameFox: 'nameFox', branchIntro: 'branchIntro', secondaryGoals: 'secondaryGoals', personalizedFuture: 'planReady' };
+  for (const route of Object.keys(hydratedStepExpected)) {
+    assert.equal(mapLegacyResumeStep(route), mapLegacyResumeStepExpected[route]);
     const hydrated = onboardingV3Reducer(initialOnboardingV3State, { type: 'HYDRATE', profile, resumeStep: route, mascotName: 'Kiko', attribution: null });
-    assert.equal(onboardingV3Reducer(hydrated, { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, destination);
+    assert.equal(onboardingV3Reducer(hydrated, { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, hydratedStepExpected[route]);
   }
 });

@@ -5,8 +5,8 @@ import test from 'node:test';
 
 const source = readFileSync(resolve(process.cwd(), 'src/screens/RecipeDetailScreen.tsx'), 'utf8');
 
-test('completion screen uses the supplied large pasta Kiko artwork', () => {
-  assert.match(source, /kiko-pasta-celebration\.png/);
+test('completion screen uses the supplied flat Kiko artwork', () => {
+  assert.match(source, /kiko-static\/approved\/kiko-ramen\.png/);
   assert.match(source, /completionMascotArt:[\s\S]{0,120}height: 190/);
   assert.doesNotMatch(source, /<KikoMascot pose="success"/);
 });

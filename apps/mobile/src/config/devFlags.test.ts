@@ -69,8 +69,8 @@ test('RevenueCat and the paywall architecture are left intact', () => {
   assert.match(paywall, /onRestore/);
 });
 
-test('ONBOARDING_V4_ENABLED defaults to true in Step 11', () => {
-  assert.match(flags, /export const ONBOARDING_V4_ENABLED\s*=\s*true;/);
+test('ONBOARDING_V4_ENABLED master switch defaults to false — V4 rejected, legacy V3 is production-visible again', () => {
+  assert.match(flags, /export const ONBOARDING_V4_ENABLED\s*=\s*false;/);
 });
 
 test('ONBOARDING_V4_ENABLED is referenced only by devFlags.ts and its one sanctioned gate insertion point (OnboardingV3.tsx, Step 03)', () => {

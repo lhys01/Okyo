@@ -12,34 +12,35 @@ import {
   type PersonalizedAnswer,
   type PersonalizedOnboardingProfile,
   type PrimaryGoal,
+  type SecondaryGoal,
 } from '../state/personalizedOnboarding';
 
 export type OnboardingV3Step =
-  | 'splash' | 'name' | 'primaryGoal'
+  | 'splash' | 'showcase' | 'nameFox' | 'name' | 'primaryGoal' | 'branchIntro'
   | 'question1' | 'question2' | 'question3' | 'question4' | 'question5' | 'question6' | 'question7' | 'question8' | 'question9'
   | 'holdReveal' | 'branchReveal' | 'branchInsight' | 'nutritionTargets' | 'branchDemo'
-  | 'dietaryPreferences' | 'planReady' | 'paywall'
+  | 'secondaryGoals' | 'dietaryPreferences' | 'personalizedFuture' | 'planReady' | 'paywall'
   | 'postPurchase' | 'input' | 'photoConfirm' | 'analyzing' | 'recipe' | 'cooking' | 'cookingComplete' | 'complete';
 
 export const ONBOARDING_V3_STEPS: readonly OnboardingV3Step[] = Object.freeze([
-  'splash', 'name', 'primaryGoal', 'question1', 'question2', 'question3', 'question4', 'question5', 'question6', 'question7', 'question8', 'question9',
-  'holdReveal', 'branchReveal', 'branchInsight', 'nutritionTargets', 'branchDemo', 'dietaryPreferences', 'planReady', 'paywall', 'postPurchase', 'input', 'photoConfirm', 'analyzing', 'recipe', 'cooking', 'cookingComplete', 'complete',
+  'splash', 'showcase', 'nameFox', 'name', 'primaryGoal', 'branchIntro', 'question1', 'question2', 'question3', 'question4', 'question5', 'question6', 'question7', 'question8', 'question9',
+  'holdReveal', 'branchReveal', 'branchInsight', 'nutritionTargets', 'branchDemo', 'secondaryGoals', 'dietaryPreferences', 'personalizedFuture', 'planReady', 'paywall', 'postPurchase', 'input', 'photoConfirm', 'analyzing', 'recipe', 'cooking', 'cookingComplete', 'complete',
 ]);
 const questionSteps = ['question1', 'question2', 'question3', 'question4', 'question5', 'question6', 'question7', 'question8', 'question9'] as const;
 type QuestionStep = (typeof questionSteps)[number];
 const isQuestionStep = (step: OnboardingV3Step): step is QuestionStep => questionSteps.includes(step as QuestionStep);
 
 export function isRealInputUnlocked(step: OnboardingV3Step): boolean { return ['postPurchase', 'input', 'photoConfirm', 'analyzing', 'recipe', 'cooking', 'cookingComplete', 'complete'].includes(step); }
-export function getPersistedPersonalizedStep(step: OnboardingV3Step): OnboardingV3Step { return isRealInputUnlocked(step) ? 'paywall' : step; }
+export function getPersistedPersonalizedStep(step: OnboardingV3Step): OnboardingV3Step { return isRealInputUnlocked(step) ? 'paywall' : step === 'personalizedFuture' ? 'planReady' : step; }
 export type OnboardingV3ErrorKind = 'ingredients_only' | 'not_food' | 'unclear' | 'network' | 'recipe_generation' | 'purchase' | 'not_entitled' | 'nothing_to_restore';
 export type OnboardingV3Error = { kind: OnboardingV3ErrorKind; message: string };
 export type OnboardingV3State = { step: OnboardingV3Step; resumeStep: OnboardingV3Step | null; profile: PersonalizedOnboardingProfile; mascotName: string; attribution: AttributionSource | null; dietaryRestrictions: string[]; dietaryDislikes: string[]; analysisId: string | null; dishName: string | null; photoUri: string | null; recipeId: string | null; scanSessionId: string | null; error: OnboardingV3Error | null; };
 export type OnboardingV3Event =
   | { type: 'HYDRATE'; profile: PersonalizedOnboardingProfile; resumeStep: string | null; mascotName: string; attribution: AttributionSource | null }
-  | { type: 'SPLASH_FINISHED'; elapsedMs: number; fontsLoaded: boolean }
+  | { type: 'SPLASH_FINISHED'; elapsedMs: number; fontsLoaded: boolean } | { type: 'SHOWCASE_FINISHED' } | { type: 'MASCOT_NAME_SUBMITTED'; raw: string }
   | { type: 'ATTRIBUTION_SELECTED'; source: AttributionSource } | { type: 'ATTRIBUTION_SKIPPED' } | { type: 'NAME_SUBMITTED'; raw: string }
   | { type: 'PRIMARY_GOAL_SELECTED'; goal: PrimaryGoal } | { type: 'ANSWER_SET'; key: string; value: PersonalizedAnswer } | { type: 'CONTINUE' } | { type: 'HOLD_COMPLETED' }
-  | { type: 'DIETARY_SET'; preferences: FoodPreferences }
+  | { type: 'SECONDARY_GOALS_SET'; goals: SecondaryGoal[] } | { type: 'DIETARY_SET'; preferences: FoodPreferences }
   | { type: 'PHOTO_SELECTED'; uri: string } | { type: 'DESCRIPTION_SUBMITTED'; text: string; scanSessionId?: string } | { type: 'PERMISSION_DENIED'; message?: string } | { type: 'PHOTO_CONFIRMED'; scanSessionId?: string }
   | { type: 'ANALYSIS_SUCCEEDED'; analysisId: string; dishName: string } | { type: 'ANALYSIS_REJECTED'; kind: 'ingredients_only' | 'not_food' | 'unclear'; message: string } | { type: 'ANALYSIS_FAILED'; message: string }
   | { type: 'RECIPE_READY'; recipeId: string } | { type: 'RECIPE_FAILED'; message: string } | { type: 'RECIPE_RETRY' } | { type: 'START_OVER' } | { type: 'COOK' } | { type: 'COOKING_COMPLETED' } | { type: 'COOKING_EXITED' }
@@ -50,17 +51,20 @@ export const initialOnboardingV3State: OnboardingV3State = Object.freeze({ step:
 export function onboardingV3Reducer(state: OnboardingV3State, event: OnboardingV3Event): OnboardingV3State {
   if (event.type === 'HYDRATE' && state.step === 'splash') {
     const profile = normalizePersonalizedProfile(event.profile);
-    const legacyStep = mapLegacyResumeStep(event.resumeStep);
+    const legacyStep = event.resumeStep === 'personalizedFuture' ? 'planReady' : event.resumeStep;
     const requestedStep = isResumableStep(legacyStep) ? legacyStep : null;
     const resumeStep = requestedStep && needsPrimaryGoal(requestedStep) && !profile.primaryGoal ? 'primaryGoal' : requestedStep;
     return { ...state, profile, mascotName: sanitizeMascotName(event.mascotName), attribution: event.attribution, dietaryRestrictions: [...profile.dietaryPreferences.allergies, ...profile.dietaryPreferences.restrictions], dietaryDislikes: [...profile.dietaryPreferences.avoidances, ...profile.dietaryPreferences.dislikes], resumeStep };
   }
   switch (state.step) {
-    case 'splash': return event.type === 'SPLASH_FINISHED' && event.elapsedMs >= 700 && (event.fontsLoaded || event.elapsedMs >= 1100) ? { ...state, step: state.resumeStep ?? 'name', resumeStep: null, error: null } : state;
-    case 'name': if (event.type === 'NAME_SUBMITTED' && sanitizeUserName(event.raw)) return { ...state, step: 'primaryGoal', profile: { ...state.profile, name: sanitizeUserName(event.raw) } }; return state;
+    case 'splash': return event.type === 'SPLASH_FINISHED' && event.elapsedMs >= 700 && (event.fontsLoaded || event.elapsedMs >= 1100) ? { ...state, step: state.resumeStep ?? 'showcase', resumeStep: null, error: null } : state;
+    case 'showcase': if (event.type === 'SHOWCASE_FINISHED') return { ...state, step: 'nameFox' }; if (event.type === 'ATTRIBUTION_SELECTED') return { ...state, attribution: event.source }; if (event.type === 'ATTRIBUTION_SKIPPED') return { ...state, attribution: null }; return state;
+    case 'nameFox': if (event.type === 'MASCOT_NAME_SUBMITTED') return { ...state, step: 'name', mascotName: sanitizeMascotName(event.raw) }; return event.type === 'BACK' ? { ...state, step: 'showcase' } : state;
+    case 'name': if (event.type === 'NAME_SUBMITTED' && sanitizeUserName(event.raw)) return { ...state, step: 'primaryGoal', profile: { ...state.profile, name: sanitizeUserName(event.raw) } }; return event.type === 'BACK' ? { ...state, step: 'nameFox' } : state;
     case 'primaryGoal':
-      if (event.type === 'PRIMARY_GOAL_SELECTED' && isPrimaryGoal(event.goal)) return { ...state, step: 'question1', profile: { ...state.profile, primaryGoal: event.goal, secondaryGoals: [event.goal], answers: {}, nutritionProfile: event.goal === 'hit_macros' ? { ...state.profile.nutritionProfile } : state.profile.nutritionProfile } };
+      if (event.type === 'PRIMARY_GOAL_SELECTED' && isPrimaryGoal(event.goal)) return { ...state, step: 'branchIntro', profile: { ...state.profile, primaryGoal: event.goal, secondaryGoals: [event.goal], answers: {}, nutritionProfile: event.goal === 'hit_macros' ? { ...state.profile.nutritionProfile } : state.profile.nutritionProfile } };
       return event.type === 'BACK' ? { ...state, step: 'name' } : state;
+    case 'branchIntro': return event.type === 'CONTINUE' ? { ...state, step: 'question1' } : event.type === 'BACK' ? { ...state, step: 'primaryGoal' } : state;
     default: break;
   }
   if (isQuestionStep(state.step)) return reduceQuestion(state, event);
@@ -71,9 +75,13 @@ export function onboardingV3Reducer(state: OnboardingV3State, event: OnboardingV
     case 'nutritionTargets': return event.type === 'CONTINUE' ? { ...state, step: 'branchDemo' } : event.type === 'BACK' ? { ...state, step: 'question9' } : state;
     case 'branchDemo': return event.type === 'CONTINUE' ? { ...state, step: 'dietaryPreferences' } : event.type === 'BACK' ? { ...state, step: state.profile.primaryGoal === 'hit_macros' ? 'nutritionTargets' : 'branchInsight' } : state;
     case 'dietaryPreferences':
-      if (event.type === 'DIETARY_SET') { const profile = setDietaryPreferences(state.profile, event.preferences); return { ...state, profile, dietaryRestrictions: [...profile.dietaryPreferences.allergies, ...profile.dietaryPreferences.restrictions], dietaryDislikes: [...profile.dietaryPreferences.avoidances, ...profile.dietaryPreferences.dislikes], step: 'planReady' }; }
+      if (event.type === 'DIETARY_SET') { const profile = setDietaryPreferences(state.profile, event.preferences); return { ...state, profile, dietaryRestrictions: [...profile.dietaryPreferences.allergies, ...profile.dietaryPreferences.restrictions], dietaryDislikes: [...profile.dietaryPreferences.avoidances, ...profile.dietaryPreferences.dislikes], step: 'secondaryGoals' }; }
       return event.type === 'BACK' ? { ...state, step: 'branchDemo' } : state;
-    case 'planReady': return event.type === 'CONTINUE' ? { ...state, step: 'paywall' } : event.type === 'BACK' ? { ...state, step: 'dietaryPreferences' } : state;
+    case 'secondaryGoals':
+      if (event.type === 'SECONDARY_GOALS_SET') { const primary = state.profile.primaryGoal; return { ...state, profile: { ...state.profile, secondaryGoals: [...new Set(primary ? [primary, ...event.goals.filter((goal) => goal !== primary)] : event.goals)] }, step: 'planReady' }; }
+      return event.type === 'BACK' ? { ...state, step: 'dietaryPreferences' } : state;
+    case 'personalizedFuture': return event.type === 'CONTINUE' ? { ...state, step: 'planReady' } : event.type === 'BACK' ? { ...state, step: 'dietaryPreferences' } : state;
+    case 'planReady': return event.type === 'CONTINUE' ? { ...state, step: 'paywall' } : event.type === 'BACK' ? { ...state, step: 'secondaryGoals' } : state;
     case 'paywall':
       if (event.type === 'PURCHASE_SUCCEEDED') return event.entitled ? { ...state, step: 'postPurchase', error: null } : { ...state, error: { kind: 'not_entitled', message: 'Your purchase completed, but Okyo Pro is not active yet.' } };
       if (event.type === 'RESTORE_SUCCEEDED') return event.entitled ? { ...state, step: 'postPurchase', error: null } : { ...state, error: { kind: 'nothing_to_restore', message: "We couldn't find an Okyo Pro subscription to restore." } };
@@ -90,7 +98,7 @@ export function onboardingV3Reducer(state: OnboardingV3State, event: OnboardingV
 
 function reduceQuestion(state: OnboardingV3State, event: OnboardingV3Event): OnboardingV3State {
   if (event.type === 'ANSWER_SET') return { ...state, profile: setPersonalizedAnswer(state.profile, event.key, event.value) };
-  if (event.type === 'BACK') return { ...state, step: state.step === 'question1' ? 'primaryGoal' : previousQuestionStep(state) };
+  if (event.type === 'BACK') return { ...state, step: state.step === 'question1' ? 'branchIntro' : previousQuestionStep(state) };
   if (event.type !== 'CONTINUE' || !hasCurrentQuestionAnswer(state)) return state;
   const goal = state.profile.primaryGoal!;
   const index = questionSteps.indexOf(state.step as QuestionStep);
@@ -121,18 +129,19 @@ function nextAfterFirstInsight(state: OnboardingV3State): QuestionStep { return 
 function nextAfterSecondInsight(state: OnboardingV3State): OnboardingV3Step { return state.profile.primaryGoal === 'hit_macros' ? 'question9' : 'question6'; }
 function clearScanState(state: OnboardingV3State): OnboardingV3State { return { ...state, step: 'postPurchase', analysisId: null, dishName: null, photoUri: null, recipeId: null, scanSessionId: null, error: null }; }
 function isResumableStep(value: string | null): value is OnboardingV3Step { return Boolean(value && ONBOARDING_V3_STEPS.includes(value as OnboardingV3Step) && !['splash', 'complete'].includes(value as OnboardingV3Step) && !isRealInputUnlocked(value as OnboardingV3Step)); }
-function needsPrimaryGoal(step: OnboardingV3Step): boolean { return !['splash', 'name', 'primaryGoal'].includes(step); }
+function needsPrimaryGoal(step: OnboardingV3Step): boolean { return !['splash', 'showcase', 'nameFox', 'name', 'primaryGoal'].includes(step); }
 
 /**
- * Redirects a persisted step id that a later rebuild phase removes or merges
- * onto its safe successor. `personalizedFuture` has no render case in
- * OnboardingV3.tsx today (dead legacy state) so it is always redirected, same
- * as the inline check this replaces. `nameFox`/`branchIntro`/`secondaryGoals`
- * are still live, rendered screens right now, so they pass through unchanged —
- * the mapping only takes effect once those steps are actually removed from
- * ONBOARDING_V3_STEPS in a later phase, at which point isResumableStep will
- * reject the raw id and this table redirects it instead of dropping the user
- * back to the start of onboarding.
+ * V4's onboarding rebuild (Okyo_Onboarding_V4_Implementation_Plan.md) briefly
+ * removed showcase/nameFox/branchIntro/secondaryGoals from ONBOARDING_V3_STEPS
+ * before V4 was rejected and V3 was restored byte-for-byte (see devFlags.ts's
+ * ONBOARDING_V4_ENABLED). All four are live steps again, so `isResumableStep`
+ * accepts their raw ids directly and this map is not consulted for them.
+ * `personalizedFuture` is kept for backward-compat with any install that
+ * persisted it while it was documented as a distinct step, and mirrors this
+ * file's own always-redirect handling of it in the HYDRATE branch above.
+ * Exported (with `mapLegacyResumeStep`) because a still-live V4-era test
+ * exercises it directly; nothing in the restored V3 path calls it.
  */
 export const LEGACY_RESUME_STEP_MAP: Readonly<Record<string, OnboardingV3Step>> = Object.freeze({
   personalizedFuture: 'planReady',
@@ -153,11 +162,9 @@ const ENTITLED_PHASE_STEPS: ReadonlySet<OnboardingV3Step> = new Set(['postPurcha
 const RECIPE_REVEALED_PHASE_STEPS: ReadonlySet<OnboardingV3Step> = new Set(['recipe', 'cooking', 'cookingComplete']);
 
 /**
- * Categorizes a step into the activation phases the rebuild reorders around
- * (doc §14): pre-paywall questions, the future free-scan phase (unused until
- * that phase ships — nothing maps to it yet), the recipe reveal (Okyo's
- * activation moment), the paywall itself, the post-purchase entitled state,
- * and completion. Purely descriptive today; nothing reads this yet.
+ * Categorizes a step into the activation phases V4 (onboardingV4Route.ts)
+ * reuses this type for. Purely descriptive; the restored V3 path does not
+ * read this.
  */
 export function getOnboardingActivationPhase(step: OnboardingV3Step): OnboardingActivationPhase {
   if (step === 'paywall') return 'paywall';

@@ -25,7 +25,7 @@ import { copyToDocuments } from '../../utils/scanImageStorage';
 import type { AttributionSource } from '../state/attribution';
 import { buildGoalContext } from '../state/goalContext';
 import { onboardingV3Persistence } from '../state/onboardingV3Persistence';
-import type { PersonalizedAnswer, PersonalizedOnboardingProfile, PrimaryGoal } from '../state/personalizedOnboarding';
+import type { PersonalizedAnswer, PersonalizedOnboardingProfile, PrimaryGoal, SecondaryGoal } from '../state/personalizedOnboarding';
 import { onboardingV3Log } from '../utils/onboardingV3Log';
 import { runOnboardingAnalysis, runOnboardingRecipeGeneration } from './onboardingV3Requests';
 import {
@@ -44,6 +44,7 @@ type AnalysisRejectionError = { kind: 'ingredients_only' | 'not_food' | 'unclear
 export function useOnboardingV3Controller() {
   const [state, rawDispatch] = useReducer(onboardingV3Reducer, initialOnboardingV3State);
   const [isPurchaseBusy, setIsPurchaseBusy] = useState(false);
+  const [showcaseInitialPage, setShowcaseInitialPage] = useState(0);
   const stateRef = useRef(state);
   const hydratedRef = useRef(false);
   const pendingSplashRef = useRef<{ elapsedMs: number; fontsLoaded: boolean } | null>(null);
@@ -134,6 +135,10 @@ export function useOnboardingV3Controller() {
     dispatch({ type: 'SPLASH_FINISHED', elapsedMs, fontsLoaded });
   }, [dispatch]);
 
+  const finishShowcase = useCallback(() => {
+    dispatch({ type: 'SHOWCASE_FINISHED' });
+  }, [dispatch]);
+
   const selectAttribution = useCallback((source: AttributionSource) => {
     dispatch({ type: 'ATTRIBUTION_SELECTED', source });
     void onboardingV3Persistence.writeAttribution(source).catch((error: unknown) => {
@@ -148,6 +153,13 @@ export function useOnboardingV3Controller() {
     });
   }, [dispatch]);
 
+  const submitMascotName = useCallback((raw: string) => {
+    dispatch({ type: 'MASCOT_NAME_SUBMITTED', raw });
+    void onboardingV3Persistence.writeMascotName(raw).catch((error: unknown) => {
+      onboardingV3Log('mascot_name_persist_failed', { error: String(error) });
+    });
+  }, [dispatch]);
+
   const submitName = useCallback((raw: string) => {
     dispatch({ type: 'NAME_SUBMITTED', raw });
     onboardingV3Log('user_named', { length: raw.trim().length });
@@ -157,6 +169,7 @@ export function useOnboardingV3Controller() {
   const setPersonalizedAnswer = useCallback((key: string, value: PersonalizedAnswer) => dispatch({ type: 'ANSWER_SET', key, value }), [dispatch]);
   const continuePersonalized = useCallback(() => dispatch({ type: 'CONTINUE' }), [dispatch]);
   const completeHoldReveal = useCallback(() => dispatch({ type: 'HOLD_COMPLETED' }), [dispatch]);
+  const submitSecondaryGoals = useCallback((goals: SecondaryGoal[]) => dispatch({ type: 'SECONDARY_GOALS_SET', goals }), [dispatch]);
   const submitDietaryPreferences = useCallback((preferences: FoodPreferences) => {
     dispatch({ type: 'DIETARY_SET', preferences });
     void foodPreferencesPersistence.write(preferences).catch((error: unknown) => {
@@ -461,6 +474,7 @@ export function useOnboardingV3Controller() {
   }, [dispatch]);
 
   const back = useCallback(() => {
+    if (stateRef.current.step === 'nameFox') setShowcaseInitialPage(6);
     if (stateRef.current.step === 'recipe') requestControllerRef.current?.abort();
     dispatch({ type: 'BACK' });
   }, [dispatch]);
@@ -468,14 +482,18 @@ export function useOnboardingV3Controller() {
   return {
     state,
     isPurchaseBusy,
+    showcaseInitialPage,
     finishSplash,
+    finishShowcase,
     selectAttribution,
     skipAttribution,
+    submitMascotName,
     submitName,
     selectPrimaryGoal,
     setPersonalizedAnswer,
     continuePersonalized,
     completeHoldReveal,
+    submitSecondaryGoals,
     submitDietaryPreferences,
     selectPhoto,
     submitDescription,

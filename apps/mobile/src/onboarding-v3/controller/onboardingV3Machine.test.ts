@@ -20,9 +20,11 @@ function goalState(goal: PrimaryGoal, step: OnboardingV3Step, answers: Record<st
   return at(step, { profile: { ...initialOnboardingV3State.profile, name: 'Megan', primaryGoal: goal, secondaryGoals: [goal], answers } });
 }
 
-test('legacy fallback starts at the retained name screen', () => {
+test('splash and locked onboarding2 lead through onboarding11 before the user name screen', () => {
   assert.equal(reduce('splash', { type: 'SPLASH_FINISHED', elapsedMs: 699, fontsLoaded: true }).step, 'splash');
-  assert.equal(reduce('splash', { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, 'name');
+  assert.equal(reduce('splash', { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, 'showcase');
+  assert.equal(reduce('showcase', { type: 'SHOWCASE_FINISHED' }).step, 'nameFox');
+  assert.equal(reduce('nameFox', { type: 'MASCOT_NAME_SUBMITTED', raw: '  Kiko  ' }).step, 'name');
 });
 
 test('name is trimmed and exactly three primary goals enter one shared engine', () => {
@@ -32,7 +34,7 @@ test('name is trimmed and exactly three primary goals enter one shared engine', 
   assert.deepEqual(PRIMARY_GOALS, ['save_money', 'eat_healthier', 'hit_macros']);
   for (const goal of PRIMARY_GOALS) {
     const selected = onboardingV3Reducer({ ...named, step: 'primaryGoal' }, { type: 'PRIMARY_GOAL_SELECTED', goal });
-    assert.equal(selected.step, 'question1');
+    assert.equal(selected.step, 'branchIntro');
     assert.equal(selected.profile.primaryGoal, goal);
   }
   assert.equal(PRIMARY_GOALS.includes('waste_less' as PrimaryGoal), false);
@@ -54,7 +56,8 @@ test('old cook-more primary state returns safely to goal selection', () => {
 });
 
 test('branch questions insert meaningful reveals and macro target screens', () => {
-  let state = goalState('hit_macros', 'question1');
+  let state = goalState('hit_macros', 'branchIntro');
+  state = onboardingV3Reducer(state, { type: 'CONTINUE' });
   state = onboardingV3Reducer(state, { type: 'ANSWER_SET', key: 'macroGoal', value: 'Build muscle' });
   state = onboardingV3Reducer(state, { type: 'CONTINUE' });
   state = onboardingV3Reducer(state, { type: 'ANSWER_SET', key: 'ageYears', value: 28 });
@@ -85,11 +88,13 @@ test('branch questions insert meaningful reveals and macro target screens', () =
   assert.ok(state.profile.nutritionTargets?.proteinGrams);
 });
 
-test('dietary answers persist directly into the plan without secondary or future screens', () => {
+test('secondary and dietary answers persist into the plan without a redundant future screen', () => {
   let state = goalState('save_money', 'dietaryPreferences');
   state = onboardingV3Reducer(state, { type: 'DIETARY_SET', preferences: { allergies: ['Peanuts'], restrictions: ['Vegetarian'], avoidances: [], dislikes: [] } });
+  assert.equal(state.step, 'secondaryGoals');
+  state = onboardingV3Reducer(state, { type: 'SECONDARY_GOALS_SET', goals: ['cook_more', 'waste_less'] });
   assert.equal(state.step, 'planReady');
-  assert.deepEqual(state.profile.secondaryGoals, ['save_money']);
+  assert.deepEqual(state.profile.secondaryGoals, ['save_money', 'cook_more', 'waste_less']);
   assert.deepEqual(state.profile.dietaryRestrictions, ['Peanuts', 'Vegetarian']);
   assert.equal(onboardingV3Reducer(at('planReady', { profile: state.profile }), { type: 'CONTINUE' }).step, 'paywall');
 });
@@ -124,7 +129,9 @@ test('camera, picker, and scan states exist only after the entitlement gate', ()
 });
 
 test('Back is deterministic and no pre-paywall state can bypass into real input', () => {
-  const globalBackPairs: Array<[OnboardingV3Step, OnboardingV3Step]> = [['primaryGoal', 'name'], ['question1', 'primaryGoal']];
+  const globalBackPairs: Array<[OnboardingV3Step, OnboardingV3Step]> = [
+    ['nameFox', 'showcase'], ['name', 'nameFox'], ['primaryGoal', 'name'], ['branchIntro', 'primaryGoal'],
+  ];
   for (const [from, to] of globalBackPairs) assert.equal(reduce(from, { type: 'BACK' }).step, to);
 
   const savingsQuestion2 = goalState('save_money', 'question2');
@@ -138,7 +145,8 @@ test('Back is deterministic and no pre-paywall state can bypass into real input'
   assert.equal(onboardingV3Reducer(goalState('hit_macros', 'nutritionTargets'), { type: 'BACK' }).step, 'question9');
   assert.equal(onboardingV3Reducer(goalState('hit_macros', 'branchDemo'), { type: 'BACK' }).step, 'nutritionTargets');
   assert.equal(onboardingV3Reducer(goalState('save_money', 'dietaryPreferences'), { type: 'BACK' }).step, 'branchDemo');
-  assert.equal(onboardingV3Reducer(goalState('save_money', 'planReady'), { type: 'BACK' }).step, 'dietaryPreferences');
+  assert.equal(onboardingV3Reducer(goalState('save_money', 'secondaryGoals'), { type: 'BACK' }).step, 'dietaryPreferences');
+  assert.equal(onboardingV3Reducer(goalState('save_money', 'planReady'), { type: 'BACK' }).step, 'secondaryGoals');
   const entitlementIndex = ONBOARDING_V3_STEPS.indexOf('paywall');
   for (const step of ONBOARDING_V3_STEPS.slice(0, entitlementIndex)) {
     const next = onboardingV3Reducer(at(step), { type: 'PHOTO_SELECTED', uri: 'file:///blocked.jpg' });
@@ -146,12 +154,12 @@ test('Back is deterministic and no pre-paywall state can bypass into real input'
   }
 });
 
-test('fresh legacy fallback starts at splash and advances to name', () => {
+test('fresh legacy fallback starts at splash and advances to showcase', () => {
   const hydrated = onboardingV3Reducer(initialOnboardingV3State, {
     type: 'HYDRATE', profile: initialOnboardingV3State.profile, resumeStep: null, mascotName: 'Kiko', attribution: null,
   });
   assert.equal(hydrated.resumeStep, null);
-  assert.equal(onboardingV3Reducer(hydrated, { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, 'name');
+  assert.equal(onboardingV3Reducer(hydrated, { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, 'showcase');
 });
 
 test('resume from a currently valid screen lands back on that exact screen', () => {
@@ -162,14 +170,22 @@ test('resume from a currently valid screen lands back on that exact screen', () 
   assert.equal(onboardingV3Reducer(hydrated, { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, 'question3');
 });
 
-test('mapLegacyResumeStep: removed screens redirect to retained safe successors', () => {
-  assert.equal(mapLegacyResumeStep('nameFox'), 'name');
-  assert.equal(mapLegacyResumeStep('branchIntro'), 'question1');
-  assert.equal(mapLegacyResumeStep('secondaryGoals'), 'dietaryPreferences');
+test('mapLegacyResumeStep: restored screens resume directly, no longer redirected', () => {
+  // V4's Step 11 briefly removed these steps and this map redirected persisted
+  // routes for them; V4 was rejected and all four are live steps again (see
+  // onboardingV3Machine.ts), so isResumableStep accepts the raw id and the
+  // map is never consulted for them anymore.
+  assert.equal(mapLegacyResumeStep('nameFox'), 'nameFox');
+  assert.equal(mapLegacyResumeStep('branchIntro'), 'branchIntro');
+  assert.equal(mapLegacyResumeStep('secondaryGoals'), 'secondaryGoals');
 });
 
 test('mapLegacyResumeStep: personalizedFuture (dead, unrendered) always redirects to planReady', () => {
-  assert.equal(mapLegacyResumeStep('personalizedFuture'), 'planReady');
+  // Unlike the other three, personalizedFuture has no reachable forward
+  // transition in the restored reducer either (see the HYDRATE branch's
+  // explicit ternary) — this is original pre-V4 behavior, not a Step 11
+  // artifact, so it keeps redirecting even now that the step is back in
+  // ONBOARDING_V3_STEPS.
   const hydrated = onboardingV3Reducer(initialOnboardingV3State, {
     type: 'HYDRATE', profile: { ...initialOnboardingV3State.profile, primaryGoal: 'save_money' as PrimaryGoal, secondaryGoals: ['save_money' as const] },
     resumeStep: 'personalizedFuture', mascotName: 'Kiko', attribution: null,
@@ -185,7 +201,7 @@ test('mapLegacyResumeStep: unknown or malformed route values never crash and fal
     type: 'HYDRATE', profile: initialOnboardingV3State.profile, resumeStep: 'totally-made-up-step', mascotName: 'Kiko', attribution: null,
   });
   assert.equal(hydrated.resumeStep, null);
-  assert.equal(onboardingV3Reducer(hydrated, { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, 'name');
+  assert.equal(onboardingV3Reducer(hydrated, { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, 'showcase');
 });
 
 test('an unknown resume step never lands on complete or marks onboarding finished', () => {

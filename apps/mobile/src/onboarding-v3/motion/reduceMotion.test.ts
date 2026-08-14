@@ -26,13 +26,16 @@ test('onboarding uses no JavaScript intervals and only splash/name-placeholder g
     const source = readFileSync(file, 'utf8');
     return /setInterval|setTimeout/.test(source) ? [file] : [];
   });
-  assert.deepEqual(matches.map((file) => file.replace(`${root}/`, '')).sort(), ['screens/SplashScreen.tsx']);
+  assert.deepEqual(matches.map((file) => file.replace(`${root}/`, '')).sort(), ['screens/NameFoxScreen.tsx', 'screens/SplashScreen.tsx']);
 });
 
-test('live Reduce Motion changes cancel the retained decorative splash loop', () => {
+test('live Reduce Motion changes cancel decorative splash and Kiko idle loops', () => {
   const root = resolve(process.cwd(), 'src/onboarding-v3');
   const splash = readFileSync(join(root, 'screens/SplashScreen.tsx'), 'utf8');
+  const meetKiko = readFileSync(join(root, 'showcase/pages/MeetKikoPage.tsx'), 'utf8');
+
   assert.match(splash, /else \{\s*rotation\.value = 0;/);
+  assert.match(meetKiko, /else \{\s*idleY\.value = 0;\s*idleRotation\.value = 0;/);
 });
 
 test('font loading cannot trap the native splash beyond the 1100ms cap', () => {

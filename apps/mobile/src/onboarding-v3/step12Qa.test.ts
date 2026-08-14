@@ -39,10 +39,10 @@ test('Step 12 terminology and privacy audit: user-facing legacy cost copy and se
   assert.match(analytics, /sanitizeOnboardingV4EventProperties/);
 });
 
-test('Step 12 rollout audit: source flag remains explicit and activation remains single-owner', () => {
+test('Step 12 rollout audit: source flag remains explicit and activation remains single-owner (V4 rejected — flag now off, V4 preserved but unreachable)', () => {
   const flags = readSource('config/devFlags.ts');
   const host = read('OnboardingV3.tsx');
-  assert.match(flags, /ONBOARDING_V4_ENABLED = true/);
+  assert.match(flags, /ONBOARDING_V4_ENABLED = false/);
   assert.match(host, /if \(assignment === null\) return <View/);
   assert.match(host, /<OnboardingV4/);
   assert.match(host, /<LegacyOnboardingV3/);

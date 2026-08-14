@@ -12,10 +12,12 @@ import { CookingCompleteScreen } from './screens/CookingCompleteScreen';
 import { OnboardingCookingScreen } from './screens/OnboardingCookingScreen';
 import { OnboardingPaywallScreen } from './screens/OnboardingPaywallScreen';
 import { OnboardingRecipePreview } from './screens/OnboardingRecipePreview';
+import { NameFoxScreen } from './screens/NameFoxScreen';
 import { PhotoConfirmScreen } from './screens/PhotoConfirmScreen';
 import { PersonalizedOnboardingScreen } from './screens/PersonalizedOnboardingScreen';
 import { ScanInputScreen } from './screens/ScanInputScreen';
 import { SplashScreen } from './screens/SplashScreen';
+import { ShowcasePager } from './showcase/ShowcasePager';
 import { resolveOnboardingActivation } from './state/onboardingV4Activation';
 import type { OnboardingV4Assignment } from './state/onboardingV4Experiment';
 import { shouldUseOnboardingV4 } from './state/onboardingV4Route';
@@ -52,12 +54,27 @@ function LegacyOnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: numbe
   const { state } = controller;
   const recipe = useOkyoStore((store) => state.recipeId ? store.recipesById[state.recipeId] ?? null : null);
   const activeCookingSession = useOkyoStore((store) => store.activeCookingSession);
+  const [showcasePage, setShowcasePage] = useState(controller.showcaseInitialPage);
 
   switch (state.step) {
     case 'splash':
       return <SplashScreen appStartedAt={appStartedAt} fontsLoaded={fontsLoaded} onFinished={controller.finishSplash} />;
+    case 'showcase':
+      return (
+        <ShowcasePager
+          attribution={state.attribution}
+          initialPage={controller.showcaseInitialPage}
+          onAttributionSelected={controller.selectAttribution}
+          onAttributionSkipped={controller.skipAttribution}
+          onPageChange={setShowcasePage}
+          onFinished={controller.finishShowcase}
+        />
+      );
+    case 'nameFox':
+      return <NameFoxScreen initialName={state.mascotName} onBack={controller.back} onSubmit={controller.submitMascotName} />;
     case 'name':
     case 'primaryGoal':
+    case 'branchIntro':
     case 'question1':
     case 'question2':
     case 'question3':
@@ -72,7 +89,9 @@ function LegacyOnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: numbe
     case 'branchInsight':
     case 'nutritionTargets':
     case 'branchDemo':
+    case 'secondaryGoals':
     case 'dietaryPreferences':
+    case 'personalizedFuture':
     case 'planReady':
       return (
         <PersonalizedOnboardingScreen
@@ -83,6 +102,7 @@ function LegacyOnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: numbe
           onGoal={controller.selectPrimaryGoal}
           onHoldComplete={controller.completeHoldReveal}
           onName={controller.submitName}
+          onSecondaryGoals={controller.submitSecondaryGoals}
           state={state}
         />
       );

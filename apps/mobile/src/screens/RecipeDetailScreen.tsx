@@ -773,7 +773,7 @@ export function RecipeStepsScreen() {
                 accessibilityIgnoresInvertColors
                 accessibilityLabel="Kiko enjoying a bowl of pasta"
                 resizeMode="contain"
-                source={require('../../assets/kiko-static/completion/kiko-pasta-celebration.png')}
+                source={require('../../assets/kiko-static/approved/kiko-ramen.png')}
                 style={styles.completionMascotArt}
               />
               <Text style={styles.completionEyebrow}>You made it!</Text>

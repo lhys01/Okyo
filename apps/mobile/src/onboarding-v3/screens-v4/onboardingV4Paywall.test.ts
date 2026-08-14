@@ -95,5 +95,5 @@ test('Cook resumption starts the same canonical recipe and cannot record complet
 test('production V3 paywall, routing, RevenueCat service, notifications, and V4 flag remain isolated', () => {
   for (const path of ['src/onboarding-v3/screens/OnboardingPaywallScreen.tsx', 'src/navigation/AppNavigator.tsx', 'src/services/revenueCat.ts']) assert.doesNotMatch(read(path), /V4PaywallScreen|onboardingV4PremiumAction/);
   assert.doesNotMatch(flow + paywall + transaction, /Notifications|requestPermissionsAsync/);
-  assert.match(read('src/config/devFlags.ts'), /export const ONBOARDING_V4_ENABLED = true;/);
+  assert.match(read('src/config/devFlags.ts'), /export const ONBOARDING_V4_ENABLED = false;/);
 });

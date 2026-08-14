@@ -3409,8 +3409,8 @@ export function getVisionPrompt(image: ScanImageMetadata | undefined, mode: Reci
     'If the image is too blurry/dark/blocked to know whether food is visible, set scanState too_unclear, isFoodImage false, confidence below 40, and rejectionReason to ask for a clearer food photo.',
     'If food is visible but uncertain, do NOT say "could not recognize" or "failed"; provide a broad best guess with lower confidence instead of failure.',
     'confidence may be 0-100. Use lower confidence when the image is unclear, partial, or screenshot-like.',
-    'restaurantPriceEstimate is a cautious estimate for a comparable prepared dish at a typical restaurant or takeout counter, not an exact live menu price. Base it on the visible dish, likely portion, ingredients, and preparation complexity. Use 0 only when no responsible estimate is possible.',
-    'homemadeCostEstimate may be a cautious grocery-cost estimate for making a similar recipe at home.',
+    'restaurantPriceEstimate is a cautious estimate for a comparable prepared dish at a nice, higher-end restaurant or premium takeout counter, not a live menu price and not the cheapest available version. Lean toward the upper end of a believable range for the cuisine, protein, and presentation. Base it on the visible dish, likely portion, ingredients, and preparation complexity. Use 0 only when no responsible estimate is possible.',
+    'homemadeCostEstimate is a cautious, economical grocery-cost estimate for making a similar recipe at home, based on the proportional cost of only the amount of each ingredient actually used (not the price of buying a whole package). Lean toward the lower end of a believable range.',
     'Use cautious estimates. Never present food identification, cost, or ingredients as exact.',
     'Do not give exact nutrition claims. Do not give unsafe cooking advice.',
     'If no actual image is available, return a cautious low-confidence result based only on metadata.',
@@ -3432,7 +3432,7 @@ function getCompactVisionRetryPrompt(image: ScanImageMetadata | undefined, mode:
     'If a prepared dish or finished drink is visible, give the most specific honest name supported by the image, with lower confidence if uncertain.',
     'Drinks must be named as drinks, such as smoothie, latte, shake, juice, boba, coffee, or matcha. Never call a drink a plate or bowl.',
     'Avoid generic names like Food Plate, Restaurant Plate, Meal, Dish, Bowl, Drink, or Unknown Dish when a more specific visible guess is possible.',
-    'restaurantPriceEstimate is a cautious comparable prepared-dish estimate, not a live menu price. Use 0 only when no responsible estimate is possible.',
+    'restaurantPriceEstimate is a cautious comparable prepared-dish estimate for a nice, higher-end restaurant or premium takeout, leaning toward the upper end of a believable range — not a live menu price. Use 0 only when no responsible estimate is possible.',
     `Requested recipe mode: ${mode}.`,
     `Image metadata: ${JSON.stringify(getSafeImageMetadata(image))}`,
   ].join('\n');
@@ -3499,6 +3499,7 @@ function getRecipeEditPrompt(input: {
       goalContext: input.goalContext,
     }),
     'Use this simple JSON shape: {"title":"Recipe title","description":"Short description","servings":2,"ingredients":["1 cup ingredient"],"equipment":["bowl"],"steps":[{"title":"Mix","step":"Mix for 5 minutes.","activeMinutes":5,"passiveMinutes":0,"elapsedMinutes":5}],"prepTime":"5 minutes","cookTime":"0 minutes","totalTime":"5 minutes","nutritionEstimate":{"calories":250,"proteinGrams":20,"carbohydratesGrams":25,"fatGrams":8}}.',
+    'Keep the fastest reasonable home-cooking method and optimistic-but-plausible low-end times for prepTime/cookTime/totalTime/activeMinutes unless the user\'s edit specifically changes the cooking method or timing.',
     'Unknown culinary terms are valid. When nutrition changes, change ingredients or quantities plausibly and update the estimate.',
     `Current complete recipe: ${JSON.stringify(currentRecipe)}`,
     ...(previousCandidate
@@ -3600,9 +3601,15 @@ function buildPreferencesPromptSection(preferences: RecipeGenerationPreferences 
 
   const lines: string[] = [];
 
+  if (preferences?.dietaryAllergies?.length) {
+    lines.push(
+      `HARD ALLERGY CONSTRAINT — SAFETY CRITICAL: the recipe MUST NOT include, or be cooked using equipment cross-contaminated with, any of these saved allergies: ${preferences.dietaryAllergies.join(', ')}. This is a non-negotiable medical safety constraint, not a preference. If the dish cannot be made safely, substitute ingredients rather than including an allergen. Do not claim the result is guaranteed allergen-free — state which ingredients were substituted or omitted for this reason.`,
+    );
+  }
+
   if (preferences?.dietaryRestrictions?.length) {
     lines.push(
-      `HARD DIETARY RESTRICTION — SAFETY CRITICAL: the recipe MUST NOT include, or be cooked using equipment cross-contaminated with, any of: ${preferences.dietaryRestrictions.join(', ')}. This is a non-negotiable allergy/restriction constraint, not a preference. If the dish cannot be made safely, substitute ingredients rather than including a restricted one.`,
+      `HARD DIETARY RESTRICTION: the recipe MUST NOT include, or be cooked using equipment cross-contaminated with, any of: ${preferences.dietaryRestrictions.join(', ')}. This is a non-negotiable recipe constraint, not a preference. If the dish cannot be made safely, substitute ingredients rather than including a restricted one.`,
     );
   }
 
@@ -3688,7 +3695,8 @@ function getRecipePrompt(
     'Return ONLY valid minified JSON. No markdown, no prose, no reasoning, no extra text.',
     'Return exactly ONE recipe object starting with {. One recipe only — no modes, variants, or multiple recipes.',
     `Recipe fields: dishName, title, description, ingredients, equipment, steps, avoidMistake, substitutions, storageAndReheating, spicePairings, prepTime, cookTime, totalTime, servings, skillLevel, restaurantPriceEstimate, nutritionEstimate${correction ? ', appliedChanges' : ''}${isPlatter ? ', ingredientGroups' : ''}.`,
-    'restaurantPriceEstimate: a cautious number for a comparable prepared dish at a restaurant or takeout counter, not a live menu price. Base it on the dish, portion, ingredients, and complexity; omit it if no responsible estimate is possible.',
+    'restaurantPriceEstimate: a cautious number for a comparable prepared dish at a nice, higher-end restaurant or premium takeout counter, leaning toward the upper end of a believable range for the cuisine, protein, and presentation — not a live menu price and not the cheapest available version. Base it on the dish, portion, ingredients, and complexity; omit it if no responsible estimate is possible.',
+    'TIME: Write this recipe for an efficient home cook using the fastest reasonable method for the dish, with prep steps parallelized wherever possible (e.g. start something simmering before chopping the next ingredient). prepTime, cookTime, totalTime, and each step\'s active minutes should be optimistic but plausible — use the low end of a believable range and cut unnecessary resting/prep buffers. Never invent passive waiting (marinating, proofing, chilling, resting) that a real version of the dish would not need, but when a genuine passive wait is required, keep it physically accurate and do not fold it into an inflated-looking total.',
     correction
       ? 'nutritionEstimate is REQUIRED. Use cautious numeric per-serving estimates: calories, proteinGrams, carbohydratesGrams, fatGrams, and optional fiberGrams.'
       : 'nutritionEstimate is optional. When included, use cautious numeric per-serving estimates: calories, proteinGrams, carbohydratesGrams, fatGrams, and optional fiberGrams. Omit it when the description does not support a reasonable estimate.',
@@ -3756,7 +3764,7 @@ function getCompactRecipeRetryPrompt(
   return [
     ...(correctionSection ? [correctionSection] : []),
     'JSON only. No markdown. No explanations. Write real recipe text in every field; never output placeholder dots.',
-    'Return ONE recipe object: {"dishName","title","description","ingredients","steps","prepTime","cookTime","totalTime","servings","skillLevel","restaurantPriceEstimate","avoidMistake","substitutions","storageAndReheating","spicePairings"}. restaurantPriceEstimate is a cautious comparable prepared-dish estimate, never a live menu price.',
+    'Return ONE recipe object: {"dishName","title","description","ingredients","steps","prepTime","cookTime","totalTime","servings","skillLevel","restaurantPriceEstimate","avoidMistake","substitutions","storageAndReheating","spicePairings"}. restaurantPriceEstimate is a cautious comparable prepared-dish estimate for a nice, higher-end restaurant or premium takeout, leaning toward the upper end of a believable range — never a live menu price. Use the fastest reasonable home-cooking method and optimistic-but-plausible low-end times for prepTime/cookTime/totalTime.',
     'ingredients: 6 strings, each an exact amount plus grocery name like "2 large eggs" or "1 cup all-purpose flour" — use real ingredients for this specific dish, not examples.',
     `steps: 6-8 step OBJECTS. Exact shape: {"stepNumber":1,"phase":3,"title":"Sear Chicken","step":"Detailed beginner-friendly instruction with exact action, grounded cue, and transition cue","ingredients":["names used in this step"],"tools":["tools used"]}. stepNumber starts 1, sequential. phase 1-6. ingredients/tools never empty. ${RICH_COOKING_INSTRUCTION_GUIDANCE}`,
     'spicePairings: up to 2 strings.',

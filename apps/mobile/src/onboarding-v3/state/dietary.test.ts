@@ -31,7 +31,7 @@ test('Continue with an empty dietary selection is valid', () => {
     ...initialOnboardingV3State,
     step: 'dietaryPreferences',
   }, { type: 'DIETARY_SET', preferences: { allergies: [], restrictions: [], avoidances: [], dislikes: [] } });
-  assert.equal(state.step, 'planReady');
+  assert.equal(state.step, 'secondaryGoals');
   assert.deepEqual(state.dietaryRestrictions, []);
   assert.deepEqual(state.profile.dietaryRestrictions, []);
 });

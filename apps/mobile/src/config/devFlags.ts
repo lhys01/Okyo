@@ -35,9 +35,15 @@ export const DEV_BYPASS_PAYWALL =
   (typeof __DEV__ !== 'undefined' && __DEV__) && DEV_BYPASS_PAYWALL_ENABLED;
 
 /**
- * Gate for the V4 onboarding rebuild (Okyo_Onboarding_V4_Implementation_Plan.md).
- * Defaults to false and is unreferenced by any live screen as of Step 02 —
- * Step 03 is the first step that reads it, to gate the new V4 screens behind
- * a flag before they're wired into OnboardingV3.tsx's render switch.
+ * Master kill-switch for the V4 onboarding rebuild
+ * (Okyo_Onboarding_V4_Implementation_Plan.md). V4's visual design and
+ * shortened sequence were rejected after release-candidate QA; the legacy
+ * V3 onboarding (OnboardingV3.tsx's LegacyOnboardingV3) is production-visible
+ * again. This flag overrides every stored per-install `v4` experiment
+ * assignment (see onboardingV4Route.ts's shouldUseOnboardingV4: it is
+ * `enabled && assignment === 'v4'`, so `false` here always selects V3
+ * regardless of assignment). V4's screens, reducer, and persisted state are
+ * fully intact and unreachable while this stays false — flip back to true
+ * once V4 is visually redesigned.
  */
-export const ONBOARDING_V4_ENABLED = true;
+export const ONBOARDING_V4_ENABLED = false;

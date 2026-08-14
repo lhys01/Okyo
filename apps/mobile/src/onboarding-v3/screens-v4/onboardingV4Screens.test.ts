@@ -48,8 +48,13 @@ test('V4 is selected behind the reversible gate and the retained V3 fallback rem
   }
 });
 
-test('ShowcasePager and NameFoxScreen are absent from both engines', () => {
-  assert.doesNotMatch(onboardingV3Source, /ShowcasePager|NameFoxScreen/);
+test('ShowcasePager and NameFoxScreen are the restored legacy V3 screens, never referenced by V4', () => {
+  // V4 is rejected/hidden (ONBOARDING_V4_ENABLED = false); the restored
+  // legacy V3 path in OnboardingV3.tsx legitimately renders both screens
+  // again, so OnboardingV3.tsx itself is deliberately not checked here —
+  // only that V4's own screens never reference them.
+  assert.match(onboardingV3Source, /ShowcasePager/);
+  assert.match(onboardingV3Source, /NameFoxScreen/);
   for (const v4Source of [promiseSource, goalSource, onboardingV4Source]) {
     const code = v4Source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     assert.doesNotMatch(code, /ShowcasePager/);
@@ -110,9 +115,9 @@ test('OnboardingV4 hydrates the persisted draft on mount (resume)', () => {
   assert.match(onboardingV4Source, /dispatch\(\{ type: 'HYDRATE', draft, inFlightScan, freeRecipeConsumed, recipeId: restoredRecipe\?\.recipeId \?\? null, pendingPremiumAction \}\)/);
 });
 
-test('ONBOARDING_V4_ENABLED is activated in Step 11', () => {
+test('ONBOARDING_V4_ENABLED is off — V4 rejected after release-candidate QA, legacy V3 restored', () => {
   const flags = readFileSync(resolve(process.cwd(), 'src/config/devFlags.ts'), 'utf8');
-  assert.match(flags, /export const ONBOARDING_V4_ENABLED = true;/);
+  assert.match(flags, /export const ONBOARDING_V4_ENABLED = false;/);
 });
 
 // --- Step 05 ------------------------------------------------------------

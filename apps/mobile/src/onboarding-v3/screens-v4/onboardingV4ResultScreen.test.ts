@@ -61,7 +61,7 @@ test('retained V3 result and main navigator do not directly import or mount the 
   for (const path of ['src/onboarding-v3/screens/OnboardingRecipePreview.tsx', 'src/navigation/AppNavigator.tsx']) {
     assert.doesNotMatch(read(path), /FreeRecipeResultScreen|onboardingV4Result/);
   }
-  assert.match(read('src/config/devFlags.ts'), /export const ONBOARDING_V4_ENABLED = true;/);
+  assert.match(read('src/config/devFlags.ts'), /export const ONBOARDING_V4_ENABLED = false;/);
 });
 
 test('Step 09 result emits the selected action but never mounts the Step 10 paywall itself', () => {

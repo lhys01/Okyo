@@ -54,13 +54,12 @@ test('registry metadata matches source PNG dimensions, alpha channel, and origin
   }
 });
 
-test('every source loader references the complete audited PNG set with no substitutions', () => {
+test('every source loader uses the approved bundled Kiko artwork', () => {
   const registrySource = readFileSync(registrySourcePath, 'utf8');
-  const requiredPngs = [...registrySource.matchAll(/require\('\.\.\/\.\.\/\.\.\/assets\/onboarding kiko\/([^']+\.png)'\)/g)]
-    .map((match) => match[1])
-    .sort();
-
-  assert.deepEqual(requiredPngs, sourcePngs());
+  const approvedRequires = [...registrySource.matchAll(/require\('\.\.\/\.\.\/\.\.\/assets\/kiko-static\/approved\/([^']+\.png)'\)/g)]
+    .map((match) => match[1]);
+  assert.equal(approvedRequires.length, kikoOnboardingInventory.length);
+  assert.ok(approvedRequires.every((filename) => filename.startsWith('kiko-')));
 });
 
 test('assignments reference audited assets and never declare duplicate Kikos on a screen', () => {

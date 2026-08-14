@@ -39,3 +39,9 @@ test('Design System V2 keeps V3 on the shared Inter family', () => {
   assert.match(theme, /fontFamilies[\s\S]*display: 'Inter_900Black'/);
   assert.match(theme, /onboardingFontFamilies[\s\S]*display: fontFamilies\.display/);
 });
+
+test('showcase headlines explicitly use Inter Black at weight 900', () => {
+  const pageStyles = readFileSync(resolve(process.cwd(), 'src/onboarding-v3/showcase/pages/pageStyles.ts'), 'utf8');
+  assert.match(pageStyles, /fontFamily: fontFamilies\.extraBold/);
+  assert.match(pageStyles, /fontWeight: '900'/);
+});

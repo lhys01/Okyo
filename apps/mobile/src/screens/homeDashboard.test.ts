@@ -60,7 +60,7 @@ test('Home week strip is clickable and has concise day empty states', () => {
 test('Home shows a real first-use CTA only until there is activity', () => {
   // The approved three-Kiko row plus its line, with a real coral CTA beside it.
   assert.match(home, /activityDates\.length === 0/);
-  assert.match(home, /recent-empty-kiko\.png/);
+  assert.match(home, /kiko-static\/approved\/kiko-soup\.png/);
   assert.match(home, /Scan your first dish to get started\./);
   assert.match(home, /Scan a dish/);
 

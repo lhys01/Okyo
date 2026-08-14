@@ -39,7 +39,7 @@ import {
   type OpenRouterVisionOutput,
   type StepCoachingPatch,
 } from './openRouterProvider.js';
-import { deriveRecipeTimeline, deriveRecipeStepTime } from './recipeTime.js';
+import { deriveRecipeTimeline, deriveRecipeStepTime, applyOptimisticTimeBias } from './recipeTime.js';
 import {
   CorrectionValidationError,
   parseCorrectionRequirements,
@@ -1535,8 +1535,14 @@ function createRecipeFromVariant(
   );
   const title = getRecipeTitle(variant.title, analysis.dishName, mode);
   const ingredients = getRecipeIngredients(variant.ingredients, analysis, mode);
-  const prepTimeMinutes = parseMinutes(variant.prepTime, 15);
-  const cookTimeMinutes = parseMinutes(variant.cookTime, 25);
+  // Okyo shows the fastest believable version of a recipe: bias every active
+  // (hands-on) duration toward the low end of its believable range via
+  // applyOptimisticTimeBias. Passive waits (baking, marinating, proofing)
+  // are never biased — they stay physically accurate and are tracked
+  // separately (passiveMinutes / passiveTimeMinutes) rather than folded into
+  // an inflated-looking total.
+  const prepTimeMinutes = applyOptimisticTimeBias(parseMinutes(variant.prepTime, 15));
+  const cookTimeMinutes = applyOptimisticTimeBias(parseMinutes(variant.cookTime, 25));
   const servings = parseServings(variant.servings, 2);
   const skillLevel = normalizeDifficulty(variant.skillLevel || variant.difficulty);
   const steps = getRecipeSteps(variant.steps, analysis.dishName);
@@ -1545,29 +1551,26 @@ function createRecipeFromVariant(
     const derivedTiming = deriveRecipeStepTime(step.text, step.estimatedMinutes);
     const unattendedCooking = /\b(?:bake|baking|roast|roasting|preheat|preheating|simmer|simmering)\b/i.test(step.text);
     const semanticallyUnattended = unattendedCooking;
-    const activeMinutes = semanticallyUnattended
+    const rawActiveMinutes = semanticallyUnattended
       ? derivedTiming.activeMinutes
       : Number.isFinite(step.activeMinutes) ? Math.max(0, step.activeMinutes ?? 0) : derivedTiming.activeMinutes;
     const passiveMinutes = semanticallyUnattended
       ? derivedTiming.passiveMinutes
       : Number.isFinite(step.passiveMinutes) ? Math.max(0, step.passiveMinutes ?? 0) : derivedTiming.passiveMinutes;
-    const elapsedMinutes = Math.max(
-      1,
-      Number.isFinite(step.elapsedMinutes) ? step.elapsedMinutes ?? 0 : derivedTiming.elapsedMinutes,
-      activeMinutes + passiveMinutes,
-    );
+    const activeMinutes = applyOptimisticTimeBias(rawActiveMinutes);
+    const elapsedMinutes = Math.max(1, activeMinutes + passiveMinutes);
     return { ...step, activeMinutes, passiveMinutes, elapsedMinutes };
   });
   const timeline = deriveRecipeTimeline(timedStructuredSteps);
   const structuredStepElapsedMinutes = timedStructuredSteps.reduce((total, step) => total + step.elapsedMinutes, 0);
   const totalTimeMinutes = Math.max(
-    parseMinutes(variant.totalTime, prepTimeMinutes + cookTimeMinutes),
+    applyOptimisticTimeBias(parseMinutes(variant.totalTime, prepTimeMinutes + cookTimeMinutes)),
     prepTimeMinutes + cookTimeMinutes,
     timeline.elapsedMinutes,
     structuredStepElapsedMinutes,
   );
   const activeTimeMinutes = Math.max(
-    parseMinutes(variant.activeTime, prepTimeMinutes + 10),
+    applyOptimisticTimeBias(parseMinutes(variant.activeTime, prepTimeMinutes + 10)),
     timeline.activeMinutes,
     timedStructuredSteps.reduce((total, step) => total + step.activeMinutes, 0),
   );
@@ -2130,6 +2133,18 @@ function getDefaultConfidenceReason(scanState: ScanState) {
   }
 }
 
+// Eating-out estimates lean toward a nice/premium restaurant or takeout
+// price, not the cheapest available version of the dish — a believable
+// high end, never an absurd one (see the 120 ceiling below). Make-at-home
+// estimates lean toward an efficient, proportional grocery cost for only
+// the amount of each ingredient actually used. These biases are applied
+// exactly once, in resolvePricing() below — never inside these two plain
+// sanitizers, which are also called earlier (at vision-output parse time)
+// to store a cautious raw estimate on FoodImageAnalysis; biasing here too
+// would double-apply the multiplier by the time resolvePricing runs.
+const RESTAURANT_PRICE_PREMIUM_BIAS = 1.2;
+const HOMEMADE_COST_ECONOMY_BIAS = 0.8;
+
 function normalizeRestaurantPrice(value: unknown) {
   const parsed = getFiniteNumber(value);
   if (parsed === undefined || parsed <= 0) {
@@ -2153,42 +2168,60 @@ function normalizeHomemadeCost(value: unknown, restaurantPrice: number) {
   return roundMoney(clampNumber(cappedCost, 1, Math.max(1, restaurantPrice - 0.5)));
 }
 
+// Applies the premium/economy bias exactly once, after both raw AI values
+// have been sanitized. Kept separate from resolvePricing so the ceiling
+// math (home cost must stay below restaurant price) is easy to audit.
+function applyRestaurantPricePremiumBias(sanitizedPrice: number): number {
+  if (sanitizedPrice <= 0) return 0;
+  return roundMoney(clampNumber(sanitizedPrice * RESTAURANT_PRICE_PREMIUM_BIAS, 0, 120));
+}
+
+function applyHomemadeCostEconomyBias(sanitizedCost: number, restaurantPrice: number): number {
+  if (sanitizedCost <= 0) return sanitizedCost;
+  const ceiling = restaurantPrice > 0 ? Math.max(1, restaurantPrice - 0.5) : 80;
+  return roundMoney(clampNumber(sanitizedCost * HOMEMADE_COST_ECONOMY_BIAS, 1, ceiling));
+}
+
 // Typical restaurant/takeout markup over grocery cost, by dish category. Mirrors
 // the categories already produced by normalizeBroadDishCategory. Used only when
 // the AI gives no usable restaurant price, so the recipe never shows "—".
 const RESTAURANT_MARKUP_BY_CATEGORY: Record<string, number> = {
-  pizza: 2.2,
-  'pasta/noodles': 2.6,
-  'rice bowl': 2.4,
-  'burger/sandwich': 2.3,
-  'tacos/wrap': 2.5,
-  'grilled meat': 2.8,
-  'fried food': 2.4,
-  seafood: 3.2,
-  salad: 2.6,
-  'soup/stew': 2.5,
-  dessert: 2.8,
-  'breakfast item': 2.3,
-  'drink/beverage': 3.5,
-  'mixed platter': 2.6,
-  default: 2.6,
+  pizza: 2.6,
+  'pasta/noodles': 3.0,
+  'rice bowl': 2.8,
+  'burger/sandwich': 2.7,
+  'tacos/wrap': 2.9,
+  'grilled meat': 3.3,
+  'fried food': 2.8,
+  seafood: 3.7,
+  salad: 3.0,
+  'soup/stew': 2.9,
+  dessert: 3.2,
+  'breakfast item': 2.7,
+  'drink/beverage': 3.9,
+  'mixed platter': 3.0,
+  default: 3.0,
 };
 
 function estimateRestaurantPriceFallback(homemadeCost: number, broadDishCategory?: string) {
   const multiplier = RESTAURANT_MARKUP_BY_CATEGORY[broadDishCategory ?? ''] ?? RESTAURANT_MARKUP_BY_CATEGORY.default;
-  return roundMoney(clampNumber(homemadeCost * multiplier, homemadeCost + 2, 120));
+  return roundMoney(clampNumber(homemadeCost * multiplier, homemadeCost + 4, 120));
 }
 
 // Canonical pricing resolver: guarantees both numbers are known and positive.
 // AI values are used when valid; otherwise homemade cost falls back to the
 // existing default, and restaurant price is estimated from that homemade cost
-// via a category-based markup rather than left blank.
+// via a category-based markup rather than left blank. The premium/economy
+// bias (nice-restaurant eating-out price, proportional economical homemade
+// cost) is applied here, once, after sanitizing the raw AI values.
 function resolvePricing(rawRestaurantPrice: unknown, rawHomemadeCost: unknown, broadDishCategory?: string) {
-  const restaurantPriceFromAi = normalizeRestaurantPrice(rawRestaurantPrice);
-  const homemadeCost = normalizeHomemadeCost(rawHomemadeCost, restaurantPriceFromAi);
+  const sanitizedRestaurantPrice = normalizeRestaurantPrice(rawRestaurantPrice);
+  const sanitizedHomemadeCost = normalizeHomemadeCost(rawHomemadeCost, sanitizedRestaurantPrice);
+  const restaurantPriceFromAi = applyRestaurantPricePremiumBias(sanitizedRestaurantPrice);
   const restaurantPrice = restaurantPriceFromAi > 0
     ? restaurantPriceFromAi
-    : estimateRestaurantPriceFallback(homemadeCost, broadDishCategory);
+    : estimateRestaurantPriceFallback(applyHomemadeCostEconomyBias(sanitizedHomemadeCost, sanitizedRestaurantPrice), broadDishCategory);
+  const homemadeCost = applyHomemadeCostEconomyBias(sanitizedHomemadeCost, restaurantPrice);
   return { restaurantPrice, homemadeCost };
 }
 
