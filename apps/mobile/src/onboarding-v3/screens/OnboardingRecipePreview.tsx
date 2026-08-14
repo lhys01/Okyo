@@ -1,10 +1,13 @@
 import { Image } from 'expo-image';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { Recipe } from '../../mocks';
+import { FoodSafetyNotice } from '../../components/FoodSafetyNotice';
+import { EMPTY_FOOD_PREFERENCES, findFoodPreferenceConflicts, type FoodPreferences } from '../../state/foodPreferences';
+import { classifyDietarySafetyPrompt } from '../../utils/dietarySafetyPrompt';
 import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
 import { formatRecipeDuration, getRecipeTiming } from '../../utils/recipeIntegrity';
 import { LoadingOverlay } from '../components/LoadingOverlay';
@@ -17,6 +20,7 @@ export function OnboardingRecipePreview({
   photoUri,
   mascotName,
   errorMessage,
+  dietaryPreferences = EMPTY_FOOD_PREFERENCES,
   onBack,
   onContinue,
   onCook,
@@ -28,6 +32,14 @@ export function OnboardingRecipePreview({
   photoUri: string | null;
   mascotName: string;
   errorMessage: string | null;
+  /**
+   * Step 06: reuses the existing `FoodPreferences`/`findFoodPreferenceConflicts`
+   * engine already live in the main app's `ResultSummaryScreen.tsx` — this
+   * onboarding-v3 screen had zero dietary warning wiring before this change.
+   * Optional with a safe empty default so every existing caller (real prop
+   * not yet threaded through in older call sites, if any) keeps compiling.
+   */
+  dietaryPreferences?: FoodPreferences;
   onBack: () => void;
   onContinue: () => void;
   onCook: () => void;
@@ -67,6 +79,38 @@ export function OnboardingRecipePreview({
   const ingredients = recipe.ingredientGroups?.length
     ? recipe.ingredientGroups.flatMap((group) => group.items)
     : recipe.ingredients;
+  // Automated ingredient-name matching only — a possible match, never a
+  // guarantee (decision: "describe automated matches as possible matches").
+  const dietaryConflicts = findFoodPreferenceConflicts(ingredients.map((ingredient) => ingredient.name), dietaryPreferences);
+  const hasSavedAllergies = dietaryPreferences.allergies.length > 0;
+  // Shared with RecipeDetailScreen.tsx's pre-Cook gate (dietarySafetyPrompt.ts)
+  // so both reachable recipe-result/Cook entry points classify the same
+  // preferences+recipe pair identically. Never claims a clean automated scan
+  // means the recipe is safe — "possible match" and "verify" language only.
+  const promptLevel = classifyDietarySafetyPrompt(dietaryPreferences, dietaryConflicts);
+  const handleCookPress = () => {
+    if (promptLevel === 'none') { onCook(); return; }
+    if (promptLevel === 'possible_conflict') {
+      const conflict = dietaryConflicts[0];
+      Alert.alert(
+        'Before you cook',
+        `This recipe still includes ${conflict.ingredient}. You marked ${conflict.preference} as ${conflict.category === 'allergy' ? 'an allergy' : 'a dietary restriction'}.`,
+        [
+          { text: 'Review ingredients', style: 'cancel' },
+          { text: 'I’ve checked, continue', onPress: onCook },
+        ],
+      );
+      return;
+    }
+    Alert.alert(
+      'Before you start cooking',
+      "You've saved allergies. Okyo's ingredient check is automated and can miss things — verify every ingredient and label yourself before you begin.",
+      [
+        { text: 'Review ingredients', style: 'cancel' },
+        { text: 'I’ve checked, continue', onPress: onCook },
+      ],
+    );
+  };
   const steps = recipe.structuredSteps?.length
     ? recipe.structuredSteps.map((step) => step.text)
     : recipe.steps;
@@ -100,6 +144,13 @@ export function OnboardingRecipePreview({
           </Pressable>
         </View>
         <Text style={styles.description}>{recipe.description}</Text>
+
+        {hasSavedAllergies ? (
+          <Text accessibilityRole="text" style={styles.allergyReminder}>
+            You've saved allergies — always verify every ingredient before cooking, even when no warning appears below.
+          </Text>
+        ) : null}
+        <FoodSafetyNotice conflicts={dietaryConflicts} />
 
         <View style={styles.stats}>
           <Stat label="Total" value={formatRecipeDuration(timing.totalMinutes)} />
@@ -147,7 +198,7 @@ export function OnboardingRecipePreview({
       </ScrollView>
       <View style={styles.footer}>
         <OnboardingCTA label="Continue" onPress={onContinue} />
-        <OnboardingCTA label="Cook step-by-step" onPress={onCook} variant="secondary" />
+        <OnboardingCTA label="Cook step-by-step" onPress={handleCookPress} variant="secondary" />
       </View>
     </SafeAreaView>
   );
@@ -169,6 +220,7 @@ const styles = StyleSheet.create({
   safeArea: { backgroundColor: colors.background, flex: 1 },
   header: { minHeight: ONBOARDING_BACK_ROW_HEIGHT, paddingHorizontal: ONBOARDING_HORIZONTAL_PADDING, paddingTop: ONBOARDING_BACK_ROW_TOP_GAP },
   content: { paddingBottom: 30, paddingHorizontal: 24 },
+  allergyReminder: { color: colors.muted, fontFamily: fontFamilies.medium, fontSize: 12.5, lineHeight: 18, marginBottom: 10, marginTop: 4 },
   hero: { backgroundColor: colors.creamDeep, borderRadius: 28, height: 240, width: '100%' },
   eyebrow: { color: colors.coralDark, fontFamily: fontFamilies.bold, fontSize: 12, letterSpacing: 0.4, marginTop: 22, textTransform: 'uppercase' },
   titleRow: { alignItems: 'flex-start', flexDirection: 'row', gap: 10, marginTop: 5 },

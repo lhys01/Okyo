@@ -7,10 +7,9 @@ import Svg, { Circle, Line, Polyline, Text as SvgText } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { MainTabParamList } from '../navigation/types';
-import type { CanonicalRecipe } from '../state/canonicalRecipes';
+import type { CompletedMeal } from '../state/completedMeals';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { colors, fontFamilies, radius, spacing } from '../theme/okyoTheme';
-import { isValidNutritionEstimate } from '../utils/nutrition';
 
 type Navigation = NativeStackNavigationProp<MainTabParamList>;
 type Range = '7D' | '1M' | '3M' | '6M' | '1Y' | 'ALL';
@@ -25,17 +24,18 @@ const MACROS: Array<{ key: MacroKey; label: string }> = [
 
 export function StatsProgressScreen() {
   const navigation = useNavigation<Navigation>();
+  const completedMeals = useOkyoStore((state) => state.completedMeals);
   const recipesById = useOkyoStore((state) => state.recipesById);
   const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
   const [range, setRange] = useState<Range>('1M');
   const [macroKey, setMacroKey] = useState<MacroKey>('proteinGrams');
   const recipes = useMemo(() => Object.values(recipesById).filter((recipe) => !recipe.id.startsWith('mock-') && inRange(recipe.scanCompletedAt, range)), [range, recipesById]);
-  const completed = recipes.filter((recipe) => recipe.completionState === 'completed' && recipe.cookingCompletedAt);
-  const nutrition = completed.filter((recipe) => isValidNutritionEstimate(recipe.nutritionEstimate));
-  const savedCount = savedRecipeIds.filter((id) => recipesById[id]).length;
-  const savings = sum(completed.map((recipe) => positive(recipe.estimatedSavings)));
+  const completed = useMemo(() => completedMeals.filter((meal) => inRange(meal.completedAt, range)), [completedMeals, range]);
+  const nutrition = completed.filter((meal) => meal.proteinGrams !== undefined || meal.carbohydratesGrams !== undefined || meal.fatGrams !== undefined);
+  const savedCount = savedRecipeIds.filter((id) => recipesById[id] && recipes.some((recipe) => recipe.id === id)).length;
+  const savings = sum(completed.map((meal) => positive(meal.estimatedSavings)));
   const averageSavings = completed.length ? savings / completed.length : 0;
-  const macroTotal = (key: MacroKey) => Math.round(sum(nutrition.map((recipe) => positive(recipe.nutritionEstimate?.[key]))));
+  const macroTotal = (key: MacroKey) => Math.round(sum(nutrition.map((meal) => positive(meal[key]))));
   const macroAverage = nutrition.length ? Math.round(macroTotal(macroKey) / nutrition.length) : 0;
   const selectedMacro = MACROS.find((item) => item.key === macroKey) ?? MACROS[0];
   const points = useMemo(() => buildProgressPoints(completed, range, macroKey), [completed, macroKey, range]);
@@ -71,7 +71,7 @@ function ProgressGraph({ empty, macro, points }: { empty: string | null; macro: 
 }
 
 function inRange(value: string, range: Range) { if (range === 'ALL') return true; const days = { '7D': 7, '1M': 30, '3M': 90, '6M': 180, '1Y': 365 }[range]; return new Date(value).getTime() >= Date.now() - days * 86_400_000; }
-function buildProgressPoints(completed: CanonicalRecipe[], range: Range, macroKey: MacroKey): ProgressPoint[] { const count = range === '7D' ? 7 : 6; const span = range === '7D' ? 7 : ({ '1M': 30, '3M': 90, '6M': 180, '1Y': 365, ALL: 180 } as Record<Range, number>)[range]; const unit = span / count; return Array.from({ length: count }, (_, index) => { const end = Date.now() - (count - 1 - index) * unit * 86_400_000; const start = end - unit * 86_400_000; const bucket = completed.filter((recipe) => { const time = new Date(recipe.cookingCompletedAt ?? 0).getTime(); return time > start && time <= end; }); const withNutrition = bucket.filter((recipe) => isValidNutritionEstimate(recipe.nutritionEstimate)); return { label: new Date(end).toLocaleDateString(undefined, { month: 'short', day: range === '7D' ? 'numeric' : undefined }), savings: sum(bucket.map((recipe) => positive(recipe.estimatedSavings))), macro: withNutrition.length ? sum(withNutrition.map((recipe) => positive(recipe.nutritionEstimate?.[macroKey]))) / withNutrition.length : 0 }; }); }
+function buildProgressPoints(completed: CompletedMeal[], range: Range, macroKey: MacroKey): ProgressPoint[] { const count = range === '7D' ? 7 : 6; const span = range === '7D' ? 7 : ({ '1M': 30, '3M': 90, '6M': 180, '1Y': 365, ALL: 180 } as Record<Range, number>)[range]; const unit = span / count; return Array.from({ length: count }, (_, index) => { const end = Date.now() - (count - 1 - index) * unit * 86_400_000; const start = end - unit * 86_400_000; const bucket = completed.filter((meal) => { const time = new Date(meal.completedAt).getTime(); return time > start && time <= end; }); const withNutrition = bucket.filter((meal) => meal[macroKey] !== undefined); return { label: new Date(end).toLocaleDateString(undefined, { month: 'short', day: range === '7D' ? 'numeric' : undefined }), savings: sum(bucket.map((meal) => positive(meal.estimatedSavings))), macro: withNutrition.length ? sum(withNutrition.map((meal) => positive(meal[macroKey]))) / withNutrition.length : 0 }; }); }
 function positive(value: unknown) { return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0; }
 function sum(values: number[]) { return values.reduce((total, value) => total + value, 0); }
 function money(value: number) { return `$${positive(value).toFixed(value >= 100 ? 0 : 2)}`; }

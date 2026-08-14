@@ -17,18 +17,17 @@ type Navigation = NativeStackNavigationProp<MainTabParamList>;
 export function ProfileScreen() {
   const navigation = useNavigation<Navigation>();
   const refreshPrimaryGoal = useOkyoStore((state) => state.refreshPrimaryGoal);
-  const recipesById = useOkyoStore((state) => state.recipesById);
+  const completedMeals = useOkyoStore((state) => state.completedMeals);
   const [profile, setProfile] = useState<PersonalizedOnboardingProfile | null>(null);
   const [dietaryCount, setDietaryCount] = useState(0);
   const [saving, setSaving] = useState(false);
   useEffect(() => { void Promise.all([onboardingV3Persistence.readPersonalizedProfile(), foodPreferencesPersistence.read()]).then(([stored, dietary]) => { setProfile(stored); setDietaryCount(dietary.allergies.length + dietary.restrictions.length + dietary.avoidances.length + dietary.dislikes.length); }); }, []);
   const goBack = () => { if (navigation.canGoBack()) navigation.goBack(); };
   const save = async () => { if (!profile) return; setSaving(true); try { await onboardingV3Persistence.writePersonalizedProfile(profile); await refreshPrimaryGoal(); Alert.alert('Profile saved'); } catch { Alert.alert('Couldn’t save profile', 'Try again.'); } finally { setSaving(false); } };
-  const recipes = Object.values(recipesById);
-  const totalSavings = recipes.reduce((sum, recipe) => sum + Math.max(0, recipe.estimatedSavings || 0), 0);
-  const totalProtein = recipes.reduce((sum, recipe) => sum + (recipe.nutritionEstimate?.proteinGrams || 0), 0);
-  const totalCarbs = recipes.reduce((sum, recipe) => sum + (recipe.nutritionEstimate?.carbohydratesGrams || 0), 0);
-  const totalFat = recipes.reduce((sum, recipe) => sum + (recipe.nutritionEstimate?.fatGrams || 0), 0);
+  const totalSavings = completedMeals.reduce((sum, meal) => sum + Math.max(0, meal.estimatedSavings ?? 0), 0);
+  const totalProtein = completedMeals.reduce((sum, meal) => sum + (meal.proteinGrams ?? 0), 0);
+  const totalCarbs = completedMeals.reduce((sum, meal) => sum + (meal.carbohydratesGrams ?? 0), 0);
+  const totalFat = completedMeals.reduce((sum, meal) => sum + (meal.fatGrams ?? 0), 0);
   if (!profile) return <View accessibilityRole="progressbar" style={styles.loading}><ActivityIndicator color={colors.coral} /></View>;
   return <SafeAreaView style={styles.safeArea}><View style={styles.header}><Pressable accessibilityLabel="Go back" accessibilityRole="button" onPress={goBack} style={styles.back}><NavArrowLeft color={colors.ink} height={25} width={25} /></Pressable><Text style={styles.headerTitle}>Profile</Text></View><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}><View style={styles.hero}><View style={styles.avatar}><Image accessibilityLabel="Profile avatar" resizeMode="contain" source={require('../../assets/profile-avatar-bob.png')} style={styles.avatarImage} /></View><Text style={styles.heroTitle}>{profile.name || 'Your Okyo profile'}</Text><Text style={styles.heroMeta}>{profile.primaryGoal ? primaryGoalLabels[profile.primaryGoal] : 'Choose what Okyo should optimize for'}</Text></View><Text style={styles.label}>NAME</Text><TextInput accessibilityLabel="Name" maxLength={30} onChangeText={(name) => setProfile({ ...profile, name })} placeholder="Your name" placeholderTextColor={colors.muted} style={styles.input} value={profile.name} /><Text style={styles.label}>PRIMARY GOAL</Text><View accessibilityLabel={`Primary goal: ${profile.primaryGoal ? primaryGoalLabels[profile.primaryGoal] : 'Not set'}`} style={styles.goalReadOnly}><Text style={styles.goalText}>{profile.primaryGoal ? primaryGoalLabels[profile.primaryGoal] : 'Not set'}</Text><Text style={styles.goalHint}>Set during onboarding</Text></View><Text style={styles.label}>YOUR OKYO TOTALS</Text><View style={styles.statsGrid}><Stat label="Estimated saved" value={`$${totalSavings.toFixed(0)}`} /><Stat label="Protein" value={`${Math.round(totalProtein)}g`} /><Stat label="Carbs" value={`${Math.round(totalCarbs)}g`} /><Stat label="Fat" value={`${Math.round(totalFat)}g`} /></View><Text style={styles.label}>FOOD PREFERENCES</Text><Pressable accessibilityRole="button" onPress={() => navigation.navigate('DietaryPreferencesScreen')} style={styles.row}><View><Text style={styles.rowTitle}>Dietary preferences</Text><Text style={styles.rowBody}>{dietaryCount ? `${dietaryCount} saved preferences` : 'None set'}</Text></View><NavArrowRight color={colors.muted} height={19} width={19} /></Pressable><Pressable accessibilityRole="button" disabled={saving} onPress={() => void save()} style={styles.save}>{saving ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.saveText}>Save profile</Text>}</Pressable></ScrollView></SafeAreaView>;
 }

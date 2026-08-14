@@ -1,4 +1,4 @@
-import type { CompletedChallenge } from './useOkyoStore';
+import type { CompletedMeal } from './completedMeals';
 import type { CanonicalRecipe } from './canonicalRecipes';
 import type { PrimaryGoal } from '../onboarding-v3/state/personalizedOnboarding';
 
@@ -17,23 +17,20 @@ export type HomeMetric = {
 };
 
 export type HomeMetricInput = {
-  completedChallenges: readonly CompletedChallenge[];
+  completedMeals: readonly CompletedMeal[];
   recipesById: Record<string, CanonicalRecipe>;
   selectedDayKey?: string;
-  totalMoneySaved: number;
   now?: Date;
 };
 
 const emptyCopy = 'Cook a meal to see this. Your totals will appear here.';
 
 export function selectHomeMetrics(input: HomeMetricInput): Record<HomeMetricKind, HomeMetric> {
-  const recipes = Object.values(input.recipesById).filter(isRealRecipe);
-  const allCanonicalRecipes = Object.values(input.recipesById);
   const selectedDayKey = input.selectedDayKey ?? toLocalDateKey((input.now ?? new Date()).toISOString()) ?? '';
   return {
-    savings: selectSavingsMetric(recipes, input.completedChallenges, input.totalMoneySaved, input.now ?? new Date()),
-    macros: selectMacrosMetric(allCanonicalRecipes, selectedDayKey),
-    health: selectHealthMetric(recipes),
+    savings: selectSavingsMetric(input.completedMeals, input.now ?? new Date()),
+    macros: selectMacrosMetric(input.completedMeals, selectedDayKey),
+    health: selectHealthMetric(input.completedMeals),
   };
 }
 
@@ -53,17 +50,14 @@ export function getHomeActivityDates(recipesById: Record<string, CanonicalRecipe
   )).map(toLocalDateKey).filter((value): value is string => Boolean(value)))];
 }
 
-function selectSavingsMetric(recipes: readonly CanonicalRecipe[], challenges: readonly CompletedChallenge[], totalMoneySaved: number, now: Date): HomeMetric {
-  const monthlyChallenges = challenges.filter((challenge) => isSameMonth(challenge.completedAt, now));
-  const completedRecipes = recipes.filter((recipe) => recipe.completionState === 'completed');
-  const monthlyRecipes = completedRecipes.filter((recipe) => isSameMonth(recipe.cookingCompletedAt, now));
-  const challengeSavings = sum(monthlyChallenges.map((challenge) => positive(challenge.moneySaved)));
-  const recipeSavings = sum(monthlyRecipes.map((recipe) => positive(recipe.estimatedSavings)));
-  const monthlySavings = challengeSavings > 0 ? challengeSavings : recipeSavings;
-  const mealsMade = monthlyChallenges.length > 0 ? monthlyChallenges.length : monthlyRecipes.length;
-  const available = mealsMade > 0 && monthlySavings > 0;
-  const lifetime = Math.max(positive(totalMoneySaved), sum(challenges.map((challenge) => positive(challenge.moneySaved))));
-  const average = mealsMade > 0 ? monthlySavings / mealsMade : 0;
+function selectSavingsMetric(meals: readonly CompletedMeal[], now: Date): HomeMetric {
+  const monthlyMeals = meals.filter((meal) => isSameMonth(meal.completedAt, now));
+  const monthlySavings = sum(monthlyMeals.map((meal) => nonNegative(meal.estimatedSavings)));
+  const validSavingsMeals = monthlyMeals.filter((meal) => meal.estimatedSavings !== undefined);
+  const mealsMade = monthlyMeals.length;
+  const available = mealsMade > 0;
+  const lifetime = sum(meals.map((meal) => nonNegative(meal.estimatedSavings)));
+  const average = validSavingsMeals.length > 0 ? monthlySavings / validSavingsMeals.length : 0;
 
   return available ? {
     accessibilityLabel: `Savings. ${formatDollars(monthlySavings)} estimated saved this month.`,
@@ -84,29 +78,25 @@ function selectSavingsMetric(recipes: readonly CanonicalRecipe[], challenges: re
 }
 
 export function selectCompletedMacrosForDay(
-  recipes: readonly CanonicalRecipe[],
+  meals: readonly CompletedMeal[],
   selectedDayKey: string,
 ) {
-  const completedRecipes = recipes.filter((recipe) => (
-    recipe.completionState === 'completed' &&
-    Boolean(recipe.cookingCompletedAt) &&
-    toLocalDateKey(recipe.cookingCompletedAt!) === selectedDayKey
-  ));
+  const completedMeals = meals.filter((meal) => toLocalDateKey(meal.completedAt) === selectedDayKey);
   const total = (key: 'calories' | 'proteinGrams' | 'carbohydratesGrams' | 'fatGrams') => (
-    Math.round(sum(completedRecipes.map((recipe) => finiteOrZero(recipe.nutritionEstimate?.[key]))))
+    Math.round(sum(completedMeals.map((meal) => finiteOrZero(meal[key]))))
   );
 
   return {
     calories: total('calories'),
     carbs: total('carbohydratesGrams'),
     fat: total('fatGrams'),
-    meals: completedRecipes.length,
+    meals: completedMeals.length,
     protein: total('proteinGrams'),
   };
 }
 
-function selectMacrosMetric(recipes: readonly CanonicalRecipe[], selectedDayKey: string): HomeMetric {
-  const totals = selectCompletedMacrosForDay(recipes, selectedDayKey);
+function selectMacrosMetric(meals: readonly CompletedMeal[], selectedDayKey: string): HomeMetric {
+  const totals = selectCompletedMacrosForDay(meals, selectedDayKey);
   return {
     accessibilityLabel: `Macros. ${totals.calories} calories from ${totals.meals} completed meal${totals.meals === 1 ? '' : 's'} today.`,
     available: totals.meals > 0,
@@ -124,25 +114,20 @@ function selectMacrosMetric(recipes: readonly CanonicalRecipe[], selectedDayKey:
   };
 }
 
-function selectHealthMetric(recipes: readonly CanonicalRecipe[]): HomeMetric {
-  if (recipes.length === 0) return emptyMetric('health', 'Health', 'goal-friendly meals');
-  const friendlier = recipes.filter((recipe) => (
-    recipe.selectedPresentationMode === 'Healthier' ||
-    recipe.selectedPresentationMode === 'More Protein' ||
-    recipe.mode === 'Healthier' ||
-    recipe.mode === 'More Protein'
-  ));
-  const completed = recipes.filter((recipe) => recipe.completionState === 'completed');
+function selectHealthMetric(meals: readonly CompletedMeal[]): HomeMetric {
+  if (meals.length === 0) return emptyMetric('health', 'Health', 'goal-friendly meals');
+  const friendlier = meals.filter((meal) => meal.goalFriendly);
+  const completed = meals.length;
   return {
     accessibilityLabel: `Health. ${friendlier.length} goal-friendly Okyo meals.`,
     available: true,
     caption: 'goal-friendly meals · estimated',
     kind: 'health',
     label: 'Health',
-    progress: Math.min(1, friendlier.length / Math.max(recipes.length, 1)),
+    progress: Math.min(1, friendlier.length / meals.length),
     stats: [
       { label: 'healthier edits', value: String(friendlier.length) },
-      { label: 'meals cooked', value: String(completed.length) },
+      { label: 'meals cooked', value: String(completed) },
       { label: 'goal-friendly meals', value: String(friendlier.length) },
     ],
     value: String(friendlier.length),
@@ -216,8 +201,8 @@ function toDateKey(date: Date): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-function positive(value: number): number {
-  return Number.isFinite(value) && value > 0 ? value : 0;
+function nonNegative(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 function finiteOrZero(value: number | undefined): number {

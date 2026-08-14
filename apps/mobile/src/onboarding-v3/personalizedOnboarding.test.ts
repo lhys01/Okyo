@@ -73,8 +73,8 @@ test('macro answers and cook-more secondary benefit survive normalization', () =
 });
 
 test('pre-paywall states cannot unlock input and resumable post-purchase state returns to the gate', () => {
-  const paywallIndex = (['splash', 'showcase', 'nameFox', 'name', 'primaryGoal', 'branchIntro', 'question1', 'question2', 'question3', 'holdReveal', 'branchReveal', 'branchDemo', 'secondaryGoals', 'dietaryPreferences', 'personalizedFuture', 'planReady', 'paywall'] as OnboardingV3Step[]).indexOf('paywall');
-  const prePaywall = ['splash', 'showcase', 'nameFox', 'name', 'primaryGoal', 'branchIntro', 'question1', 'question2', 'question3', 'holdReveal', 'branchReveal', 'branchDemo', 'secondaryGoals', 'dietaryPreferences', 'personalizedFuture', 'planReady', 'paywall'] as OnboardingV3Step[];
+  const prePaywall = ['splash', 'name', 'primaryGoal', 'question1', 'question2', 'question3', 'holdReveal', 'branchReveal', 'branchDemo', 'dietaryPreferences', 'planReady', 'paywall'] as OnboardingV3Step[];
+  const paywallIndex = prePaywall.indexOf('paywall');
   assert.equal(paywallIndex, prePaywall.length - 1);
   for (const step of prePaywall) assert.equal(isRealInputUnlocked(step), false, step);
   assert.equal(isRealInputUnlocked('postPurchase'), true);
@@ -92,7 +92,7 @@ test('controller guards every real input entry and makes no scan request during 
   const personalized = read('screens/PersonalizedOnboardingScreen.tsx');
   assert.doesNotMatch(personalized, /ImagePicker|runOnboardingAnalysis|runOnboardingRecipeGeneration|\/v1\/scans|apiClient/);
   assert.match(read('OnboardingV3.tsx'), /case 'postPurchase':[\s\S]{0,350}<ScanInputScreen/);
-  assert.match(read('OnboardingV3.tsx'), /case 'branchIntro':/);
+  assert.doesNotMatch(read('OnboardingV3.tsx'), /case 'branchIntro':/);
 });
 
 test('hold interaction resets on early release and provides accessible and reduced-motion paths', () => {
@@ -107,7 +107,7 @@ test('hold interaction resets on early release and provides accessible and reduc
 
 test('live Kiko moments use registry lookups and declared zero-Kiko moments resolve to no asset', () => {
   const screen = read('screens/PersonalizedOnboardingScreen.tsx');
-  for (const moment of ['annual-spending-reveal', 'savings-demonstration', 'savings-projection-graph', 'favorite-foods-reveal', 'nutrition-data', 'macro-transformation', 'macro-result', 'personalized-plan-ready']) {
+  for (const moment of ['annual-spending-reveal', 'savings-demonstration', 'favorite-foods-reveal', 'nutrition-data', 'macro-transformation', 'macro-result', 'personalized-plan-ready']) {
     assert.match(screen, new RegExp(moment));
   }
   const paywall = read('screens/OnboardingPaywallScreen.tsx');

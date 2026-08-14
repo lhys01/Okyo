@@ -56,9 +56,15 @@ test('reset onboarding is development only', () => {
   assert.doesNotMatch(beforeGate, /label="Reset onboarding"/);
 });
 
-test('dietary editor reads and writes the global persisted food preferences', () => {
+test('dietary editor reads the mirror for display and writes through the authoritative store (Step 06 repair)', () => {
   assert.match(dietary, /foodPreferencesPersistence\.read\(\)/);
-  assert.match(dietary, /foodPreferencesPersistence\.write\(/);
+  // Writes now go through saveAuthoritativeDietaryPreferences, which syncs
+  // both the canonical profile and the mirror in one place — see
+  // state/dietaryPreferencesAuthority.ts. Settings no longer writes the
+  // mirror directly, avoiding the two-store silent-disagreement bug this
+  // repair fixes.
+  assert.match(dietary, /saveAuthoritativeDietaryPreferences\(/);
+  assert.doesNotMatch(dietary, /foodPreferencesPersistence\.write\(/);
   assert.match(dietary, /ALLERGIES/);
   assert.match(dietary, /THINGS I AVOID/);
 });

@@ -78,7 +78,7 @@ export function RecipeCostSummary({
       <View style={styles.costComparisonCard}>
         <PriceColumn label="Make at home" value={scaledHomeCost === null ? '—' : `$${scaledHomeCost.toFixed(2)}`} />
         <View style={styles.costDivider} />
-        <PriceColumn label="Restaurant estimate" value={scaledRestaurantEstimate === null ? '—' : `~$${scaledRestaurantEstimate.toFixed(2)}`} />
+        <PriceColumn label="Eating out" value={scaledRestaurantEstimate === null ? '—' : `~$${scaledRestaurantEstimate.toFixed(2)}`} />
       </View>
     </View>
   );

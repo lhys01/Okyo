@@ -84,7 +84,7 @@ test('Liked has an explicit empty state and canonical-only references', () => {
   assert.match(library, /No liked recipes yet/);
   assert.match(library, /Save recipes you love and they'll show up here\./);
   assert.match(library, /Explore recipes/);
-  assert.match(library, /liked-pasta-kiko\.png/);
+  assert.match(library, /liked-empty-kiko\.png/);
   assert.match(library, /resolveCanonicalRecipes\(recipesById, savedRecipeIds\)/);
   assert.doesNotMatch(library, /recommendedRecipes|mockRecipes/);
   assert.match(tabs, /LibraryScreen: 'Liked'/);
@@ -101,7 +101,9 @@ test('persisted legacy collections are sanitized before tabs render', () => {
   assert.match(store, /isMockOrDemoRecipe\(value\)/);
   assert.match(store, /recipe\.origin === 'scan' \|\| recipe\.origin === 'description'/);
   assert.match(store, /recipe\.isSaved === true && typeof recipe\.savedAt === 'string'/);
-  assert.match(store, /version: 3/);
+  assert.match(store, /sanitizeCompletedMeals\(state\.completedMeals\)/);
+  assert.match(store, /migrateLegacyCompletedMeals\(recipesById\)/);
+  assert.match(store, /version: 4/);
 });
 
 test('dashboard distinguishes active cooking from ordinary recipe activity', () => {

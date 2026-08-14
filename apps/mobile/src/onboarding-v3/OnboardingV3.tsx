@@ -1,47 +1,63 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { ONBOARDING_V4_ENABLED } from '../config/devFlags';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { colors } from '../theme/okyoTheme';
+import { restorePurchases } from '../services/revenueCat';
 import { useOnboardingV3Controller } from './controller/useOnboardingV3Controller';
+import { OnboardingV4 } from './screens-v4/OnboardingV4';
 import { AnalyzingScreen } from './screens/AnalyzingScreen';
 import { CookingCompleteScreen } from './screens/CookingCompleteScreen';
 import { OnboardingCookingScreen } from './screens/OnboardingCookingScreen';
 import { OnboardingPaywallScreen } from './screens/OnboardingPaywallScreen';
 import { OnboardingRecipePreview } from './screens/OnboardingRecipePreview';
-import { NameFoxScreen } from './screens/NameFoxScreen';
 import { PhotoConfirmScreen } from './screens/PhotoConfirmScreen';
 import { PersonalizedOnboardingScreen } from './screens/PersonalizedOnboardingScreen';
 import { ScanInputScreen } from './screens/ScanInputScreen';
 import { SplashScreen } from './screens/SplashScreen';
-import { ShowcasePager } from './showcase/ShowcasePager';
+import { resolveOnboardingActivation } from './state/onboardingV4Activation';
+import type { OnboardingV4Assignment } from './state/onboardingV4Experiment';
+import { shouldUseOnboardingV4 } from './state/onboardingV4Route';
 
 export function OnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: number; fontsLoaded: boolean }) {
+  const [assignment, setAssignment] = useState<OnboardingV4Assignment | null>(ONBOARDING_V4_ENABLED ? null : 'v3');
+
+  useEffect(() => {
+    if (!ONBOARDING_V4_ENABLED) return;
+    let cancelled = false;
+    resolveOnboardingActivation().then((decision) => {
+      if (!cancelled) setAssignment(decision.assignment);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (assignment === null) return <View style={styles.empty} />;
+  if (shouldUseOnboardingV4({ enabled: ONBOARDING_V4_ENABLED, assignment })) {
+    return (
+      <OnboardingV4
+        appStartedAt={appStartedAt}
+        fontsLoaded={fontsLoaded}
+        onRestore={() => { void restorePurchases().then((result) => {
+          if (result.status === 'restored' && result.isEntitled) useOkyoStore.getState().setPremium(true);
+        }); }}
+      />
+    );
+  }
+  return <LegacyOnboardingV3 appStartedAt={appStartedAt} fontsLoaded={fontsLoaded} />;
+}
+
+function LegacyOnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: number; fontsLoaded: boolean }) {
   const controller = useOnboardingV3Controller();
   const { state } = controller;
   const recipe = useOkyoStore((store) => state.recipeId ? store.recipesById[state.recipeId] ?? null : null);
   const activeCookingSession = useOkyoStore((store) => store.activeCookingSession);
-  const [showcasePage, setShowcasePage] = useState(controller.showcaseInitialPage);
 
   switch (state.step) {
     case 'splash':
       return <SplashScreen appStartedAt={appStartedAt} fontsLoaded={fontsLoaded} onFinished={controller.finishSplash} />;
-    case 'showcase':
-      return (
-        <ShowcasePager
-          attribution={state.attribution}
-          initialPage={controller.showcaseInitialPage}
-          onAttributionSelected={controller.selectAttribution}
-          onAttributionSkipped={controller.skipAttribution}
-          onPageChange={setShowcasePage}
-          onFinished={controller.finishShowcase}
-        />
-      );
-    case 'nameFox':
-      return <NameFoxScreen initialName={state.mascotName} onBack={controller.back} onSubmit={controller.submitMascotName} />;
     case 'name':
     case 'primaryGoal':
-    case 'branchIntro':
     case 'question1':
     case 'question2':
     case 'question3':
@@ -56,7 +72,6 @@ export function OnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: numb
     case 'branchInsight':
     case 'nutritionTargets':
     case 'branchDemo':
-    case 'secondaryGoals':
     case 'dietaryPreferences':
     case 'planReady':
       return (
@@ -68,7 +83,6 @@ export function OnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: numb
           onGoal={controller.selectPrimaryGoal}
           onHoldComplete={controller.completeHoldReveal}
           onName={controller.submitName}
-          onSecondaryGoals={controller.submitSecondaryGoals}
           state={state}
         />
       );
@@ -91,6 +105,7 @@ export function OnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: numb
     case 'recipe':
       return (
         <OnboardingRecipePreview
+          dietaryPreferences={state.profile.dietaryPreferences}
           errorMessage={state.error?.message ?? null}
           mascotName={state.mascotName}
           onBack={controller.back}

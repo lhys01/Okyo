@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { CanonicalRecipe } from './canonicalRecipes.js';
+import type { CompletedMeal } from './completedMeals.js';
 import { getHomeActivityDates, getHomeMetricOrder, isFutureDateKey, selectHomeMetrics } from './homeMetrics.js';
 
 const now = new Date('2026-08-05T12:00:00.000Z');
 
 test('fresh Home metrics show honest zero values, not em dashes', () => {
-  const metrics = selectHomeMetrics({ completedChallenges: [], now, recipesById: {}, selectedDayKey: '2026-08-05', totalMoneySaved: 0 });
+  const metrics = selectHomeMetrics({ completedMeals: [], now, recipesById: {}, selectedDayKey: '2026-08-05' });
   for (const metric of Object.values(metrics)) {
     assert.equal(metric.available, false);
     assert.doesNotMatch(metric.value, /—/);
@@ -46,7 +47,7 @@ test('a completed recipe contributes its full nutrition totals on the completed 
     nutritionEstimate: { calories: 520, proteinGrams: 38, carbohydratesGrams: 54, fatGrams: 18 },
     selectedPresentationMode: 'Healthier',
   });
-  const metrics = selectHomeMetrics({ completedChallenges: [], now, recipesById: { [recipe.id]: recipe }, selectedDayKey: '2026-08-04', totalMoneySaved: 0 });
+  const metrics = selectHomeMetrics({ completedMeals: [fixtureMeal(recipe)], now, recipesById: { [recipe.id]: recipe }, selectedDayKey: '2026-08-04' });
   assert.equal(metrics.savings.value, '$12.50');
   assert.equal(metrics.savings.stats[0]?.value, '1');
   assert.equal(metrics.macros.value, '520');
@@ -58,7 +59,7 @@ test('a completed recipe contributes its full nutrition totals on the completed 
 test('unfinished scans and saved recipes never count toward selected-day macros', () => {
   const scanned = fixtureRecipe({ completionState: 'ready', cookingCompletedAt: undefined, id: 'scanned' });
   const saved = fixtureRecipe({ completionState: 'ready', cookingCompletedAt: undefined, id: 'saved', isSaved: true, savedAt: '2026-08-05T12:00:00.000Z' });
-  const metrics = selectHomeMetrics({ completedChallenges: [], now, recipesById: { saved, scanned }, selectedDayKey: '2026-08-05', totalMoneySaved: 0 });
+  const metrics = selectHomeMetrics({ completedMeals: [], now, recipesById: { saved, scanned }, selectedDayKey: '2026-08-05' });
   assert.equal(metrics.macros.value, '0');
   assert.deepEqual(metrics.macros.stats.map((stat) => stat.value), ['0g', '0g', '0g']);
 });
@@ -67,16 +68,16 @@ test('two completed recipes on the selected day are summed and recipes from anot
   const first = fixtureRecipe({ cookingCompletedAt: '2026-08-05T09:00:00.000Z', id: 'first', nutritionEstimate: { calories: 400, proteinGrams: 20, carbohydratesGrams: 40, fatGrams: 10 } });
   const second = fixtureRecipe({ cookingCompletedAt: '2026-08-05T18:00:00.000Z', id: 'second', nutritionEstimate: { calories: 600, proteinGrams: 40, carbohydratesGrams: 60, fatGrams: 20 } });
   const yesterday = fixtureRecipe({ cookingCompletedAt: '2026-08-04T18:00:00.000Z', id: 'yesterday', nutritionEstimate: { calories: 900, proteinGrams: 90, carbohydratesGrams: 90, fatGrams: 90 } });
-  const metrics = selectHomeMetrics({ completedChallenges: [], now, recipesById: { first, second, yesterday }, selectedDayKey: '2026-08-05', totalMoneySaved: 0 });
+  const metrics = selectHomeMetrics({ completedMeals: [fixtureMeal(first), fixtureMeal(second), fixtureMeal(yesterday)], now, recipesById: { first, second, yesterday }, selectedDayKey: '2026-08-05' });
   assert.equal(metrics.macros.value, '1000');
   assert.deepEqual(metrics.macros.stats.map((stat) => [stat.label, stat.value]), [['Protein', '60g'], ['Fat', '30g'], ['Carbs', '100g']]);
 });
 
 test('a zero-completion selected day stays at zero and missing nutrition contributes zero only for that field', () => {
   const partialNutrition = fixtureRecipe({ cookingCompletedAt: '2026-08-04T18:00:00.000Z', nutritionEstimate: { calories: 400, proteinGrams: 20, carbohydratesGrams: 40, fatGrams: undefined as unknown as number } });
-  const zeroDay = selectHomeMetrics({ completedChallenges: [], now, recipesById: { [partialNutrition.id]: partialNutrition }, selectedDayKey: '2026-08-05', totalMoneySaved: 0 });
+  const zeroDay = selectHomeMetrics({ completedMeals: [fixtureMeal(partialNutrition)], now, recipesById: { [partialNutrition.id]: partialNutrition }, selectedDayKey: '2026-08-05' });
   assert.equal(zeroDay.macros.value, '0');
-  const completedDay = selectHomeMetrics({ completedChallenges: [], now, recipesById: { [partialNutrition.id]: partialNutrition }, selectedDayKey: '2026-08-04', totalMoneySaved: 0 });
+  const completedDay = selectHomeMetrics({ completedMeals: [fixtureMeal(partialNutrition)], now, recipesById: { [partialNutrition.id]: partialNutrition }, selectedDayKey: '2026-08-04' });
   assert.equal(completedDay.macros.value, '400');
   assert.deepEqual(completedDay.macros.stats.map((stat) => stat.value), ['20g', '0g', '40g']);
   assert.doesNotMatch(completedDay.macros.caption, /average|averaged/i);
@@ -102,5 +103,19 @@ function fixtureRecipe(overrides: Partial<CanonicalRecipe> = {}): CanonicalRecip
     scanResult: null, title: 'Dish', mode: 'Normal', description: 'A dish.', prepTimeMinutes: 10, cookTimeMinutes: 20, servings: 2,
     difficulty: 'Easy', estimatedHomemadeCost: 6, estimatedSavings: 0, ingredients: [], steps: [], substitutions: [], pantryNote: '', confidenceNote: '',
     ...overrides,
+  };
+}
+
+function fixtureMeal(recipe: CanonicalRecipe): CompletedMeal {
+  return {
+    id: `meal-${recipe.id}`,
+    recipeId: recipe.id,
+    completedAt: recipe.cookingCompletedAt ?? '2026-08-05T12:00:00.000Z',
+    calories: recipe.nutritionEstimate?.calories,
+    proteinGrams: recipe.nutritionEstimate?.proteinGrams,
+    carbohydratesGrams: recipe.nutritionEstimate?.carbohydratesGrams,
+    fatGrams: recipe.nutritionEstimate?.fatGrams,
+    estimatedSavings: recipe.estimatedSavings,
+    goalFriendly: recipe.selectedPresentationMode === 'Healthier' || recipe.selectedPresentationMode === 'More Protein',
   };
 }

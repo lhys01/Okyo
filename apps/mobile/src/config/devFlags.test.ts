@@ -68,3 +68,33 @@ test('RevenueCat and the paywall architecture are left intact', () => {
   assert.match(paywall, /onPurchase/);
   assert.match(paywall, /onRestore/);
 });
+
+test('ONBOARDING_V4_ENABLED defaults to true in Step 11', () => {
+  assert.match(flags, /export const ONBOARDING_V4_ENABLED\s*=\s*true;/);
+});
+
+test('ONBOARDING_V4_ENABLED is referenced only by devFlags.ts and its one sanctioned gate insertion point (OnboardingV3.tsx, Step 03)', () => {
+  // Step 02 required this flag be unreferenced by any live screen; Step 03 is
+  // the plan's designated first reader — `OnboardingV3.tsx`'s top-of-function
+  // gate (`if (ONBOARDING_V4_ENABLED) return <OnboardingV4 .../>`-equivalent).
+  // A route/type module documenting the future gate in a comment is not a
+  // reference — only code outside comments that actually imports or reads the
+  // flag counts, and only that one file may do so.
+  const sanctioned = resolve(process.cwd(), 'src/onboarding-v3/OnboardingV3.tsx');
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = resolve(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(entry.name) && full !== resolve(process.cwd(), 'src/config/devFlags.ts') && full !== sanctioned && !entry.name.includes('.test.')) {
+        const code = readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+        if (code.includes('ONBOARDING_V4_ENABLED')) offenders.push(full);
+      }
+    }
+  };
+  walk(resolve(process.cwd(), 'src'));
+  assert.deepEqual(offenders, [], `ONBOARDING_V4_ENABLED referenced outside devFlags.ts/OnboardingV3.tsx in: ${offenders.join(', ')}`);
+
+  const onboardingV3Source = readFileSync(sanctioned, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(onboardingV3Source.includes('ONBOARDING_V4_ENABLED'), 'OnboardingV3.tsx should be the one screen reading ONBOARDING_V4_ENABLED');
+});

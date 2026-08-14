@@ -9,10 +9,24 @@ test('legacy dietary state migrates into risk-aware categories', () => {
   });
 });
 
-test('API mapping keeps allergies and restrictions hard while avoids and dislikes stay soft', () => {
+test('API mapping sends allergies, restrictions, and dislikes as three separate fields (Step 06: never merged into one ambiguous list)', () => {
   assert.deepEqual(toApiFoodPreferences({ allergies: ['Peanuts'], restrictions: ['Vegan'], avoidances: ['Pork'], dislikes: ['Olives'] }), {
-    dietaryRestrictions: ['Peanuts', 'Vegan'], dietaryDislikes: ['Pork', 'Olives'],
+    dietaryAllergies: ['Peanuts'], dietaryRestrictions: ['Vegan'], dietaryDislikes: ['Pork', 'Olives'],
   });
+});
+
+test('every plan-required allergy label (Milk, Egg) and restriction label (Dairy-free, Gluten-free) matches its broader alias set, not just its own literal word', () => {
+  const milk = findFoodPreferenceConflicts(['cheese sauce'], { allergies: ['Milk'], restrictions: [], avoidances: [], dislikes: [] });
+  assert.ok(milk.some((item) => item.preference === 'Milk' && item.ingredient === 'cheese sauce'));
+
+  const egg = findFoodPreferenceConflicts(['mayonnaise'], { allergies: ['Egg'], restrictions: [], avoidances: [], dislikes: [] });
+  assert.ok(egg.some((item) => item.preference === 'Egg' && item.ingredient === 'mayonnaise'));
+
+  const dairyFree = findFoodPreferenceConflicts(['buttered toast'], { allergies: [], restrictions: ['Dairy-free'], avoidances: [], dislikes: [] });
+  assert.ok(dairyFree.some((item) => item.preference === 'Dairy-free' && item.ingredient === 'buttered toast'));
+
+  const glutenFree = findFoodPreferenceConflicts(['pasta salad'], { allergies: [], restrictions: ['Gluten-free'], avoidances: [], dislikes: [] });
+  assert.ok(glutenFree.some((item) => item.preference === 'Gluten-free' && item.ingredient === 'pasta salad'));
 });
 
 test('allergy conflicts are stronger than ordinary dislikes', () => {

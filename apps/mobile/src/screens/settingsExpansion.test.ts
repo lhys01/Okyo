@@ -36,7 +36,8 @@ test('privacy deletion is honest about local data and account blocker', () => {
 });
 
 test('stats use completed recipes and label estimates', () => {
-  assert.match(stats, /completionState === 'completed'/);
+  assert.match(stats, /state\.completedMeals/);
+  assert.match(stats, /meal\.completedAt/);
   assert.match(stats, /estimated saved/);
   assert.match(stats, /Nutrition across completed recipes|Average protein across completed recipes/);
   assert.doesNotMatch(stats, /You ate/);

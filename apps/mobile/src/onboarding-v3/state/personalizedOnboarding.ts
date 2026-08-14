@@ -13,6 +13,17 @@ import {
 
 export const PRIMARY_GOALS = ['save_money', 'eat_healthier', 'hit_macros'] as const;
 export type PrimaryGoal = (typeof PRIMARY_GOALS)[number];
+
+/**
+ * `not_sure` is a planned fourth primary goal (see onboarding rebuild blueprint
+ * §14.8). Its typing is prepared ahead of the screens so downstream code can
+ * start guarding for it, but it is deliberately excluded from PRIMARY_GOALS so
+ * no current screen (which renders one GoalCard per PRIMARY_GOALS entry) offers
+ * it yet.
+ */
+export const FUTURE_PRIMARY_GOALS = [...PRIMARY_GOALS, 'not_sure'] as const;
+export type FuturePrimaryGoal = (typeof FUTURE_PRIMARY_GOALS)[number];
+export function isFuturePrimaryGoal(value: unknown): value is FuturePrimaryGoal { return typeof value === 'string' && FUTURE_PRIMARY_GOALS.includes(value as FuturePrimaryGoal); }
 export const SECONDARY_GOALS = [...PRIMARY_GOALS, 'cook_more', 'waste_less', 'save_time'] as const;
 export type SecondaryGoal = (typeof SECONDARY_GOALS)[number];
 export type PersonalizedAnswer = string | number | string[] | null;

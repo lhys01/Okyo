@@ -63,6 +63,7 @@ import {
 } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { findFoodPreferenceConflicts, useFoodPreferences } from '../state/foodPreferences';
+import { classifyDietarySafetyPrompt } from '../utils/dietarySafetyPrompt';
 import { foodPreferencesPersistence, toApiFoodPreferences } from '../state/foodPreferences';
 import { onboardingV3Persistence } from '../onboarding-v3/state/onboardingV3Persistence';
 import { buildGoalContext } from '../onboarding-v3/state/goalContext';
@@ -299,7 +300,9 @@ export function RecipeDetailScreen() {
       return;
     }
 
-    if (seriousFoodConflicts.length > 0) {
+    const promptLevel = foodPreferences ? classifyDietarySafetyPrompt(foodPreferences, seriousFoodConflicts) : 'none';
+
+    if (promptLevel === 'possible_conflict') {
       const conflict = seriousFoodConflicts[0];
       Alert.alert(
         'Before you cook',
@@ -313,6 +316,25 @@ export function RecipeDetailScreen() {
       return;
     }
 
+    if (promptLevel === 'general_reminder') {
+      Alert.alert(
+        'Before you start cooking',
+        "You've saved allergies. Okyo's ingredient check is automated and can miss things — verify every ingredient and label yourself before you begin.",
+        [
+          { text: 'Review ingredients', style: 'cancel' },
+          { text: 'I’ve checked, continue', onPress: continueToCookingSteps },
+        ],
+      );
+      return;
+    }
+
+    continueToCookingSteps();
+  };
+
+  const continueToCookingSteps = () => {
+    if (!recipe) {
+      return;
+    }
     const navigateToCooking = () => navigation.navigate('RecipeStepsScreen', {
       completion: false,
       mode: selectedMode,

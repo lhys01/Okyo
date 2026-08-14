@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { NavArrowDown, NavArrowLeft, NavArrowRight } from 'iconoir-react-native';
@@ -7,10 +6,8 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { MainTabParamList } from '../navigation/types';
-import { onboardingV3Persistence } from '../onboarding-v3/state/onboardingV3Persistence';
-import { NOTIFICATION_PREFERENCES_KEY } from '../state/notificationPreferences';
+import { clearAllPersonalOkyoData } from '../state/dietaryDeletion';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { foodPreferencesPersistence } from '../state/foodPreferences';
 import { colors, fontFamilies, radius, spacing } from '../theme/okyoTheme';
 
 type Navigation = NativeStackNavigationProp<MainTabParamList>;
@@ -30,15 +27,9 @@ export function PrivacyDataScreen() {
   const goBack = () => { if (navigation.canGoBack()) navigation.goBack(); };
   const deleteAllData = () => Alert.alert('Delete all Okyo data?', 'This removes local recipes, scan and cooking history, grocery state, preferences, progress, and locally stored scan images. This cannot be undone.', [
     { text: 'Cancel', style: 'cancel' },
-    { text: 'Delete data', style: 'destructive', onPress: () => void (async () => {
-      clearSavedData();
-      await Promise.all([
-        onboardingV3Persistence.reset(),
-        foodPreferencesPersistence.clear(),
-        AsyncStorage.multiRemove([NOTIFICATION_PREFERENCES_KEY, 'okyo:home-start-date:v1', 'okyo:home-first-seen-at:v1']),
-      ]);
-      Alert.alert('Local data deleted', 'Okyo’s locally stored recipes, scans, cooking history, preferences, and progress were removed.');
-    })().catch(() => Alert.alert('Couldn’t delete all data', 'Try again in a moment.')) },
+    { text: 'Delete data', style: 'destructive', onPress: () => void clearAllPersonalOkyoData(clearSavedData)
+      .then(() => Alert.alert('Local data deleted', 'Okyo’s locally stored recipes, scans, cooking history, preferences, and progress were removed.'))
+      .catch(() => Alert.alert('Couldn’t delete all data', 'Try again in a moment.')) },
   ]);
   const explainAccount = () => Alert.alert('Account deletion is unavailable', 'This build has no account or sign-in backend. There is no server account to delete. “Delete all my data” removes the Okyo data stored by this app on this device.');
 

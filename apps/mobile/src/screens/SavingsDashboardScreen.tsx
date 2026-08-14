@@ -22,8 +22,9 @@ import {
   type RecipeMode,
 } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
-import { resolveCanonicalRecipes, type CanonicalRecipe } from '../state/canonicalRecipes';
-import { useOkyoStore, type CompletedChallenge } from '../state/useOkyoStore';
+import type { CanonicalRecipe } from '../state/canonicalRecipes';
+import type { CompletedMeal } from '../state/completedMeals';
+import { useOkyoStore } from '../state/useOkyoStore';
 import { getModeChipPalette, getModeLabel } from '../utils/modeDisplay';
 import { getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
 import { uiLog } from '../utils/uiDebug';
@@ -54,32 +55,13 @@ const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 export function SavingsDashboardScreen() {
   const navigation = useNavigation<SavingsNavigation>();
   const recipesById = useOkyoStore((state) => state.recipesById);
-  const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
-  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
-  const storedMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
+  const completedMeals = useOkyoStore((state) => state.completedMeals);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const [selectedPeriod, setSelectedPeriod] = useState<SavingsPeriod>('month');
 
-  const safeSavedRecipes = useMemo(
-    () => resolveCanonicalRecipes(recipesById, savedRecipeIds),
-    [recipesById, savedRecipeIds],
-  );
-  const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
-  const safeStoredMoneySaved = getFiniteNumber(storedMoneySaved);
-  const recipeEntries = useMemo(
-    () => safeSavedRecipes.filter((recipe) => recipe.completionState === 'completed').map((recipe) => toRecipeEntry(
-      recipe,
-      getRecipeImageUrl(recipe),
-    )),
-    [safeSavedRecipes],
-  );
-  const challengeEntries = useMemo(
-    () => safeCompletedChallenges.map(toChallengeEntry),
-    [safeCompletedChallenges],
-  );
   const allEntries = useMemo(
-    () => [...recipeEntries, ...challengeEntries].filter((entry) => entry.savings > 0),
-    [challengeEntries, recipeEntries],
+    () => completedMeals.map((meal) => toCompletedMealEntry(meal, recipesById)).filter((entry) => entry.savings > 0),
+    [completedMeals, recipesById],
   );
   const timestampedEntries = useMemo(
     () => allEntries.filter((entry) => Boolean(entry.completedAt)),
@@ -90,14 +72,13 @@ export function SavingsDashboardScreen() {
     [allEntries, selectedPeriod],
   );
 
-  const savedRecipeSavings = recipeEntries.reduce((total, entry) => total + entry.savings, 0);
-  const totalEstimatedSaved = savedRecipeSavings + safeStoredMoneySaved;
+  const totalEstimatedSaved = allEntries.reduce((total, entry) => total + entry.savings, 0);
   const selectedPeriodSavings = selectedPeriod === 'all'
     ? totalEstimatedSaved
     : selectedEntries.reduce((total, entry) => total + entry.savings, 0);
   const weekSavings = filterEntriesForPeriod(timestampedEntries, 'week').reduce((total, entry) => total + entry.savings, 0);
   const monthSavings = filterEntriesForPeriod(timestampedEntries, 'month').reduce((total, entry) => total + entry.savings, 0);
-  const mealCount = recipeEntries.length + safeCompletedChallenges.length;
+  const mealCount = completedMeals.length;
   const averageSavings = mealCount > 0 ? totalEstimatedSaved / mealCount : 0;
   const biggestWin = (selectedEntries.length > 0 ? selectedEntries : allEntries)
     .reduce<SavingsEntry | null>((bestEntry, entry) => !bestEntry || entry.savings > bestEntry.savings ? entry : bestEntry, null);
@@ -384,35 +365,22 @@ function ModeChip({ mode }: { mode: RecipeMode }) {
   );
 }
 
-function toRecipeEntry(recipe: CanonicalRecipe, imageUri?: string | null): SavingsEntry {
-  const savings = getFiniteNumber(recipe.estimatedSavings);
-  const homeCost = getFiniteNumber(recipe.estimatedHomemadeCost);
+function toCompletedMealEntry(meal: CompletedMeal, recipesById: Record<string, CanonicalRecipe>): SavingsEntry {
+  const recipe = recipesById[meal.recipeId];
+  const savings = getFiniteNumber(meal.estimatedSavings);
+  const homeCost = getFiniteNumber(meal.makeAtHomeCost);
 
   return {
-    id: `recipe-${recipe.id}`,
-    title: recipe.title,
-    mode: recipe.selectedMode,
+    id: meal.id,
+    title: recipe?.title ?? 'Completed meal',
+    mode: getSafeRecipeMode(recipe?.selectedMode),
     savings,
     homeCost,
-    restaurantCost: homeCost + savings,
-    completedAt: getOptionalDate(recipe),
+    restaurantCost: getFiniteNumber(meal.eatingOutEstimate),
+    completedAt: meal.completedAt,
     recipe,
-    imageStatus: getRecipeImageStatus(recipe),
-    imageUri,
-  };
-}
-
-function toChallengeEntry(challenge: CompletedChallenge): SavingsEntry {
-  const savings = getFiniteNumber(challenge.moneySaved);
-
-  return {
-    id: `challenge-${challenge.id}`,
-    title: challenge.recipeTitle,
-    mode: getSafeRecipeMode(challenge.mode),
-    savings,
-    homeCost: 0,
-    restaurantCost: savings,
-    completedAt: challenge.completedAt,
+    imageStatus: recipe ? getRecipeImageStatus(recipe) : undefined,
+    imageUri: recipe ? getRecipeImageUrl(recipe) : undefined,
   };
 }
 
@@ -445,11 +413,6 @@ function getFiniteNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-function getOptionalDate(recipe: CanonicalRecipe) {
-  const maybeSavedAt = recipe.savedAt ?? recipe.createdAt;
-
-  return typeof maybeSavedAt === 'string' && maybeSavedAt.trim().length > 0 ? maybeSavedAt : null;
-}
 
 function cleanDisplayText(value: string) {
   const copyWord = `copy${'cat'}`;

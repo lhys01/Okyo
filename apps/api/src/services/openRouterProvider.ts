@@ -1475,6 +1475,7 @@ export async function generateRecipeEditWithOpenRouter(input: {
   editMessage: string;
   previousCandidate?: Recipe;
   retryReason?: string;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   goalContext?: RecipeGenerationPreferences['goalContext'];
@@ -3233,6 +3234,7 @@ export async function askOkyoWithOpenRouter(input: {
   question: string;
   recipe: Recipe;
   currentStep?: RecipeStep;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   goalContext?: RecipeGenerationPreferences['goalContext'];
@@ -3254,6 +3256,7 @@ export async function askOkyoWithOpenRouter(input: {
           recipe: input.recipe,
           currentStep: input.currentStep,
           preferences: {
+            dietaryAllergies: input.dietaryAllergies ?? [],
             dietaryRestrictions: input.dietaryRestrictions ?? [],
             dietaryDislikes: input.dietaryDislikes ?? [],
             goals: input.goalContext ?? {},
@@ -3475,6 +3478,7 @@ function getRecipeEditPrompt(input: {
   editMessage: string;
   previousCandidate?: Recipe;
   retryReason?: string;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   goalContext?: RecipeGenerationPreferences['goalContext'];
@@ -3489,6 +3493,7 @@ function getRecipeEditPrompt(input: {
     `User\'s exact edit message: ${JSON.stringify(input.editMessage)}`,
     'Return the complete revised recipe. Apply all requested changes and preserve unrelated parts. Do not return a patch or persistent IDs.',
     buildPreferencesPromptSection({
+      dietaryAllergies: input.dietaryAllergies,
       dietaryRestrictions: input.dietaryRestrictions,
       dietaryDislikes: input.dietaryDislikes,
       goalContext: input.goalContext,
@@ -3559,6 +3564,7 @@ function hasMeaningfulPreferences(preferences: RecipeGenerationPreferences | und
   return Boolean(
     preferences.recipePriority ||
     preferences.cookingFrictionFollowUp ||
+    preferences.dietaryAllergies?.length ||
     preferences.dietaryRestrictions?.length ||
     Boolean(preferences.goalContext?.primaryGoal) ||
     preferences.dietaryDislikes?.length,
@@ -3580,10 +3586,13 @@ const FOLLOW_UP_GUIDANCE: Record<string, string> = {
 };
 
 // Builds the personalization block appended to the recipe-generation prompt.
-// Restrictions are stated as a hard, non-negotiable safety constraint;
-// dislikes are a soft preference the model may override only if there's no
-// reasonable alternative. Returns '' when there's nothing to say, so the
-// base prompt is byte-identical to today's for requests without preferences.
+// Allergies (Step 06: a distinct field) are stated as the highest-severity,
+// medical-safety constraint; restrictions are a separate hard, non-negotiable
+// recipe constraint (not framed as an allergy); dislikes are a soft
+// preference the model may override only if there's no reasonable
+// alternative. Never merged into one ambiguous list. Returns '' when there's
+// nothing to say, so the base prompt is byte-identical to today's for
+// requests without preferences.
 function buildPreferencesPromptSection(preferences: RecipeGenerationPreferences | undefined): string {
   if (!hasMeaningfulPreferences(preferences)) {
     return '';

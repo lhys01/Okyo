@@ -9,7 +9,7 @@ const canonical = readFileSync(resolve(process.cwd(), 'src/state/canonicalRecipe
 
 test('recipe pricing prefers the persisted restaurant estimate and preserves a safe unavailable state', () => {
   assert.match(costSummary, /isKnownPrice\(recipe\.restaurantPriceEstimate\)/);
-  assert.match(costSummary, /Restaurant estimate/);
+  assert.match(costSummary, /Eating out/);
   assert.match(costSummary, /scaledRestaurantEstimate === null \? '—'/);
   assert.match(costSummary, /fontSize: 19/);
 });

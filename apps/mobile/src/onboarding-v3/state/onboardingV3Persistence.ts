@@ -15,6 +15,33 @@ export const DIETARY_STORAGE_KEY = 'okyo:dietary:v1';
 export const PERSONALIZED_PROFILE_STORAGE_KEY = 'okyo:personalized-onboarding-profile:v1';
 export const PERSONALIZED_PROGRESS_STORAGE_KEY = 'okyo:personalized-onboarding-progress:v1';
 
+/**
+ * Bump this when the persisted profile shape changes in a way that needs
+ * dedicated migration logic (not just normalizePersonalizedProfile's existing
+ * default-filling). Every install shipped before this change wrote the raw
+ * profile object with no envelope at all, so `unwrapPersistedPersonalizedProfile`
+ * must keep accepting that unwrapped legacy shape indefinitely.
+ */
+export const PERSONALIZED_PROFILE_SCHEMA_VERSION = 1;
+
+type PersonalizedProfileEnvelope = { schemaVersion: number; profile: unknown };
+
+function isPersonalizedProfileEnvelope(value: unknown): value is PersonalizedProfileEnvelope {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    && typeof (value as { schemaVersion?: unknown }).schemaVersion === 'number'
+    && typeof (value as { profile?: unknown }).profile === 'object' && (value as { profile?: unknown }).profile !== null;
+}
+
+/**
+ * Every reader of the personalized-profile storage key (this module and
+ * state/primaryGoalBridge.ts) must unwrap through this before normalizing, or
+ * a versioned envelope written by writePersonalizedProfile will be
+ * misread as garbage profile data.
+ */
+export function unwrapPersistedPersonalizedProfile(parsed: unknown): unknown {
+  return isPersonalizedProfileEnvelope(parsed) ? parsed.profile : parsed;
+}
+
 type OnboardingV3Storage = Pick<typeof AsyncStorage, 'getItem' | 'removeItem' | 'setItem'>;
 
 export function createOnboardingV3Persistence(storage: OnboardingV3Storage) {
@@ -56,14 +83,15 @@ export function createOnboardingV3Persistence(storage: OnboardingV3Storage) {
       const raw = await storage.getItem(PERSONALIZED_PROFILE_STORAGE_KEY);
       if (!raw) return normalizePersonalizedProfile(null);
       try {
-        return normalizePersonalizedProfile(JSON.parse(raw));
+        return normalizePersonalizedProfile(unwrapPersistedPersonalizedProfile(JSON.parse(raw)));
       } catch {
         return normalizePersonalizedProfile(null);
       }
     },
     async writePersonalizedProfile(value: PersonalizedOnboardingProfile) {
       const profile = normalizePersonalizedProfile(value);
-      await storage.setItem(PERSONALIZED_PROFILE_STORAGE_KEY, JSON.stringify(profile));
+      const envelope: PersonalizedProfileEnvelope = { schemaVersion: PERSONALIZED_PROFILE_SCHEMA_VERSION, profile };
+      await storage.setItem(PERSONALIZED_PROFILE_STORAGE_KEY, JSON.stringify(envelope));
       return profile;
     },
     async readPersonalizedProgress() {

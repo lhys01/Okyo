@@ -300,11 +300,19 @@ export type GeneratedRecipeOutput = z.infer<typeof generatedRecipeOutputSchema> 
 export type IngredientCostEstimate = z.infer<typeof ingredientCostEstimateSchema>;
 
 // Onboarding-collected personalization, threaded through to recipe generation.
-// dietaryRestrictions are hard safety constraints; dietaryDislikes are soft
-// preferences the model should avoid but may override if there's no other way.
+// dietaryAllergies are hard safety constraints (medical/allergen severity);
+// dietaryRestrictions are hard recipe constraints (e.g. vegetarian/halal —
+// still non-negotiable, but not allergy-severity framing); dietaryDislikes
+// are soft preferences the model should avoid but may override if there's no
+// other way. All three are optional and independent — never merged into one
+// list (Okyo_Onboarding_V4_Implementation_Plan.md Step 06). Older clients
+// that still send only dietaryRestrictions (possibly containing merged
+// allergy+restriction values, the pre-Step-06 mobile behavior) continue to
+// work unchanged — dietaryAllergies is purely additive.
 export type RecipeGenerationPreferences = {
   recipePriority?: string;
   cookingFrictionFollowUp?: string;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   goalContext?: {
@@ -347,6 +355,7 @@ export type AnalyzePreparedDishResult = {
 export type GenerateRecipeForAnalysisInput = {
   analysisId: string;
   mode?: RecipeMode;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   recipeRequestId?: string;
@@ -728,6 +737,7 @@ export async function generateRecipeForAnalysis(
     source: stored.context.source,
     fableActive: stored.context.fableActive,
     preferences: {
+      dietaryAllergies: input.dietaryAllergies,
       dietaryRestrictions: input.dietaryRestrictions,
       dietaryDislikes: input.dietaryDislikes,
       goalContext: input.goalContext,
@@ -828,6 +838,7 @@ export async function createAiRecipeCorrection(input: {
   currentRecipe?: Recipe;
   canonicalRecipeId?: string;
   scanSessionId?: string;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   goalContext?: RecipeGenerationPreferences['goalContext'];
@@ -880,6 +891,7 @@ async function createAiRecipeCorrectionWithMetrics(input: {
   currentRecipe?: Recipe;
   canonicalRecipeId?: string;
   scanSessionId?: string;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   goalContext?: RecipeGenerationPreferences['goalContext'];
@@ -926,6 +938,7 @@ async function createAiRecipeCorrectionWithMetrics(input: {
     config,
     currentRecipe: existingRecipe,
     editMessage: input.correctionNote,
+    dietaryAllergies: input.dietaryAllergies,
     dietaryRestrictions: input.dietaryRestrictions,
     dietaryDislikes: input.dietaryDislikes,
     goalContext: input.goalContext,

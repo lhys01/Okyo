@@ -6,6 +6,7 @@ import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, Sc
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { MainTabParamList } from '../navigation/types';
+import { saveAuthoritativeDietaryPreferences } from '../state/dietaryPreferencesAuthority';
 import { EMPTY_FOOD_PREFERENCES, foodPreferencesPersistence, type FoodPreferences } from '../state/foodPreferences';
 import { colors, fontFamilies, radius, spacing } from '../theme/okyoTheme';
 import { uiLog } from '../utils/uiDebug';
@@ -46,7 +47,7 @@ export function DietaryPreferencesScreen() {
     if (!preferences || saving) return;
     setSaving(true);
     try {
-      await foodPreferencesPersistence.write(preferences);
+      await saveAuthoritativeDietaryPreferences(preferences);
       uiLog('DietaryPreferencesScreen', 'save', Object.fromEntries(Object.entries(preferences).map(([key, values]) => [key, values.length])));
       goBack();
     } catch {

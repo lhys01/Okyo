@@ -67,9 +67,20 @@ export function useFoodPreferences() {
   return { preferences, reload, save };
 }
 
+/**
+ * Step 06: sends allergies, restrictions, and dislikes as three separate
+ * fields (never merged into one ambiguous list) — a shared dietary-safety
+ * improvement that also benefits V3's existing recipe requests, which
+ * previously combined allergies into `dietaryRestrictions` with no
+ * allergy-specific signal reaching the API at all. The API
+ * (apps/api/src/server.ts / openRouterProvider.ts) treats the new
+ * `dietaryAllergies` field as optional and additive, so older stored
+ * requests/clients that never send it are unaffected.
+ */
 export function toApiFoodPreferences(preferences: FoodPreferences) {
   return {
-    dietaryRestrictions: unique([...preferences.allergies, ...preferences.restrictions]),
+    dietaryAllergies: unique(preferences.allergies),
+    dietaryRestrictions: unique(preferences.restrictions),
     dietaryDislikes: unique([...preferences.avoidances, ...preferences.dislikes]),
   };
 }
@@ -103,9 +114,13 @@ function allergenTerms(value: string): string[] {
   const aliases: Record<string, string[]> = {
     'milk dairy': ['milk', 'dairy', 'cream', 'butter', 'cheese', 'whey', 'casein'],
     dairy: ['milk', 'dairy', 'cream', 'butter', 'cheese', 'whey', 'casein'],
+    milk: ['milk', 'dairy', 'cream', 'butter', 'cheese', 'whey', 'casein'],
+    'dairy free': ['milk', 'dairy', 'cream', 'butter', 'cheese', 'whey', 'casein'],
     eggs: ['egg', 'mayonnaise', 'mayo'],
+    egg: ['egg', 'mayonnaise', 'mayo'],
     wheat: ['wheat', 'flour', 'bread', 'pasta'],
     gluten: ['gluten', 'wheat', 'flour', 'bread', 'pasta'],
+    'gluten free': ['gluten', 'wheat', 'flour', 'bread', 'pasta'],
     shellfish: ['shellfish', 'shrimp', 'prawn', 'crab', 'lobster', 'scallop', 'clam', 'mussel', 'oyster'],
     fish: ['fish', 'salmon', 'tuna', 'cod', 'anchovy', 'tilapia'],
     'tree nuts': ['almond', 'cashew', 'walnut', 'pecan', 'pistachio', 'hazelnut', 'macadamia'],

@@ -25,17 +25,14 @@ import { OnboardingCTA } from '../components/OnboardingCTA';
 import type { OnboardingV3State } from '../controller/onboardingV3Machine';
 import {
   PRIMARY_GOALS,
-  SECONDARY_GOALS,
   annualTakeoutSpend,
   conservativeAnnualProjection,
   estimatedHomeMealCost,
   personalizedGoalContent,
   primaryGoalLabels,
-  secondaryGoalLabels,
   type PersonalizedAnswer,
   type PersonalizedQuestion,
   type PrimaryGoal,
-  type SecondaryGoal,
 } from '../state/personalizedOnboarding';
 
 type Props = {
@@ -47,7 +44,6 @@ type Props = {
   onGoal: (goal: PrimaryGoal) => void;
   onHoldComplete: () => void;
   onName: (name: string) => void;
-  onSecondaryGoals: (goals: SecondaryGoal[]) => void;
 };
 
 const questionSteps = ['question1', 'question2', 'question3', 'question4', 'question5', 'question6', 'question7', 'question8', 'question9'] as const;
@@ -66,16 +62,14 @@ export function PersonalizedOnboardingScreen(props: Props) {
   const { state } = props;
   if (state.step === 'name') return <NameStep initialName={state.profile.name} onBack={props.onBack} onSubmit={props.onName} />;
   if (state.step === 'primaryGoal') return <PrimaryGoalStep selected={state.profile.primaryGoal} onBack={props.onBack} onSelect={props.onGoal} />;
-  if (state.step === 'branchIntro') return <BranchIntro goal={requireGoal(state)} onBack={props.onBack} onContinue={props.onContinue} />;
   if (questionSteps.includes(state.step as (typeof questionSteps)[number])) return <QuestionStep {...props} step={state.step as (typeof questionSteps)[number]} />;
   if (state.step === 'holdReveal') {
     const goal = requireGoal(state);
     return <BranchShell goal={goal} onBack={props.onBack}><HoldToReveal onComplete={props.onHoldComplete} prompt={personalizedGoalContent[goal].holdPrompt} /></BranchShell>;
   }
-  if (state.step === 'branchReveal' || state.step === 'branchInsight' || state.step === 'nutritionTargets' || state.step === 'branchDemo' || state.step === 'personalizedFuture') {
+  if (state.step === 'branchReveal' || state.step === 'branchInsight' || state.step === 'nutritionTargets' || state.step === 'branchDemo') {
     return <StoryStep onBack={props.onBack} onContinue={props.onContinue} state={state} step={state.step} />;
   }
-  if (state.step === 'secondaryGoals') return <SecondaryGoalsStep profile={state.profile} onBack={props.onBack} onSubmit={props.onSecondaryGoals} />;
   if (state.step === 'dietaryPreferences') return <DietaryPreferencesStep profile={state.profile} onBack={props.onBack} onSubmit={props.onDietary} />;
   if (state.step === 'planReady') return <PlanReadyStep onBack={props.onBack} onContinue={props.onContinue} state={state} />;
   return null;
@@ -107,23 +101,6 @@ function PrimaryGoalStep({ selected, onBack, onSelect }: { selected: PrimaryGoal
         {PRIMARY_GOALS.map((goal) => <GoalCard key={goal} goal={goal} selected={selected === goal} onPress={() => onSelect(goal)} />)}
       </View>
     </SimpleShell>
-  );
-}
-
-function BranchIntro({ goal, onBack, onContinue }: { goal: PrimaryGoal; onBack: () => void; onContinue: () => void }) {
-  const copy = goal === 'save_money'
-    ? ['Where is your food money going?', 'Let’s find out.']
-    : goal === 'eat_healthier'
-      ? ['KEEP THE FOOD YOU LOVE.', 'Change the recipe, not the craving.']
-      : ['CRAVINGS CAN FIT YOUR NUMBERS.', 'Targets should guide, never restrict.'];
-  return (
-    <BranchShell goal={goal} footer={<OnboardingCTA label="Let’s go" onPress={onContinue} />} onBack={onBack}>
-      <View style={styles.introContent}>
-        <Text style={[styles.heroTitle, goal === 'hit_macros' && styles.macroHero]}>{copy[0]}</Text>
-        {goal === 'save_money' ? <SavingsIntroVisual /> : goal === 'eat_healthier' ? <FoodHero source={food.health} /> : <MacroDashboard compact />}
-        <Text style={styles.introLine}>{copy[1]}</Text>
-      </View>
-    </BranchShell>
   );
 }
 
@@ -163,7 +140,7 @@ function QuestionControl({ question, answer, onChange, goal }: { question: Perso
   return <View style={styles.optionList}>{question.options?.map((option) => <OptionCard key={option} label={option} selected={selected.includes(option)} onPress={() => question.kind === 'multi' ? onChange(selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option]) : onChange(option)} tone={goal} />)}</View>;
 }
 
-function StoryStep({ state, step, onBack, onContinue }: { state: OnboardingV3State; step: 'branchReveal' | 'branchInsight' | 'nutritionTargets' | 'branchDemo' | 'personalizedFuture'; onBack: () => void; onContinue: () => void }) {
+function StoryStep({ state, step, onBack, onContinue }: { state: OnboardingV3State; step: 'branchReveal' | 'branchInsight' | 'nutritionTargets' | 'branchDemo'; onBack: () => void; onContinue: () => void }) {
   const goal = requireGoal(state);
   if (step === 'nutritionTargets') return <NutritionTargetsStep state={state} onBack={onBack} onContinue={onContinue} />;
   return (
@@ -203,12 +180,6 @@ function NutritionTargetsStep({ state, onBack, onContinue }: { state: Onboarding
   return <BranchShell footer={<OnboardingCTA label="Looks good" onPress={onContinue} />} goal="hit_macros" onBack={onBack} scroll><Text style={styles.heroTitle}>Your starting targets</Text><TargetRows targets={targets} target={targets?.proteinGrams ?? 150} /><Text style={styles.disclosure}>These are starting estimates, not a prescription. You can edit them anytime.</Text></BranchShell>;
 }
 
-function SecondaryGoalsStep({ profile, onBack, onSubmit }: { profile: OnboardingV3State['profile']; onBack: () => void; onSubmit: (goals: SecondaryGoal[]) => void }) {
-  const primary = profile.primaryGoal;
-  const [selected, setSelected] = useState<SecondaryGoal[]>(profile.secondaryGoals);
-  return <SimpleShell footer={<OnboardingCTA label="Continue" onPress={() => onSubmit(selected)} />} onBack={onBack} scroll><Text style={styles.displayTitle}>Anything else you’d like help with?</Text><Text style={styles.dietaryIntro}>Optional — choose as many as you like.</Text><View style={styles.optionList}>{SECONDARY_GOALS.map((goal) => <OptionCard key={goal} badge={goal === primary ? 'Primary' : undefined} label={secondaryGoalLabels[goal]} selected={selected.includes(goal)} onPress={() => goal !== primary && setSelected(selected.includes(goal) ? selected.filter((item) => item !== goal) : [...selected, goal])} />)}</View></SimpleShell>;
-}
-
 function DietaryPreferencesStep({ profile, onBack, onSubmit }: { profile: OnboardingV3State['profile']; onBack: () => void; onSubmit: (preferences: FoodPreferences) => void }) {
   const [preferences, setPreferences] = useState<FoodPreferences>(profile.dietaryPreferences ?? EMPTY_FOOD_PREFERENCES);
   const [dislike, setDislike] = useState('');
@@ -232,8 +203,8 @@ function NutritionPanel({ macros = false, targets }: { macros?: boolean; targets
 function TargetRows({ target, targets }: { target: number; targets?: OnboardingV3State['profile']['nutritionTargets'] }) { return <View style={styles.targetRows}>{[['CALORIES', `${targets?.calories ?? '—'}`, 0.72], ['PROTEIN', `${target}g`, 0.86], ['CARBS', `${targets?.carbsGrams ?? '—'}g`, 0.58], ['FAT', `${targets?.fatGrams ?? '—'}g`, 0.66]].map(([label, value, progress]) => <View key={String(label)} style={styles.targetRow}><View style={styles.ring}><View style={[styles.ringFill, { transform: [{ rotate: `${Number(progress) * 250}deg` }] }]} /></View><View><Text style={styles.targetRowLabel}>{label}</Text><Text style={styles.targetRowValue}>{value}</Text></View></View>)}</View>; }
 function MacroDashboard({ compact = false }: { compact?: boolean }) { return <View style={[styles.dashboard, compact ? styles.dashboardCompact : styles.dashboardHero]}><Text style={styles.dashboardToday}>TODAY</Text><View style={styles.dashboardRow}>{[['2,100', 'CAL'], ['150g', 'PROTEIN'], ['210g', 'CARBS'], ['70g', 'FAT']].map(([value, label]) => <View key={label} style={styles.dashboardCell}><View style={styles.dashboardRing} /><Text style={styles.dashboardValue}>{value}</Text><Text style={styles.dashboardLabel}>{label}</Text></View>)}</View></View>; }
 
-function AssignedKiko({ goal, step }: { goal: PrimaryGoal; step: 'branchReveal' | 'branchDemo' | 'personalizedFuture' }) {
-  const lookup: Partial<Record<PrimaryGoal, Partial<Record<typeof step, string>>>> = { save_money: { branchReveal: 'annual-spending-reveal', branchDemo: 'savings-demonstration', personalizedFuture: 'savings-projection-graph' }, eat_healthier: { branchReveal: 'favorite-foods-reveal', branchDemo: 'nutrition-data' }, hit_macros: { branchReveal: 'macro-transformation', branchDemo: 'macro-result' } };
+function AssignedKiko({ goal, step }: { goal: PrimaryGoal; step: 'branchReveal' | 'branchDemo' }) {
+  const lookup: Partial<Record<PrimaryGoal, Partial<Record<typeof step, string>>>> = { save_money: { branchReveal: 'annual-spending-reveal', branchDemo: 'savings-demonstration' }, eat_healthier: { branchReveal: 'favorite-foods-reveal', branchDemo: 'nutrition-data' }, hit_macros: { branchReveal: 'macro-transformation', branchDemo: 'macro-result' } };
   const moment = lookup[goal]?.[step];
   if (!moment) return null;
   const assignment = getKikoOnboardingAssignment(goalToRegistryBranch(goal), moment);

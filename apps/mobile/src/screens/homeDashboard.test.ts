@@ -121,8 +121,8 @@ test('future days replace Savings only; Macros retain their honest selected-day 
 test('Macros uses daily completed totals with calories primary and neutral nutrition styling', () => {
   assert.match(home, /selectedDayKey: selectedDateKey/);
   assert.match(homeMetrics, /selectCompletedMacrosForDay/);
-  assert.match(homeMetrics, /recipe\.completionState === 'completed'/);
-  assert.match(homeMetrics, /recipe\.cookingCompletedAt/);
+  assert.match(homeMetrics, /completedMeals/);
+  assert.match(homeMetrics, /meal\.completedAt/);
   assert.match(homeMetrics, /caption: 'calories today'/);
   assert.match(homeMetrics, /label: 'Protein'/);
   assert.match(homeMetrics, /label: 'Fat'/);

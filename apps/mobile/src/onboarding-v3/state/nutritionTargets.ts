@@ -17,6 +17,18 @@ export type NutritionProfile = {
   desiredRatePerWeek: GoalRate;
   proteinPreference: ProteinPreference | null;
   manualProteinTargetGrams: number | null;
+  /**
+   * Okyo_Onboarding_V4_Implementation_Plan.md decision #21 / Step 04: a user
+   * under 18 must never receive an automatically generated calorie deficit or
+   * weight-loss target. Optional (defaults to false when omitted) so every
+   * existing `NutritionProfile` literal in this repo stays valid — the real
+   * safety gate in `calculateNutritionTargets` below also independently
+   * derives minor status from `ageYears < 18`, so this flag being left unset
+   * can never itself cause an unsafe result; it only lets a caller mark
+   * minor status explicitly ahead of having a numeric age (e.g. V4's
+   * `resolveMacroGuidance` in branchContracts.ts, Step 04).
+   */
+  isMinor?: boolean;
 };
 
 export type NutritionTargets = {
@@ -71,14 +83,30 @@ function validProfile(profile: NutritionProfile): profile is NutritionProfile & 
 /**
  * Produces conservative starting estimates, not medical guidance. The caller
  * should let people edit every target after this calculation.
+ *
+ * SAFETY EXCEPTION (Okyo_Onboarding_V4_Implementation_Plan.md decision #21 /
+ * Step 04): every other line of this function is unchanged V3 behavior — the
+ * one deliberate change is the `isMinor` branch immediately below, added
+ * specifically to close a latent gap: before this change, ANY caller
+ * (including existing V3 screens, e.g. `PersonalizedOnboardingScreen.tsx`'s
+ * `hit_macros` branch, whose own question flow only validates `ageYears`
+ * between 13–100 with no adult-only gate) could receive a real calorie
+ * deficit/surplus for a 13–17-year-old. This is a safety fix layered onto
+ * existing math, not a scope change to it — never a deficit/surplus target
+ * for a minor, no matter what `goal`/`desiredRatePerWeek` request. Derived
+ * from `ageYears` independently of the `isMinor` flag so it can't be
+ * bypassed by a caller simply leaving the flag unset. `validProfile` above
+ * already guarantees `ageYears` is a finite number here.
  */
 export function calculateNutritionTargets(profile: NutritionProfile, calculatedAt = new Date().toISOString()): NutritionTargets | null {
   if (!validProfile(profile)) return null;
 
+  const isMinor = profile.isMinor === true || profile.ageYears < 18;
+
   const sexAdjustment = profile.biologicalSex === 'male' ? 5 : profile.biologicalSex === 'female' ? -161 : -78;
   const bmr = (10 * profile.weightKg) + (6.25 * profile.heightCm) - (5 * profile.ageYears) + sexAdjustment;
   const tdee = bmr * activityMultipliers[profile.activityLevel];
-  const goalAdjustment = profile.goal === 'lose_fat'
+  const goalAdjustment = isMinor ? 0 : profile.goal === 'lose_fat'
     ? profile.desiredRatePerWeek === 'moderate' ? -400 : -250
     : profile.goal === 'build_muscle'
       ? profile.desiredRatePerWeek === 'moderate' ? 250 : 150

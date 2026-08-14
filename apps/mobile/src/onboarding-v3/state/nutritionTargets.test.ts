@@ -82,6 +82,38 @@ test('legacy profiles safely migrate to the typed target model', () => {
   assert.deepEqual(profile.dietaryPreferences.dislikes, ['Olives']);
 });
 
+test('a 17-year-old never receives a deficit or surplus target, regardless of goal or desired rate (decision #21)', () => {
+  const minor: NutritionProfile = { ...baseProfile, ageYears: 17 };
+  const maintain = calculateNutritionTargets(minor)!;
+  const requestedLoseFatSlow = calculateNutritionTargets({ ...minor, goal: 'lose_fat', desiredRatePerWeek: 'slow' })!;
+  const requestedLoseFatModerate = calculateNutritionTargets({ ...minor, goal: 'lose_fat', desiredRatePerWeek: 'moderate' })!;
+  const requestedBuildMuscleSlow = calculateNutritionTargets({ ...minor, goal: 'build_muscle', desiredRatePerWeek: 'slow' })!;
+  const requestedBuildMuscleModerate = calculateNutritionTargets({ ...minor, goal: 'build_muscle', desiredRatePerWeek: 'moderate' })!;
+  for (const result of [requestedLoseFatSlow, requestedLoseFatModerate, requestedBuildMuscleSlow, requestedBuildMuscleModerate]) {
+    assert.equal(result.calories, maintain.calories, 'a minor must get the same (maintenance) calories regardless of the requested goal/rate');
+  }
+});
+
+test('the isMinor flag alone (without a young ageYears) also blocks a deficit/surplus target', () => {
+  const adultAge: NutritionProfile = { ...baseProfile, ageYears: 25, isMinor: true };
+  const maintain = calculateNutritionTargets({ ...adultAge, isMinor: false, goal: 'lose_fat', desiredRatePerWeek: 'moderate' })!;
+  const flaggedMinor = calculateNutritionTargets({ ...adultAge, goal: 'lose_fat', desiredRatePerWeek: 'moderate' })!;
+  assert.notEqual(flaggedMinor.calories, maintain.calories);
+});
+
+test('an 18-year-old is treated as an adult (boundary)', () => {
+  const justAdult: NutritionProfile = { ...baseProfile, ageYears: 18, goal: 'lose_fat', desiredRatePerWeek: 'moderate' };
+  const maintain = calculateNutritionTargets({ ...justAdult, goal: 'maintain', desiredRatePerWeek: null })!;
+  const fatLoss = calculateNutritionTargets(justAdult)!;
+  assert.ok(fatLoss.calories < maintain.calories, 'an 18-year-old should still receive the normal adult deficit behavior');
+});
+
+test('a minor still gets a safe, valid target — never null just for being a minor', () => {
+  const minor = calculateNutritionTargets({ ...baseProfile, ageYears: 16, goal: 'lose_fat', desiredRatePerWeek: 'moderate' });
+  assert.ok(minor, 'a minor with an otherwise-valid profile should still receive maintenance-level targets, not null');
+  assert.ok(minor!.calories >= 1500);
+});
+
 test('a user-edited full target set survives resume without being recalculated', () => {
   const profile = normalizePersonalizedProfile({
     primaryGoal: 'hit_macros',

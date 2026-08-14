@@ -54,6 +54,7 @@ export type CreateScanRequest = {
   // RecipeGenerationPreferences. Older requests omit these unchanged.
   recipePriority?: string;
   cookingFrictionFollowUp?: string;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   goalContext?: GoalContext;
@@ -84,6 +85,7 @@ export type AnalyzeScanResult = {
 
 export type GenerateRecipeFromAnalysisRequest = {
   mode?: RecipeMode;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   recipeRequestId?: string;
@@ -103,6 +105,7 @@ export type CorrectRecipeRequest = {
   scanSessionId?: string;
   mode?: RecipeMode;
   currentRecipe?: Recipe;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   goalContext?: GoalContext;
@@ -112,6 +115,7 @@ export type AskOkyoRequest = {
   question: string;
   recipe: Recipe;
   currentStep?: Recipe['structuredSteps'] extends (infer T)[] | undefined ? T : never;
+  dietaryAllergies?: string[];
   dietaryRestrictions?: string[];
   dietaryDislikes?: string[];
   goalContext?: GoalContext;

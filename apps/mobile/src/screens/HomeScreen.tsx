@@ -73,8 +73,7 @@ export function HomeScreen() {
   const recipesById = useOkyoStore((state) => state.recipesById);
   const recentRecipeIds = useOkyoStore((state) => state.recentRecipeIds);
   const activeCookingSession = useOkyoStore((state) => state.activeCookingSession);
-  const completedChallenges = useOkyoStore((state) => state.completedChallenges);
-  const totalMoneySaved = useOkyoStore((state) => state.totalMoneySaved);
+  const completedMeals = useOkyoStore((state) => state.completedMeals);
   const weeklyScanCount = useOkyoStore((state) => state.weeklyScanCount);
   const primaryGoal = useOkyoStore((state) => state.primaryGoal);
   const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
@@ -103,7 +102,7 @@ export function HomeScreen() {
     ideaHour,
     HOME_IDEA_RECIPES.filter((recipe) => !foodPreferences || findFoodPreferenceConflicts(recipe.ingredients.map((ingredient) => ingredient.name), foodPreferences).length === 0),
   ), [foodPreferences, ideaHour]);
-  const metrics = useMemo(() => selectHomeMetrics({ completedChallenges, recipesById, selectedDayKey: selectedDateKey, totalMoneySaved }), [completedChallenges, recipesById, selectedDateKey, totalMoneySaved]);
+  const metrics = useMemo(() => selectHomeMetrics({ completedMeals, recipesById, selectedDayKey: selectedDateKey }), [completedMeals, recipesById, selectedDateKey]);
   const metricOrder = useMemo(() => getHomeMetricOrder(primaryGoal), [primaryGoal]);
   const activityDates = useMemo(() => getHomeActivityDates(recipesById), [recipesById]);
   const futureSelectedDay = isFutureDateKey(selectedDateKey);

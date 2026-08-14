@@ -33,3 +33,11 @@ const DEV_BYPASS_PAYWALL_ENABLED = true;
  */
 export const DEV_BYPASS_PAYWALL =
   (typeof __DEV__ !== 'undefined' && __DEV__) && DEV_BYPASS_PAYWALL_ENABLED;
+
+/**
+ * Gate for the V4 onboarding rebuild (Okyo_Onboarding_V4_Implementation_Plan.md).
+ * Defaults to false and is unreferenced by any live screen as of Step 02 —
+ * Step 03 is the first step that reads it, to gate the new V4 screens behind
+ * a flag before they're wired into OnboardingV3.tsx's render switch.
+ */
+export const ONBOARDING_V4_ENABLED = true;

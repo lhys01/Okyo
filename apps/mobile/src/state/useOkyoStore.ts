@@ -55,6 +55,7 @@ import {
   type ActiveCookingSession,
 } from './activeCooking';
 import { toggleGroceryIngredientSelection } from './groceryIngredientSelection';
+import { createCompletedMeal, migrateLegacyCompletedMeals, sanitizeCompletedMeals, type CompletedMeal } from './completedMeals';
 
 export type OnboardingGoal =
   | 'Save money'
@@ -151,6 +152,7 @@ type OkyoState = {
   groceryIngredientSelections: Record<string, string[]>;
   recipeServingOverrides: Record<string, number>;
   activeCookingSession: ActiveCookingSession | null;
+  completedMeals: CompletedMeal[];
   completedChallenges: CompletedChallenge[];
   recipeFeedbackById: Record<string, RecipeFeedback>;
   totalMoneySaved: number;
@@ -252,6 +254,7 @@ export const useOkyoStore = create<OkyoState>()(
       groceryIngredientSelections: {},
       recipeServingOverrides: {},
       activeCookingSession: null,
+      completedMeals: [],
       completedChallenges: [],
       recipeFeedbackById: {},
       totalMoneySaved: 0,
@@ -537,10 +540,21 @@ export const useOkyoStore = create<OkyoState>()(
           };
         }),
       completeRecipe: (recipeId) =>
-        set((state) => ({
-          ...setCanonicalRecipeCompletion(getCanonicalCollections(state), recipeId, 'completed'),
-          activeCookingSession: clearActiveCookingSession(state.activeCookingSession, recipeId),
-        })),
+        set((state) => {
+          const session = state.activeCookingSession;
+          const recipe = resolveCanonicalRecipe(state.recipesById, recipeId);
+          if (!session || session.recipeId !== recipeId || !recipe) return state;
+
+          const completedAt = new Date().toISOString();
+          const completedMeal = createCompletedMeal(recipe, session, completedAt);
+          return {
+            ...setCanonicalRecipeCompletion(getCanonicalCollections(state), recipeId, 'completed', completedAt),
+            activeCookingSession: clearActiveCookingSession(session, recipeId),
+            completedMeals: state.completedMeals.some((meal) => meal.id === completedMeal.id)
+              ? state.completedMeals
+              : [...state.completedMeals, completedMeal],
+          };
+        }),
       saveRecipe: (recipeOrId, origin = 'library') =>
         set((state) => {
           let collections = getCanonicalCollections(state);
@@ -665,6 +679,7 @@ export const useOkyoStore = create<OkyoState>()(
           return {
             ...getEmptyCanonicalRecipeCollections(),
             activeCookingSession: null,
+            completedMeals: [],
             completedChallenges: [],
             groceryIngredientSelections: {},
             recipeServingOverrides: {},
@@ -723,6 +738,7 @@ export const useOkyoStore = create<OkyoState>()(
         groceryIngredientSelections: state.groceryIngredientSelections,
         recipeServingOverrides: state.recipeServingOverrides,
         activeCookingSession: state.activeCookingSession,
+        completedMeals: state.completedMeals,
         completedChallenges: state.completedChallenges,
         recipeFeedbackById: state.recipeFeedbackById,
         totalMoneySaved: state.totalMoneySaved,
@@ -733,7 +749,7 @@ export const useOkyoStore = create<OkyoState>()(
         awardedXpEvents: state.awardedXpEvents,
         leaderboardEntries: state.leaderboardEntries,
       }),
-      version: 3,
+      version: 4,
     },
   ),
 );
@@ -884,6 +900,8 @@ function sanitizePersistedCanonicalState(state: Record<string, unknown>) {
     }
     : null;
 
+  const completedMeals = sanitizeCompletedMeals(state.completedMeals);
+
   return {
     ...state,
     recipesById,
@@ -891,6 +909,10 @@ function sanitizePersistedCanonicalState(state: Record<string, unknown>) {
     savedRecipeIds,
     groceryRecipeIds,
     activeCookingSession: persistedCookingSession,
+    // Old state only has a trustworthy completion timestamp on canonical
+    // recipes. It cannot identify arbitrary scans as cooked, so it is safe to
+    // migrate only those already marked completed.
+    completedMeals: completedMeals.length > 0 ? completedMeals : migrateLegacyCompletedMeals(recipesById),
     latestScanRecipe,
     selectedMode: getMigratedRecipeMode(state.selectedMode),
   };

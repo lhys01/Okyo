@@ -120,6 +120,7 @@ const scanRequestSchema = z.object({
   // keep working unchanged. See RecipeGenerationPreferences in aiService.ts.
   recipePriority: z.string().trim().min(1).max(60).optional(),
   cookingFrictionFollowUp: z.string().trim().min(1).max(60).optional(),
+  dietaryAllergies: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   dietaryRestrictions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   dietaryDislikes: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
 }).superRefine((value, context) => {
@@ -151,6 +152,7 @@ const analyzeScanRequestSchema = z.object({
 });
 const analysisRecipeRequestSchema = z.object({
   mode: recipeModeInputSchema.optional().default('Normal'),
+  dietaryAllergies: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   dietaryRestrictions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   dietaryDislikes: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   recipeRequestId: z.string().trim().min(1).max(120).optional(),
@@ -192,6 +194,10 @@ const recipeCorrectionRequestSchema = z.object({
   scanSessionId: z.string().trim().min(1).max(240).optional(),
   mode: recipeModeInputSchema.optional().default('Normal'),
   currentRecipe: correctionRecipeSchema.optional(),
+  dietaryAllergies: z.preprocess(
+    (value) => value == null ? undefined : value,
+    z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  ),
   dietaryRestrictions: z.preprocess(
     (value) => value == null ? undefined : value,
     z.array(z.string().trim().min(1).max(60)).max(20).optional(),
@@ -235,6 +241,7 @@ const askOkyoRequestSchema = z.object({
   question: z.string().trim().min(1).max(500),
   recipe: z.custom<import('./types.js').Recipe>((value) => Boolean(value && typeof value === 'object')),
   currentStep: z.custom<import('./types.js').RecipeStep>((value) => value === undefined || Boolean(value && typeof value === 'object')).optional(),
+  dietaryAllergies: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   dietaryRestrictions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   dietaryDislikes: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   goalContext: z.object({
@@ -396,6 +403,7 @@ app.post('/v1/scans/analyze/:analysisId/recipe', async (request, response, next)
     const result = await generateRecipeForAnalysis({
       analysisId: request.params.analysisId,
       mode: body.mode,
+      dietaryAllergies: body.dietaryAllergies,
       dietaryRestrictions: body.dietaryRestrictions,
       dietaryDislikes: body.dietaryDislikes,
       recipeRequestId: body.recipeRequestId,
@@ -540,6 +548,7 @@ app.post('/v1/recipes/:recipeId/correct', async (request, response, next) => {
       mode: body.mode,
       currentRecipe: body.currentRecipe,
       recipeId: request.params.recipeId,
+      dietaryAllergies: body.dietaryAllergies,
       dietaryRestrictions: body.dietaryRestrictions,
       dietaryDislikes: body.dietaryDislikes,
       goalContext: body.goalContext,
@@ -759,6 +768,7 @@ function getScanPreferencesFromBody(body: z.infer<typeof scanRequestSchema>): Re
   if (
     !body.recipePriority &&
     !body.cookingFrictionFollowUp &&
+    !body.dietaryAllergies?.length &&
     !body.dietaryRestrictions?.length &&
     !body.dietaryDislikes?.length
   ) {
@@ -768,6 +778,7 @@ function getScanPreferencesFromBody(body: z.infer<typeof scanRequestSchema>): Re
   return {
     recipePriority: body.recipePriority,
     cookingFrictionFollowUp: body.cookingFrictionFollowUp,
+    dietaryAllergies: body.dietaryAllergies,
     dietaryRestrictions: body.dietaryRestrictions,
     dietaryDislikes: body.dietaryDislikes,
   };

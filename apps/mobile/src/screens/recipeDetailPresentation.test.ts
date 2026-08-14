@@ -36,18 +36,18 @@ test('nutrition uses four independent floating metric bubbles', () => {
 test('pricing uses real restaurant and homemade estimates in one comparable two-column card', () => {
   const source = read('components/RecipeAssistantOverview.tsx');
   assert.match(source, />Pricing</);
-  assert.match(source, /Restaurant estimate/);
+  assert.match(source, /Eating out/);
   assert.match(source, /Make at home/);
   assert.match(source, /homemadePrice/);
   assert.match(source, /isKnownPrice/);
   assert.match(source, /costComparisonCard/);
   assert.match(source, /costDivider/);
   assert.match(source, /<PriceColumn label="Make at home"/);
-  assert.match(source, /<PriceColumn label="Restaurant estimate"/);
+  assert.match(source, /<PriceColumn label="Eating out"/);
   assert.match(source, /recipe\.estimatedHomemadeCost \+ recipe\.estimatedSavings/);
   assert.match(source, /scaledRestaurantEstimate/);
   assert.match(source, /\.\.\.recipeShadows\.card/);
-  assert.match(source, /Restaurant estimate" value=\{scaledRestaurantEstimate === null \? '—'/);
+  assert.match(source, /Eating out" value=\{scaledRestaurantEstimate === null \? '—'/);
 });
 
 test('scan results keep all four in-place recipe styles alongside Customize', () => {
