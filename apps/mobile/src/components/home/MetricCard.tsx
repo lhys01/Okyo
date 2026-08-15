@@ -6,7 +6,7 @@ import type { HomeMetric, HomeMetricKind } from '../../state/homeMetrics';
 import { colors, radius, shadows, typography } from '../../theme/okyoTheme';
 
 const metricArtwork: Partial<Record<HomeMetricKind, number>> = {
-  savings: require('../../../assets/food/home-savings-transparent.png'),
+  savings: require('../../../assets/food/states/home-savings-transparent.png'),
 };
 
 // These are bundled app-owned illustrations supplied for the macro card. Keep

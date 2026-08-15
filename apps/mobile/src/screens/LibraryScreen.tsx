@@ -126,7 +126,7 @@ export function LibraryScreen() {
       <LibraryFrame>
         <TopBar title="Liked" />
         <View style={styles.emptyCard}>
-          <Image accessibilityIgnoresInvertColors resizeMode="contain" source={require('../../assets/food/liked-empty-kiko.png')} style={styles.emptyArt} />
+          <Image accessibilityIgnoresInvertColors resizeMode="contain" source={require('../../assets/food/states/liked-empty-kiko.png')} style={styles.emptyArt} />
           <Text style={styles.emptyTitle}>No liked recipes yet</Text>
           <Text style={styles.emptyBody}>Save recipes you love and they'll show up here.</Text>
           <PrimaryAction label="Explore recipes" onPress={goToExplore} />
