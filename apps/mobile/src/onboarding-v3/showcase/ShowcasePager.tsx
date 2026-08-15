@@ -7,10 +7,11 @@ import type { AttributionSource } from '../state/attribution';
 import { onboardingV3Log } from '../utils/onboardingV3Log';
 import { AttributionPage } from './pages/AttributionPage';
 import { CustomizePage } from './pages/CustomizePage';
+import { CustomizeDetailsPage } from './pages/CustomizeDetailsPage';
 import { HeroPage } from './pages/HeroPage';
 import { MeetKikoPage } from './pages/MeetKikoPage';
-import { RecipeOutputPage } from './pages/RecipeOutputPage';
 import { ScanPage } from './pages/ScanPage';
+import { ValuePage } from './pages/ValuePage';
 import { showcasePages } from './showcasePages';
 
 export function ShowcasePager({
@@ -67,17 +68,18 @@ export function ShowcasePager({
     >
       <View collapsable={false} key="hero" style={{ flex: 1 }}><HeroPage {...pageProps(0)} /></View>
       <View collapsable={false} key="scan" style={{ flex: 1 }}><ScanPage {...pageProps(1)} /></View>
-      <View collapsable={false} key="recipeOutput" style={{ flex: 1 }}><RecipeOutputPage {...pageProps(2)} /></View>
+      <View collapsable={false} key="value" style={{ flex: 1 }}><ValuePage {...pageProps(2)} /></View>
       <View collapsable={false} key="customize" style={{ flex: 1 }}><CustomizePage {...pageProps(3)} /></View>
+      <View collapsable={false} key="customizeDetails" style={{ flex: 1 }}><CustomizeDetailsPage {...pageProps(4)} /></View>
       <View collapsable={false} key="attribution" style={{ flex: 1 }}>
         <AttributionPage
-          {...pageProps(4)}
+          {...pageProps(5)}
           attribution={attribution}
           onSelectAttribution={onAttributionSelected}
           onSkipAttribution={onAttributionSkipped}
         />
       </View>
-      <View collapsable={false} key="meetKiko" style={{ flex: 1 }}><MeetKikoPage {...pageProps(5)} /></View>
+      <View collapsable={false} key="meetKiko" style={{ flex: 1 }}><MeetKikoPage {...pageProps(6)} /></View>
     </PagerView>
   );
 }

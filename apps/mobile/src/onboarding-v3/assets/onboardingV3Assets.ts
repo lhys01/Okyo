@@ -28,6 +28,7 @@ export const onboardingV3Assets: Readonly<Record<string, number>> = Object.freez
   doodleSquiggle: require('../../../assets/onboarding-ex-transparent/o10-doodle-squiggle.png'),
   nameFoxKikoPeek: require('../../../assets/onboarding-ex-transparent/o11-kiko-peek.png'),
   nameFoxKikoPeekUpdated: require('../../../assets/onboarding-ex-transparent/o11-kiko-updated.png'),
+  approvedMoreThanRecipeArtwork: require('../../../assets/onboarding-v3/more-than-just-a-recipe-artwork.png'),
 });
 
 export type OnboardingV3AssetKey = keyof typeof onboardingV3Assets;
