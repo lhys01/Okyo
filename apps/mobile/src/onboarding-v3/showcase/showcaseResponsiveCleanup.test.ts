@@ -34,7 +34,8 @@ test('the value page replaces the duplicate baked More than just a recipe screen
 test('the approved crop is a new asset outside the restored onboarding directory', () => {
   const assets = readFileSync(resolve(process.cwd(), 'src/onboarding-v3/assets/onboardingV3Assets.ts'), 'utf8');
   assert.match(assets, /approvedMoreThanRecipeArtwork/);
-  assert.equal(showcasePages.at(-1)?.primaryAsset, 'approvedMoreThanRecipeArtwork');
+  assert.equal(showcasePages[4]?.primaryAsset, 'approvedMoreThanRecipeArtwork');
+  assert.equal(showcasePages.filter((page) => page.primaryAsset === 'approvedMoreThanRecipeArtwork').length, 1);
 });
 
 test('pages 1–3 cannot substitute one another’s approved artwork', () => {
@@ -59,7 +60,7 @@ test('the shared full-artwork page preserves aspect ratio and real Back/Next con
 
 test('screen-only derivatives keep the supplied artwork dimensions', () => {
   for (const file of ['onboarding3-screen.png', 'onboarding4-screen.png', 'onboarding5-screen.png']) {
-    const bytes = readFileSync(resolve(process.cwd(), 'assets/onboarding ex', file));
+    const bytes = readFileSync(resolve(process.cwd(), 'assets/onboarding-ex', file));
     assert.equal(bytes.readUInt32BE(16), 852, file);
     assert.equal(bytes.readUInt32BE(20), 1608, file);
   }
@@ -76,7 +77,7 @@ test('approved source PNG checksums remain byte-identical', () => {
     'onboarding5.png': 'eb9fb9257587077e64c2629e42a221bb64e61c9d29f405e38e7b82a5853d7928',
   } as const;
   for (const [file, checksum] of Object.entries(expected)) {
-    const bytes = readFileSync(resolve(process.cwd(), 'assets/onboarding ex', file));
+    const bytes = readFileSync(resolve(process.cwd(), 'assets/onboarding-ex', file));
     assert.equal(createHash('sha256').update(bytes).digest('hex'), checksum);
   }
 });

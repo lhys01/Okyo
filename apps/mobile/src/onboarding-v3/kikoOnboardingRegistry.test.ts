@@ -12,7 +12,7 @@ import {
   resolveKikoOnboardingMotion,
 } from './assets/kikoOnboardingRegistry';
 
-const assetDirectory = resolve(process.cwd(), 'assets/onboarding kiko');
+const assetDirectory = resolve(process.cwd(), 'assets/onboarding-kiko');
 const registrySourcePath = resolve(
   process.cwd(),
   'src/onboarding-v3/assets/kikoOnboardingRegistry.ts',

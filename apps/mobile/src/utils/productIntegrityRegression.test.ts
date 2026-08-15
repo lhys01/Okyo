@@ -196,7 +196,7 @@ test('photo and description results preserve origin handling with one honest loa
 
   assert.match(loading, /\{!isDescriptionScan && stableScanImageUri \? \(/);
   assert.match(loading, /Okyo is scanning your food/);
-  assert.match(loading, /assets\/onboarding ex\/icon\.png/);
+  assert.match(loading, /assets\/onboarding-ex\/icon\.png/);
   assert.doesNotMatch(loading, /KikoMascot|mascotName/);
   assert.doesNotMatch(loading, />\s*Analyzing\s*</);
 });

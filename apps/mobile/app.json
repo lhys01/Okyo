@@ -8,7 +8,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/onboarding ex/onboarding1.png",
+      "image": "./assets/onboarding-ex/onboarding1.png",
       "resizeMode": "contain",
       "backgroundColor": "#fffdfe"
     },
@@ -40,7 +40,7 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#fffdfe",
-          "image": "./assets/onboarding ex/onboarding1.png",
+          "image": "./assets/onboarding-ex/onboarding1.png",
           "imageWidth": 430,
           "resizeMode": "cover"
         }

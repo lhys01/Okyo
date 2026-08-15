@@ -5,11 +5,11 @@ export const onboardingV3Assets: Readonly<Record<string, number>> = Object.freez
   approvedHeroArtwork: require('../../../assets/onboarding-approved/reach-your-food-goals.png'),
   // Derived screen-only exports. The supplied source PNGs remain untouched;
   // these assets remove the embedded device frame before rendering in-app.
-  approvedOnboarding3: require('../../../assets/onboarding ex/onboarding3-screen.png'),
-  approvedOnboarding4: require('../../../assets/onboarding ex/onboarding4-screen.png'),
-  approvedOnboarding5: require('../../../assets/onboarding ex/onboarding5-screen.png'),
-  approvedOnboarding1: require('../../../assets/onboarding ex/onboarding1.png'),
-  approvedOnboarding2: require('../../../assets/onboarding ex/onboarding2.png'),
+  approvedOnboarding3: require('../../../assets/onboarding-ex/onboarding3-screen.png'),
+  approvedOnboarding4: require('../../../assets/onboarding-ex/onboarding4-screen.png'),
+  approvedOnboarding5: require('../../../assets/onboarding-ex/onboarding5-screen.png'),
+  approvedOnboarding1: require('../../../assets/onboarding-ex/onboarding1.png'),
+  approvedOnboarding2: require('../../../assets/onboarding-ex/onboarding2.png'),
   onboarding3Composition: require('../../../assets/onboarding-ex-transparent/o3-approved-composition.png'),
   onboarding4Composition: require('../../../assets/onboarding-ex-transparent/o4-approved-composition.png'),
   onboarding5Composition: require('../../../assets/onboarding-ex-transparent/o5-approved-composition.png'),

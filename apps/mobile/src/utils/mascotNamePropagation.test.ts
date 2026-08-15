@@ -22,7 +22,7 @@ test('user-facing mascot copy resolves the persisted mascot name', () => {
 
   const analysisLoading = readFileSync(resolve(srcRoot, 'screens/AnalysisLoadingScreen.tsx'), 'utf8');
   assert.doesNotMatch(analysisLoading, /mascotName|KikoMascot/);
-  assert.match(analysisLoading, /assets\/onboarding ex\/icon\.png/);
+  assert.match(analysisLoading, /assets\/onboarding-ex\/icon\.png/);
 });
 
 test('internal Kiko asset, component, and analytics identifiers stay literal', () => {
