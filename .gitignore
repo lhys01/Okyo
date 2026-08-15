@@ -147,3 +147,11 @@ vite.config.ts.timestamp-*
 .DS_Store
 **/.DS_Store
 apps/mobile/.artifacts/
+
+# Local AI tool caches/state (generated, not source)
+__pycache__/
+*.pyc
+.swarm/
+.claude-flow/
+.impeccable/
+ruvector.db
