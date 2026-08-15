@@ -432,7 +432,7 @@ export function ShareCardPreviewScreen() {
           {selectedMetrics.length > 0 ? <MetricGrid metrics={selectedMetrics} /> : null}
 
           <View style={styles.cardFooter}>
-            <Image accessibilityIgnoresInvertColors source={require('../../assets/icon.png')} style={styles.okyoIcon} />
+            <Image accessibilityIgnoresInvertColors source={require('../../assets/app-icon/icon.png')} style={styles.okyoIcon} />
             <View style={styles.footerCopy}>
               <Text style={styles.cardFooterText}>Made with <Text style={styles.okyoText}>Okyo</Text></Text>
               <Text style={styles.cardFooterTagline}>Turn any dish into a recipe</Text>

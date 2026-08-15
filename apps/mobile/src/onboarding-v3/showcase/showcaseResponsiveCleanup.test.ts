@@ -60,7 +60,7 @@ test('the shared full-artwork page preserves aspect ratio and real Back/Next con
 
 test('screen-only derivatives keep the supplied artwork dimensions', () => {
   for (const file of ['onboarding3-screen.png', 'onboarding4-screen.png', 'onboarding5-screen.png']) {
-    const bytes = readFileSync(resolve(process.cwd(), 'assets/onboarding-ex', file));
+    const bytes = readFileSync(resolve(process.cwd(), 'assets/onboarding/onboarding-ex', file));
     assert.equal(bytes.readUInt32BE(16), 852, file);
     assert.equal(bytes.readUInt32BE(20), 1608, file);
   }
@@ -77,7 +77,7 @@ test('approved source PNG checksums remain byte-identical', () => {
     'onboarding5.png': 'eb9fb9257587077e64c2629e42a221bb64e61c9d29f405e38e7b82a5853d7928',
   } as const;
   for (const [file, checksum] of Object.entries(expected)) {
-    const bytes = readFileSync(resolve(process.cwd(), 'assets/onboarding-ex', file));
+    const bytes = readFileSync(resolve(process.cwd(), 'assets/onboarding/onboarding-ex', file));
     assert.equal(createHash('sha256').update(bytes).digest('hex'), checksum);
   }
 });

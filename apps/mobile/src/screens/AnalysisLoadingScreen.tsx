@@ -24,8 +24,8 @@ import { uiLog } from '../utils/uiDebug';
 
 type AnalysisNavigation = NativeStackNavigationProp<RootStackParamList, 'AnalysisLoadingScreen'>;
 type AnalysisRoute = RouteProp<RootStackParamList, 'AnalysisLoadingScreen'>;
-const loadingProgressVideo = require('../../assets/button-background/loading-progress-gradient.mp4');
-const okyoAppIcon = require('../../assets/icon.png');
+const loadingProgressVideo = require('../../assets/backgrounds/button-background/loading-progress-gradient.mp4');
+const okyoAppIcon = require('../../assets/app-icon/icon.png');
 
 const ANALYSIS_STAGES = [
   'Identifying the image',

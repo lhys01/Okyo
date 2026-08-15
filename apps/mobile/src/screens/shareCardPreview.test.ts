@@ -12,7 +12,7 @@ test('recipe share card is live-customizable and exports the visible card', () =
   assert.match(source, /Turn any dish into a recipe/);
   assert.match(source, /getMetricRows\(metrics\)/);
   assert.match(source, /captureRef\(cardRef/);
-  assert.match(source, /source=\{require\('\.\.\/\.\.\/assets\/icon\.png'\)\}/);
+  assert.match(source, /source=\{require\('\.\.\/\.\.\/assets\/app-icon\/icon\.png'\)\}/);
   assert.doesNotMatch(source, /remade at home/);
   assert.doesNotMatch(source, /Seen online/);
 });

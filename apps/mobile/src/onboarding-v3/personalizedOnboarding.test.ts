@@ -24,7 +24,7 @@ import {
 const read = (path: string) => readFileSync(resolve(process.cwd(), 'src/onboarding-v3', path), 'utf8');
 
 test('all human-selected branch references resolve', () => {
-  const root = resolve(process.cwd(), 'assets/onboarding-ex');
+  const root = resolve(process.cwd(), 'assets/onboarding/onboarding-ex');
   assert.deepEqual(readdirSync(resolve(root, 'savings')).filter((file) => file.endsWith('.webp')).sort(), ['file-1.webp', 'file-2.webp', 'file-3.webp', 'file-4.webp', 'file-5.webp', 'file-6.webp', 'file.webp']);
   assert.deepEqual(readdirSync(resolve(root, 'health')).filter((file) => file.endsWith('.webp')).sort(), ['file-1.webp', 'file-2.webp', 'file-3.webp', 'file.webp']);
   assert.deepEqual(readdirSync(resolve(root, 'macros')).filter((file) => file.endsWith('.webp')).sort(), ['file-1.webp', 'file-2.webp', 'file.webp']);

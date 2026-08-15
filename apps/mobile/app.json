@@ -5,10 +5,10 @@
     "scheme": "okyo",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/app-icon/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/onboarding-ex/onboarding1.png",
+      "image": "./assets/onboarding/onboarding-ex/onboarding1.png",
       "resizeMode": "contain",
       "backgroundColor": "#fffdfe"
     },
@@ -19,7 +19,7 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#111013",
-        "foregroundImage": "./assets/icon.png"
+        "foregroundImage": "./assets/app-icon/icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -29,7 +29,7 @@
       "package": "com.anonymous.okyo"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/app-icon/favicon.png"
     },
     "plugins": [
       "expo-sharing",
@@ -40,7 +40,7 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#fffdfe",
-          "image": "./assets/onboarding-ex/onboarding1.png",
+          "image": "./assets/onboarding/onboarding-ex/onboarding1.png",
           "imageWidth": 430,
           "resizeMode": "cover"
         }

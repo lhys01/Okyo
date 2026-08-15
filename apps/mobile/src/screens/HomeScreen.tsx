@@ -30,7 +30,7 @@ import { useOpenRecommendation } from '../utils/useOpenRecommendation';
 type HomeNavigation = NativeStackNavigationProp<RootStackParamList>;
 const HOME_START_DATE_KEY = 'okyo:home-start-date:v1';
 const HOME_FIRST_SEEN_AT_KEY = 'okyo:home-first-seen-at:v1';
-const scanButtonVideo = require('../../assets/button-background/scan-button-gradient.mp4');
+const scanButtonVideo = require('../../assets/backgrounds/button-background/scan-button-gradient.mp4');
 
 /** Home surfaces two ideas; the rest live behind Explore. */
 const HOME_IDEA_COUNT = 2;

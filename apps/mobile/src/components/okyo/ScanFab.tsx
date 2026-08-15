@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, radius, shadows, spacing, typography } from '../../theme/okyoTheme';
 
-const scanFabVideo = require('../../../assets/button-background/gradient-1920x1080.mp4');
+const scanFabVideo = require('../../../assets/backgrounds/button-background/gradient-1920x1080.mp4');
 const scanActionIcons = {
   describe: <Sparks color={colors.body} height={34} strokeWidth={2.1} width={34} />,
   takePhoto: <Camera color={colors.coral} height={34} strokeWidth={2.1} width={34} />,
