@@ -40,6 +40,18 @@ test('name is trimmed and exactly three primary goals enter one shared engine', 
   assert.equal(PRIMARY_GOALS.includes('waste_less' as PrimaryGoal), false);
 });
 
+test('Save Money branch preview completion enters the canonical completion lifecycle', () => {
+  const completed = onboardingV3Reducer(goalState('save_money', 'branchIntro'), { type: 'BRANCH_PREVIEW_COMPLETED' });
+  assert.equal(completed.step, 'complete');
+  assert.equal(completed.profile.primaryGoal, 'save_money');
+});
+
+test('Macros branch preview completion uses the same canonical terminal state', () => {
+  const completed = onboardingV3Reducer(goalState('hit_macros', 'branchIntro'), { type: 'BRANCH_PREVIEW_COMPLETED' });
+  assert.equal(completed.step, 'complete');
+  assert.equal(completed.profile.primaryGoal, 'hit_macros');
+});
+
 test('old cook-more primary state returns safely to goal selection', () => {
   const legacyProfile = {
     ...initialOnboardingV3State.profile,

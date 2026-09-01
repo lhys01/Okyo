@@ -101,6 +101,14 @@ export const onboardingFontFamilies = {
   extraBold: fontFamilies.extraBold,
 } as const;
 
+// Onboarding title face. Every restored stage2 onboarding screen spreads this
+// token then sets its own fontSize/lineHeight, so it must exist here for the
+// restored onboarding to compile. Uses the shared Inter extraBold alias — no Sora.
+export const onboardingTitleFont = {
+  fontFamily: onboardingFontFamilies.extraBold,
+  fontWeight: 'normal' as const,
+} as const;
+
 const tabularNums: ('tabular-nums')[] = ['tabular-nums'];
 
 export const typography = {
@@ -144,4 +152,15 @@ export const shadows = {
     shadowRadius: 24,
     elevation: 5,
   },
+} as const;
+
+// Light, grounded card lift. Required by the restored onboarding AttributionPage
+// (reference screen "How did you hear about Okyo?") which imports this token —
+// without it the restored onboarding will not compile.
+export const homeRecipeCardShadow = {
+  shadowColor: '#4A4850',
+  shadowOffset: { width: 0, height: 3 },
+  shadowOpacity: 0.2,
+  shadowRadius: 0.85,
+  elevation: 2,
 } as const;

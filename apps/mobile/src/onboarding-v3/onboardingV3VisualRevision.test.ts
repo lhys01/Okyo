@@ -59,3 +59,29 @@ test('virtual-pet page has the exact headline and no explanatory paragraph', () 
   assert.doesNotMatch(page, /Kiko helps you scan dishes/);
   assert.doesNotMatch(page, /styles\.body/);
 });
+
+test('shared onboarding controls use a real left arrow and text-only forward CTAs', () => {
+  const back = read('components/OnboardingBackButton.tsx');
+  const cta = read('components/OnboardingCTA.tsx');
+  assert.match(back, /NavArrowLeft/);
+  assert.match(back, /strokeWidth=\{2\.35\}/);
+  assert.doesNotMatch(back, />‹<\/Text>/);
+  assert.doesNotMatch(cta, /›/);
+  assert.doesNotMatch(cta, /icon\?:/);
+  assert.match(cta, /justifyContent: 'center'/);
+});
+
+test('MCQ scroll shells size to their content and keep a modest footer clearance', () => {
+  const shell = read('screens/PersonalizedOnboardingScreen.tsx');
+  const branchShell = read('branch-ui/BranchScaffold.tsx');
+  assert.match(shell, /scrollContent: \{ paddingBottom: 32,/);
+  assert.doesNotMatch(shell, /scrollContent: \{[^}]*flexGrow/);
+  assert.match(shell, /optionList: \{ gap: 12,/);
+  assert.match(shell, /minHeight: 68, paddingHorizontal: 18, paddingVertical: 14/);
+  assert.match(branchShell, /content: \{ paddingBottom: 28,/);
+  assert.doesNotMatch(branchShell, /content: \{[^}]*flexGrow/);
+  assert.match(shell, /<ScrollView contentContainerStyle=\{styles\.scrollContent\}/);
+  // BranchScaffold now merges an opt-in `contentFill` (flexGrow) via array form so
+  // coaching branches can centre short beats; `styles.content` keeps its spacing.
+  assert.match(branchShell, /<ScrollView[\s\S]*contentContainerStyle=\{\[styles\.content/);
+});

@@ -7,7 +7,7 @@ import type { ScanImageMetadata } from '../../api/types';
 import { ScanEntryOptions } from '../../components/ScanEntryOptions';
 import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
 import { MAX_MEAL_DESCRIPTION_LENGTH, validateMealDescription } from '../../utils/mealDescription';
-import { preparePickedImage } from '../../utils/scanImageProcessing';
+import { getScanImageProcessingErrorMessage, preparePickedImage } from '../../utils/scanImageProcessing';
 import { OnboardingBackButton } from '../components/OnboardingBackButton';
 import { ONBOARDING_BACK_ROW_HEIGHT, ONBOARDING_BACK_ROW_TOP_GAP, ONBOARDING_HORIZONTAL_PADDING } from '../components/onboardingLayout';
 import { OnboardingCTA } from '../components/OnboardingCTA';
@@ -64,8 +64,8 @@ export function FirstScanEntryScreen({ priorityEcho, description, onDescriptionC
       if (result.canceled || !asset) return;
       const image = await preparePickedImage(asset, 'camera');
       onImageSelected('camera', image);
-    } catch {
-      setError('Okyo could not open the camera. Try again, or use Upload a photo or Describe a dish instead.');
+    } catch (error) {
+      setError(getScanImageProcessingErrorMessage(error, 'Okyo could not open the camera. Try again, or use Upload a photo or Describe a dish instead.'));
     } finally {
       setBusy(false);
     }
@@ -85,8 +85,8 @@ export function FirstScanEntryScreen({ priorityEcho, description, onDescriptionC
       if (result.canceled || !asset) return;
       const image = await preparePickedImage(asset, 'photos');
       onImageSelected('library', image);
-    } catch {
-      setError('Okyo could not open your photos. Try again, or use Take a photo or Describe a dish instead.');
+    } catch (error) {
+      setError(getScanImageProcessingErrorMessage(error, 'Okyo could not open your photos. Try again, or use Take a photo or Describe a dish instead.'));
     } finally {
       setBusy(false);
     }

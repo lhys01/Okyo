@@ -4,24 +4,23 @@ import { AppStore, Check, Group, Instagram, Tiktok, UserLove, Youtube } from 'ic
 import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors, onboardingFontFamilies as fontFamilies } from '../../../theme/okyoTheme';
+import { colors, homeRecipeCardShadow, onboardingFontFamilies as fontFamilies, onboardingTitleFont } from '../../../theme/okyoTheme';
 import { type AttributionSource } from '../../state/attribution';
-import { OnboardingBackButton } from '../../components/OnboardingBackButton';
-import { OnboardingCTA } from '../../components/OnboardingCTA';
-import { PageScaffold } from '../../components/PageScaffold';
 import { motionTokens } from '../../motion/motionTokens';
 import { useReduceMotion } from '../../motion/useReduceMotion';
 import { getShowcaseResponsiveLayout } from '../showcaseResponsiveLayout';
+import { onboardingShadow } from '../../branch-ui/branchTheme';
+import { ShowcasePageShell } from './ShowcasePageShell';
 import type { ShowcasePageProps } from './types';
 
 const OPTIONS = [
-  { source: 'influencer', label: 'From influencer', Icon: UserLove, color: '#8B62C6' },
-  { source: 'instagram', label: 'Instagram', Icon: Instagram, color: '#D45586' },
-  { source: 'tiktok', label: 'TikTok', Icon: Tiktok, color: '#29252A' },
-  { source: 'youtube', label: 'YouTube', Icon: Youtube, color: '#E6534D' },
-  { source: 'app_store', label: 'App Store search', Icon: AppStore, color: '#4B91E7' },
-  { source: 'friends_family', label: 'Friends / family', Icon: Group, color: '#47A967' },
-] as const satisfies readonly { source: AttributionSource; label: string; Icon: typeof Instagram; color: string }[];
+  { source: 'influencer', label: 'From influencer', testID: 'attribution-option-influencer', Icon: UserLove, color: '#8B62C6' },
+  { source: 'instagram', label: 'Instagram', testID: 'attribution-option-instagram', Icon: Instagram, color: '#D45586' },
+  { source: 'tiktok', label: 'TikTok', testID: 'attribution-option-tiktok', Icon: Tiktok, color: '#29252A' },
+  { source: 'youtube', label: 'YouTube', testID: 'attribution-option-youtube', Icon: Youtube, color: '#E6534D' },
+  { source: 'app_store', label: 'App Store search', testID: 'attribution-option-app-store', Icon: AppStore, color: '#4B91E7' },
+  { source: 'friends_family', label: 'Friends or family', testID: 'attribution-option-friends-family', Icon: Group, color: '#47A967' },
+] as const satisfies readonly { source: AttributionSource; label: string; testID: string; Icon: typeof Instagram; color: string }[];
 
 function AttributionRow({ option, index, selected, settled, onPress }: {
   option: typeof OPTIONS[number];
@@ -54,22 +53,22 @@ function AttributionRow({ option, index, selected, settled, onPress }: {
   const checkStyle = useAnimatedStyle(() => ({ opacity: selected ? 1 : 0, transform: [{ scale: checkScale.value }] }));
   return (
     <Animated.View style={[styles.rowWrap, rowStyle]}>
-      <AnimatedPressable
+      <Pressable
+        accessible
         accessibilityLabel={option.label}
         accessibilityRole="radio"
         accessibilityState={{ selected }}
         onPress={onPress}
-        style={[styles.row, selected && styles.rowSelected]}
+        style={[styles.row, selected && styles.rowSelected, onboardingShadow]}
+        testID={option.testID}
       >
-        <View style={[styles.iconCircle, { backgroundColor: `${option.color}14` }]}><Icon color={option.color} height={23} strokeWidth={2.2} width={23} /></View>
+        <View style={[styles.iconCircle, { backgroundColor: `${option.color}14` }]}><Icon color={option.color} height={21} strokeWidth={2.2} width={21} /></View>
         <Text maxFontSizeMultiplier={1.2} style={styles.rowLabel}>{option.label}</Text>
         <Animated.View style={[styles.check, checkStyle]}><Check color={colors.coralDark} height={20} strokeWidth={3} width={20} /></Animated.View>
-      </AnimatedPressable>
+      </Pressable>
     </Animated.View>
   );
 }
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export function AttributionPage(props: ShowcasePageProps & {
   attribution: AttributionSource | null;
@@ -99,13 +98,10 @@ export function AttributionPage(props: ShowcasePageProps & {
   };
 
   return (
-    <PageScaffold
-      footer={<OnboardingCTA label="Submit" onPress={() => { props.onSkipAttribution(); props.onNext(); }} />}
-      header={<OnboardingBackButton onPress={props.onBack} />}
-    >
-      <ScrollView contentContainerStyle={[styles.content, layout.compact && styles.contentCompact]} showsVerticalScrollIndicator={false}>
+    <ShowcasePageShell ctaLabel="Next" onBack={props.onBack} onNext={() => { props.onSkipAttribution(); props.onNext(); }} page={props.page}>
+      <ScrollView contentContainerStyle={[styles.content, layout.compact ? styles.contentCompact : styles.contentBalanced]} showsVerticalScrollIndicator={false}>
         <Text accessibilityRole="header" maxFontSizeMultiplier={1.25} style={[styles.title, layout.compact && styles.titleCompact]}>How did you hear about Okyo?</Text>
-        <View accessibilityRole="radiogroup" style={[styles.rows, layout.compact && styles.rowsCompact]}>
+        <View accessibilityRole="radiogroup" accessible={false} style={[styles.rows, layout.compact && styles.rowsCompact]}>
           {OPTIONS.map((option, index) => (
             <AttributionRow
               index={index}
@@ -118,21 +114,22 @@ export function AttributionPage(props: ShowcasePageProps & {
           ))}
         </View>
       </ScrollView>
-    </PageScaffold>
+    </ShowcasePageShell>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { alignItems: 'center', paddingBottom: 10, paddingTop: 0 },
-  contentCompact: { paddingBottom: 4 },
-  title: { alignSelf: 'stretch', color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 30, fontWeight: '900', letterSpacing: -0.8, lineHeight: 35, marginBottom: 18, textAlign: 'center' },
-  titleCompact: { fontSize: 27, lineHeight: 31, marginBottom: 10 },
-  rows: { gap: 8, width: '100%' },
+  content: { alignItems: 'center', paddingBottom: 8, paddingHorizontal: 24, paddingTop: 14 },
+  contentBalanced: { flexGrow: 1, justifyContent: 'center', paddingBottom: 18, paddingTop: 18 },
+  contentCompact: { paddingBottom: 12, paddingHorizontal: 20, paddingTop: 8 },
+  title: { ...onboardingTitleFont, alignSelf: 'center', color: colors.charcoal, fontSize: 30, letterSpacing: -0.6, lineHeight: 35, marginBottom: 14, maxWidth: 340, textAlign: 'center' },
+  titleCompact: { fontSize: 28, lineHeight: 32, marginBottom: 10 },
+  rows: { gap: 6, maxWidth: 360, width: '100%' },
   rowsCompact: { gap: 5 },
-  rowWrap: { width: '100%' },
-  row: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 18, borderWidth: 1, flexDirection: 'row', minHeight: 58, paddingHorizontal: 13 },
+  rowWrap: { borderRadius: 16, ...homeRecipeCardShadow, width: '100%' },
+  row: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 16, borderWidth: 1, flexDirection: 'row', minHeight: 52, paddingHorizontal: 12 },
   rowSelected: { backgroundColor: colors.coralSoft, borderColor: colors.coral },
-  iconCircle: { alignItems: 'center', borderRadius: 20, height: 40, justifyContent: 'center', width: 40 },
-  rowLabel: { color: colors.charcoal, flex: 1, fontFamily: fontFamilies.semibold, fontSize: 15, fontWeight: '600', marginLeft: 13 },
+  iconCircle: { alignItems: 'center', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  rowLabel: { color: colors.charcoal, flex: 1, fontFamily: fontFamilies.semibold, fontSize: 14, fontWeight: '600', marginLeft: 12 },
   check: { alignItems: 'center', height: 24, justifyContent: 'center', width: 24 },
 });

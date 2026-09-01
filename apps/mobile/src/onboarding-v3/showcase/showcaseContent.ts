@@ -9,13 +9,6 @@ export const showcaseContent = Object.freeze({
     body: 'Okyo finds practical ingredients and builds clear cookbook-style steps.',
     recipeParts: ['Practical ingredients', 'Cookbook-style steps', 'Tools included'],
   },
-  recipeOutput: {
-    title: 'More than just a recipe',
-    body: 'See nutrition, cooking time, and what making the dish at home could cost.',
-    macroMetrics: ['Calories', 'Protein', 'Carbs', 'Fat + more'],
-    timeMetrics: ['Total time', 'Active time', 'Waiting time'],
-    valueMetrics: ['Homemade cost', 'Estimated savings'],
-  },
   customize: {
     title: 'Make every recipe yours',
     body: 'Change ingredients, macros, or steps in seconds.',

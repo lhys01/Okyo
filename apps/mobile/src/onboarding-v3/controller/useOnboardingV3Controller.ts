@@ -54,8 +54,9 @@ export function useOnboardingV3Controller() {
   const sourceRef = useRef<ScanSource>('photos');
   const recipeRequestIdRef = useRef<string | null>(null);
   const didCompleteRef = useRef(false);
+  const branchPreviewCompletionBusyRef = useRef(false);
   const purchaseBusyRef = useRef(false);
-  const completionPathRef = useRef<'purchase' | 'restore' | 'dev_bypass' | null>(null);
+  const completionPathRef = useRef<'purchase' | 'restore' | 'dev_bypass' | 'branch_preview' | null>(null);
 
   stateRef.current = state;
 
@@ -102,6 +103,14 @@ export function useOnboardingV3Controller() {
     return () => { mounted = false; };
   }, [dispatch]);
 
+  const commitCanonicalOnboardingCompletion = useCallback(async (onPersisted?: () => void) => {
+    await onboardingPersistence.writeCompleted();
+    onPersisted?.();
+    useOkyoStore.getState().completeOnboarding();
+    onboardingV3Log('completed', { path: completionPathRef.current ?? 'purchase' });
+    track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'OnboardingV3' });
+  }, []);
+
   useEffect(() => {
     if (!hydratedRef.current || state.step === 'splash' || state.step === 'complete') return;
     void Promise.all([
@@ -115,17 +124,11 @@ export function useOnboardingV3Controller() {
   useEffect(() => {
     if (state.step !== 'complete' || didCompleteRef.current) return;
     didCompleteRef.current = true;
-    void (async () => {
-      try {
-        await onboardingPersistence.writeCompleted();
-      } catch (error) {
-        onboardingV3Log('completion_persist_failed', { error: String(error) });
-      }
-      useOkyoStore.getState().completeOnboarding();
-      onboardingV3Log('completed', { path: completionPathRef.current ?? 'purchase' });
-      track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'OnboardingV3' });
-    })();
-  }, [state.step]);
+    void commitCanonicalOnboardingCompletion().catch((error: unknown) => {
+      didCompleteRef.current = false;
+      onboardingV3Log('completion_persist_failed', { error: String(error) });
+    });
+  }, [commitCanonicalOnboardingCompletion, state.step]);
 
   const finishSplash = useCallback((elapsedMs: number, fontsLoaded: boolean) => {
     if (!hydratedRef.current) {
@@ -473,6 +476,30 @@ export function useOnboardingV3Controller() {
     dispatch({ type: 'DEV_BYPASS_COMPLETED' });
   }, [dispatch]);
 
+  // Stage-two branch previews have already collected their answers. Their final
+  // Done action uses the same controller completion lifecycle as the rest of V3
+  // without granting a subscription or re-entering the paywall flow.
+  const completeBranchPreview = useCallback(async () => {
+    if (branchPreviewCompletionBusyRef.current) return;
+    branchPreviewCompletionBusyRef.current = true;
+    completionPathRef.current = 'branch_preview';
+    try {
+      await commitCanonicalOnboardingCompletion(() => {
+        // Move the controller through its canonical terminal state only after
+        // durable persistence succeeds. The app shell then switches to MainTabs.
+        didCompleteRef.current = true;
+        dispatch({ type: 'BRANCH_PREVIEW_COMPLETED' });
+      });
+    } catch (error) {
+      didCompleteRef.current = false;
+      completionPathRef.current = null;
+      onboardingV3Log('completion_persist_failed', { error: String(error) });
+      throw error;
+    } finally {
+      branchPreviewCompletionBusyRef.current = false;
+    }
+  }, [commitCanonicalOnboardingCompletion, dispatch]);
+
   const back = useCallback(() => {
     if (stateRef.current.step === 'nameFox') setShowcaseInitialPage(6);
     if (stateRef.current.step === 'recipe') requestControllerRef.current?.abort();
@@ -510,6 +537,7 @@ export function useOnboardingV3Controller() {
     restore,
     acceptExistingEntitlement,
     devCompleteOnboarding,
+    completeBranchPreview,
     dismissPurchaseError: () => dispatch({ type: 'PURCHASE_CANCELLED' }),
     back,
     permissionDenied: (message?: string) => dispatch({ type: 'PERMISSION_DENIED', message }),

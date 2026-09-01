@@ -1,17 +1,16 @@
 import { StyleSheet } from 'react-native';
 
-import { colors, onboardingFontFamilies as fontFamilies } from '../../../theme/okyoTheme';
+import { colors, onboardingFontFamilies as fontFamilies, onboardingTitleFont } from '../../../theme/okyoTheme';
 
 export const pageStyles = StyleSheet.create({
   content: { alignItems: 'center', flex: 1, justifyContent: 'center' },
   title: {
     alignSelf: 'stretch',
     color: colors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 30,
-    fontWeight: '900',
+    ...onboardingTitleFont,
+    fontSize: 27,
     letterSpacing: -1,
-    lineHeight: 35,
+    lineHeight: 32,
     marginTop: 12,
     textAlign: 'center',
   },
@@ -19,9 +18,9 @@ export const pageStyles = StyleSheet.create({
     alignSelf: 'center',
     color: colors.body,
     fontFamily: fontFamilies.body,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '500',
-    lineHeight: 22,
+    lineHeight: 20,
     marginTop: 9,
     maxWidth: 350,
     textAlign: 'center',

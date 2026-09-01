@@ -5,7 +5,7 @@ import { StatsUpSquare } from 'iconoir-react-native';
 import Animated, { Easing, useAnimatedProps, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
 import Svg, { Circle, Path } from 'react-native-svg';
 
-import { colors, onboardingFontFamilies as fontFamilies } from '../../../theme/okyoTheme';
+import { colors, onboardingFontFamilies as fontFamilies, onboardingTitleFont } from '../../../theme/okyoTheme';
 import { onboardingV3Assets } from '../../assets/onboardingV3Assets';
 import { motionTokens } from '../../motion/motionTokens';
 import { useReduceMotion } from '../../motion/useReduceMotion';
@@ -89,7 +89,7 @@ export function SavingsPage(props: ShowcasePageProps) {
 
 const styles = StyleSheet.create({
   content: { alignItems: 'center', flex: 1, justifyContent: 'center' },
-  title: { alignSelf: 'stretch', color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 29, fontWeight: '900', letterSpacing: -0.8, lineHeight: 34, textAlign: 'center' },
+  title: { ...onboardingTitleFont, alignSelf: 'stretch', color: colors.charcoal, fontSize: 29, letterSpacing: -0.8, lineHeight: 34, textAlign: 'center' },
   body: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 13, fontWeight: '500', lineHeight: 19, marginTop: 6, maxWidth: 330, textAlign: 'center' },
   graph: { aspectRatio: 1.25, backgroundColor: '#FEFCFA', borderRadius: 28, marginTop: 12, maxHeight: '52%', overflow: 'hidden', position: 'relative', width: '100%' },
   graphInterior: { backgroundColor: '#FEFCFA', borderRadius: 20, bottom: '6%', left: '5%', position: 'absolute', right: '5%', top: '5%' },

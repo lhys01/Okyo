@@ -40,8 +40,12 @@ test('Design System V2 keeps V3 on the shared Inter family', () => {
   assert.match(theme, /onboardingFontFamilies[\s\S]*display: fontFamilies\.display/);
 });
 
-test('showcase headlines explicitly use Inter Black at weight 900', () => {
+test('showcase headlines use the shared Inter title token', () => {
   const pageStyles = readFileSync(resolve(process.cwd(), 'src/onboarding-v3/showcase/pages/pageStyles.ts'), 'utf8');
-  assert.match(pageStyles, /fontFamily: fontFamilies\.extraBold/);
-  assert.match(pageStyles, /fontWeight: '900'/);
+  // Titles spread the onboardingTitleFont token instead of an inline family/weight.
+  assert.match(pageStyles, /\.\.\.onboardingTitleFont/);
+  // The token itself must resolve to the Inter extraBold alias (no Sora).
+  const theme = readFileSync(resolve(process.cwd(), 'src/theme/okyoTheme.ts'), 'utf8');
+  assert.match(theme, /onboardingTitleFont[\s\S]*fontFamily: onboardingFontFamilies\.extraBold/);
+  assert.match(theme, /fontFamilies[\s\S]*extraBold: 'Inter_900Black'/);
 });

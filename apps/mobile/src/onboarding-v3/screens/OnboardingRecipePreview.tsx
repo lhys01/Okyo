@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { Recipe } from '../../mocks';
 import { FoodSafetyNotice } from '../../components/FoodSafetyNotice';
+import { NutritionSummary } from '../../components/RecipeNutritionCards';
 import { EMPTY_FOOD_PREFERENCES, findFoodPreferenceConflicts, type FoodPreferences } from '../../state/foodPreferences';
 import { classifyDietarySafetyPrompt } from '../../utils/dietarySafetyPrompt';
 import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
@@ -185,16 +186,7 @@ export function OnboardingRecipePreview({
             <Text style={styles.estimateNote}>AI estimate — your ingredients and local prices may differ.</Text>
           </RecipeSection>
         ) : null}
-        {isUsableNutrition(recipe.nutritionEstimate) ? (
-          <RecipeSection title="Estimated nutrition per serving">
-            <View style={styles.nutritionRow}>
-              <Stat label="Calories" value={String(Math.round(recipe.nutritionEstimate!.calories))} />
-              <Stat label="Protein" value={`${Math.round(recipe.nutritionEstimate!.proteinGrams)}g`} />
-              <Stat label="Carbs" value={`${Math.round(recipe.nutritionEstimate!.carbohydratesGrams)}g`} />
-            </View>
-            <Text style={styles.estimateNote}>Nutrition is an estimate, not medical advice.</Text>
-          </RecipeSection>
-        ) : null}
+        <NutritionSummary nutrition={recipe.nutritionEstimate} servings={recipe.servings} />
       </ScrollView>
       <View style={styles.footer}>
         <OnboardingCTA label="Continue" onPress={onContinue} />
@@ -209,11 +201,12 @@ function RecipeSection({ title, children }: { title: string; children: ReactNode
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
-  return <View style={styles.stat}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text></View>;
-}
-
-function isUsableNutrition(value: Recipe['nutritionEstimate']) {
-  return Boolean(value && value.calories > 0 && value.proteinGrams >= 0 && value.carbohydratesGrams >= 0 && value.fatGrams >= 0);
+  return (
+    <View style={styles.stat}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -236,7 +229,7 @@ const styles = StyleSheet.create({
   section: { backgroundColor: colors.card, borderRadius: 22, marginTop: 16, padding: 18 },
   sectionTitle: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 19, marginBottom: 12 },
   listRow: { alignItems: 'flex-start', flexDirection: 'row', marginBottom: 8 },
-  bullet: { color: colors.coral, fontSize: 19, marginRight: 8, marginTop: -1 },
+  bullet: { color: colors.coral, fontFamily: fontFamilies.bold, fontSize: 19, marginRight: 8, marginTop: -1 },
   listText: { color: colors.body, flex: 1, fontFamily: fontFamilies.body, fontSize: 14, lineHeight: 21 },
   stepRow: { alignItems: 'flex-start', flexDirection: 'row', gap: 11, marginBottom: 14 },
   stepNumber: { alignItems: 'center', backgroundColor: colors.coralSoft, borderRadius: 999, height: 28, justifyContent: 'center', width: 28 },
@@ -244,7 +237,6 @@ const styles = StyleSheet.create({
   stepText: { color: colors.body, flex: 1, fontFamily: fontFamilies.body, fontSize: 14, lineHeight: 21 },
   estimate: { color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 24 },
   estimateNote: { color: colors.muted, fontFamily: fontFamilies.body, fontSize: 11, lineHeight: 17, marginTop: 7 },
-  nutritionRow: { flexDirection: 'row', gap: 7 },
   footer: { backgroundColor: colors.background, borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth, gap: 8, paddingBottom: 8, paddingHorizontal: 24, paddingTop: 10 },
   loadingContent: { flex: 1, paddingHorizontal: 24, paddingTop: 6 },
   skeleton: { backgroundColor: '#EEE4D6', borderRadius: 14 },

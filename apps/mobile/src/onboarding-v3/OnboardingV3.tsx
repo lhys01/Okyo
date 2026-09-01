@@ -13,14 +13,21 @@ import { OnboardingCookingScreen } from './screens/OnboardingCookingScreen';
 import { OnboardingPaywallScreen } from './screens/OnboardingPaywallScreen';
 import { OnboardingRecipePreview } from './screens/OnboardingRecipePreview';
 import { NameFoxScreen } from './screens/NameFoxScreen';
+import { SaveMoneyBranchScreen } from './screens/SaveMoneyBranchScreen';
+import { HealthBranchScreen } from './screens/HealthBranchScreen';
+import { MacrosBranchScreen } from './screens/MacrosBranchScreen';
 import { PhotoConfirmScreen } from './screens/PhotoConfirmScreen';
 import { PersonalizedOnboardingScreen } from './screens/PersonalizedOnboardingScreen';
 import { ScanInputScreen } from './screens/ScanInputScreen';
 import { SplashScreen } from './screens/SplashScreen';
+import { OnboardingScreenTransition } from './components/OnboardingScreenTransition';
 import { ShowcasePager } from './showcase/ShowcasePager';
 import { resolveOnboardingActivation } from './state/onboardingV4Activation';
 import type { OnboardingV4Assignment } from './state/onboardingV4Experiment';
 import { shouldUseOnboardingV4 } from './state/onboardingV4Route';
+import { isSaveMoneyStage2PreviewEnabled } from './state/saveMoneyStage2Preview';
+import { isEatHealthierStage2PreviewEnabled } from './state/eatHealthierStage2Preview';
+import { isHitMacrosStage2PreviewEnabled } from './state/hitMacrosStage2Preview';
 
 export function OnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: number; fontsLoaded: boolean }) {
   const [assignment, setAssignment] = useState<OnboardingV4Assignment | null>(ONBOARDING_V4_ENABLED ? null : 'v3');
@@ -56,7 +63,8 @@ function LegacyOnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: numbe
   const activeCookingSession = useOkyoStore((store) => store.activeCookingSession);
   const [showcasePage, setShowcasePage] = useState(controller.showcaseInitialPage);
 
-  switch (state.step) {
+  const renderCurrentScreen = () => {
+    switch (state.step) {
     case 'splash':
       return <SplashScreen appStartedAt={appStartedAt} fontsLoaded={fontsLoaded} onFinished={controller.finishSplash} />;
     case 'showcase':
@@ -75,6 +83,9 @@ function LegacyOnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: numbe
     case 'name':
     case 'primaryGoal':
     case 'branchIntro':
+      if (state.step === 'branchIntro' && state.profile.primaryGoal === 'save_money' && isSaveMoneyStage2PreviewEnabled()) return <SaveMoneyBranchScreen onBack={controller.back} onComplete={controller.completeBranchPreview} />;
+      if (state.step === 'branchIntro' && state.profile.primaryGoal === 'eat_healthier' && isEatHealthierStage2PreviewEnabled()) return <HealthBranchScreen onBack={controller.back} onComplete={controller.completeBranchPreview} userName={state.profile.name} />;
+      if (state.profile.primaryGoal === 'hit_macros' && isHitMacrosStage2PreviewEnabled()) return <MacrosBranchScreen onBack={controller.back} onComplete={controller.completeBranchPreview} userName={state.profile.name} />;
     case 'question1':
     case 'question2':
     case 'question3':
@@ -164,9 +175,12 @@ function LegacyOnboardingV3({ appStartedAt, fontsLoaded }: { appStartedAt: numbe
           profile={state.profile}
         />
       );
-    case 'complete':
-      return <View style={styles.empty} />;
-  }
+      case 'complete':
+        return <View style={styles.empty} />;
+    }
+  };
+
+  return <OnboardingScreenTransition step={state.step}>{renderCurrentScreen()}</OnboardingScreenTransition>;
 }
 
 const styles = StyleSheet.create({

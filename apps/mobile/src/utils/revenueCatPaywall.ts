@@ -20,6 +20,10 @@ export type RevenueCatPaywallPlan<TPackage extends RevenueCatPackageLike> = {
     secondary: string;
   };
   title: string;
+  // Optional: read by the restored onboarding OnboardingPaywallScreen. Left
+  // optional so getRevenueCatPaywallPlans need not change; the screen guards undefined.
+  introOffer?: string | null;
+  renewalDisclosure?: string;
 };
 
 const packageOrder: Record<string, number> = {

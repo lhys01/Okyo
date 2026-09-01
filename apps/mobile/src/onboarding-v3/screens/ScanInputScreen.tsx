@@ -6,9 +6,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { ScanImageMetadata } from '../../api/types';
 import { ScanEntryOptions } from '../../components/ScanEntryOptions';
-import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
+import { colors, onboardingFontFamilies as fontFamilies, onboardingTitleFont } from '../../theme/okyoTheme';
 import { MAX_MEAL_DESCRIPTION_LENGTH, validateMealDescription } from '../../utils/mealDescription';
-import { preparePickedImage } from '../../utils/scanImageProcessing';
+import { requestPermissionWithNotice } from '../../privacy/requestPermissionWithNotice';
+import { getScanImageProcessingErrorMessage, preparePickedImage } from '../../utils/scanImageProcessing';
 import { OnboardingBackButton } from '../components/OnboardingBackButton';
 import { ONBOARDING_BACK_ROW_HEIGHT, ONBOARDING_BACK_ROW_TOP_GAP, ONBOARDING_HORIZONTAL_PADDING } from '../components/onboardingLayout';
 import { OnboardingCTA } from '../components/OnboardingCTA';
@@ -40,11 +41,15 @@ export function ScanInputScreen({
     setBusy(true);
     setLocalError(null);
     try {
-      const permission = source === 'camera'
-        ? await ImagePicker.requestCameraPermissionsAsync()
-        : await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        onPermissionDenied(`Photo access is needed to use ${source === 'camera' ? 'the camera' : 'your library'}. You can enable it in Settings.`);
+      // Okyo's own explanation always runs before the OS prompt — see
+      // privacy/permissionNotices.ts.
+      const outcome = source === 'camera'
+        ? await requestPermissionWithNotice('camera', ImagePicker.getCameraPermissionsAsync, ImagePicker.requestCameraPermissionsAsync)
+        : await requestPermissionWithNotice('photos', ImagePicker.getMediaLibraryPermissionsAsync, ImagePicker.requestMediaLibraryPermissionsAsync);
+      if (outcome !== 'granted') {
+        if (outcome === 'denied') {
+          onPermissionDenied(`Photo access is needed to use ${source === 'camera' ? 'the camera' : 'your library'}. You can enable it in Settings, or describe the dish instead.`);
+        }
         return;
       }
       const result = source === 'camera'
@@ -54,8 +59,8 @@ export function ScanInputScreen({
       if (result.canceled || !asset) return;
       const image = await preparePickedImage(asset, source);
       await onPhotoSelected(image);
-    } catch {
-      setLocalError('Okyo could not open that photo. Try again, or describe the dish instead.');
+    } catch (error) {
+      setLocalError(getScanImageProcessingErrorMessage(error, 'Okyo could not open that photo. Try again, or describe the dish instead.'));
     } finally {
       setBusy(false);
     }
@@ -160,7 +165,7 @@ const styles = StyleSheet.create({
   heroCopy: { flex: 1 },
   postPurchaseKiko: { marginLeft: -18, marginRight: -18 },
   eyebrow: { color: colors.coralDark, fontFamily: fontFamilies.bold, fontSize: 13, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
-  title: { color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 35, fontWeight: '900', letterSpacing: -1, lineHeight: 41, marginTop: 9 },
+  title: { ...onboardingTitleFont, color: colors.charcoal, fontSize: 35, letterSpacing: -1, lineHeight: 41, marginTop: 9 },
   body: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 15, fontWeight: '500', lineHeight: 22, marginTop: 10 },
   visualGuide: { backgroundColor: '#F7E8DC', borderColor: '#EAD7C7', borderRadius: 26, borderWidth: 1, height: 136, marginTop: 16, overflow: 'hidden', padding: 17, position: 'relative' },
   visualCopy: { width: '67%' },

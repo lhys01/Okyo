@@ -1,5 +1,5 @@
 export const DEFAULT_MASCOT_NAME = 'Kiko';
-export const MASCOT_NAME_MAX_LENGTH = 20;
+export const MASCOT_NAME_MAX_LENGTH = 40;
 
 /** Trim; fall back to Kiko when blank; hard-cap length. */
 export function sanitizeMascotName(raw: string | null | undefined): string {

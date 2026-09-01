@@ -7,7 +7,7 @@ export const motionTokens = Object.freeze({
   graphDraw: { durationMs: 900, easing: 'outQuad' },
   splash: { opacityMs: 220, scaleMs: 300, wiggleLegMs: 600, wiggleDelayMs: 300 },
   pagerDot: { durationMs: 180, reduceMotionMs: 100, inactiveWidth: 6, activeWidth: 18, inactiveOpacity: 0.3 },
-  cta: { pressInMs: 90, pressOutMs: 140, pressedScale: 0.975, shadowResting: 0.18, shadowPressed: 0.1 },
+  cta: { pressInMs: 120, pressOutMs: 220, pressedScale: 0.96, shadowResting: 0.3, shadowPressed: 0.16, releaseDelayMs: 35 },
   settle: {
     pageMs: 250, pageTranslateY: 8, pageInitialOpacity: 0.92,
     kikoMs: 280, kikoDelayMs: 40, kikoTranslateY: 6, kikoInitialScale: 0.98, kikoInitialOpacity: 0.9,

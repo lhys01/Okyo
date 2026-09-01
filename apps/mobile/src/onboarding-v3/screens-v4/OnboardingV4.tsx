@@ -2,7 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Alert, Share, StyleSheet, Text, View } from 'react-native';
 import type { PurchasesPackage } from 'react-native-purchases';
 
-import { colors } from '../../theme/okyoTheme';
+import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
 import { onboardingV4DraftPersistence, type OnboardingV4ScanInputMethod } from '../state/onboardingV4Draft';
 import { commitOnboardingV4PlanToCanonicalProfile } from '../state/onboardingV4CanonicalCommit';
 import type { ScanImageMetadata } from '../../api/types';
@@ -687,6 +687,6 @@ function resolveScanEntryPriorityEcho(draft: OnboardingV4State['draft']): string
 const styles = StyleSheet.create({
   empty: { backgroundColor: colors.background, flex: 1 },
   recovery: { backgroundColor: colors.background, flex: 1, justifyContent: 'center', paddingHorizontal: 28 },
-  recoveryTitle: { color: colors.charcoal, fontSize: 26, fontWeight: '800', textAlign: 'center' },
-  recoveryBody: { color: colors.muted, fontSize: 15, lineHeight: 22, marginTop: 10, textAlign: 'center' },
+  recoveryTitle: { color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 26, fontWeight: 'normal', textAlign: 'center' },
+  recoveryBody: { color: colors.muted, fontFamily: fontFamilies.body, fontSize: 15, lineHeight: 22, marginTop: 10, textAlign: 'center' },
 });

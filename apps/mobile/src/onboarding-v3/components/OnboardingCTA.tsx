@@ -1,8 +1,8 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
 
-import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
+import { colors, homeRecipeCardShadow, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
 import { motionTokens } from '../motion/motionTokens';
 import { useReduceMotion } from '../motion/useReduceMotion';
 
@@ -11,25 +11,31 @@ type Props = {
   onPress: () => void;
   disabled?: boolean;
   accessibilityLabel?: string;
-  icon?: ReactNode;
   variant?: 'primary' | 'secondary' | 'questionnaire';
   style?: StyleProp<ViewStyle>;
   testID?: string;
+  tone?: 'default' | 'pastelPink';
 };
+
+const CTA_SHADOW_RESTING = homeRecipeCardShadow.shadowOpacity;
+const CTA_SHADOW_PRESSED = CTA_SHADOW_RESTING * 0.6;
+const FORWARD_GUARD_MS = 320;
 
 export function OnboardingCTA({
   label,
   onPress,
   disabled = false,
   accessibilityLabel,
-  icon,
   variant = 'primary',
   style,
   testID,
+  tone = 'default',
 }: Props) {
   const reduceMotion = useReduceMotion();
+  const lockedRef = useRef(false);
+  const guardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scale = useSharedValue<number>(1);
-  const shadowOpacity = useSharedValue<number>(motionTokens.cta.shadowResting);
+  const shadowOpacity = useSharedValue<number>(CTA_SHADOW_RESTING);
   const animatedStyle = useAnimatedStyle(() => ({
     shadowOpacity: shadowOpacity.value,
     transform: [{ scale: scale.value }],
@@ -40,20 +46,33 @@ export function OnboardingCTA({
       duration: reduceMotion ? 0 : motionTokens.cta.pressInMs,
       easing: Easing.out(Easing.quad),
     });
-    shadowOpacity.value = withTiming(motionTokens.cta.shadowPressed, {
+    shadowOpacity.value = withTiming(CTA_SHADOW_PRESSED, {
       duration: reduceMotion ? 0 : motionTokens.cta.pressInMs,
       easing: Easing.out(Easing.quad),
     });
   };
   const pressOut = () => {
-    scale.value = withTiming(1, {
+    scale.value = withDelay(motionTokens.cta.releaseDelayMs, withTiming(1, {
       duration: reduceMotion ? 0 : motionTokens.cta.pressOutMs,
       easing: Easing.out(Easing.quad),
-    });
-    shadowOpacity.value = withTiming(motionTokens.cta.shadowResting, {
+    }));
+    shadowOpacity.value = withDelay(motionTokens.cta.releaseDelayMs, withTiming(CTA_SHADOW_RESTING, {
       duration: reduceMotion ? 0 : motionTokens.cta.pressOutMs,
       easing: Easing.out(Easing.quad),
-    });
+    }));
+  };
+  useEffect(() => () => {
+    if (guardTimerRef.current) clearTimeout(guardTimerRef.current);
+  }, []);
+
+  const handlePress = () => {
+    if (lockedRef.current) return;
+    lockedRef.current = true;
+    onPress();
+    guardTimerRef.current = setTimeout(() => {
+      lockedRef.current = false;
+      guardTimerRef.current = null;
+    }, reduceMotion ? 120 : FORWARD_GUARD_MS);
   };
 
   return (
@@ -63,14 +82,13 @@ export function OnboardingCTA({
         accessibilityRole="button"
         accessibilityState={{ disabled }}
         disabled={disabled}
-        onPress={onPress}
+        onPress={handlePress}
         onPressIn={pressIn}
         onPressOut={pressOut}
-        style={[styles.button, variant === 'secondary' && styles.secondary, variant === 'questionnaire' && styles.questionnaire, disabled && styles.disabled, variant === 'questionnaire' && disabled && styles.questionnaireDisabled]}
+        style={[styles.button, tone === 'pastelPink' && styles.pastelPink, variant === 'secondary' && styles.secondary, variant === 'questionnaire' && styles.questionnaire, disabled && styles.disabled, variant === 'questionnaire' && disabled && styles.questionnaireDisabled]}
         testID={testID}
       >
-        <Text maxFontSizeMultiplier={1.2} style={[styles.label, variant === 'secondary' && styles.secondaryLabel, variant === 'questionnaire' && styles.questionnaireLabel]}>{label}</Text>
-        {icon ?? <Text accessibilityElementsHidden allowFontScaling={false} style={[styles.arrow, variant === 'secondary' && styles.secondaryLabel, variant === 'questionnaire' && styles.questionnaireLabel]}>›</Text>}
+        <Text maxFontSizeMultiplier={1.2} style={[styles.label, tone === 'pastelPink' && styles.pastelPinkLabel, variant === 'secondary' && styles.secondaryLabel, variant === 'questionnaire' && styles.questionnaireLabel]}>{label}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -79,37 +97,36 @@ export function OnboardingCTA({
 const styles = StyleSheet.create({
   shadow: {
     alignSelf: 'center',
-    maxWidth: 360,
-    shadowColor: '#5A3924',
-    shadowOffset: { width: 0, height: 6 },
-    shadowRadius: 14,
-    elevation: 4,
-    width: '86%',
+    maxWidth: undefined,
+    ...homeRecipeCardShadow,
+    width: '92%',
   },
   button: {
     alignItems: 'center',
-    backgroundColor: colors.softCharcoal,
+    // Coral is Okyo's primary action colour. Ink-on-coral keeps the label at a
+    // high contrast ratio, which white-on-coral would not reach.
+    backgroundColor: '#FFA8C2',
     borderRadius: 999,
-    flexDirection: 'row',
     justifyContent: 'center',
     minHeight: 60,
     paddingHorizontal: 28,
   },
+  pastelPink: { backgroundColor: '#FFA8C2' },
   secondary: {
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
   },
   questionnaire: {
-    backgroundColor: colors.softCharcoal,
+    backgroundColor: '#FFA8C2',
   },
   questionnaireDisabled: {
-    backgroundColor: colors.muted,
-    opacity: 1,
+    backgroundColor: '#FFA8C2',
+    opacity: 0.5,
   },
   disabled: { opacity: 0.45 },
   label: { color: '#FFFFFF', fontFamily: fontFamilies.bold, fontSize: 17, fontWeight: '700' },
-  secondaryLabel: { color: colors.charcoal },
+  secondaryLabel: { color: '#FFFFFF' },
   questionnaireLabel: { color: '#FFFFFF' },
-  arrow: { color: '#FFFFFF', fontFamily: fontFamilies.bold, fontSize: 30, lineHeight: 30, marginLeft: 12, marginTop: -2 },
+  pastelPinkLabel: { color: '#FFFFFF' },
 });

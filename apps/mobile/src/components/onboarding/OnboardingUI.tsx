@@ -21,7 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { ScanStatus } from '../../api/types';
 import { KikoMascot, type KikoMascotPose } from '../KikoMascot';
 import type { Recipe } from '../../mocks';
-import { colors, fontFamilies, shadows } from '../../theme/okyoTheme';
+import { colors, onboardingFontFamilies as fontFamilies, shadows } from '../../theme/okyoTheme';
 import { getConfiguredFreeTrialDays, getSubscriptionPricing } from '../../utils/purchaseAvailability';
 import { INITIAL_SCAN_PROGRESS_STATE, nextScanProgress, type ScanProgressState } from '../../utils/scanProgress';
 

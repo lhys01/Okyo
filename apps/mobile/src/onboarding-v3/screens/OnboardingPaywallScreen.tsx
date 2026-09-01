@@ -1,10 +1,12 @@
 import { CheckCircle } from 'iconoir-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { PurchasesPackage } from 'react-native-purchases';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DEV_BYPASS_PAYWALL } from '../../config/devFlags';
+import { LegalDocumentModal } from '../../legal/LegalDocumentModal';
+import type { LegalDocumentId } from '../../legal/legalDocuments';
 import { useEntitlement } from '../../services/revenueCat';
 import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
 import { getRevenueCatPaywallPlans, hasUsableRevenueCatOffering } from '../../utils/revenueCatPaywall';
@@ -14,7 +16,9 @@ import { KikoOnboardingArtwork } from '../components/KikoOnboardingArtwork';
 import { getKikoOnboardingAssignment } from '../assets/kikoOnboardingRegistry';
 import { personalizedGoalContent, type PersonalizedOnboardingProfile } from '../state/personalizedOnboarding';
 
-export function OnboardingPaywallScreen({ isBusy, error, profile, onPurchase, onRestore, onAlreadyEntitled, onDevSkipToHome, onDismissError }: {
+export function OnboardingPaywallScreen({ allowDevelopmentPaywallBypass = true, developmentPreview, isBusy, error, profile, onPurchase, onRestore, onAlreadyEntitled, onDevSkipToHome, onDismissError }: {
+  allowDevelopmentPaywallBypass?: boolean;
+  developmentPreview?: { notice: string | null; onExit: () => void };
   isBusy: boolean;
   error: OnboardingV3Error | null;
   profile: PersonalizedOnboardingProfile;
@@ -26,6 +30,11 @@ export function OnboardingPaywallScreen({ isBusy, error, profile, onPurchase, on
 }) {
   const entitlement = useEntitlement();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // App Store Review Guideline 3.1.2 requires the Terms and Privacy Policy to
+  // be reachable from the purchase screen. Onboarding has no navigator yet, so
+  // the documents are presented as a modal over this screen — onboarding
+  // routing itself is untouched.
+  const [legalDocumentId, setLegalDocumentId] = useState<LegalDocumentId | null>(null);
   const acceptedEntitlement = useRef(false);
   const plans = useMemo(
     () => getRevenueCatPaywallPlans(entitlement.status === 'ready' ? entitlement.offering : null),
@@ -44,7 +53,7 @@ export function OnboardingPaywallScreen({ isBusy, error, profile, onPurchase, on
     // without the real-purchase "Okyo Pro unlocked" handoff screen. Always
     // false in release builds; set DEV_BYPASS_PAYWALL_ENABLED to false to
     // restore the real paywall.
-    if (DEV_BYPASS_PAYWALL && !acceptedEntitlement.current) {
+    if (DEV_BYPASS_PAYWALL && allowDevelopmentPaywallBypass && !acceptedEntitlement.current) {
       acceptedEntitlement.current = true;
       onDevSkipToHome();
       return;
@@ -53,11 +62,25 @@ export function OnboardingPaywallScreen({ isBusy, error, profile, onPurchase, on
       acceptedEntitlement.current = true;
       onAlreadyEntitled();
     }
-  }, [entitlement, onAlreadyEntitled, onDevSkipToHome]);
+  }, [allowDevelopmentPaywallBypass, entitlement, onAlreadyEntitled, onDevSkipToHome]);
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {developmentPreview ? (
+          <View style={styles.previewHeader}>
+            <Text style={styles.previewLabel}>Development-only RevenueCat preview</Text>
+            <Pressable
+              accessibilityLabel="Exit RevenueCat paywall preview"
+              accessibilityRole="button"
+              onPress={developmentPreview.onExit}
+              style={styles.previewExit}
+              testID="revenuecat-preview-exit"
+            >
+              <Text style={styles.previewExitText}>Exit preview</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <View style={styles.paywallIntro}>
           <View style={styles.paywallCopy}>
             <Text style={styles.eyebrow}>Okyo Pro</Text>
@@ -83,7 +106,7 @@ export function OnboardingPaywallScreen({ isBusy, error, profile, onPurchase, on
           const active = selected?.package.identifier === plan.package.identifier;
           return (
             <Pressable
-              accessibilityLabel={`${plan.title}, ${plan.pricing.primary}, ${plan.pricing.secondary}`}
+              accessibilityLabel={`${plan.title}, ${plan.pricing.primary}, ${plan.pricing.secondary}. ${plan.introOffer ? `${plan.introOffer} ` : ''}${plan.renewalDisclosure}`}
               accessibilityRole="radio"
               accessibilityState={{ checked: active }}
               key={plan.package.identifier}
@@ -96,6 +119,8 @@ export function OnboardingPaywallScreen({ isBusy, error, profile, onPurchase, on
               </View>
               <Text style={styles.primaryPrice}>{plan.pricing.primary}</Text>
               <Text style={styles.secondaryPrice}>{plan.pricing.secondary}</Text>
+              {plan.introOffer ? <Text style={styles.introOffer}>{plan.introOffer}</Text> : null}
+              <Text style={styles.renewalDisclosure}>{plan.renewalDisclosure}</Text>
             </Pressable>
           );
         })}
@@ -114,11 +139,30 @@ export function OnboardingPaywallScreen({ isBusy, error, profile, onPurchase, on
         ) : null}
       </ScrollView>
       <View style={styles.footer}>
+        {developmentPreview?.notice ? <Text accessibilityLiveRegion="polite" style={styles.previewNotice}>{developmentPreview.notice}</Text> : null}
         {selected ? <OnboardingCTA disabled={isBusy} label={isBusy ? 'Working…' : `Choose ${selected.title}`} onPress={() => onPurchase(selected.package as PurchasesPackage)} /> : null}
         <Pressable accessibilityLabel="Restore purchases" accessibilityRole="button" disabled={isBusy} onPress={onRestore} style={styles.restore}>
           <Text style={styles.restoreText}>Restore Purchases</Text>
         </Pressable>
+        <View style={styles.legalRow}>
+          <Pressable accessibilityHint="Opens Okyo's Terms of Service" accessibilityLabel="Terms of Service" accessibilityRole="button" onPress={() => setLegalDocumentId('terms-of-service')} style={styles.legalLink}>
+            <Text style={styles.legalLinkText}>Terms</Text>
+          </Pressable>
+          <Text style={styles.legalSeparator}>·</Text>
+          <Pressable accessibilityHint="Opens Okyo's Privacy Policy" accessibilityLabel="Privacy Policy" accessibilityRole="button" onPress={() => setLegalDocumentId('privacy-policy')} style={styles.legalLink}>
+            <Text style={styles.legalLinkText}>Privacy</Text>
+          </Pressable>
+          <Text style={styles.legalSeparator}>·</Text>
+          <Pressable accessibilityHint="Opens Okyo's Subscription Terms" accessibilityLabel="Subscription Terms" accessibilityRole="button" onPress={() => setLegalDocumentId('subscription-terms')} style={styles.legalLink}>
+            <Text style={styles.legalLinkText}>Subscription terms</Text>
+          </Pressable>
+          <Text style={styles.legalSeparator}>·</Text>
+          <Pressable accessibilityHint="Opens your App Store subscription settings" accessibilityLabel="Manage subscription" accessibilityRole="button" onPress={() => { void Linking.openURL('https://apps.apple.com/account/subscriptions').catch(() => undefined); }} style={styles.legalLink}>
+            <Text style={styles.legalLinkText}>Manage subscription</Text>
+          </Pressable>
+        </View>
       </View>
+      <LegalDocumentModal documentId={legalDocumentId} onClose={() => setLegalDocumentId(null)} />
       <Modal animationType="fade" onRequestClose={onDismissError} transparent visible={error?.kind === 'purchase'}>
         <View style={styles.modalBackdrop}>
           <View accessibilityRole="alert" accessibilityViewIsModal style={styles.dialog}>
@@ -145,6 +189,10 @@ export function OnboardingPaywallScreen({ isBusy, error, profile, onPurchase, on
 
 const styles = StyleSheet.create({
   safeArea: { backgroundColor: colors.background, flex: 1 },
+  previewHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+  previewLabel: { color: colors.coralDark, flex: 1, fontFamily: fontFamilies.bold, fontSize: 12, lineHeight: 17, paddingRight: 12 },
+  previewExit: { alignItems: 'center', borderColor: colors.border, borderRadius: 999, borderWidth: 1, justifyContent: 'center', minHeight: 44, paddingHorizontal: 14 },
+  previewExitText: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 12 },
   paywallIntro: { alignItems: 'flex-start', flexDirection: 'row', gap: 10 },
   paywallCopy: { flex: 1 },
   content: { paddingBottom: 22, paddingHorizontal: 24, paddingTop: 30 },
@@ -168,7 +216,14 @@ const styles = StyleSheet.create({
   errorCard: { backgroundColor: '#FFF5F2', borderColor: '#F1C4B9', borderRadius: 16, borderWidth: 1, marginTop: 13, padding: 13 },
   errorText: { color: colors.danger, fontFamily: fontFamilies.medium, fontSize: 13, lineHeight: 19, textAlign: 'center' },
   footer: { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth, paddingBottom: 7, paddingHorizontal: 24, paddingTop: 11 },
+  previewNotice: { color: colors.body, fontFamily: fontFamilies.medium, fontSize: 13, lineHeight: 18, marginBottom: 8, textAlign: 'center' },
   restore: { alignItems: 'center', justifyContent: 'center', minHeight: 46 },
+  introOffer: { color: colors.green, fontFamily: fontFamilies.bold, fontSize: 12.5, lineHeight: 17, marginTop: 6 },
+  renewalDisclosure: { color: colors.muted, fontFamily: fontFamilies.body, fontSize: 11.5, lineHeight: 16, marginTop: 5 },
+  legalRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center', paddingBottom: 4 },
+  legalLink: { justifyContent: 'center', minHeight: 44, paddingHorizontal: 4 },
+  legalLinkText: { color: colors.muted, fontFamily: fontFamilies.bold, fontSize: 12, textDecorationLine: 'underline' },
+  legalSeparator: { color: colors.muted, fontFamily: fontFamilies.body, fontSize: 12 },
   restoreText: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 14 },
   modalBackdrop: { alignItems: 'center', backgroundColor: 'rgba(28,24,25,0.38)', flex: 1, justifyContent: 'center', padding: 24 },
   dialog: { backgroundColor: colors.card, borderRadius: 24, maxWidth: 360, padding: 22, width: '100%' },

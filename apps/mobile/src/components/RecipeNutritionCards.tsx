@@ -40,6 +40,18 @@ export function RecipeNutritionCards({
   );
 }
 
+// Alias required by the restored onboarding OnboardingRecipePreview screen,
+// which imports { NutritionSummary } and passes an extra `servings` prop.
+// Thin wrapper so Okyo-1's card design is unchanged.
+export function NutritionSummary({
+  nutrition,
+}: {
+  nutrition: Recipe['nutritionEstimate'];
+  servings?: Recipe['servings'];
+}) {
+  return <RecipeNutritionCards nutrition={nutrition} />;
+}
+
 const styles = StyleSheet.create({
   section: {
     marginTop: 18,

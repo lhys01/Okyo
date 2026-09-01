@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { Alert, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 
+import { LegalDocumentModal } from '../../../legal/LegalDocumentModal';
+import type { LegalDocumentId } from '../../../legal/legalDocuments';
 import { onboardingV3Assets } from '../../assets/onboardingV3Assets';
 import { onboardingV3Log } from '../../utils/onboardingV3Log';
 import type { ShowcasePageProps } from './types';
@@ -14,6 +17,11 @@ const unavailable = (title: string, message: string, event: string) => {
 };
 
 export function HeroPage(props: ShowcasePageProps) {
+  // The Terms and Privacy Notice must be readable before onboarding starts —
+  // a first-run screen that says "by continuing you accept our Terms" while the
+  // Terms are unreachable is a false statement, and App Store review treats it
+  // as one. Presented as a modal so onboarding routing is untouched.
+  const [legalDocumentId, setLegalDocumentId] = useState<LegalDocumentId | null>(null);
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const scale = Math.min(windowWidth / ARTWORK.width, windowHeight / ARTWORK.height);
   const artworkWidth = ARTWORK.width * scale;
@@ -40,12 +48,25 @@ export function HeroPage(props: ShowcasePageProps) {
           accessibilityHint="Account sign-in is not available in this build"
           accessibilityLabel="I already have an account"
           accessibilityRole="button"
-          onPress={() => unavailable('Account sign-in', 'Account sign-in is not available in this build yet.', 'showcase_account_unavailable')}
+          onPress={() => unavailable('Okyo has no accounts', 'Okyo does not use accounts or sign-in. Everything you make is saved on this device, and you can delete it any time from Settings.', 'showcase_account_unavailable')}
           style={styles.accountHitTarget}
         />
-        <Pressable accessibilityLabel="Terms of Use" accessibilityRole="link" onPress={() => unavailable('Terms of Use', 'Terms of Use are not available in this build yet.', 'showcase_terms_unavailable')} style={styles.termsHitTarget} />
-        <Pressable accessibilityLabel="Privacy Notice" accessibilityRole="link" onPress={() => unavailable('Privacy Notice', 'The Privacy Notice is not available in this build yet.', 'showcase_privacy_unavailable')} style={styles.privacyHitTarget} />
+        <Pressable
+          accessibilityHint="Opens Okyo's Terms of Service"
+          accessibilityLabel="Terms of Use"
+          accessibilityRole="link"
+          onPress={() => { onboardingV3Log('showcase_terms_opened', { documentId: 'terms-of-service' }); setLegalDocumentId('terms-of-service'); }}
+          style={styles.termsHitTarget}
+        />
+        <Pressable
+          accessibilityHint="Opens Okyo's Privacy Policy"
+          accessibilityLabel="Privacy Notice"
+          accessibilityRole="link"
+          onPress={() => { onboardingV3Log('showcase_privacy_opened', { documentId: 'privacy-policy' }); setLegalDocumentId('privacy-policy'); }}
+          style={styles.privacyHitTarget}
+        />
       </View>
+      <LegalDocumentModal documentId={legalDocumentId} onClose={() => setLegalDocumentId(null)} />
     </View>
   );
 }

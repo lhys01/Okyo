@@ -22,3 +22,9 @@ export async function preparePickedImage(asset: ImagePicker.ImagePickerAsset, so
     width: result.width,
   };
 }
+
+// Required by the restored onboarding ScanInputScreen / FirstScanEntryScreen,
+// which import this helper. Standalone (no error-class dependency).
+export function getScanImageProcessingErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.name === 'ScanImageProcessingError' ? error.message : fallback;
+}

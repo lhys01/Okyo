@@ -44,7 +44,7 @@ export type OnboardingV3Event =
   | { type: 'PHOTO_SELECTED'; uri: string } | { type: 'DESCRIPTION_SUBMITTED'; text: string; scanSessionId?: string } | { type: 'PERMISSION_DENIED'; message?: string } | { type: 'PHOTO_CONFIRMED'; scanSessionId?: string }
   | { type: 'ANALYSIS_SUCCEEDED'; analysisId: string; dishName: string } | { type: 'ANALYSIS_REJECTED'; kind: 'ingredients_only' | 'not_food' | 'unclear'; message: string } | { type: 'ANALYSIS_FAILED'; message: string }
   | { type: 'RECIPE_READY'; recipeId: string } | { type: 'RECIPE_FAILED'; message: string } | { type: 'RECIPE_RETRY' } | { type: 'START_OVER' } | { type: 'COOK' } | { type: 'COOKING_COMPLETED' } | { type: 'COOKING_EXITED' }
-  | { type: 'PURCHASE_SUCCEEDED'; entitled: boolean } | { type: 'PURCHASE_CANCELLED' } | { type: 'PURCHASE_FAILED'; message: string } | { type: 'RESTORE_SUCCEEDED'; entitled: boolean } | { type: 'DEV_BYPASS_COMPLETED' } | { type: 'BACK' };
+  | { type: 'PURCHASE_SUCCEEDED'; entitled: boolean } | { type: 'PURCHASE_CANCELLED' } | { type: 'PURCHASE_FAILED'; message: string } | { type: 'RESTORE_SUCCEEDED'; entitled: boolean } | { type: 'DEV_BYPASS_COMPLETED' } | { type: 'BRANCH_PREVIEW_COMPLETED' } | { type: 'BACK' };
 
 export const initialOnboardingV3State: OnboardingV3State = Object.freeze({ step: 'splash', resumeStep: null, profile: emptyPersonalizedProfile, mascotName: 'Kiko', attribution: null, dietaryRestrictions: [], dietaryDislikes: [], analysisId: null, dishName: null, photoUri: null, recipeId: null, scanSessionId: null, error: null });
 
@@ -64,24 +64,24 @@ export function onboardingV3Reducer(state: OnboardingV3State, event: OnboardingV
     case 'primaryGoal':
       if (event.type === 'PRIMARY_GOAL_SELECTED' && isPrimaryGoal(event.goal)) return { ...state, step: 'branchIntro', profile: { ...state.profile, primaryGoal: event.goal, secondaryGoals: [event.goal], answers: {}, nutritionProfile: event.goal === 'hit_macros' ? { ...state.profile.nutritionProfile } : state.profile.nutritionProfile } };
       return event.type === 'BACK' ? { ...state, step: 'name' } : state;
-    case 'branchIntro': return event.type === 'CONTINUE' ? { ...state, step: 'question1' } : event.type === 'BACK' ? { ...state, step: 'primaryGoal' } : state;
+    case 'branchIntro': return event.type === 'BRANCH_PREVIEW_COMPLETED' ? { ...state, step: 'complete', error: null } : event.type === 'CONTINUE' ? { ...state, step: 'question1' } : event.type === 'BACK' ? { ...state, step: 'primaryGoal' } : state;
     default: break;
   }
   if (isQuestionStep(state.step)) return reduceQuestion(state, event);
   switch (state.step) {
-    case 'holdReveal': return event.type === 'HOLD_COMPLETED' ? { ...state, step: 'branchReveal' } : event.type === 'BACK' ? { ...state, step: previousQuestionStep(state) } : state;
+    case 'holdReveal': return event.type === 'HOLD_COMPLETED' ? { ...state, step: 'planReady' } : event.type === 'BACK' ? { ...state, step: 'secondaryGoals' } : state;
     case 'branchReveal': return event.type === 'CONTINUE' ? { ...state, step: nextAfterFirstInsight(state) } : event.type === 'BACK' ? { ...state, step: 'holdReveal' } : state;
     case 'branchInsight': return event.type === 'CONTINUE' ? { ...state, step: nextAfterSecondInsight(state) } : event.type === 'BACK' ? { ...state, step: previousQuestionStep(state) } : state;
     case 'nutritionTargets': return event.type === 'CONTINUE' ? { ...state, step: 'branchDemo' } : event.type === 'BACK' ? { ...state, step: 'question9' } : state;
     case 'branchDemo': return event.type === 'CONTINUE' ? { ...state, step: 'dietaryPreferences' } : event.type === 'BACK' ? { ...state, step: state.profile.primaryGoal === 'hit_macros' ? 'nutritionTargets' : 'branchInsight' } : state;
     case 'dietaryPreferences':
-      if (event.type === 'DIETARY_SET') { const profile = setDietaryPreferences(state.profile, event.preferences); return { ...state, profile, dietaryRestrictions: [...profile.dietaryPreferences.allergies, ...profile.dietaryPreferences.restrictions], dietaryDislikes: [...profile.dietaryPreferences.avoidances, ...profile.dietaryPreferences.dislikes], step: 'secondaryGoals' }; }
+      if (event.type === 'DIETARY_SET') { const profile = setDietaryPreferences(state.profile, event.preferences); return { ...state, profile, dietaryRestrictions: [...profile.dietaryPreferences.allergies, ...profile.dietaryPreferences.restrictions], dietaryDislikes: [...profile.dietaryPreferences.avoidances, ...profile.dietaryPreferences.dislikes], step: 'holdReveal' }; }
       return event.type === 'BACK' ? { ...state, step: 'branchDemo' } : state;
     case 'secondaryGoals':
-      if (event.type === 'SECONDARY_GOALS_SET') { const primary = state.profile.primaryGoal; return { ...state, profile: { ...state.profile, secondaryGoals: [...new Set(primary ? [primary, ...event.goals.filter((goal) => goal !== primary)] : event.goals)] }, step: 'planReady' }; }
+      if (event.type === 'SECONDARY_GOALS_SET') { const primary = state.profile.primaryGoal; return { ...state, profile: { ...state.profile, secondaryGoals: [...new Set(primary ? [primary, ...event.goals.filter((goal) => goal !== primary)] : event.goals)] }, step: 'holdReveal' }; }
       return event.type === 'BACK' ? { ...state, step: 'dietaryPreferences' } : state;
     case 'personalizedFuture': return event.type === 'CONTINUE' ? { ...state, step: 'planReady' } : event.type === 'BACK' ? { ...state, step: 'dietaryPreferences' } : state;
-    case 'planReady': return event.type === 'CONTINUE' ? { ...state, step: 'paywall' } : event.type === 'BACK' ? { ...state, step: 'secondaryGoals' } : state;
+    case 'planReady': return event.type === 'CONTINUE' ? { ...state, step: 'paywall' } : event.type === 'BACK' ? { ...state, step: 'dietaryPreferences' } : state;
     case 'paywall':
       if (event.type === 'PURCHASE_SUCCEEDED') return event.entitled ? { ...state, step: 'postPurchase', error: null } : { ...state, error: { kind: 'not_entitled', message: 'Your purchase completed, but Okyo Pro is not active yet.' } };
       if (event.type === 'RESTORE_SUCCEEDED') return event.entitled ? { ...state, step: 'postPurchase', error: null } : { ...state, error: { kind: 'nothing_to_restore', message: "We couldn't find an Okyo Pro subscription to restore." } };
@@ -102,7 +102,7 @@ function reduceQuestion(state: OnboardingV3State, event: OnboardingV3Event): Onb
   if (event.type !== 'CONTINUE' || !hasCurrentQuestionAnswer(state)) return state;
   const goal = state.profile.primaryGoal!;
   const index = questionSteps.indexOf(state.step as QuestionStep);
-  if ((goal !== 'hit_macros' && index === 1) || (goal === 'hit_macros' && index === 3)) return { ...state, step: 'holdReveal' };
+  if ((goal !== 'hit_macros' && index === 1) || (goal === 'hit_macros' && index === 3)) return { ...state, step: nextVisibleQuestionStep(state, index) ?? 'branchDemo' };
   if (goal !== 'hit_macros' && index === 4) return { ...state, step: 'branchInsight' };
   if (goal === 'hit_macros' && (index === 7 || (index === 6 && !isQuestionVisible(state, 7)))) return { ...state, step: 'branchInsight' };
   if (goal === 'hit_macros' && index === 8) return { ...state, step: 'nutritionTargets' };

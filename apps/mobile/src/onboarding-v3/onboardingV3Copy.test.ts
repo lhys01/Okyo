@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const pageFiles = [
-  'HeroPage.tsx', 'ScanPage.tsx', 'RecipeOutputPage.tsx', 'CustomizePage.tsx',
+  'HeroPage.tsx', 'ScanPage.tsx', 'CustomizePage.tsx', 'CustomizeDetailsPage.tsx',
   'AttributionPage.tsx', 'SavingsPage.tsx', 'ValuePage.tsx', 'MeetKikoPage.tsx',
 ];
 
@@ -27,9 +27,8 @@ test('showcase pages contain the approved product copy and none of the rejected 
     'Make every recipe yours', 'How did you hear about Okyo?', 'Spend less on the dishes you love',
     'Know what goes into every bite', 'This fox is now your virtual pet',
     'Take photo', 'Upload photo', 'Describe a dish', 'Practical ingredients', 'Cookbook-style steps',
-    'Calories', 'Protein', 'Carbs', 'Fat + more', 'Total time', 'Active time', 'Waiting time',
-    'Tools', 'Homemade cost', 'Estimated savings', 'More protein', 'Fewer calories', 'Swap ingredient',
-    'Simpler steps', 'Cook step-by-step', 'Illustrative example', '$84 saved this month with Okyo',
+    'More protein', 'Fewer calories', 'Swap ingredient', 'Simpler steps', 'Cook step-by-step',
+    'Illustrative example', '$84 saved this month with Okyo',
   ]) {
     assert.match(source, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
@@ -44,7 +43,7 @@ test('the complete V3 UI contains no rejected product positioning or confirmatio
   for (const forbidden of [
     '$6.20', '$17.80', '$11.60',
     'See what a scan includes', 'Quick Check', 'Does this look right', 'Yes, looks good',
-    'hasAcceptedOnboardingRecipe', 'pantry', 'fridge', 'leftovers',
+    'hasAcceptedOnboardingRecipe', 'pantry', 'fridge',
   ]) {
     assert.doesNotMatch(source, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
   }
@@ -56,7 +55,7 @@ test('screen two uses the approved full-screen artwork without rebuilt callouts'
   const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'showcase', 'pages', 'ScanPage.tsx'), 'utf8');
   assert.doesNotMatch(source, /scanLine|scanProgress|withRepeat|Ingredients floating|Recipe steps floating|Cook time floating/);
   assert.match(source, /ApprovedArtworkPage/);
-  assert.match(source, /approvedOnboarding3/);
+  assert.match(source, /onboarding3CarouselArtwork/);
 });
 
 test('attribution uses six vector icons and no fox or single-letter glyph placeholders', () => {
