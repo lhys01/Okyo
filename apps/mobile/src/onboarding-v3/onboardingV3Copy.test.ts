@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const pageFiles = [
-  'HeroPage.tsx', 'ScanPage.tsx', 'CustomizePage.tsx', 'CustomizeDetailsPage.tsx',
+  'HeroPage.tsx', 'ScanPage.tsx', 'RecipeOutputPage.tsx', 'CustomizePage.tsx',
   'AttributionPage.tsx', 'SavingsPage.tsx', 'ValuePage.tsx', 'MeetKikoPage.tsx',
 ];
 

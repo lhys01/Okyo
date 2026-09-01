@@ -6,7 +6,6 @@ import { Pressable, StyleSheet, useWindowDimensions, View, type LayoutChangeEven
 // All three supplied showcase screens share this extracted screen canvas.
 // The source PNGs include a phone mockup; derived assets contain only its app screen.
 const ARTWORK = { height: 1608, width: 852 } as const;
-const V3_ARTWORK_SCALE = 0.92;
 
 export function ApprovedArtworkPage({ artwork, onBack, onNext }: { artwork: number; onBack: () => void; onNext: () => void }) {
   // This page renders below the persistent onboarding header, so fit against
@@ -19,11 +18,11 @@ export function ApprovedArtworkPage({ artwork, onBack, onNext }: { artwork: numb
   const windowHeight = measured?.height ?? window.height;
   // Fill from the real screen origin. The artwork is a complete screen canvas;
   // vertically centering it leaves a legacy header-sized void above the content.
-  const scale = Math.max(windowWidth / ARTWORK.width, windowHeight / ARTWORK.height) * V3_ARTWORK_SCALE;
+  const scale = Math.max(windowWidth / ARTWORK.width, windowHeight / ARTWORK.height);
   const artworkFrame = {
     height: ARTWORK.height * scale,
     left: (windowWidth - ARTWORK.width * scale) / 2,
-    top: Math.max(0, (windowHeight - ARTWORK.height * scale) / 2),
+    top: 0,
     width: ARTWORK.width * scale,
   };
 

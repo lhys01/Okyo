@@ -13,11 +13,11 @@ test('splash transitions into the restored pager whose first page uses the appro
   assert.match(pager, /<PagerView/);
   assert.match(pager, /<HeroPage \{\.\.\.pageProps\(0\)\}/);
   assert.match(pager, /<ScanPage \{\.\.\.pageProps\(1\)\}/);
-  assert.match(pager, /<ValuePage \{\.\.\.pageProps\(2\)\}/);
+  assert.match(pager, /<RecipeOutputPage \{\.\.\.pageProps\(2\)\}/);
   assert.match(pager, /<CustomizePage \{\.\.\.pageProps\(3\)\}/);
-  assert.match(pager, /<AttributionPage[\s\S]*\{\.\.\.pageProps\(5\)\}/);
-  assert.match(pager, /<MeetKikoPage \{\.\.\.pageProps\(6\)\}/);
-  assert.doesNotMatch(pager, /SavingsPage/);
+  assert.match(pager, /<AttributionPage[\s\S]*\{\.\.\.pageProps\(4\)\}/);
+  assert.match(pager, /<MeetKikoPage \{\.\.\.pageProps\(5\)\}/);
+  assert.doesNotMatch(pager, /SavingsPage|ValuePage/);
   assert.match(descriptors, /id: 'hero', primaryAsset: 'approvedHeroArtwork'/);
 });
 
@@ -49,7 +49,7 @@ test('the restored approved components hand off from onboarding11 to user Name w
   const pager = read('showcase/ShowcasePager.tsx');
   const personalized = read('screens/PersonalizedOnboardingScreen.tsx');
   const approvedComponents = [
-    'ScanPage', 'ValuePage', 'CustomizePage', 'CustomizeDetailsPage', 'AttributionPage',
+    'ScanPage', 'RecipeOutputPage', 'CustomizePage', 'AttributionPage',
     'MeetKikoPage',
   ];
 
@@ -62,5 +62,5 @@ test('the restored approved components hand off from onboarding11 to user Name w
   assert.match(machine, /case 'name':[\s\S]{0,220}step: 'primaryGoal'/);
   assert.match(personalized, /What should we call you\?/);
   assert.equal((pager.match(/<AttributionPage/g) ?? []).length, 1);
-  assert.doesNotMatch(pager, /SavingsPage|RecipeOutputPage|PersonalizedOnboardingScreen|KikoOnboardingArtwork/);
+  assert.doesNotMatch(pager, /SavingsPage|ValuePage|PersonalizedOnboardingScreen|KikoOnboardingArtwork/);
 });

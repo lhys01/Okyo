@@ -11,10 +11,11 @@ const readPage = (name: string) => readFileSync(resolve(pagesDir, name), 'utf8')
 
 const mappings = [
   { page: 1, component: 'ScanPage.tsx', source: 'onboarding3.png', asset: 'approvedOnboarding3' },
+  { page: 2, component: 'RecipeOutputPage.tsx', source: 'onboarding4.png', asset: 'approvedOnboarding4' },
   { page: 3, component: 'CustomizePage.tsx', source: 'onboarding5.png', asset: 'approvedOnboarding5' },
 ] as const;
 
-test('legacy screenshot pages retain their approved source mappings', () => {
+test('showcase pages 1–3 map to screen-only exports of their approved source images', () => {
   for (const mapping of mappings) {
     const descriptor = showcasePages[mapping.page];
     assert.equal(descriptor.approvedSource, mapping.source);
@@ -22,20 +23,6 @@ test('legacy screenshot pages retain their approved source mappings', () => {
     assert.equal(descriptor.kikoCount, 1);
     assert.match(readPage(mapping.component), new RegExp(`artwork=\\{onboardingV3Assets\\.${mapping.asset}\\}`));
   }
-});
-
-test('the value page replaces the duplicate baked More than just a recipe screen', () => {
-  assert.equal(showcasePages[2].id, 'value');
-  assert.equal(showcasePages[2].primaryAsset, 'valuePastaBowl');
-  assert.match(readPage('ValuePage.tsx'), /showcaseContent\.value\.title/);
-  assert.doesNotMatch(readPage('ValuePage.tsx'), /More than just a recipe/);
-});
-
-test('the approved crop is a new asset outside the restored onboarding directory', () => {
-  const assets = readFileSync(resolve(process.cwd(), 'src/onboarding-v3/assets/onboardingV3Assets.ts'), 'utf8');
-  assert.match(assets, /approvedMoreThanRecipeArtwork/);
-  assert.equal(showcasePages[4]?.primaryAsset, 'approvedMoreThanRecipeArtwork');
-  assert.equal(showcasePages.filter((page) => page.primaryAsset === 'approvedMoreThanRecipeArtwork').length, 1);
 });
 
 test('pages 1–3 cannot substitute one another’s approved artwork', () => {
@@ -50,8 +37,8 @@ test('pages 1–3 cannot substitute one another’s approved artwork', () => {
 test('the shared full-artwork page preserves aspect ratio and real Back/Next controls', () => {
   const source = readPage('ApprovedArtworkPage.tsx');
   assert.match(source, /contentFit="cover"/);
-  assert.match(source, /Math\.max\(windowWidth \/ ARTWORK\.width, windowHeight \/ ARTWORK\.height\) \* V3_ARTWORK_SCALE/);
-  assert.match(source, /top: Math\.max\(0, \(windowHeight - ARTWORK\.height \* scale\) \/ 2\)/);
+  assert.match(source, /Math\.max\(windowWidth \/ ARTWORK\.width, windowHeight \/ ARTWORK\.height\)/);
+  assert.match(source, /top: 0/);
   assert.match(source, /ARTWORK = \{ height: 1608, width: 852 \}/);
   assert.match(source, /hidden=\{false\}/);
   assert.match(source, /accessibilityLabel="Go back"[\s\S]{0,180}onPress=\{onBack\}/);

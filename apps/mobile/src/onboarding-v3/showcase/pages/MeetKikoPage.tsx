@@ -66,7 +66,7 @@ export function MeetKikoPage(props: ShowcasePageProps) {
 
 const styles = StyleSheet.create({
   content: { alignItems: 'center', flex: 1, justifyContent: 'center' },
-  title: { alignSelf: 'stretch', color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 28, fontWeight: '900', letterSpacing: -1, lineHeight: 33, textAlign: 'center', transform: [{ translateY: -12 }] },
-  heroArea: { aspectRatio: 1, maxHeight: '66%', position: 'relative', width: '115%' },
+  title: { alignSelf: 'stretch', color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 31, fontWeight: '900', letterSpacing: -1, lineHeight: 36, textAlign: 'center', transform: [{ translateY: -18 }] },
+  heroArea: { aspectRatio: 1, maxHeight: '70%', position: 'relative', width: '125%' },
   hero: { bottom: '-1%', left: '4%', position: 'absolute', top: '0%', width: '92%' },
 });

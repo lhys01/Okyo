@@ -3,9 +3,8 @@ import type { OnboardingV3AssetKey } from '../assets/onboardingV3Assets';
 export type ShowcasePageId =
   | 'hero'
   | 'scan'
-  | 'value'
+  | 'recipeOutput'
   | 'customize'
-  | 'customizeDetails'
   | 'attribution'
   | 'meetKiko';
 
@@ -20,9 +19,8 @@ export type ShowcasePageDescriptor = {
 export const showcasePages: readonly ShowcasePageDescriptor[] = Object.freeze([
   { id: 'hero', primaryAsset: 'approvedHeroArtwork', prefetchAssets: ['approvedHeroArtwork'], approvedSource: 'reach-your-food-goals.png', kikoCount: 1 },
   { id: 'scan', primaryAsset: 'approvedOnboarding3', prefetchAssets: ['approvedOnboarding3'], approvedSource: 'onboarding3.png', kikoCount: 1 },
-  { id: 'value', primaryAsset: 'valuePastaBowl', prefetchAssets: ['valuePastaBowl', 'valueBrackets', 'valueLeafTile', 'valueChartTile', 'valueChefTile', 'valueClockTile', 'valueSparkles'] },
+  { id: 'recipeOutput', primaryAsset: 'approvedOnboarding4', prefetchAssets: ['approvedOnboarding4'], approvedSource: 'onboarding4.png', kikoCount: 1 },
   { id: 'customize', primaryAsset: 'approvedOnboarding5', prefetchAssets: ['approvedOnboarding5'], approvedSource: 'onboarding5.png', kikoCount: 1 },
-  { id: 'customizeDetails', primaryAsset: 'approvedMoreThanRecipeArtwork', prefetchAssets: ['approvedMoreThanRecipeArtwork'] },
   { id: 'attribution', primaryAsset: 'onboarding6KikoMark', prefetchAssets: ['onboarding6KikoMark'], approvedSource: 'onboarding6.png', kikoCount: 1 },
   { id: 'meetKiko', primaryAsset: 'meetKikoHeroUpdated', prefetchAssets: ['meetKikoHeroUpdated'], approvedSource: 'onboarding10.png', kikoCount: 1 },
 ]);
