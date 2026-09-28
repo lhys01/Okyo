@@ -5,6 +5,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { z } from 'zod';
 
 import { getAiConfig, getPublicAiConfig } from './config/aiConfig.js';
+import { productionReadiness } from './services/productionReadiness.js';
 import { getCostControlConfig } from './config/costControlConfig.js';
 import { validateEpicureConfigAtStartup } from './config/openRouter.js';
 import {
@@ -236,6 +237,31 @@ app.get('/health', (_request, response) => {
     databaseEnabled: false,
     timestamp: new Date().toISOString(),
   });
+});
+
+app.get('/live', (_request, response) => {
+  sendOk(response, { status: 'live', service: 'okyo-api', timestamp: new Date().toISOString() });
+});
+
+app.get('/ready', async (_request, response, next) => {
+  try {
+    const dependencies = await productionReadiness();
+    const ready = process.env.NODE_ENV !== 'production' || dependencies.productionAiEnabled;
+    const requestIdHeader = response.getHeader('x-okyo-request-id');
+    const requestId = typeof requestIdHeader === 'string' ? requestIdHeader : randomUUID();
+    response.setHeader('x-okyo-request-id', requestId);
+    const payload = {
+      status: ready ? 'ready' : 'not_ready',
+      service: 'okyo-api',
+      ...dependencies,
+      requestId,
+      timestamp: new Date().toISOString(),
+    };
+    if (ready) sendOk(response, payload);
+    else sendError(response.status(503), 'not_ready', 'This instance is not ready to receive production traffic.', payload);
+  } catch (error) {
+    next(error);
+  }
 });
 const askOkyoRequestSchema = z.object({
   question: z.string().trim().min(1).max(500),
