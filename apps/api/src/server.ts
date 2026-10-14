@@ -4,6 +4,9 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 
+import { AccountDeletionError, deleteAuthenticatedAccount } from './services/accountDeletion.js';
+import { requireAuthenticatedUser } from './middleware/requireAuthenticatedUser.js';
+
 import { getAiConfig, getPublicAiConfig } from './config/aiConfig.js';
 import { productionReadiness } from './services/productionReadiness.js';
 import { getCostControlConfig } from './config/costControlConfig.js';
@@ -241,6 +244,21 @@ app.get('/health', (_request, response) => {
 
 app.get('/live', (_request, response) => {
   sendOk(response, { status: 'live', service: 'okyo-api', timestamp: new Date().toISOString() });
+});
+
+// The user identity comes exclusively from a verified Clerk session. The
+// client cannot select a target account for deletion.
+app.delete('/v1/account', requireAuthenticatedUser, async (request, response, next) => {
+  try {
+    await deleteAuthenticatedAccount(request.get('authorization'));
+    sendOk(response, { deleted: true });
+  } catch (error) {
+    if (error instanceof AccountDeletionError) {
+      sendError(response.status(error.status), error.code, error.userMessage);
+      return;
+    }
+    next(error);
+  }
 });
 
 app.get('/ready', async (_request, response, next) => {
