@@ -1,5 +1,11 @@
 import { databaseConfigured, databaseHealthy } from '../persistence/database.js';
 import { getAiConfig } from '../config/aiConfig.js';
+import {
+  areAuthorizedPartiesValid,
+  getAccountDeletionConfig,
+  isClerkSecretValid,
+  isProductionDeployment,
+} from './accountDeletion.js';
 
 type ClerkReadiness = {
   clerkSecretConfigured: boolean;
@@ -9,32 +15,15 @@ type ClerkReadiness = {
 };
 
 function getProductionAuthReadiness(): ClerkReadiness {
-  const clerkSecret = process.env.CLERK_SECRET_KEY?.trim() ?? '';
-  const authorizedParties = (process.env.CLERK_AUTHORIZED_PARTIES ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-
+  const config = getAccountDeletionConfig();
+  const authorizedPartiesConfigured = config.authorizedParties.length > 0;
+  const authorizedPartiesValid = areAuthorizedPartiesValid(config.authorizedParties);
   return {
-    clerkSecretConfigured: clerkSecret.length > 0,
-    clerkSecretValid: clerkSecret.startsWith('sk_live_') && clerkSecret.length > 'sk_live_'.length,
-    authorizedPartiesConfigured: authorizedParties.length > 0,
-    authorizedPartiesValid: authorizedParties.length > 0 && authorizedParties.every(isAuthorizedParty),
+    clerkSecretConfigured: Boolean(config.clerkSecretKey),
+    clerkSecretValid: isClerkSecretValid(config.clerkSecretKey),
+    authorizedPartiesConfigured,
+    authorizedPartiesValid,
   };
-}
-
-function isAuthorizedParty(value: string): boolean {
-  if (value.includes('*') || value === 'null' || value.length > 512) return false;
-  if (/^https:\/\//i.test(value)) {
-    try {
-      const url = new URL(value);
-      return url.protocol === 'https:' && Boolean(url.hostname) && url.username === '' &&
-        url.password === '' && url.pathname === '/' && url.search === '' && url.hash === '';
-    } catch {
-      return false;
-    }
-  }
-  return /^okyo:\/\/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*$/i.test(value);
 }
 
 function hasValidQuotaConfiguration(): boolean {
@@ -58,7 +47,8 @@ export async function productionReadiness() {
   const persistentStateHealthy = persistentStateConfigured && await databaseHealthy();
   const quotaConfigValid = hasValidQuotaConfiguration();
   const providerConfigured = ai.enabled && Boolean(ai.openRouterApiKey?.startsWith('sk-or-v1-'));
-  const authConfigValid = clerkAuth.clerkSecretValid && clerkAuth.authorizedPartiesValid;
+  const authConfigValid = clerkAuth.clerkSecretValid &&
+    (!isProductionDeployment() || clerkAuth.authorizedPartiesValid);
   // Readiness never calls OpenRouter (or any other AI provider). It only
   // checks local configuration and durable persistence, so a healthcheck
   // cannot create spend or leak credentials.

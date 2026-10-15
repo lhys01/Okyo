@@ -15,6 +15,7 @@ test('production readiness fails closed without durable persistence and never pr
 
   try {
     process.env.NODE_ENV = 'production';
+    process.env.RAILWAY_ENVIRONMENT = 'production';
     process.env.AI_ENABLED = 'true';
     process.env.PRODUCTION_AI_ENABLED = 'true';
     process.env.OPENROUTER_API_KEY = 'sk-or-v1-not-a-real-test-key';
@@ -50,6 +51,7 @@ test('production readiness accepts only healthy durable persistence and local pr
 
   try {
     process.env.NODE_ENV = 'production';
+    process.env.RAILWAY_ENVIRONMENT = 'production';
     process.env.AI_ENABLED = 'true';
     process.env.PRODUCTION_AI_ENABLED = 'true';
     process.env.OPENROUTER_API_KEY = 'sk-or-v1-not-a-real-test-key';
@@ -77,6 +79,28 @@ test('production readiness accepts only healthy durable persistence and local pr
     globalThis.fetch = originalFetch;
     resetProductionReadinessProbesForTests();
     useDatabaseForTests();
+    restoreEnvironment(savedEnv);
+  }
+});
+
+test('Development readiness accepts the matching Development Clerk key without Production authorized parties', async () => {
+  const savedEnv = { ...process.env };
+  try {
+    process.env.NODE_ENV = 'production';
+    process.env.RAILWAY_ENVIRONMENT = 'development';
+    process.env.CLERK_SECRET_KEY = 'sk_test_development-fixture';
+    delete process.env.CLERK_AUTHORIZED_PARTIES;
+    delete process.env.DATABASE_URL;
+    process.env.AI_ENABLED = 'false';
+    process.env.PRODUCTION_AI_ENABLED = 'false';
+
+    const readiness = await productionReadiness();
+
+    assert.equal(readiness.clerkAuth.clerkSecretConfigured, true);
+    assert.equal(readiness.clerkAuth.clerkSecretValid, true);
+    assert.equal(readiness.clerkAuth.authorizedPartiesConfigured, false);
+    assert.equal(readiness.clerkAuth.clerkCredentialValid, true);
+  } finally {
     restoreEnvironment(savedEnv);
   }
 });
