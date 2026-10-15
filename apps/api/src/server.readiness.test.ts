@@ -71,3 +71,9 @@ test('/ready fails closed without persistence, is safe, and never calls a provid
     Object.assign(process.env, savedEnv);
   }
 });
+
+test('read-only account session probe requires the same authentication as deletion', async () => {
+  const response = await request('/v1/account/session');
+  assert.equal(response.status, 401);
+  assert.equal((response.body as { error: { code: string } }).error.code, 'authentication_required');
+});

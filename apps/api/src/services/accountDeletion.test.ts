@@ -64,6 +64,19 @@ test('a Railway Production deployment still rejects a Development Clerk server k
   }
 });
 
+test('Development refuses an unclassified Clerk server credential', () => {
+  const saved = { ...process.env };
+  process.env.RAILWAY_ENVIRONMENT = 'development';
+  try {
+    assert.equal(isClerkSecretValid('invalid-server-credential'), false);
+    assert.equal(isClerkSecretValid('sk_live_fixture'), false);
+    assert.equal(isClerkSecretValid('sk_test_fixture'), true);
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
+});
+
 test('an already-deleted Clerk user and missing user-owned records are safe to retry', async () => {
   const deletedUsers: string[] = [];
   let cleanups = 0;

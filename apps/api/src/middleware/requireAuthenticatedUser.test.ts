@@ -33,3 +33,32 @@ test('Railway Development authenticates a Development Clerk session when NODE_EN
     Object.assign(process.env, saved);
   }
 });
+
+test('malformed Development Clerk server credential fails as unavailable before token verification', async () => {
+  const saved = { ...process.env };
+  process.env.NODE_ENV = 'production';
+  process.env.RAILWAY_ENVIRONMENT = 'development';
+  process.env.CLERK_SECRET_KEY = 'invalid-server-credential';
+  try {
+    let status: number | undefined;
+    let code: string | undefined;
+    let verified = false;
+    const response = {
+      locals: {},
+      status(nextStatus: number) { status = nextStatus; return this; },
+      json(body: { error?: { code?: string } }) { code = body.error?.code; return this; },
+    };
+    const middleware = createRequireAuthenticatedUser(async () => {
+      verified = true;
+      return { sub: 'user_123ABC' };
+    });
+    const request = { get: () => 'Bearer example.session.token' };
+    await middleware(request as unknown as Request, response as unknown as Response, (() => undefined) as NextFunction);
+    assert.equal(status, 503);
+    assert.equal(code, 'authentication_unavailable');
+    assert.equal(verified, false);
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
+});

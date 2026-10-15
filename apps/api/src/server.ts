@@ -261,6 +261,12 @@ app.delete('/v1/account', requireAuthenticatedUser, async (request, response, ne
   }
 });
 
+// Lets the app confirm its current Clerk token with the same middleware used
+// by deletion, without starting any destructive operation.
+app.get('/v1/account/session', requireAuthenticatedUser, (_request, response) => {
+  sendOk(response, { authenticated: true });
+});
+
 app.get('/ready', async (_request, response, next) => {
   try {
     const dependencies = await productionReadiness();

@@ -91,7 +91,8 @@ export function isProductionDeployment(environment: NodeJS.ProcessEnv = process.
 
 export function isClerkSecretValid(secret: string | null): boolean {
   if (!secret) return false;
-  return !isProductionDeployment() || (secret.startsWith('sk_live_') && secret.length > 'sk_live_'.length);
+  const expectedPrefix = isProductionDeployment() ? 'sk_live_' : 'sk_test_';
+  return secret.startsWith(expectedPrefix) && secret.length > expectedPrefix.length;
 }
 
 /** Extracts only a conventional bearer token; never accepts a raw JWT header. */
