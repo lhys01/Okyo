@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 import { AccountDeletionError, deleteAuthenticatedAccount } from './services/accountDeletion.js';
 import { requireAuthenticatedUser } from './middleware/requireAuthenticatedUser.js';
+import { accountSessionCheckHandler } from './services/accountSessionCheck.js';
 
 import { getAiConfig, getPublicAiConfig } from './config/aiConfig.js';
 import { productionReadiness } from './services/productionReadiness.js';
@@ -263,9 +264,7 @@ app.delete('/v1/account', requireAuthenticatedUser, async (request, response, ne
 
 // Lets the app confirm its current Clerk token with the same middleware used
 // by deletion, without starting any destructive operation.
-app.get('/v1/account/session', requireAuthenticatedUser, (_request, response) => {
-  sendOk(response, { authenticated: true });
-});
+app.get('/v1/account/session', requireAuthenticatedUser, accountSessionCheckHandler);
 
 app.get('/ready', async (_request, response, next) => {
   try {
