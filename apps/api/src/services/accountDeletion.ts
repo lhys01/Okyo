@@ -73,9 +73,25 @@ export function getProductionAuthReadiness() {
   };
 }
 
+/**
+ * Railway runs both Development and Production services with NODE_ENV set to
+ * production. NODE_ENV is therefore a runtime-optimization setting, not a
+ * reliable indicator of which Clerk instance the service is connected to.
+ *
+ * Outside Railway, preserve the existing safe fallback: NODE_ENV=production
+ * means a live Clerk secret is required.
+ */
+export function isProductionDeployment(environment: NodeJS.ProcessEnv = process.env): boolean {
+  const railwayEnvironment = (environment.RAILWAY_ENVIRONMENT ?? environment.RAILWAY_ENVIRONMENT_NAME ?? '')
+    .trim()
+    .toLowerCase();
+  if (railwayEnvironment) return railwayEnvironment === 'production';
+  return environment.NODE_ENV === 'production';
+}
+
 export function isClerkSecretValid(secret: string | null): boolean {
   if (!secret) return false;
-  return process.env.NODE_ENV !== 'production' || (secret.startsWith('sk_live_') && secret.length > 'sk_live_'.length);
+  return !isProductionDeployment() || (secret.startsWith('sk_live_') && secret.length > 'sk_live_'.length);
 }
 
 /** Extracts only a conventional bearer token; never accepts a raw JWT header. */
@@ -107,7 +123,7 @@ export function createAccountDeletionService(deps: {
   return async function deleteAuthenticatedAccount(authorization: string | undefined): Promise<{
     revenueCatCustomerDeletionRequested: boolean;
   }> {
-    if (!isClerkSecretValid(clerkSecretKey) || (process.env.NODE_ENV === 'production' && !areAuthorizedPartiesValid(config.authorizedParties))) {
+    if (!isClerkSecretValid(clerkSecretKey) || (isProductionDeployment() && !areAuthorizedPartiesValid(config.authorizedParties))) {
       throw new AccountDeletionError(
         'account_deletion_unavailable',
         503,
@@ -116,7 +132,7 @@ export function createAccountDeletionService(deps: {
     }
     const hasRevenueCatCustomer = Boolean(config.revenueCatProjectId && config.revenueCatSecretKey);
     if (Boolean(config.revenueCatProjectId) !== Boolean(config.revenueCatSecretKey) ||
-      (process.env.NODE_ENV === 'production' && !hasRevenueCatCustomer)) {
+      (isProductionDeployment() && !hasRevenueCatCustomer)) {
       throw new AccountDeletionError(
         'account_deletion_unavailable',
         503,

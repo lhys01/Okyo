@@ -5,6 +5,8 @@ import test from 'node:test';
 import {
   AccountDeletionError,
   createAccountDeletionService,
+  isClerkSecretValid,
+  isProductionDeployment,
   readBearerToken,
 } from './accountDeletion.js';
 
@@ -24,6 +26,42 @@ test('missing Development Clerk deletion configuration fails closed before any d
   await assert.rejects(service('Bearer test-token'), (error: unknown) =>
     error instanceof AccountDeletionError && error.code === 'account_deletion_unavailable' && error.status === 503);
   assert.equal(providerCalls, 0);
+});
+
+test('Railway Development accepts the configured Development Clerk server key even when NODE_ENV is production', async () => {
+  const saved = { ...process.env };
+  process.env.NODE_ENV = 'production';
+  process.env.RAILWAY_ENVIRONMENT = 'development';
+  try {
+    assert.equal(isProductionDeployment(), false);
+    const service = createAccountDeletionService({
+      config: { authorizedParties: [], clerkSecretKey: 'sk_test_fixture', revenueCatProjectId: null, revenueCatSecretKey: null },
+      fetchImpl: async (_url, init) => new Response(
+        JSON.stringify(init?.method === 'DELETE' ? {} : { external_accounts: [] }),
+        { status: 200 },
+      ),
+      verifySessionToken: async () => ({ sub: 'user_123ABC' } as Awaited<ReturnType<typeof import('@clerk/backend').verifyToken>>),
+      clearServerData: async () => undefined,
+    });
+
+    await service('Bearer development-session-token');
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
+});
+
+test('a Railway Production deployment still rejects a Development Clerk server key', () => {
+  const saved = { ...process.env };
+  process.env.NODE_ENV = 'production';
+  process.env.RAILWAY_ENVIRONMENT = 'production';
+  try {
+    assert.equal(isProductionDeployment(), true);
+    assert.equal(isClerkSecretValid('sk_test_fixture'), false);
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
 });
 
 test('an already-deleted Clerk user and missing user-owned records are safe to retry', async () => {
