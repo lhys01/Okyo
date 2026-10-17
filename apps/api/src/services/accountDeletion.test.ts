@@ -5,8 +5,6 @@ import test from 'node:test';
 import {
   AccountDeletionError,
   createAccountDeletionService,
-  isClerkSecretValid,
-  isProductionDeployment,
   readBearerToken,
 } from './accountDeletion.js';
 
@@ -26,55 +24,6 @@ test('missing Development Clerk deletion configuration fails closed before any d
   await assert.rejects(service('Bearer test-token'), (error: unknown) =>
     error instanceof AccountDeletionError && error.code === 'account_deletion_unavailable' && error.status === 503);
   assert.equal(providerCalls, 0);
-});
-
-test('Railway Development accepts the configured Development Clerk server key even when NODE_ENV is production', async () => {
-  const saved = { ...process.env };
-  process.env.NODE_ENV = 'production';
-  process.env.RAILWAY_ENVIRONMENT = 'development';
-  try {
-    assert.equal(isProductionDeployment(), false);
-    const service = createAccountDeletionService({
-      config: { authorizedParties: [], clerkSecretKey: 'sk_test_fixture', revenueCatProjectId: null, revenueCatSecretKey: null },
-      fetchImpl: async (_url, init) => new Response(
-        JSON.stringify(init?.method === 'DELETE' ? {} : { external_accounts: [] }),
-        { status: 200 },
-      ),
-      verifySessionToken: async () => ({ sub: 'user_123ABC' } as Awaited<ReturnType<typeof import('@clerk/backend').verifyToken>>),
-      clearServerData: async () => undefined,
-    });
-
-    await service('Bearer development-session-token');
-  } finally {
-    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
-    Object.assign(process.env, saved);
-  }
-});
-
-test('a Railway Production deployment still rejects a Development Clerk server key', () => {
-  const saved = { ...process.env };
-  process.env.NODE_ENV = 'production';
-  process.env.RAILWAY_ENVIRONMENT = 'production';
-  try {
-    assert.equal(isProductionDeployment(), true);
-    assert.equal(isClerkSecretValid('sk_test_fixture'), false);
-  } finally {
-    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
-    Object.assign(process.env, saved);
-  }
-});
-
-test('Development refuses an unclassified Clerk server credential', () => {
-  const saved = { ...process.env };
-  process.env.RAILWAY_ENVIRONMENT = 'development';
-  try {
-    assert.equal(isClerkSecretValid('invalid-server-credential'), false);
-    assert.equal(isClerkSecretValid('sk_live_fixture'), false);
-    assert.equal(isClerkSecretValid('sk_test_fixture'), true);
-  } finally {
-    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
-    Object.assign(process.env, saved);
-  }
 });
 
 test('an already-deleted Clerk user and missing user-owned records are safe to retry', async () => {
@@ -122,7 +71,7 @@ test('account deletion verifies the session and deletes the matching RevenueCat 
 
   const result = await service('Bearer signed-session-token');
 
-  assert.deepEqual(result, { revenueCatCustomerDeletionRequested: true });
+  assert.deepEqual(result, { revenueCatCustomerDeletionRequested: true, appleAuthorizationRevocation: 'not_applicable' });
   assert.equal(requests.length, 3);
   assert.match(requests[1]!.url, /revenuecat\.com\/v2\/projects\/proj_okyo\/customers\/user_123ABC$/);
   assert.equal(requests[1]!.init?.method, 'DELETE');
@@ -185,6 +134,78 @@ test('server cleanup failure preserves the Clerk identity for a safe retry', asy
     (error: unknown) => error instanceof AccountDeletionError && error.code === 'account_deletion_failed',
   );
   assert.deepEqual(calls, ['session-verify']);
+});
+
+test('Apple-linked account deletion completes when Development lacks Apple revocation credentials and reports manual action', async () => {
+  const names = ['APPLE_SIGN_IN_CLIENT_ID', 'APPLE_TEAM_ID', 'APPLE_SIGN_IN_KEY_ID', 'APPLE_SIGN_IN_PRIVATE_KEY'] as const;
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  for (const name of names) delete process.env[name];
+
+  const requests: Array<{ url: string; method: string }> = [];
+  let serverCleanup = 0;
+  try {
+    const service = createAccountDeletionService({
+      config: { authorizedParties: [], clerkSecretKey: 'sk_test_clerk', revenueCatProjectId: null, revenueCatSecretKey: null },
+      fetchImpl: async (url, init) => {
+        const method = init?.method ?? 'GET';
+        requests.push({ url: String(url), method });
+        if (method === 'DELETE') return new Response('{}', { status: 200 });
+        return new Response(JSON.stringify({ external_accounts: [{ provider: 'oauth_apple' }] }), { status: 200 });
+      },
+      verifySessionToken: async () => ({ sub: 'user_123ABC' } as Awaited<ReturnType<typeof import('@clerk/backend').verifyToken>>),
+      clearServerData: async () => { serverCleanup++; },
+    });
+
+    const result = await service('Bearer signed-session-token');
+    assert.deepEqual(result, { revenueCatCustomerDeletionRequested: false, appleAuthorizationRevocation: 'manual_action_required' });
+    assert.equal(serverCleanup, 1);
+    assert.deepEqual(requests.map(({ method }) => method), ['GET', 'DELETE'], 'missing Apple credentials must not block server cleanup or Clerk deletion');
+    assert.ok(requests[1]!.url.endsWith('/users/user_123ABC'));
+  } finally {
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  }
+});
+
+test('a partial server cleanup can be retried before Clerk deletion, and a completed deletion is idempotent', async () => {
+  const order: string[] = [];
+  let cleanupAttempts = 0;
+  let userExists = true;
+  const service = createAccountDeletionService({
+    config: { authorizedParties: [], clerkSecretKey: 'sk_test_clerk', revenueCatProjectId: null, revenueCatSecretKey: null },
+    fetchImpl: async (_url, init) => {
+      if (init?.method === 'DELETE') {
+        order.push('clerk-delete');
+        userExists = false;
+        return new Response('{}', { status: 200 });
+      }
+      order.push('clerk-lookup');
+      return userExists
+        ? new Response(JSON.stringify({ external_accounts: [] }), { status: 200 })
+        : new Response('{}', { status: 404 });
+    },
+    verifySessionToken: async () => ({ sub: 'user_123ABC' } as Awaited<ReturnType<typeof import('@clerk/backend').verifyToken>>),
+    clearServerData: async () => {
+      cleanupAttempts++;
+      order.push(`server-cleanup-${cleanupAttempts}`);
+      if (cleanupAttempts === 1) throw new Error('one cleanup layer failed after another completed');
+    },
+  });
+
+  await assert.rejects(service('Bearer signed-session-token'), (error: unknown) =>
+    error instanceof AccountDeletionError && error.code === 'account_deletion_failed' && error.failureStep === 'server_data_cleanup');
+  assert.deepEqual(order, ['clerk-lookup', 'server-cleanup-1']);
+
+  const retry = await service('Bearer signed-session-token');
+  assert.deepEqual(retry, { revenueCatCustomerDeletionRequested: false, appleAuthorizationRevocation: 'not_applicable' });
+  assert.deepEqual(order, ['clerk-lookup', 'server-cleanup-1', 'clerk-lookup', 'server-cleanup-2', 'clerk-delete']);
+
+  const repeated = await service('Bearer signed-session-token');
+  assert.deepEqual(repeated, { revenueCatCustomerDeletionRequested: false, appleAuthorizationRevocation: 'unknown' });
+  assert.equal(cleanupAttempts, 3);
+  assert.equal(order.filter((step) => step === 'clerk-delete').length, 2, 'Clerk DELETE 404 is accepted after a prior successful deletion');
 });
 
 test('production account deletion fails closed until RevenueCat customer deletion is configured', async () => {

@@ -21,6 +21,7 @@ export class AccountDeletionError extends Error {
     readonly code: 'account_deletion_unavailable' | 'authentication_required' | 'account_deletion_failed',
     readonly status: 401 | 502 | 503,
     readonly userMessage: string,
+    readonly failureStep?: 'configuration' | 'session_verification' | 'clerk_user_lookup' | 'revenuecat_customer_deletion' | 'apple_authorization_revocation' | 'server_data_cleanup' | 'clerk_user_deletion',
   ) {
     super(userMessage);
   }
@@ -123,6 +124,7 @@ export function createAccountDeletionService(deps: {
 
   return async function deleteAuthenticatedAccount(authorization: string | undefined): Promise<{
     revenueCatCustomerDeletionRequested: boolean;
+    appleAuthorizationRevocation: 'not_applicable' | 'revoked' | 'manual_action_required' | 'unknown';
   }> {
     if (!isClerkSecretValid(clerkSecretKey) || (isProductionDeployment() && !areAuthorizedPartiesValid(config.authorizedParties))) {
       throw new AccountDeletionError(
@@ -167,11 +169,11 @@ export function createAccountDeletionService(deps: {
       headers: clerkHeaders, signal: AbortSignal.timeout(5000),
     }).catch(() => null);
     if (!userResponse || (!userResponse.ok && userResponse.status !== 404)) {
-      throw new AccountDeletionError('account_deletion_failed', 502, 'We couldn’t verify account deletion. Please try again.');
+      throw deletionFailure('clerk_user_lookup', 'We couldn’t verify account deletion. Please try again.');
     }
     const user = userResponse.status === 404 ? null : await userResponse.json().catch(() => null);
     if (userResponse.ok && (!user || !Array.isArray(user.external_accounts))) {
-      throw new AccountDeletionError('account_deletion_failed', 502, 'We couldn’t verify account deletion. Please try again.');
+      throw deletionFailure('clerk_user_lookup', 'We couldn’t verify account deletion. Please try again.');
     }
     const usesApple = user?.external_accounts.some((account: { provider?: string }) => account.provider === 'oauth_apple');
     if (hasRevenueCatCustomer) {
@@ -188,21 +190,25 @@ export function createAccountDeletionService(deps: {
       // customer. Any other failed request is retriable and must leave the
       // Clerk account intact so the deletion is never falsely confirmed.
       if (!revenueCatResponse || (!revenueCatResponse.ok && revenueCatResponse.status !== 404)) {
-        throw new AccountDeletionError(
-          'account_deletion_failed',
-          502,
-          'We couldn’t start deleting your account. Please try again.',
-        );
+        throw deletionFailure('revenuecat_customer_deletion', 'We couldn’t start deleting your account. Please try again.');
       }
     }
 
+    let appleAuthorizationRevocation: 'not_applicable' | 'revoked' | 'manual_action_required' | 'unknown' =
+      userResponse.status === 404 ? 'unknown' : 'not_applicable';
     if (usesApple) {
-      try { await (deps.revokeApple ?? revokeAppleAuthorization)(userId, clerkSecretKey!, fetchImpl); }
-      catch { throw new AccountDeletionError('account_deletion_failed', 502, 'We couldn’t finish deleting your account. Please try again.'); }
+      try {
+        await (deps.revokeApple ?? revokeAppleAuthorization)(userId, clerkSecretKey!, fetchImpl);
+        appleAuthorizationRevocation = 'revoked';
+      } catch {
+        // Apple still requires Okyo to complete deletion if provider revocation
+        // cannot run. Tell the user to remove Okyo from Apple account settings.
+        appleAuthorizationRevocation = 'manual_action_required';
+      }
     }
     // Clear server state before deleting the identity needed to authenticate a retry.
     try { await deps.clearServerData?.(userId); }
-    catch { throw new AccountDeletionError('account_deletion_failed', 502, 'We couldn’t finish deleting your account. Please try again.'); }
+    catch { throw deletionFailure('server_data_cleanup', 'We couldn’t finish deleting your account. Please try again.'); }
 
     const clerkResponse = await fetchImpl(`${CLERK_API_URL}/users/${encodedUserId}`, {
       headers: { Authorization: `Bearer ${clerkSecretKey!}` },
@@ -211,15 +217,18 @@ export function createAccountDeletionService(deps: {
     }).catch(() => null);
 
     if (!clerkResponse || (!clerkResponse.ok && clerkResponse.status !== 404)) {
-      throw new AccountDeletionError(
-        'account_deletion_failed',
-        502,
-        'We couldn’t finish deleting your account. Please try again.',
-      );
+      throw deletionFailure('clerk_user_deletion', 'We couldn’t finish deleting your account. Please try again.');
     }
 
-    return { revenueCatCustomerDeletionRequested: hasRevenueCatCustomer };
+    return { revenueCatCustomerDeletionRequested: hasRevenueCatCustomer, appleAuthorizationRevocation };
   };
+}
+
+function deletionFailure(
+  failureStep: NonNullable<AccountDeletionError['failureStep']>,
+  userMessage: string,
+): AccountDeletionError {
+  return new AccountDeletionError('account_deletion_failed', 502, userMessage, failureStep);
 }
 
 export async function deleteAuthenticatedAccount(authorization: string | undefined) {

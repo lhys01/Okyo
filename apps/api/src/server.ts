@@ -250,12 +250,26 @@ app.get('/live', (_request, response) => {
 // The user identity comes exclusively from a verified Clerk session. The
 // client cannot select a target account for deletion.
 app.delete('/v1/account', requireAuthenticatedUser, async (request, response, next) => {
+  const requestId = randomUUID();
+  response.setHeader('x-okyo-request-id', requestId);
   try {
-    await deleteAuthenticatedAccount(request.get('authorization'));
-    sendOk(response, { deleted: true });
+    const result = await deleteAuthenticatedAccount(request.get('authorization'));
+    console.log(JSON.stringify({
+      event: 'account_deletion_completed',
+      requestId,
+      revenuecat_customer_deletion_requested: result.revenueCatCustomerDeletionRequested,
+      apple_authorization_revocation: result.appleAuthorizationRevocation,
+    }));
+    sendOk(response, { deleted: true, appleAuthorizationRevocation: result.appleAuthorizationRevocation });
   } catch (error) {
     if (error instanceof AccountDeletionError) {
-      sendError(response.status(error.status), error.code, error.userMessage);
+      console.error(JSON.stringify({
+        event: 'account_deletion_failed',
+        requestId,
+        error_code: error.code,
+        failure_step: error.failureStep,
+      }));
+      sendError(response.status(error.status), error.code, error.userMessage, { requestId, failureStep: error.failureStep });
       return;
     }
     next(error);
