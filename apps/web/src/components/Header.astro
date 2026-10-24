@@ -1,0 +1,98 @@
+---
+import { Image } from 'astro:assets';
+import appIcon from '../assets/brand/app-icon.png';
+import ComingSoon from './ComingSoon.astro';
+---
+
+<header class="site-header">
+  <div class="container">
+    <div class="site-header__bar">
+      <a class="brand" href="/">
+        <Image src={appIcon} alt="" width={44} height={44} class="brand__icon" loading="eager" />
+        <span class="brand__name">Okyo</span>
+        <span class="visually-hidden">home</span>
+      </a>
+      <nav aria-label="Main">
+        <ul class="nav">
+          <li><a class="nav__button" href="/support">Support</a></li>
+          <li class="nav__status"><ComingSoon small /></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<style>
+  .site-header {
+    padding-top: var(--space-md);
+  }
+
+  /* Rounded header container (the site's own bar; browser chrome is not ours to style). */
+  .site-header__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: 10px 12px 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: 0 4px 14px rgb(43 43 48 / 0.06);
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    text-decoration: none;
+  }
+
+  .brand__icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+  }
+
+  .brand__name {
+    color: var(--ink);
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  .nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .nav__button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--surface-muted);
+    font-size: var(--text-body);
+    text-decoration: none;
+  }
+
+  .nav__button:hover {
+    border-color: var(--coral);
+    background: var(--coral-soft);
+  }
+
+  /* The full badge appears in the hero; keep the bar to one line on small phones. */
+  @media (max-width: 479px) {
+    .nav__status {
+      display: none;
+    }
+  }
+</style>

@@ -1,0 +1,58 @@
+---
+import { getImage } from 'astro:assets';
+import '../styles/global.css';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import WaitlistDialog from '../components/WaitlistDialog.astro';
+import appIcon from '../assets/brand/app-icon.png';
+import { SITE_NAME, SITE_URL } from '../config/site';
+
+interface Props {
+  title: string;
+  description: string;
+  noindex?: boolean;
+  /** Set false for pages with no real URL (the 404 page). */
+  canonical?: boolean;
+}
+
+const { title, description, noindex = false, canonical: hasCanonical = true } = Astro.props;
+const pageTitle = title === SITE_NAME ? title : `${title} · ${SITE_NAME}`;
+// Clean URL with no trailing slash or ".html" (build.format is 'file').
+const cleanPath = Astro.url.pathname.replace(/\.html$/, '').replace(/(^|\/)index$/, '').replace(/\/$/, '');
+const canonical = `${SITE_URL}${cleanPath}`;
+
+const favicon = await getImage({ src: appIcon, width: 48, height: 48, format: 'png' });
+const touchIcon = await getImage({ src: appIcon, width: 180, height: 180, format: 'png' });
+const ogImage = await getImage({ src: appIcon, width: 512, height: 512, format: 'png' });
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    {hasCanonical && <link rel="canonical" href={canonical} />}
+    {noindex && <meta name="robots" content="noindex, nofollow" />}
+    <meta name="theme-color" content="#fffdfe" />
+    <link rel="icon" type="image/png" href={favicon.src} />
+    <link rel="apple-touch-icon" href={touchIcon.src} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={SITE_NAME} />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    {hasCanonical && <meta property="og:url" content={canonical} />}
+    <meta property="og:image" content={new URL(ogImage.src, SITE_URL).href} />
+    <meta name="twitter:card" content="summary" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <Header />
+    <main id="main" tabindex="-1">
+      <slot />
+    </main>
+    <Footer />
+    <WaitlistDialog />
+  </body>
+</html>

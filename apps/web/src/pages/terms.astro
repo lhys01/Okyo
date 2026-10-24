@@ -1,0 +1,22 @@
+---
+import LegalDraft from '../layouts/LegalDraft.astro';
+import { Content, frontmatter } from '../legal-drafts/terms.md';
+
+// From the website planning audit (2026-10-09), comparing the draft with the app code.
+const knownGaps = [
+  'Governing law, dispute resolution, and the legal entity are not set.',
+  'Minimum age is not set, but the app asks users whether they are under 18.',
+  'Subscription terms say Okyo quotes no prices elsewhere, but legacy hard-coded prices still exist in the app code.',
+  'The paywall does not yet show an auto-renewal disclosure.',
+  'Ownership and licensing of the Kiko mascot and app icon are unconfirmed.',
+];
+---
+
+<LegalDraft
+  title={frontmatter.title}
+  version={frontmatter.version}
+  knownGaps={knownGaps}
+  description="Draft Okyo terms of service for review. Not in effect."
+>
+  <Content />
+</LegalDraft>

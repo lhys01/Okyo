@@ -1,0 +1,368 @@
+---
+import { Image } from 'astro:assets';
+import Base from '../layouts/Base.astro';
+import ScreenshotSlot from '../components/ScreenshotSlot.astro';
+import ComingSoon from '../components/ComingSoon.astro';
+import Sticker from '../components/Sticker.astro';
+import foxCheering from '../assets/brand/fox-cheering.png';
+import foxPeeking from '../assets/brand/fox-peeking.png';
+import stickerCarrot from '../assets/brand/sticker-fox-holding-carrot.png';
+import stickerBowl from '../assets/brand/sticker-fox-holding-bowl.png';
+import stickerLaptop from '../assets/brand/sticker-fox-cooking-laptop.png';
+import stickerChef from '../assets/brand/sticker-fox-chef.png';
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from '../config/site';
+
+// Homepage copy is a draft for founder approval (D6). Order: copycat + savings
+// first, then estimated nutrition, customization, cooking. No pricing (D7).
+const steps = [
+  {
+    title: 'Snap or describe a meal',
+    text: 'Take a photo of a finished dish, choose one from your library, or describe it in words.',
+  },
+  {
+    title: 'Get a copycat-style recipe',
+    text: 'Okyo estimates the dish and writes an editable recipe with ingredients and steps.',
+  },
+  {
+    title: 'Cook it at home',
+    text: 'Review the recipe, make it yours, and follow along step by step.',
+  },
+];
+---
+
+<Base
+  title="Okyo"
+  description="Okyo turns restaurant meals you love into copycat-style recipes you can cook at home, with estimated savings and nutrition."
+>
+  <section class="hero">
+    <div class="container hero__grid">
+      <div class="hero__copy">
+        <p class="label">Restaurant food, made at home</p>
+        <h1>Turn restaurant cravings into recipes.</h1>
+        <p class="lead">
+          Snap or upload a meal you loved. Okyo writes a copycat-style recipe you can cook at home,
+          and shows an estimate of what making it yourself could save.
+        </p>
+        <div class="hero__status"><ComingSoon /></div>
+      </div>
+      <div class="hero__visual">
+        <Image
+          src={foxCheering}
+          alt=""
+          widths={[320, 640, 960]}
+          sizes="(min-width: 1024px) 300px, (min-width: 768px) 220px, 48vw"
+          loading="eager"
+          class="hero__fox"
+        />
+        <ScreenshotSlot slot="home" eager />
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="how-heading">
+    <div class="container split">
+      <div>
+        <h2 id="how-heading">How Okyo works</h2>
+        <ol class="steps">
+          {
+            steps.map((step, index) => (
+              <li class="step">
+                <span class="step__number" aria-hidden="true">{index + 1}</span>
+                <div>
+                  <h3>{step.title}</h3>
+                  <p>{step.text}</p>
+                </div>
+              </li>
+            ))
+          }
+        </ol>
+        <p class="note">
+          Results are AI estimates and can be wrong. Check every ingredient, especially if you have
+          allergies.
+        </p>
+      </div>
+      <div class="split__visual">
+        <ScreenshotSlot slot="scan" />
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="savings-heading">
+    <div class="container">
+      <div class="feature panel-lg feature--tinted">
+        <div class="feature__copy">
+          <Sticker src={stickerCarrot} />
+          <p class="label">Estimated savings</p>
+          <h2 id="savings-heading">See what cooking it yourself could save.</h2>
+          <p>
+            Okyo compares an estimated make-at-home cost with the restaurant price. The restaurant
+            price starts as an estimate you can change to what you actually paid.
+          </p>
+          <p class="note">Local prices and portions vary, so treat savings as a guide, not a promise.</p>
+        </div>
+        <div class="feature__visual"><ScreenshotSlot slot="recipe" /></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="nutrition-heading">
+    <div class="container">
+      <div class="feature feature--reverse panel-lg">
+        <div class="feature__copy">
+          <Sticker src={stickerBowl} />
+          <p class="label">Estimated nutrition</p>
+          <h2 id="nutrition-heading">Know roughly what's on the plate.</h2>
+          <p>
+            See recipe-level nutrition estimates when available, based on ingredients and
+            servings.
+          </p>
+          <p class="note">
+            These are estimates, not medical or laboratory measurements, and not dietary advice.
+          </p>
+        </div>
+        <div class="feature__visual"><ScreenshotSlot slot="nutrition" /></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="customize-heading">
+    <div class="container">
+      <div class="feature panel-lg feature--tinted">
+        <div class="feature__copy">
+          <Sticker src={stickerLaptop} />
+          <p class="label">Customize</p>
+          <h2 id="customize-heading">Change it in plain words.</h2>
+          <p>
+            Ask for a swap, a dietary change, or a fix when something looks off. Okyo revises the
+            recipe, and you stay in control of what you cook.
+          </p>
+          <p class="note">Always check substitutions against labels and your own dietary needs.</p>
+        </div>
+        <div class="feature__visual"><ScreenshotSlot slot="customize" /></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="cook-heading">
+    <div class="container">
+      <div class="feature feature--reverse panel-lg">
+        <div class="feature__copy">
+          <Sticker src={stickerChef} />
+          <p class="label">Cook and keep</p>
+          <h2 id="cook-heading">Cook along, then save it for next time.</h2>
+          <p>
+            Cook Mode walks you through one step at a time. Save recipes you love and turn their
+            ingredients into a grocery list.
+          </p>
+        </div>
+        <div class="feature__visual"><ScreenshotSlot slot="cook" /></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="cta-heading">
+    <div class="container">
+      <div class="cta">
+        <Image src={foxPeeking} alt="" widths={[240, 480, 720]} sizes="(min-width: 768px) 240px, 180px" class="cta__fox" />
+        <div class="cta__copy">
+          <h2 id="cta-heading">Okyo is almost ready.</h2>
+          <div class="cta__status"><ComingSoon /></div>
+          <p>
+            Questions in the meantime? Email <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .hero {
+    padding-block: var(--space-section) var(--space-xl);
+  }
+
+  .hero__grid,
+  .split,
+  .feature {
+    display: grid;
+    gap: var(--space-xxl);
+    align-items: center;
+  }
+
+  /* Let grid columns shrink below their longest word (large text sizes). */
+  .hero__grid > *,
+  .split > *,
+  .feature > *,
+  .cta > * {
+    min-width: 0;
+  }
+
+  .lead {
+    max-width: 34rem;
+    font-size: var(--text-lead);
+    line-height: 1.55;
+  }
+
+  .hero__status {
+    margin-top: var(--space-xl);
+  }
+
+  .hero__visual {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+
+  /* The sticker art has built-in transparent padding, so it overlaps the frame's edge slightly. */
+  .hero__fox {
+    position: relative;
+    z-index: 1;
+    width: min(50%, 340px);
+    margin-right: -10%;
+    flex-shrink: 1;
+  }
+
+  .hero__visual :global(.phone) {
+    width: min(56%, 300px);
+  }
+
+  .section {
+    padding-block: var(--space-xl);
+  }
+
+  .steps {
+    display: grid;
+    gap: var(--space-md);
+    margin: 0 0 var(--space-xl);
+    padding: 0;
+    list-style: none;
+  }
+
+  .step {
+    display: flex;
+    gap: var(--space-lg);
+    padding: var(--space-xl);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  .step h3 {
+    margin-bottom: var(--space-xs);
+  }
+
+  .step p {
+    margin: 0;
+  }
+
+  .step__number {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-pill);
+    background: var(--coral-soft);
+    color: var(--ink);
+    font-size: 1.125rem;
+    font-weight: 800;
+  }
+
+  .split__visual,
+  .feature__visual {
+    display: flex;
+    justify-content: center;
+  }
+
+  .split__visual :global(.phone),
+  .feature__visual :global(.phone) {
+    width: min(78%, 270px);
+  }
+
+  .feature {
+    padding: var(--space-xxl) var(--space-xl);
+  }
+
+  .feature--tinted {
+    background: var(--surface-muted);
+  }
+
+  .feature__copy {
+    --sticker-size: 84px;
+  }
+
+  .feature__copy :global(.sticker) {
+    margin-bottom: var(--space-md);
+  }
+
+  .feature__copy > :last-child {
+    margin-bottom: 0;
+  }
+
+  .cta {
+    display: grid;
+    gap: var(--space-lg);
+    align-items: center;
+    justify-items: center;
+    padding: var(--space-xxl) var(--space-xl);
+    background: var(--coral-soft);
+    border: 1px solid #ffd3e0;
+    border-radius: var(--radius-panel-lg);
+    text-align: center;
+  }
+
+  .cta__fox {
+    width: 180px;
+  }
+
+  .cta__copy > :last-child {
+    margin-bottom: 0;
+  }
+
+  @media (min-width: 768px) {
+    .hero {
+      padding-block: var(--space-64) var(--space-section);
+    }
+
+    .hero__grid,
+    .split,
+    .feature {
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: var(--space-section);
+    }
+
+    .feature--reverse .feature__copy {
+      order: 2;
+    }
+
+    .feature--reverse {
+      grid-template-columns: 0.9fr 1.1fr;
+    }
+
+    .feature {
+      padding: var(--space-section) var(--space-64);
+    }
+
+    .section {
+      padding-block: var(--space-xxl);
+    }
+
+    .cta {
+      grid-template-columns: auto 1fr;
+      justify-items: start;
+      padding: var(--space-section) var(--space-64);
+      text-align: left;
+    }
+
+    .cta__fox {
+      width: 240px;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .feature__copy {
+      --sticker-size: 96px;
+    }
+  }
+</style>

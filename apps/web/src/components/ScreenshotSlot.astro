@@ -1,0 +1,93 @@
+---
+import { Picture } from 'astro:assets';
+import { SCREENSHOTS, type ScreenshotSlotName } from '../config/screenshots';
+
+interface Props {
+  slot: ScreenshotSlotName;
+  eager?: boolean;
+}
+
+const { slot, eager = false } = Astro.props;
+const { alt, capture, image } = SCREENSHOTS[slot];
+---
+
+<div class="phone" data-slot={slot}>
+  {
+    image ? (
+      <Picture
+        src={image}
+        alt={alt}
+        formats={['avif', 'webp']}
+        widths={[320, 640, 960]}
+        sizes="(min-width: 768px) 300px, 72vw"
+        loading={eager ? 'eager' : 'lazy'}
+        fetchpriority={eager ? 'high' : 'auto'}
+        class="phone__screen"
+      />
+    ) : (
+      <div class="phone__screen phone__screen--pending" data-placeholder="screenshot" role="img" aria-label={`Screenshot not added yet: ${capture}`}>
+        <span class="phone__pending-label">Local review only</span>
+        <span class="phone__pending-capture">{capture}</span>
+        <span class="phone__pending-hint">Capture from the release build</span>
+      </div>
+    )
+  }
+</div>
+
+<style>
+  /* Rounded phone-style frame. Real screenshots keep their own aspect ratio. */
+  .phone {
+    width: 100%;
+    max-width: 300px;
+    padding: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 44px;
+    box-shadow: var(--shadow-float);
+  }
+
+  .phone__screen {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 34px;
+  }
+
+  .phone__screen--pending {
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: var(--space-sm);
+    aspect-ratio: 1179 / 2556;
+    padding: var(--space-xl);
+    background: repeating-linear-gradient(-45deg, var(--surface-muted) 0 14px, var(--canvas) 14px 28px);
+    border: 2px dashed var(--border);
+    color: var(--ink);
+    text-align: center;
+    overflow-wrap: break-word;
+  }
+
+  .phone__screen--pending > * {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .phone__pending-label {
+    font-size: var(--text-label);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--body);
+  }
+
+  .phone__pending-capture {
+    font-size: clamp(1rem, 2.5vw + 0.5rem, 1.25rem);
+    font-weight: 800;
+    line-height: 1.25;
+  }
+
+  .phone__pending-hint {
+    font-size: var(--text-small);
+    color: var(--body);
+  }
+</style>

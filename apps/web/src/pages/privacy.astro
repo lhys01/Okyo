@@ -1,0 +1,32 @@
+---
+import Base from '../layouts/Base.astro';
+import { getLegalDocument } from '../../../mobile/src/legal/legalDocuments';
+import '../styles/prose.css';
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from '../config/site';
+
+// The public page and the sign-in modal use the same policy text.
+const policy = getLegalDocument('privacy-policy');
+if (!policy) throw new Error('Okyo Privacy Policy is missing');
+---
+
+<Base title={policy.title} description={policy.summary}>
+  <div class="container page">
+    <h1>{policy.title}</h1>
+    <p>Version {policy.version} · Effective {policy.effectiveDate}</p>
+    <article class="content-panel">
+      <div class="prose">
+        <section id="waitlist">
+          <h2>Website launch waitlist</h2>
+          <p>If you join the waitlist, we save your first name, email address, signup time, and permission to email you about Okyo’s launch. The list is stored on our hosting provider, Railway, and is available only through our protected export. We do not sell it or send your form entries to analytics.</p>
+          <p>We keep the list until launch follow-up is complete or you ask to leave. To correct your details or request removal, email <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a>. Joining does not create an app account.</p>
+        </section>
+        {policy.sections.map((section) => (
+          <section>
+            <h2>{section.heading}</h2>
+            {section.body.split('\n\n').map((paragraph) => <p>{paragraph}</p>)}
+          </section>
+        ))}
+      </div>
+    </article>
+  </div>
+</Base>

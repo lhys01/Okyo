@@ -1,0 +1,117 @@
+---
+import { SUPPORT_MAILTO } from '../config/site';
+const endpoint = import.meta.env.PUBLIC_WAITLIST_API_URL || '';
+---
+<dialog id="waitlist-dialog" aria-labelledby="waitlist-title" aria-describedby="waitlist-intro" data-endpoint={endpoint} data-waitlist-unconfigured={!endpoint ? 'true' : undefined}>
+  <button type="button" class="waitlist-close" aria-label="Close waitlist">×</button>
+  <div class="waitlist-content">
+    <p class="label">Your next craving, covered</p>
+    <h2 id="waitlist-title">Be first to cook with Okyo.</h2>
+    <p id="waitlist-intro">Leave your first name and email. We’ll let you know when Okyo is live on iPhone.</p>
+    <form id="waitlist-form">
+      <label for="waitlist-name">First name</label>
+      <input id="waitlist-name" name="firstName" autocomplete="given-name" maxlength="80" required />
+      <label for="waitlist-email">Email address</label>
+      <input id="waitlist-email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="254" required />
+      <div class="waitlist-trap" aria-hidden="true">
+        <label for="waitlist-website">Leave this empty</label>
+        <input id="waitlist-website" name="website" tabindex="-1" autocomplete="off" />
+      </div>
+      <label class="waitlist-consent" for="waitlist-consent">
+        <input id="waitlist-consent" name="consent" type="checkbox" required />
+        <span>Yes, email me when Okyo launches.</span>
+      </label>
+      <p class="waitlist-privacy">Your name and email are saved for the launch notification. To leave the list, <a href={SUPPORT_MAILTO}>email us</a>. <a href="/privacy#waitlist">Privacy details</a>.</p>
+      <button class="waitlist-submit" type="submit">Join the waitlist</button>
+    </form>
+    <p id="waitlist-status" role="status" aria-live="polite" tabindex="-1"></p>
+    <button type="button" class="waitlist-submit" id="waitlist-done" hidden>Can’t wait!</button>
+  </div>
+</dialog>
+
+<script>
+  const dialog = document.querySelector<HTMLDialogElement>('#waitlist-dialog')!;
+  const form = document.querySelector<HTMLFormElement>('#waitlist-form')!;
+  const status = document.querySelector<HTMLParagraphElement>('#waitlist-status')!;
+  const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  const done = document.querySelector<HTMLButtonElement>('#waitlist-done')!;
+  let opener: HTMLElement | null = null;
+  let joined = false;
+  document.querySelectorAll<HTMLButtonElement>('[data-open-waitlist]').forEach((button) => {
+    button.addEventListener('click', () => {
+      opener = button;
+      if (!joined) status.textContent = '';
+      dialog.showModal();
+      if (!joined) dialog.querySelector<HTMLInputElement>('#waitlist-name')?.focus();
+    });
+  });
+  dialog.querySelector('.waitlist-close')!.addEventListener('click', () => dialog.close());
+  done.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => opener?.focus());
+  dialog.addEventListener('click', (event) => {
+    const bounds = dialog.getBoundingClientRect();
+    if (event.target === dialog && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) dialog.close();
+  });
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity() || submit.disabled) return;
+    const data = new FormData(form);
+    const local = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+    const endpoint = dialog.dataset.endpoint || (local ? 'http://127.0.0.1:4392/api/waitlist' : '');
+    if (!endpoint) {
+      status.textContent = 'The waitlist is taking a break. Please try again shortly.';
+      return;
+    }
+    submit.disabled = true;
+    submit.textContent = 'Joining…';
+    status.textContent = '';
+    form.setAttribute('aria-busy', 'true');
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firstName: data.get('firstName'), email: data.get('email'), consent: data.get('consent') === 'on', website: data.get('website') }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) {
+        status.textContent = response.status === 429
+          ? 'A few too many tries. Please wait a little and try again.'
+          : 'We couldn’t save your spot. Please try again in a moment.';
+        return;
+      }
+      const result = await response.json();
+      if (result.ok !== true) throw new Error('Waitlist unavailable');
+      joined = true;
+      form.reset();
+      form.hidden = true;
+      done.hidden = false;
+      status.textContent = 'You’re on the list! We’ll email you when Okyo is ready.';
+      status.focus();
+    } catch {
+      status.textContent = 'We couldn’t save your spot. Check your connection and try again.';
+    } finally {
+      submit.disabled = false;
+      submit.textContent = 'Join the waitlist';
+      form.removeAttribute('aria-busy');
+    }
+  });
+</script>
+
+<style>
+  dialog { width: min(520px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; padding: 36px 28px 28px; color: var(--body); background: var(--canvas); border: 1px solid var(--border); border-radius: 28px; box-shadow: var(--shadow-float); }
+  dialog::backdrop { background: rgb(43 43 48 / .48); }
+  h2 { font-size: clamp(1.75rem, 5vw, 2.25rem); padding-right: 8px; }
+  .waitlist-close { position: absolute; top: 8px; right: 8px; width: 44px; height: 44px; font-size: 28px; color: var(--ink); background: none; border: none; border-radius: 50%; cursor: pointer; }
+  label { display: block; color: var(--ink); font-size: var(--text-small); font-weight: 700; }
+  input:not([type="checkbox"]) { display: block; width: 100%; min-height: 50px; margin: 6px 0 16px; padding: 10px 14px; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid #b9a6af; border-radius: 14px; }
+  .waitlist-consent { display: flex; align-items: flex-start; gap: 10px; margin-block: 20px 12px; }
+  .waitlist-consent input { width: 20px; height: 20px; flex-shrink: 0; margin: 2px 0 0; accent-color: #a6375a; }
+  .waitlist-privacy { font-size: var(--text-small); }
+  .waitlist-submit { width: 100%; min-height: 52px; padding: 12px 18px; border: 1px solid #e8a2b7; border-radius: var(--radius-pill); background: var(--coral-soft); color: var(--ink); font: inherit; font-weight: 800; cursor: pointer; }
+  .waitlist-submit:disabled { opacity: .65; cursor: wait; }
+  .waitlist-submit[hidden] { display: none; }
+  .waitlist-trap { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  #waitlist-status { margin: 16px 0 0; color: var(--ink); }
+  #waitlist-done { margin-top: 20px; }
+  @media (max-width: 380px) { dialog { padding-inline: 20px; } }
+</style>

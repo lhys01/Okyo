@@ -1,0 +1,21 @@
+---
+import { Image } from 'astro:assets';
+import type { ImageMetadata } from 'astro';
+
+// Small decorative fox sticker (source art is ~200px, so it stays small to stay sharp).
+interface Props {
+  src: ImageMetadata;
+  size?: number;
+}
+
+const { src, size = 84 } = Astro.props;
+---
+
+<Image src={src} alt="" width={size} densities={[1, 2]} class="sticker" />
+
+<style>
+  .sticker {
+    width: var(--sticker-size, 84px);
+    height: auto;
+  }
+</style>

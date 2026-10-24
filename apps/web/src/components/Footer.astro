@@ -1,0 +1,65 @@
+---
+import { FOOTER_LINKS, LEGAL_ENTITY_PLACEHOLDER, SUPPORT_EMAIL, SUPPORT_MAILTO } from '../config/site';
+
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="site-footer__panel">
+      <nav aria-label="Legal and support">
+        <ul class="footer-links">
+          {FOOTER_LINKS.map((link) => <li><a href={link.href}>{link.label}</a></li>)}
+        </ul>
+      </nav>
+      <p>
+        Questions? <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a>
+      </p>
+      <p class="site-footer__note">
+        Okyo recipes are AI-generated, copycat-style interpretations. They are not official restaurant
+        recipes, and cost, savings and nutrition figures are estimates.
+      </p>
+      <p class="site-footer__note">© {year} {LEGAL_ENTITY_PLACEHOLDER}</p>
+    </div>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    margin-top: var(--space-64);
+    padding-bottom: var(--space-lg);
+  }
+
+  /* Rounded footer container. */
+  .site-footer__panel {
+    padding: var(--space-xxl) var(--space-xl);
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-panel-lg);
+    font-size: var(--text-body);
+  }
+
+  .site-footer__panel > :last-child {
+    margin-bottom: 0;
+  }
+
+  .footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-xl);
+    margin: 0 0 var(--space-lg);
+    padding: 0;
+    list-style: none;
+  }
+
+  .footer-links a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .site-footer__note {
+    max-width: var(--prose-max);
+    font-size: var(--text-small);
+  }
+</style>

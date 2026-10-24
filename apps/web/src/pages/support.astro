@@ -1,0 +1,91 @@
+---
+import Base from '../layouts/Base.astro';
+import Sticker from '../components/Sticker.astro';
+import stickerChecklist from '../assets/brand/sticker-fox-checklist.png';
+import { SUPPORT_FAQ } from '../config/supportFaq';
+import { APPLE_SUBSCRIPTIONS_URL, SUPPORT_EMAIL, SUPPORT_MAILTO } from '../config/site';
+import '../styles/prose.css';
+---
+
+<Base
+  title="Support"
+  description="Get help with Okyo: scanning, recipes, dietary safety, your data, and how to contact support."
+>
+  <div class="container page">
+    <div class="prose">
+      <div class="page-heading">
+        <Sticker src={stickerChecklist} size={76} />
+        <h1>Help & support</h1>
+      </div>
+      <p class="page-intro">Answers about scanning, cooking, safety, and your data.</p>
+
+      <div class="panel">
+        <h2>Contact support</h2>
+        <p>
+          Questions or need a hand? Email Okyo support at{' '}
+          <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a>.
+        </p>
+      </div>
+
+      {
+        SUPPORT_FAQ.map(({ group, items }) => (
+          <section class="faq-group">
+            <h2>{group}</h2>
+            {items.map(([question, answer]) => (
+              <details class="faq">
+                <summary>{question}</summary>
+                <p>{answer}</p>
+              </details>
+            ))}
+          </section>
+        ))
+      }
+
+      <section>
+        <h2>Subscriptions</h2>
+        <p>
+          Subscriptions bought in the App Store are managed and cancelled by Apple, not inside Okyo.
+          Deleting your data or your account does not cancel a subscription.{' '}
+          <a href={APPLE_SUBSCRIPTIONS_URL}>Manage subscriptions with Apple</a>.
+        </p>
+      </section>
+
+      <section>
+        <h2>Delete your data or account</h2>
+        <p>See <a href="/delete-account">how to delete your Okyo data or account</a>.</p>
+      </section>
+    </div>
+  </div>
+</Base>
+
+<style>
+  .faq-group {
+    margin-top: var(--space-section);
+  }
+
+  .faq {
+    margin-bottom: var(--space-md);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+  }
+
+  .faq[open] {
+    box-shadow: var(--shadow-card);
+  }
+
+  .faq summary {
+    min-height: 56px;
+    padding: var(--space-lg) var(--space-xl);
+    color: var(--ink);
+    font-size: var(--text-body-wide);
+    font-weight: 700;
+    line-height: 1.4;
+    cursor: pointer;
+  }
+
+  .faq p {
+    margin: 0;
+    padding: 0 var(--space-xl) var(--space-xl);
+  }
+</style>
