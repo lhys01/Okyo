@@ -4,7 +4,7 @@ import test from 'node:test';
 import { revokeAppleAuthorization } from './appleRevocation.js';
 import { createAccountDeletionService } from './accountDeletion.js';
 
-const config={authorizedParties:['okyo://'],clerkSecretKey:'test',revenueCatProjectId:'project',revenueCatSecretKey:'test'};
+const config={authorizedParties:['okyo://'],clerkSecretKey:'sk_test_fixture',revenueCatProjectId:'project',revenueCatSecretKey:'test'};
 const verifySessionToken=async()=>({sub:'user_test'} as Awaited<ReturnType<typeof import('@clerk/backend').verifyToken>>);
 test('Apple revocation precedes identity deletion; failures preserve identity and retry succeeds',async()=>{
   for(const failed of ['apple','revenuecat','clerk','network',null]) {

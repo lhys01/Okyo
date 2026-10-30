@@ -5,8 +5,15 @@ import test from 'node:test';
 import {
   AccountDeletionError,
   createAccountDeletionService,
+  isProductionDeployment,
   readBearerToken,
 } from './accountDeletion.js';
+
+test('Railway environment determines whether a deployment is production', () => {
+  assert.equal(isProductionDeployment({ NODE_ENV: 'production', RAILWAY_ENVIRONMENT: 'development' } as NodeJS.ProcessEnv), false);
+  assert.equal(isProductionDeployment({ NODE_ENV: 'production', RAILWAY_ENVIRONMENT: 'production' } as NodeJS.ProcessEnv), true);
+  assert.equal(isProductionDeployment({ NODE_ENV: 'production' } as NodeJS.ProcessEnv), true);
+});
 
 test('readBearerToken accepts only a conventional bearer token', () => {
   assert.equal(readBearerToken('Bearer token.value_123'), 'token.value_123');

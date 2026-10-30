@@ -2,7 +2,7 @@ import { getRequestContext } from '../observability/requestContext.js';
 import { verifyToken } from '@clerk/backend';
 import type { NextFunction, Request, Response } from 'express';
 
-import { areAuthorizedPartiesValid, getAccountDeletionConfig, isClerkSecretValid, readBearerToken } from '../services/accountDeletion.js';
+import { areAuthorizedPartiesValid, getAccountDeletionConfig, isClerkSecretValid, isProductionDeployment, readBearerToken } from '../services/accountDeletion.js';
 
 type TokenClaims = { sub?: unknown };
 type TokenVerifier = (token: string, options: { secretKey: string; authorizedParties?: string[] }) => Promise<TokenClaims>;
@@ -17,7 +17,7 @@ export function createRequireAuthenticatedUser(verifySessionToken: TokenVerifier
 
     const config = getAccountDeletionConfig();
     const clerkSecretKey = config.clerkSecretKey;
-    if (!isClerkSecretValid(clerkSecretKey) || (process.env.NODE_ENV === 'production' && !areAuthorizedPartiesValid(config.authorizedParties))) {
+    if (!isClerkSecretValid(clerkSecretKey) || (isProductionDeployment() && !areAuthorizedPartiesValid(config.authorizedParties))) {
       response.status(503).json({ ok: false, error: { code: 'authentication_unavailable', message: 'Please try again later.' } });
       return;
     }
@@ -55,7 +55,7 @@ export function createOptionalAuthenticatedUser(verifySessionToken: TokenVerifie
 
     const config = getAccountDeletionConfig();
     const clerkSecretKey = config.clerkSecretKey;
-    if (!isClerkSecretValid(clerkSecretKey) || (process.env.NODE_ENV === 'production' && !areAuthorizedPartiesValid(config.authorizedParties))) {
+    if (!isClerkSecretValid(clerkSecretKey) || (isProductionDeployment() && !areAuthorizedPartiesValid(config.authorizedParties))) {
       next();
       return;
     }
@@ -83,7 +83,7 @@ export const optionalAuthenticatedUser = createOptionalAuthenticatedUser();
 
 /** Real production AI spend and private runtime state require a verified user. */
 export function requireAiUser(request: Request, response: Response, next: NextFunction): Promise<void> {
-  return process.env.NODE_ENV === 'production'
+  return isProductionDeployment()
     ? requireAuthenticatedUser(request, response, next)
     : optionalAuthenticatedUser(request, response, next);
 }

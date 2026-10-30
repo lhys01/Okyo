@@ -76,9 +76,18 @@ export function getProductionAuthReadiness() {
   };
 }
 
+/** Railway also sets NODE_ENV=production for its Development service. */
+export function isProductionDeployment(environment: NodeJS.ProcessEnv = process.env): boolean {
+  const railwayEnvironment = (environment.RAILWAY_ENVIRONMENT ?? environment.RAILWAY_ENVIRONMENT_NAME ?? '')
+    .trim().toLowerCase();
+  if (railwayEnvironment) return railwayEnvironment === 'production';
+  return environment.NODE_ENV === 'production';
+}
+
 export function isClerkSecretValid(secret: string | null): boolean {
   if (!secret) return false;
-  return process.env.NODE_ENV !== 'production' || (secret.startsWith('sk_live_') && secret.length > 'sk_live_'.length);
+  const prefix = isProductionDeployment() ? 'sk_live_' : 'sk_test_';
+  return secret.startsWith(prefix) && secret.length > prefix.length;
 }
 
 /** Extracts only a conventional bearer token; never accepts a raw JWT header. */
@@ -111,7 +120,7 @@ export function createAccountDeletionService(deps: {
     revenueCatCustomerDeletionRequested: boolean;
     appleAuthorizationRevocation: 'not_applicable' | 'revoked' | 'manual_action_required' | 'unknown';
   }> {
-    if (!isClerkSecretValid(clerkSecretKey) || (process.env.NODE_ENV === 'production' && !areAuthorizedPartiesValid(config.authorizedParties))) {
+    if (!isClerkSecretValid(clerkSecretKey) || (isProductionDeployment() && !areAuthorizedPartiesValid(config.authorizedParties))) {
       throw new AccountDeletionError(
         'account_deletion_unavailable',
         503,
