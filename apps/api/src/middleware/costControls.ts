@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
 
 import { getCostControlConfig } from '../config/costControlConfig.js';
+import { isSafeLocalLoadTestEnvironment } from '../services/loadTestMock.js';
+import { reserveSharedGlobalAiQuota, SharedAiQuotaLimitExceededError } from '../services/sharedAiQuota.js';
 
 // ─── Per-IP Rate Limiter ─────────────────────────────────────────────────────
 //
@@ -9,19 +11,36 @@ import { getCostControlConfig } from '../config/costControlConfig.js';
 
 type RateLimitEntry = { count: number; windowStart: number };
 const ipWindowMap = new Map<string, RateLimitEntry>();
+const MAX_RATE_LIMIT_KEYS = 100_000;
+
+export class AiDailyCapExceededError extends Error {
+  constructor() {
+    super('Daily AI provider-call capacity has been exhausted.');
+    this.name = 'AiDailyCapExceededError';
+  }
+}
 
 export function scanRateLimitMiddleware(request: Request, response: Response, next: NextFunction) {
   const config = getCostControlConfig();
   const ip = getClientIp(request);
+  const syntheticUser = request.get('x-okyo-load-user') ?? '';
+  const rateLimitKey = isSafeLocalLoadTestEnvironment(process.env) &&
+    /^load_[A-Za-z0-9_-]{4,80}$/.test(syntheticUser) && !request.get('authorization')
+    ? `load:${syntheticUser}` : ip;
   const now = Date.now();
-  const entry = ipWindowMap.get(ip);
+  pruneRateLimitEntries(now, config.scanRateLimitWindowMs);
+  const entry = ipWindowMap.get(rateLimitKey);
 
   if (!entry || now - entry.windowStart >= config.scanRateLimitWindowMs) {
-    ipWindowMap.set(ip, { count: 1, windowStart: now });
+    ipWindowMap.set(rateLimitKey, { count: 1, windowStart: now });
     return next();
   }
 
   if (entry.count >= config.scanRateLimitMax) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((config.scanRateLimitWindowMs - (now - entry.windowStart)) / 1_000));
+    response.setHeader('Retry-After', String(retryAfterSeconds));
+    response.setHeader('X-RateLimit-Limit', String(config.scanRateLimitMax));
+    response.setHeader('X-RateLimit-Remaining', '0');
     response.status(429).json({
       ok: false,
       error: {
@@ -34,6 +53,8 @@ export function scanRateLimitMiddleware(request: Request, response: Response, ne
   }
 
   entry.count += 1;
+  response.setHeader('X-RateLimit-Limit', String(config.scanRateLimitMax));
+  response.setHeader('X-RateLimit-Remaining', String(Math.max(0, config.scanRateLimitMax - entry.count)));
   return next();
 }
 
@@ -69,6 +90,24 @@ export function checkAndIncrementGlobalAiCap(): boolean {
 
 export function getGlobalAiRequestCount(): number {
   return globalDailyAiRequests;
+}
+
+/** Reserve one actual provider attempt, including retries and fallbacks. */
+export async function reserveGlobalAiProviderCall(model?: string): Promise<void> {
+  if (process.env.NODE_ENV === 'production') {
+    try {
+      await reserveSharedGlobalAiQuota({
+        key: 'okyo:ai-provider-calls:global:daily',
+        limit: getCostControlConfig().aiDailyRequestCap,
+        ...(model ? { model } : {}),
+      });
+    } catch (error) {
+      if (error instanceof SharedAiQuotaLimitExceededError) throw new AiDailyCapExceededError();
+      throw error;
+    }
+    return;
+  }
+  if (!checkAndIncrementGlobalAiCap()) throw new AiDailyCapExceededError();
 }
 
 // ─── Fable 5 Daily Request Cap ───────────────────────────────────────────────
@@ -134,6 +173,29 @@ function getClientIp(request: Request): string {
   // Do not trust x-forwarded-for in dev (spoofable). Wire up trusted proxy
   // headers (e.g. express `trust proxy`) when deploying behind a load balancer.
   return request.ip ?? request.socket?.remoteAddress ?? 'unknown';
+}
+
+function pruneRateLimitEntries(now: number, windowMs: number): void {
+  for (const [ip, entry] of ipWindowMap) {
+    if (now - entry.windowStart >= windowMs) ipWindowMap.delete(ip);
+  }
+  while (ipWindowMap.size >= MAX_RATE_LIMIT_KEYS) {
+    const oldest = ipWindowMap.keys().next().value;
+    if (oldest === undefined) break;
+    ipWindowMap.delete(oldest);
+  }
+}
+
+export function getClientIpForScope(request: Request): string {
+  return getClientIp(request);
+}
+
+export function resetCostControlsForTests(): void {
+  ipWindowMap.clear();
+  globalDailyAiRequests = 0;
+  globalDailyResetAt = 0;
+  fableDailyRequests = 0;
+  fableDailyResetAt = 0;
 }
 
 function maskIp(ip: string): string {

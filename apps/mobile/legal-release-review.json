@@ -1,0 +1,10 @@
+{
+  "status": "approved",
+  "approvalType": "counsel_approved",
+  "approvedBy": "Roberto Ferrito",
+  "approvedAt": "2026-10-28",
+  "sourceSha256": "b8ca979c07f01b39a9f2b77ccab3576b62f6da58916bff56f8cd0eded1254a7c",
+  "reviewRequired": [
+    "Keep the published text synchronized with any future product or vendor changes"
+  ]
+}

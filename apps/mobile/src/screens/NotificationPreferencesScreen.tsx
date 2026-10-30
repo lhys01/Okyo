@@ -1,14 +1,18 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import * as Notifications from 'expo-notifications';
 import { NavArrowLeft } from 'iconoir-react-native';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FormScreenSkeleton } from '../components/Skeleton';
 import type { MainTabParamList } from '../navigation/types';
+import { requestPermissionWithNotice } from '../privacy/requestPermissionWithNotice';
+import { resyncCookingReminderNow } from '../state/cookingReminder';
+import { resyncGroceryReminderNow } from '../state/groceryReminder';
 import { DEFAULT_NOTIFICATION_PREFERENCES, readNotificationPreferences, writeNotificationPreferences, type NotificationPreferences } from '../state/notificationPreferences';
 import { colors, fontFamilies, radius, spacing } from '../theme/okyoTheme';
+import { loadNotificationsModule } from '../utils/notifications';
 
 type Navigation = NativeStackNavigationProp<MainTabParamList>;
 type PermissionState = 'loading' | 'granted' | 'denied' | 'undetermined';
@@ -17,40 +21,62 @@ export function NotificationPreferencesScreen() {
   const navigation = useNavigation<Navigation>();
   const [permission, setPermission] = useState<PermissionState>('loading');
   const [preferences, setPreferences] = useState<NotificationPreferences | null>(null);
-  useEffect(() => { void Promise.all([Notifications.getPermissionsAsync(), readNotificationPreferences()]).then(([status, saved]) => { setPermission(status.granted ? 'granted' : status.canAskAgain ? 'undetermined' : 'denied'); setPreferences(saved); }).catch(() => { setPermission('undetermined'); setPreferences({ ...DEFAULT_NOTIFICATION_PREFERENCES }); }); }, []);
+  useEffect(() => { void Promise.all([loadNotificationsModule().then((notifications) => notifications?.getPermissionsAsync() ?? null), readNotificationPreferences()]).then(([status, saved]) => { setPermission(status?.granted ? 'granted' : status?.canAskAgain ? 'undetermined' : 'undetermined'); setPreferences(saved); }).catch(() => { setPermission('undetermined'); setPreferences({ ...DEFAULT_NOTIFICATION_PREFERENCES }); }); }, []);
   const goBack = () => { if (navigation.canGoBack()) navigation.goBack(); };
-  const requestPermission = async () => {
-    if (permission === 'denied') { await Linking.openSettings(); return; }
-    const result = await Notifications.requestPermissionsAsync({ ios: { allowAlert: true, allowBadge: true, allowSound: true } });
-    setPermission(result.granted ? 'granted' : result.canAskAgain ? 'undetermined' : 'denied');
+  const requestPermission = async (): Promise<boolean> => {
+    if (permission === 'denied') { await Linking.openSettings(); return false; }
+    const notifications = await loadNotificationsModule();
+    if (!notifications) {
+      setPermission('undetermined');
+      return false;
+    }
+    await requestPermissionWithNotice(
+      'notifications',
+      () => notifications.getPermissionsAsync(),
+      () => notifications.requestPermissionsAsync({ ios: { allowAlert: true, allowBadge: true, allowSound: true } }),
+    );
+    const status = await notifications.getPermissionsAsync();
+    setPermission(status.granted ? 'granted' : status.canAskAgain ? 'undetermined' : 'denied');
+    resyncGroceryReminderNow();
+    resyncCookingReminderNow();
+    return status.granted;
   };
   const setMaster = async (value: boolean) => {
     if (!preferences) return;
     if (value && permission !== 'granted') {
-      await requestPermission();
+      if (await requestPermission()) {
+        const next = { ...preferences, allowNotifications: true };
+        setPreferences(next);
+        await writeNotificationPreferences(next);
+        resyncGroceryReminderNow();
+        resyncCookingReminderNow();
+      }
       return;
     }
     const next = { ...preferences, allowNotifications: value };
     setPreferences(next);
     await writeNotificationPreferences(next);
+    resyncGroceryReminderNow();
+    resyncCookingReminderNow();
   };
   const setPreference = (key: keyof NotificationPreferences, value: boolean) => {
     if (!preferences) return;
     const next = { ...preferences, [key]: value };
     setPreferences(next);
-    void writeNotificationPreferences(next);
+    void writeNotificationPreferences(next).then(() => {
+      resyncGroceryReminderNow();
+      resyncCookingReminderNow();
+    });
   };
-  if (!preferences || permission === 'loading') return <View accessibilityRole="progressbar" style={styles.loading}><ActivityIndicator color={colors.coral} /></View>;
+  if (!preferences || permission === 'loading') return <SafeAreaView style={styles.safeArea}><FormScreenSkeleton cards={3} /></SafeAreaView>;
   const enabled = permission === 'granted' && preferences.allowNotifications;
   return <SafeAreaView style={styles.safeArea}>
     <View style={styles.header}><Pressable accessibilityLabel="Go back" accessibilityRole="button" onPress={goBack} style={styles.back}><NavArrowLeft color={colors.ink} height={25} width={25} /></Pressable><Text style={styles.title}>Notifications</Text></View>
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <View style={styles.permissionCard}><View style={styles.permissionCopy}><Text style={styles.rowTitle}>Allow notifications</Text><Text style={styles.rowBody}>{enabled ? 'Okyo notifications are enabled.' : permission === 'denied' ? 'Notifications are blocked in iOS Settings.' : permission === 'granted' ? 'Okyo notifications are paused.' : 'Choose whether Okyo may send notifications.'}</Text></View>{permission === 'denied' ? <Pressable accessibilityRole="button" onPress={() => void requestPermission()} style={styles.permissionButton}><Text style={styles.permissionButtonText}>Open Settings</Text></Pressable> : <Switch accessibilityLabel="Allow notifications" onValueChange={(value) => void setMaster(value)} trackColor={{ false: colors.border, true: colors.coral }} value={enabled} />}</View>
-      <PreferenceGroup enabled={enabled} label="COOKING" preferences={preferences} rows={[['cookingTimers', 'Cooking timer alerts', 'Alerts for timers you start while cooking.']]} onChange={setPreference} />
-      <PreferenceGroup enabled={enabled} label="REMINDERS" preferences={preferences} rows={[['savedRecipeReminders', 'Saved recipe reminders', 'Occasional reminders about recipes you saved.'], ['groceryReminders', 'Grocery reminders', 'Reminders for unfinished grocery lists.']]} onChange={setPreference} />
-      <PreferenceGroup enabled={enabled} label="PROGRESS" preferences={preferences} rows={[['weeklySavings', 'Weekly savings summary', 'A weekly recap of estimated savings from completed meals.'], ['weeklyCooking', 'Weekly cooking recap', 'A recap of recipes you completed.']]} onChange={setPreference} />
-      <PreferenceGroup enabled={enabled} label="OKYO" preferences={preferences} rows={[['productUpdates', 'Product updates', 'Important updates about Okyo.'], ['newFeatures', 'New features', 'Occasional announcements about new tools.']]} onChange={setPreference} />
-      <Text style={styles.footer}>You can change these anytime. Timer alerts remain separate from optional product messages.</Text>
+      <PreferenceGroup enabled={enabled} label="COOKING" preferences={preferences} rows={[['cookingTimers', 'Cooking step alerts', 'Get a reminder when the current step’s estimated time is up.']]} onChange={setPreference} />
+      <PreferenceGroup enabled={enabled} label="REMINDERS" preferences={preferences} rows={[['groceryReminders', 'Grocery reminders', 'A single reminder a few hours after you start a grocery list, while items are still unchecked.']]} onChange={setPreference} />
+      <Text style={styles.footer}>Essential notifications only.</Text>
     </ScrollView>
   </SafeAreaView>;
 }

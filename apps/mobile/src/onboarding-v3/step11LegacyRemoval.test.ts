@@ -38,7 +38,7 @@ test('V4 is rejected: master switch is off and legacy V3 renders unconditionally
   const flags = readFileSync(join(root, '../config/devFlags.ts'), 'utf8');
   const host = readFileSync(join(root, 'OnboardingV3.tsx'), 'utf8');
   assert.match(flags, /ONBOARDING_V4_ENABLED = false/);
-  assert.match(host, /if \(!ONBOARDING_V4_ENABLED\) return;/);
+  assert.match(host, /if \(!canonicalOnboardingConfig\.v4Enabled\) return;/);
   assert.match(host, /<LegacyOnboardingV3/);
 });
 

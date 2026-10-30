@@ -20,17 +20,112 @@ function goalState(goal: PrimaryGoal, step: OnboardingV3Step, answers: Record<st
   return at(step, { profile: { ...initialOnboardingV3State.profile, name: 'Megan', primaryGoal: goal, secondaryGoals: [goal], answers } });
 }
 
-test('splash and locked onboarding2 lead through onboarding11 before the user name screen', () => {
+test('splash and showcase lead to the fox introduction before food goals', () => {
   assert.equal(reduce('splash', { type: 'SPLASH_FINISHED', elapsedMs: 699, fontsLoaded: true }).step, 'splash');
   assert.equal(reduce('splash', { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, 'showcase');
-  assert.equal(reduce('showcase', { type: 'SHOWCASE_FINISHED' }).step, 'nameFox');
-  assert.equal(reduce('nameFox', { type: 'MASCOT_NAME_SUBMITTED', raw: '  Kiko  ' }).step, 'name');
+  assert.equal(reduce('showcase', { type: 'SHOWCASE_FINISHED' }).step, 'foxIntro');
+  assert.equal(reduce('foxIntro', { type: 'CONTINUE' }).step, 'nameFox');
+  assert.equal(reduce('nameFox', { type: 'MASCOT_NAME_SUBMITTED', raw: 'Milo' }).step, 'name');
+  assert.equal(reduce('name', { type: 'NAME_SUBMITTED', raw: 'Megan' }).step, 'foxExplainer1');
+  assert.equal(reduce('foxExplainer1', { type: 'CONTINUE' }).step, 'foxExplainer2');
+  assert.equal(reduce('foxExplainer2', { type: 'CONTINUE' }).step, 'ageEligibility');
+  assert.equal(reduce('ageEligibility', { type: 'AGE_VALUE_CHANGED', value: 28 }).profile.age, 28);
+  assert.equal(reduce('ageEligibility', { type: 'CONTINUE' }, { profile: { ...initialOnboardingV3State.profile, age: 28, ageEligibility: '18_plus' } }).step, 'primaryGoal');
+  const selected = reduce('primaryGoal', { type: 'PRIMARY_GOAL_SELECTED', goal: 'hit_macros' });
+  assert.equal(selected.step, 'branchIntro');
+  assert.equal(onboardingV3Reducer(selected, { type: 'BACK' }).step, 'primaryGoal');
 });
 
-test('name is trimmed and exactly three primary goals enter one shared engine', () => {
+test('the explanation pages resume and Back follows the immediately preceding page', () => {
+  const profile = goalState('hit_macros', 'foxExplainer2').profile;
+  const hydrated = onboardingV3Reducer(initialOnboardingV3State, {
+    type: 'HYDRATE', profile, resumeStep: 'foxExplainer2', mascotName: 'Kiko', attribution: null,
+  });
+  const resumed = onboardingV3Reducer(hydrated, { type: 'SPLASH_FINISHED', elapsedMs: 1200, fontsLoaded: true });
+  assert.equal(resumed.step, 'foxExplainer2');
+  assert.equal(onboardingV3Reducer(resumed, { type: 'BACK' }).step, 'foxExplainer1');
+  const age = onboardingV3Reducer(resumed, { type: 'CONTINUE' });
+  assert.equal(age.step, 'ageEligibility');
+  const selectedAge = onboardingV3Reducer(age, { type: 'AGE_VALUE_CHANGED', value: 28 });
+  const primaryGoal = onboardingV3Reducer(selectedAge, { type: 'CONTINUE' });
+  assert.equal(primaryGoal.step, 'primaryGoal');
+  const branchQuestions = onboardingV3Reducer(primaryGoal, { type: 'PRIMARY_GOAL_SELECTED', goal: 'hit_macros' });
+  assert.equal(branchQuestions.step, 'branchIntro');
+  assert.equal(onboardingV3Reducer(branchQuestions, { type: 'BACK' }).step, 'primaryGoal');
+  assert.equal(onboardingV3Reducer(resumed, { type: 'BACK' }).step, 'foxExplainer1');
+});
+
+test('one shared plan route precedes signature for every active goal and survives resume', () => {
+  for (const goal of PRIMARY_GOALS) {
+    const questions = goalState(goal, 'branchIntro');
+    const plan = onboardingV3Reducer(questions, { type: 'BRANCH_PLAN_READY' });
+    assert.equal(plan.step, 'branchPlan');
+    assert.equal(onboardingV3Reducer(plan, { type: 'BACK' }).step, 'branchIntro');
+    const signature = onboardingV3Reducer(plan, { type: 'CONTINUE' });
+    assert.equal(signature.step, 'branchSignature');
+    assert.equal(onboardingV3Reducer(signature, { type: 'BACK' }).step, 'branchPlan');
+    const account = onboardingV3Reducer(signature, { type: 'BRANCH_SIGNATURE_COMPLETED' });
+    assert.equal(account.step, 'branchAccount');
+    assert.equal(onboardingV3Reducer(account, { type: 'BACK' }).step, 'branchSignature');
+    assert.equal(onboardingV3Reducer(plan, { type: 'BRANCH_PLAN_READY' }), plan);
+  }
+  const signature = goalState('hit_macros', 'branchSignature');
+  const hydrated = onboardingV3Reducer(initialOnboardingV3State, {
+    type: 'HYDRATE', profile: signature.profile, resumeStep: 'branchPlan', mascotName: 'Kiko', attribution: null,
+  });
+  assert.equal(onboardingV3Reducer(hydrated, { type: 'SPLASH_FINISHED', elapsedMs: 1200, fontsLoaded: true }).step, 'branchPlan');
+  assert.ok(ONBOARDING_V3_STEPS.indexOf('branchPlan') < ONBOARDING_V3_STEPS.indexOf('branchSignature'));
+  assert.ok(ONBOARDING_V3_STEPS.indexOf('branchSignature') < ONBOARDING_V3_STEPS.indexOf('branchAccount'));
+  assert.equal(onboardingV3Reducer(goalState('hit_macros', 'branchPlan'), { type: 'MACRO_PLAN_EDIT_REQUESTED' }).step, 'branchIntro');
+});
+
+test('fresh onboarding follows the same complete route for every active goal', () => {
+  const expected = ['showcase', 'foxIntro', 'nameFox', 'name', 'foxExplainer1', 'foxExplainer2', 'ageEligibility', 'primaryGoal', 'branchIntro', 'branchPlan', 'branchSignature', 'branchAccount'];
+  for (const goal of PRIMARY_GOALS) {
+    let state = onboardingV3Reducer(initialOnboardingV3State, { type: 'SPLASH_FINISHED', elapsedMs: 1200, fontsLoaded: true });
+    const visited = [state.step];
+    const advance = (event: OnboardingV3Event) => { state = onboardingV3Reducer(state, event); visited.push(state.step); };
+    advance({ type: 'SHOWCASE_FINISHED' });
+    advance({ type: 'CONTINUE' });
+    advance({ type: 'MASCOT_NAME_SUBMITTED', raw: 'Milo' });
+    advance({ type: 'NAME_SUBMITTED', raw: 'Megan' });
+    advance({ type: 'CONTINUE' });
+    advance({ type: 'CONTINUE' });
+    state = onboardingV3Reducer(state, { type: 'AGE_VALUE_CHANGED', value: 28 });
+    advance({ type: 'CONTINUE' });
+    advance({ type: 'PRIMARY_GOAL_SELECTED', goal });
+    advance({ type: 'BRANCH_PLAN_READY' });
+    advance({ type: 'CONTINUE' });
+    advance({ type: 'BRANCH_SIGNATURE_COMPLETED' });
+    assert.deepEqual(visited, expected, goal);
+    assert.equal(state.profile.name, 'Megan');
+    assert.equal(state.mascotName, 'Milo');
+    assert.equal(state.profile.primaryGoal, goal);
+    assert.equal(onboardingV3Reducer(state, { type: 'BACK' }).step, 'branchSignature');
+  }
+});
+
+test('fox naming and user naming precede both explanations and goal questions', () => {
+  const branch = goalState('save_money', 'nameFox');
+  assert.equal(onboardingV3Reducer(branch, { type: 'MASCOT_NAME_SUBMITTED', raw: '  Milo  ' }).step, 'name');
+  assert.equal(onboardingV3Reducer(branch, { type: 'MASCOT_NAME_SKIPPED' }).step, 'name');
+  assert.equal(onboardingV3Reducer(branch, { type: 'BACK' }).step, 'foxIntro');
+  assert.equal(reduce('nameFox', { type: 'MASCOT_NAME_SUBMITTED', raw: '  Milo  ' }).step, 'name');
+  assert.equal(reduce('nameFox', { type: 'MASCOT_NAME_SKIPPED' }).step, 'name');
+  assert.equal(reduce('nameFox', { type: 'MASCOT_NAME_SUBMITTED', raw: '  Milo  ' }).mascotName, 'Milo');
+  assert.equal(onboardingV3Reducer(goalState('save_money', 'name'), { type: 'NAME_SKIPPED' }).step, 'foxExplainer1');
+  assert.equal(onboardingV3Reducer(goalState('save_money', 'name'), { type: 'BACK' }).step, 'nameFox');
+  assert.equal(reduce('personalizationChoice', { type: 'PERSONALIZATION_CONTINUE' }).step, 'paywall');
+  assert.equal(reduce('personalizationChoice', { type: 'PERSONALIZATION_SKIP' }).step, 'paywall');
+  // A user who already named their fox (e.g. under the pre-restructure flow) is never asked twice.
+  const alreadyNamed = at('planReady', { mascotName: 'Milo' });
+  assert.equal(onboardingV3Reducer(alreadyNamed, { type: 'CONTINUE' }).step, 'paywall');
+});
+
+test('user name is trimmed after fox naming and exactly three goals enter the shared route', () => {
   const named = reduce('name', { type: 'NAME_SUBMITTED', raw: '  Megan  ' });
   assert.equal(named.profile.name, 'Megan');
-  assert.equal(named.step, 'primaryGoal');
+  assert.equal(named.step, 'foxExplainer1');
   assert.deepEqual(PRIMARY_GOALS, ['save_money', 'eat_healthier', 'hit_macros']);
   for (const goal of PRIMARY_GOALS) {
     const selected = onboardingV3Reducer({ ...named, step: 'primaryGoal' }, { type: 'PRIMARY_GOAL_SELECTED', goal });
@@ -40,16 +135,66 @@ test('name is trimmed and exactly three primary goals enter one shared engine', 
   assert.equal(PRIMARY_GOALS.includes('waste_less' as PrimaryGoal), false);
 });
 
-test('Save Money branch preview completion enters the canonical completion lifecycle', () => {
-  const completed = onboardingV3Reducer(goalState('save_money', 'branchIntro'), { type: 'BRANCH_PREVIEW_COMPLETED' });
-  assert.equal(completed.step, 'complete');
-  assert.equal(completed.profile.primaryGoal, 'save_money');
+test('Save Money questions require the shared plan before signature and account', () => {
+  const questions = goalState('save_money', 'branchIntro');
+  const plan = onboardingV3Reducer(questions, { type: 'BRANCH_PLAN_READY' });
+  assert.equal(plan.step, 'branchPlan');
+  assert.equal(plan.profile.primaryGoal, 'save_money');
+  assert.equal(onboardingV3Reducer(plan, { type: 'CONTINUE' }).step, 'branchSignature');
 });
 
-test('Macros branch preview completion uses the same canonical terminal state', () => {
-  const completed = onboardingV3Reducer(goalState('hit_macros', 'branchIntro'), { type: 'BRANCH_PREVIEW_COMPLETED' });
-  assert.equal(completed.step, 'complete');
-  assert.equal(completed.profile.primaryGoal, 'hit_macros');
+test('branch plan follows questions directly and preserves existing dietary data without showing allergies', () => {
+  let state = goalState('save_money', 'branchIntro');
+  state = { ...state, profile: { ...state.profile, dietaryPreferences: { allergies: ['Peanuts'], restrictions: [], avoidances: [], dislikes: [] } } };
+  state = onboardingV3Reducer(state, { type: 'BRANCH_PLAN_READY' });
+  assert.equal(state.step, 'branchPlan');
+  assert.deepEqual(state.profile.dietaryPreferences.allergies, ['Peanuts']);
+  state = onboardingV3Reducer(state, { type: 'CONTINUE' });
+  assert.equal(state.step, 'branchSignature');
+  assert.equal(onboardingV3Reducer(state, { type: 'BACK' }).step, 'branchPlan');
+  assert.equal(onboardingV3Reducer(state, { type: 'BRANCH_SIGNATURE_COMPLETED' }).step, 'branchAccount');
+});
+
+test('fresh reducer state has no cross-session allergy data', () => {
+  const fresh = goalState('eat_healthier', 'branchPlan');
+  assert.deepEqual(fresh.profile.dietaryPreferences.allergies, []);
+  assert.equal(onboardingV3Reducer(fresh, { type: 'BRANCH_ALLERGIES_SET', allergies: ['Milk'] }), fresh);
+});
+
+test('a fresh hydration clears a stale device dietary mirror without changing a resumable profile', () => {
+  const staleProfile = { ...initialOnboardingV3State.profile, dietaryPreferences: { allergies: ['Peanuts'], restrictions: [], avoidances: [], dislikes: [] } };
+  const fresh = onboardingV3Reducer(initialOnboardingV3State, {
+    type: 'HYDRATE', profile: staleProfile, resumeStep: null, mascotName: 'Kiko', attribution: null,
+  });
+  assert.deepEqual(fresh.profile.dietaryPreferences.allergies, []);
+
+  const resumable = onboardingV3Reducer(initialOnboardingV3State, {
+    type: 'HYDRATE', profile: { ...staleProfile, primaryGoal: 'save_money', secondaryGoals: ['save_money'] }, resumeStep: 'branchDietarySafety', mascotName: 'Kiko', attribution: null,
+  });
+  assert.deepEqual(resumable.profile.dietaryPreferences.allergies, ['Peanuts']);
+});
+
+test('legacy allergy route resumes on the shared plan without losing existing dietary data', () => {
+  const profile = {
+    ...initialOnboardingV3State.profile,
+    primaryGoal: 'eat_healthier' as PrimaryGoal,
+    secondaryGoals: ['eat_healthier' as const],
+    dietaryPreferences: { allergies: ['Tree nuts'], restrictions: [], avoidances: [], dislikes: [] },
+  };
+  const hydrated = onboardingV3Reducer(initialOnboardingV3State, {
+    type: 'HYDRATE', profile, resumeStep: 'branchDietarySafety', mascotName: 'Kiko', attribution: null,
+  });
+  assert.equal(onboardingV3Reducer(hydrated, { type: 'SPLASH_FINISHED', elapsedMs: 700, fontsLoaded: true }).step, 'branchPlan');
+  assert.deepEqual(hydrated.profile.dietaryPreferences.allergies, ['Tree nuts']);
+  assert.deepEqual(hydrated.dietaryRestrictions, ['Tree nuts']);
+});
+
+test('Macros questions also require the shared plan before signature', () => {
+  const questions = goalState('hit_macros', 'branchIntro');
+  const plan = onboardingV3Reducer(questions, { type: 'BRANCH_PLAN_READY' });
+  assert.equal(plan.step, 'branchPlan');
+  assert.equal(plan.profile.primaryGoal, 'hit_macros');
+  assert.equal(onboardingV3Reducer(plan, { type: 'CONTINUE' }).step, 'branchSignature');
 });
 
 test('old cook-more primary state returns safely to goal selection', () => {
@@ -78,10 +223,7 @@ test('branch questions insert meaningful reveals and macro target screens', () =
   state = onboardingV3Reducer(state, { type: 'CONTINUE' });
   state = onboardingV3Reducer(state, { type: 'ANSWER_SET', key: 'weightKg', value: 75 });
   state = onboardingV3Reducer(state, { type: 'CONTINUE' });
-  assert.equal(state.step, 'holdReveal');
-  state = onboardingV3Reducer(state, { type: 'HOLD_COMPLETED' });
-  assert.equal(state.step, 'branchReveal');
-  state = onboardingV3Reducer(state, { type: 'CONTINUE' });
+  assert.equal(state.step, 'question5');
   state = onboardingV3Reducer(state, { type: 'ANSWER_SET', key: 'biologicalSex', value: 'Male' });
   state = onboardingV3Reducer(state, { type: 'CONTINUE' });
   state = onboardingV3Reducer(state, { type: 'ANSWER_SET', key: 'activityLevel', value: 'Active' });
@@ -105,10 +247,11 @@ test('secondary and dietary answers persist into the plan without a redundant fu
   state = onboardingV3Reducer(state, { type: 'DIETARY_SET', preferences: { allergies: ['Peanuts'], restrictions: ['Vegetarian'], avoidances: [], dislikes: [] } });
   assert.equal(state.step, 'secondaryGoals');
   state = onboardingV3Reducer(state, { type: 'SECONDARY_GOALS_SET', goals: ['cook_more', 'waste_less'] });
-  assert.equal(state.step, 'planReady');
+  assert.equal(state.step, 'holdReveal');
   assert.deepEqual(state.profile.secondaryGoals, ['save_money', 'cook_more', 'waste_less']);
   assert.deepEqual(state.profile.dietaryRestrictions, ['Peanuts', 'Vegetarian']);
-  assert.equal(onboardingV3Reducer(at('planReady', { profile: state.profile }), { type: 'CONTINUE' }).step, 'paywall');
+  assert.equal(onboardingV3Reducer(state, { type: 'HOLD_COMPLETED' }).step, 'planReady');
+  assert.equal(onboardingV3Reducer(at('planReady', { profile: state.profile }), { type: 'CONTINUE' }).step, 'personalizationChoice');
 });
 
 test('the paywall fails closed and entitlement unlocks post-purchase real input, not Home', () => {
@@ -119,6 +262,13 @@ test('the paywall fails closed and entitlement unlocks post-purchase real input,
   assert.equal(onboardingV3Reducer(paywall, { type: 'RESTORE_SUCCEEDED', entitled: false }).step, 'paywall');
   assert.equal(onboardingV3Reducer(paywall, { type: 'PURCHASE_SUCCEEDED', entitled: true }).step, 'postPurchase');
   assert.equal(onboardingV3Reducer(paywall, { type: 'RESTORE_SUCCEEDED', entitled: true }).step, 'postPurchase');
+});
+
+test('when no purchase provider is configured, onboarding completes without granting premium', () => {
+  const paywall = at('paywall');
+  const completed = onboardingV3Reducer(paywall, { type: 'PAYMENTS_UNAVAILABLE_CONTINUE' });
+  assert.equal(completed.step, 'complete');
+  assert.equal(completed.profile, paywall.profile);
 });
 
 test('the dev paywall bypass finishes onboarding directly, skipping the post-purchase handoff', () => {
@@ -142,23 +292,28 @@ test('camera, picker, and scan states exist only after the entitlement gate', ()
 
 test('Back is deterministic and no pre-paywall state can bypass into real input', () => {
   const globalBackPairs: Array<[OnboardingV3Step, OnboardingV3Step]> = [
-    ['nameFox', 'showcase'], ['name', 'nameFox'], ['primaryGoal', 'name'], ['branchIntro', 'primaryGoal'],
+    ['name', 'nameFox'], ['ageEligibility', 'foxExplainer2'], ['primaryGoal', 'ageEligibility'], ['foxIntro', 'showcase'],
+    ['foxExplainer1', 'name'], ['foxExplainer2', 'foxExplainer1'],
+    ['branchIntro', 'primaryGoal'], ['branchPlan', 'branchIntro'], ['branchSignature', 'branchPlan'],
+    ['personalizationChoice', 'planReady'],
   ];
   for (const [from, to] of globalBackPairs) assert.equal(reduce(from, { type: 'BACK' }).step, to);
+  assert.equal(onboardingV3Reducer(goalState('save_money', 'nameFox'), { type: 'BACK' }).step, 'foxIntro');
+  assert.equal(reduce('nameFox', { type: 'BACK' }).step, 'foxIntro');
 
   const savingsQuestion2 = goalState('save_money', 'question2');
   assert.equal(onboardingV3Reducer(savingsQuestion2, { type: 'BACK' }).step, 'question1');
-  assert.equal(onboardingV3Reducer(goalState('save_money', 'holdReveal'), { type: 'BACK' }).step, 'question2');
+  assert.equal(onboardingV3Reducer(goalState('save_money', 'holdReveal'), { type: 'BACK' }).step, 'secondaryGoals');
   assert.equal(onboardingV3Reducer(goalState('save_money', 'branchReveal'), { type: 'BACK' }).step, 'holdReveal');
   assert.equal(onboardingV3Reducer(goalState('save_money', 'branchInsight'), { type: 'BACK' }).step, 'question5');
   assert.equal(onboardingV3Reducer(goalState('save_money', 'branchDemo'), { type: 'BACK' }).step, 'branchInsight');
 
-  assert.equal(onboardingV3Reducer(goalState('hit_macros', 'holdReveal'), { type: 'BACK' }).step, 'question4');
+  assert.equal(onboardingV3Reducer(goalState('hit_macros', 'holdReveal'), { type: 'BACK' }).step, 'secondaryGoals');
   assert.equal(onboardingV3Reducer(goalState('hit_macros', 'nutritionTargets'), { type: 'BACK' }).step, 'question9');
   assert.equal(onboardingV3Reducer(goalState('hit_macros', 'branchDemo'), { type: 'BACK' }).step, 'nutritionTargets');
   assert.equal(onboardingV3Reducer(goalState('save_money', 'dietaryPreferences'), { type: 'BACK' }).step, 'branchDemo');
   assert.equal(onboardingV3Reducer(goalState('save_money', 'secondaryGoals'), { type: 'BACK' }).step, 'dietaryPreferences');
-  assert.equal(onboardingV3Reducer(goalState('save_money', 'planReady'), { type: 'BACK' }).step, 'secondaryGoals');
+  assert.equal(onboardingV3Reducer(goalState('save_money', 'planReady'), { type: 'BACK' }).step, 'dietaryPreferences');
   const entitlementIndex = ONBOARDING_V3_STEPS.indexOf('paywall');
   for (const step of ONBOARDING_V3_STEPS.slice(0, entitlementIndex)) {
     const next = onboardingV3Reducer(at(step), { type: 'PHOTO_SELECTED', uri: 'file:///blocked.jpg' });

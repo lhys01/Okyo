@@ -1,9 +1,8 @@
-import { Image } from 'expo-image';
 import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
-import { onboardingV3Assets } from '../assets/onboardingV3Assets';
+import { LaunchArtwork, LAUNCH_BACKGROUND } from '../../startup/LaunchScreen';
 
 const SPLASH_MINIMUM_MS = 700;
 const SPLASH_FONT_FALLBACK_MS = 1100;
@@ -23,9 +22,9 @@ export function SplashScreen({ appStartedAt, fontsLoaded, onFinished }: {
   return (
     <View style={styles.screen}>
       <StatusBar animated={false} hidden />
-      <Image contentFit="cover" source={onboardingV3Assets.approvedOnboarding1} style={StyleSheet.absoluteFill} />
+      <LaunchArtwork />
     </View>
   );
 }
 
-const styles = StyleSheet.create({ screen: { backgroundColor: '#fffdfe', flex: 1 } });
+const styles = StyleSheet.create({ screen: { backgroundColor: LAUNCH_BACKGROUND, flex: 1 } });

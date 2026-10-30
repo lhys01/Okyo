@@ -11,8 +11,8 @@ const ORDERS: Record<PrimaryGoal, readonly V4ResultSection[]> = {
   hit_macros: ['nutrition', 'overview', 'cost', 'ingredients', 'steps', 'tools', 'actions'],
 };
 
-export function getV4ResultSectionOrder(goal: PrimaryGoal): readonly V4ResultSection[] {
-  return ORDERS[goal];
+export function getV4ResultSectionOrder(goal: PrimaryGoal | null): readonly V4ResultSection[] {
+  return goal ? ORDERS[goal] : ['overview', 'ingredients', 'steps', 'nutrition', 'cost', 'tools', 'actions'];
 }
 
 export function resolveV4ResultRecipe(

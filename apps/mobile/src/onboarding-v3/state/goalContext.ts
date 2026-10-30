@@ -1,5 +1,6 @@
 import type { GoalContext } from '../../api/types';
 import type { PersonalizedOnboardingProfile } from './personalizedOnboarding';
+import { macroPreferenceRequestContext } from './macroPreferences';
 
 /**
  * Only product-relevant onboarding answers travel with a real recipe request.
@@ -22,8 +23,10 @@ export function buildGoalContext(profile: PersonalizedOnboardingProfile): GoalCo
       ? profile.savings.orderingFriction.join(', ')
       : undefined,
     healthPriorities: profile.health.healthGoals.length ? profile.health.healthGoals : undefined,
-    trackingPreference: profile.health.trackingPreference ?? undefined,
-    nutritionTargets: profile.nutritionTargets ? {
+    trackingPreference: profile.primaryGoal === 'hit_macros' && profile.macroPreferences ? macroPreferenceRequestContext(profile.macroPreferences) : profile.health.trackingPreference ?? undefined,
+    // Explicit own references must not be accompanied by older calculated
+    // targets that could silently override them in the generation request.
+    nutritionTargets: profile.nutritionTargets && !(profile.primaryGoal === 'hit_macros' && profile.macroPreferences?.detail === 'own') ? {
       calories: profile.nutritionTargets.calories,
       proteinGrams: profile.nutritionTargets.proteinGrams,
       carbsGrams: profile.nutritionTargets.carbsGrams,

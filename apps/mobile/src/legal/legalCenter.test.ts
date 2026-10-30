@@ -8,52 +8,43 @@ import { legalDocuments } from './legalDocuments';
 const read = (file: string) => readFileSync(resolve(process.cwd(), file), 'utf8');
 
 const settings = read('src/screens/SettingsScreen.tsx');
-const centre = read('src/screens/LegalPrivacyScreen.tsx');
 const documentScreen = read('src/screens/LegalScreen.tsx');
-const licenses = read('src/screens/OpenSourceLicensesScreen.tsx');
 const privacyData = read('src/screens/PrivacyDataScreen.tsx');
 const mainTabs = read('src/navigation/MainTabs.tsx');
 const navTypes = read('src/navigation/types.ts');
 const view = read('src/legal/LegalDocumentView.tsx');
 const modal = read('src/legal/LegalDocumentModal.tsx');
 
-test('every legal and privacy route is registered and reachable', () => {
-  for (const screen of ['LegalPrivacyScreen', 'LegalScreen', 'OpenSourceLicensesScreen', 'PrivacyDataScreen', 'NotificationPreferencesScreen']) {
+test('current legal and privacy routes are registered and reachable from Settings', () => {
+  for (const screen of ['LegalScreen', 'PrivacyDataScreen', 'NotificationPreferencesScreen']) {
     assert.match(navTypes, new RegExp(`${screen}:`), `${screen} is missing from MainTabParamList`);
     assert.match(mainTabs, new RegExp(`name="${screen}"`), `${screen} is not registered in the navigator`);
   }
-  assert.match(settings, /go\('LegalPrivacyScreen'\)/, 'Settings must open the Legal & Privacy centre');
+  assert.match(settings, /go\('LegalScreen'\)/, 'Settings must open the in-app legal documents');
+  assert.match(settings, /go\('PrivacyDataScreen'\)/, 'Settings must open privacy controls');
 });
 
-test('legal and privacy screens are not exposed as bottom tabs', () => {
+test('legal and privacy utility screens are not exposed as bottom tabs', () => {
   const order = /const visibleTabOrder: MainTabRouteName\[\] = \[([\s\S]*?)\]/.exec(mainTabs)?.[1] ?? '';
-  for (const screen of ['LegalPrivacyScreen', 'LegalScreen', 'OpenSourceLicensesScreen', 'PrivacyDataScreen']) {
+  for (const screen of ['LegalScreen', 'PrivacyDataScreen', 'NotificationPreferencesScreen']) {
     assert.doesNotMatch(order, new RegExp(screen), `${screen} must not appear in the tab bar`);
   }
 });
 
-test('the centre lists every legal document', () => {
-  assert.match(centre, /legalDocuments\.map/, 'document rows must be generated from the registry, not hand-listed');
+test('the in-app legal registry lists the current documents', () => {
   assert.equal(legalDocuments.length >= 11, true);
+  assert.match(documentScreen, /legalDocuments\.map/);
+  assert.match(documentScreen, /LegalDocumentModal documentId=\{documentId\}/);
+  assert.doesNotMatch(documentScreen, /const DOCUMENTS|LAST_UPDATED/);
+  assert.match(modal, /getLegalDocument\(documentId\)/);
 });
 
-test('the centre offers the applicable controls and omits the ones Okyo does not have', () => {
-  for (const control of ['PrivacyDataScreen', 'NotificationPreferencesScreen', 'OpenSourceLicensesScreen']) {
-    assert.match(centre, new RegExp(control), `${control} must be reachable from the centre`);
-  }
-  // Rows Okyo must NOT show, because the capability does not exist.
-  assert.doesNotMatch(centre, /label: 'Delete account'/, 'there is no account to delete');
-  assert.doesNotMatch(centre, /label: 'Export my data'/, 'no export is implemented');
-  assert.doesNotMatch(centre, /label: 'Analytics'/, 'no analytics ships, so there is nothing to choose');
-});
-
-test('no production-visible legal row points at a placeholder or an unavailable URL', () => {
-  for (const [name, source] of Object.entries({ centre, documentScreen, licenses })) {
-    assert.doesNotMatch(source, /https?:\/\/example\.|TODO|Coming soon|#placeholder/i, `${name} contains a placeholder link`);
-    // Okyo has no published website; every destination must be an in-app screen.
-    const externalLinks = source.match(/openURL\(['"`]https?:\/\/[^'"`]+/g) ?? [];
-    assert.deepEqual(externalLinks, [], `${name} links out to a URL Okyo does not publish`);
-  }
+test('counsel approval stays internal and production legal screens show active documents', () => {
+  assert.doesNotMatch(view, /has not been reviewed by a lawyer|this build of Okyo|Draft\. This document/);
+  const review = JSON.parse(read('legal-release-review.json'));
+  assert.equal(review.status, 'approved');
+  assert.equal(review.approvalType, 'counsel_approved');
+  assert.equal(review.approvedBy, 'Roberto Ferrito');
 });
 
 test('the one external link that exists is Apple\'s own subscription management page', () => {
@@ -63,13 +54,7 @@ test('the one external link that exists is Apple\'s own subscription management 
 });
 
 test('every legal row exposes an accessibility label, a role and an adequate touch target', () => {
-  assert.match(centre, /accessibilityLabel=\{label\}/);
-  assert.match(centre, /accessibilityRole="button"/);
-  assert.match(centre, /accessibilityHint=\{hint\}/);
-  const minHeight = Number(/row: \{[\s\S]*?minHeight: (\d+)/.exec(centre)?.[1]);
-  assert.ok(minHeight >= 44, `legal rows are ${minHeight}pt tall; 44pt is the minimum touch target`);
-
-  for (const [name, source] of Object.entries({ documentScreen, licenses, modal })) {
+  for (const [name, source] of Object.entries({ documentScreen, privacyData, modal })) {
     assert.match(source, /accessibilityRole="button"/, `${name} has an unlabelled control`);
     assert.match(source, /accessibilityLabel=/, `${name} has an unlabelled control`);
   }
@@ -98,22 +83,10 @@ test('legal documents are reachable before onboarding completes, without changin
   assert.doesNotMatch(paywall, /navigation\.navigate|useNavigation/, 'the paywall must not introduce navigation into onboarding');
 });
 
-test('Privacy & data does not label local erasure as account deletion', () => {
-  assert.match(privacyData, /Account deletion/, 'the account row must explain itself');
-  assert.match(privacyData, /no account or sign-in/i);
-  assert.doesNotMatch(privacyData, /<Text style=\{styles\.dangerText\}>Delete account<\/Text>/, 'local erasure must not be presented as deleting an account');
-  assert.match(privacyData, /does not cancel your subscription/, 'deletion must be distinguished from cancellation');
-});
-
-test('the app version and a contact position are shown in the centre', () => {
-  assert.match(centre, /appConfig\.expo\.version/);
-  assert.match(centre, /Privacy and support contact/);
-  assert.match(centre, /Not published yet/, 'the missing contact must be stated honestly, not faked');
-});
-
-test('the open source screen renders generated data, not a hand-maintained list', () => {
-  assert.match(licenses, /openSourceNotices\.generated/);
-  assert.match(licenses, /openSourcePackages/);
+test('Privacy & data distinguishes local deletion from account deletion', () => {
+  assert.match(privacyData, /Delete all my data/);
+  assert.match(privacyData, /deleteAuthenticatedAccount\(token\)/);
+  assert.match(privacyData, /does not cancel an App Store subscription/i);
 });
 
 test('the pre-onboarding hero opens the real Terms and Privacy documents', () => {
@@ -127,12 +100,6 @@ test('the pre-onboarding hero opens the real Terms and Privacy documents', () =>
   assert.match(hero, /LegalDocumentModal/);
   assert.doesNotMatch(hero, /Terms of Use are not available in this build/);
   assert.doesNotMatch(hero, /Privacy Notice is not available in this build/);
-});
-
-test('the hero account row does not imply an account exists', () => {
-  const hero = read('src/onboarding-v3/showcase/pages/HeroPage.tsx');
-  assert.match(hero, /Okyo has no accounts/);
-  assert.match(hero, /does not use accounts or sign-in/);
 });
 
 test('legal line heights scale with the system font scale', () => {

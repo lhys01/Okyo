@@ -9,6 +9,7 @@ import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyo
 import { motionTokens } from '../motion/motionTokens';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { onboardingV3Assets } from '../assets/onboardingV3Assets';
+import { useMascotName } from '../../state/useMascotName';
 import { branchPalettes, branchShadow, branchSurfaces } from './branchTheme';
 import type { BranchIcon, ChoiceOption } from './BranchControls';
 
@@ -28,10 +29,11 @@ const mealStickerById: Record<string, number> = {
  * paragraph moment with a small illustrated scene sized for one screen.
  */
 export function OrderSceneIntro({ headline, support }: { headline: string; support: string }) {
+  const mascotName = useMascotName();
   return (
     <SettleIn style={styles.introWrap}>
       <View style={styles.introSceneFrame}>
-        <Image accessibilityIgnoresInvertColors accessibilityLabel="Kiko cooking with a chef hat" contentFit="contain" source={onboardingV3Assets.saveMoneyIntro} style={styles.introKiko} />
+        <Image accessibilityIgnoresInvertColors accessibilityLabel={`${mascotName} looking curious`} contentFit="contain" source={onboardingV3Assets.saveMoneyIntro} style={styles.introKiko} />
       </View>
       <Text accessibilityRole="header" maxFontSizeMultiplier={1.3} style={styles.introHeadline}>{headline}</Text>
       {support ? <Text maxFontSizeMultiplier={1.3} style={styles.introSupport}>{support}</Text> : null}
@@ -168,12 +170,13 @@ export function FrictionTransition({
   frictionIcon: BranchIcon;
   headline: string;
 }) {
+  const mascotName = useMascotName();
   const { height } = useWindowDimensions();
   const compact = height < 740;
 
   return (
     <SettleIn style={[styles.encouragementWrap, compact && styles.encouragementWrapCompact]}>
-      <View accessibilityLabel="Kiko encouraging home cooking" accessibilityRole="image" style={[styles.encouragementHero, compact && styles.encouragementHeroCompact]}>
+      <View accessibilityLabel={`${mascotName} encouraging home cooking`} accessibilityRole="image" style={[styles.encouragementHero, compact && styles.encouragementHeroCompact]}>
         <View style={styles.encouragementBlob} />
         <Image accessibilityIgnoresInvertColors accessible={false} contentFit="contain" source={onboardingV3Assets.saveMoneyEncouragement} style={[styles.encouragementKiko, compact && styles.encouragementKikoCompact]} />
         <Image accessibilityIgnoresInvertColors accessible={false} contentFit="contain" source={onboardingV3Assets.stickerSparkle} style={styles.encouragementSparkle} />
@@ -273,10 +276,11 @@ export function RankedPriorityCards<T extends string>({
  * a single settled statement.
  */
 export function QuietResetCard({ statement }: { statement: string }) {
+  const mascotName = useMascotName();
   return (
     <SettleIn style={styles.quietWrap}>
       <View style={[styles.quietCard, branchShadow]}>
-        <Image accessibilityIgnoresInvertColors accessibilityLabel="Kiko holding a bowl" contentFit="contain" source={onboardingV3Assets.saveMoneyReassurance} style={styles.quietArt} />
+        <Image accessibilityIgnoresInvertColors accessibilityLabel={`${mascotName} holding a bowl`} contentFit="contain" source={onboardingV3Assets.saveMoneyReassurance} style={styles.quietArt} />
         <Text accessibilityRole="header" maxFontSizeMultiplier={1.3} style={styles.quietStatement}>{statement}</Text>
       </View>
     </SettleIn>
@@ -289,6 +293,7 @@ export function QuietResetCard({ statement }: { statement: string }) {
  * separate so it can scale cleanly on smaller phones.
  */
 export function SaveMoneyReassurance() {
+  const mascotName = useMascotName();
   const { width } = useWindowDimensions();
   const compact = width < 380;
 
@@ -314,7 +319,7 @@ export function SaveMoneyReassurance() {
       </View>
 
       <View
-        accessibilityLabel="Kiko helps swap a takeout meal for a home-cooked bowl"
+        accessibilityLabel={`${mascotName} helps swap a takeout meal for a home-cooked bowl`}
         accessibilityRole="image"
         style={[styles.reassuranceStory, compact && styles.reassuranceStoryCompact]}
       >
@@ -480,10 +485,11 @@ function MealTypeChoiceTile<T extends string>({
 
 /** Supporting art for the meal-choice question; the interactive tiles remain native. */
 export function MealTypeKikoArt() {
+  const mascotName = useMascotName();
   const { width } = useWindowDimensions();
   const isCompact = width < 360;
   return (
-    <View accessibilityLabel="Kiko holding a carrot" accessibilityRole="image" style={[styles.mealKikoWrap, isCompact && styles.mealKikoWrapCompact]}>
+    <View accessibilityLabel={`${mascotName} holding a carrot`} accessibilityRole="image" style={[styles.mealKikoWrap, isCompact && styles.mealKikoWrapCompact]}>
       <Image accessibilityIgnoresInvertColors accessible={false} contentFit="contain" source={onboardingV3Assets.saveMoneyMeals} style={[styles.mealKiko, isCompact && styles.mealKikoCompact]} />
     </View>
   );
@@ -495,6 +501,7 @@ export function SavingsRevealHero({
 }: {
   weeklyDifference: string;
 }) {
+  const mascotName = useMascotName();
   return (
     <View style={styles.savingsRevealHero}>
       <View style={styles.savingsRevealHeroCopy}>
@@ -510,7 +517,7 @@ export function SavingsRevealHero({
         </Text>
         <Text maxFontSizeMultiplier={1.25} style={styles.savingsRevealHeroLine}>more every week.</Text>
       </View>
-      <View accessibilityLabel="Kiko holding a savings checklist" accessibilityRole="image" style={styles.savingsRevealHeroArtWrap}>
+      <View accessibilityLabel={`${mascotName} holding a savings checklist`} accessibilityRole="image" style={styles.savingsRevealHeroArtWrap}>
         <Image accessibilityIgnoresInvertColors accessible={false} contentFit="contain" source={onboardingV3Assets.saveMoneyReveal} style={styles.savingsRevealHeroArt} />
       </View>
     </View>
@@ -600,8 +607,9 @@ function SavingsBar({ color, label, targetHeight, value }: { color: string; labe
 
 /** The reveal keeps values native and uses this small clipboard scene as a supporting header. */
 export function ClipboardKikoArt({ large = false }: { large?: boolean }) {
+  const mascotName = useMascotName();
   return (
-    <View accessibilityLabel="Kiko holding a completed checklist" accessibilityRole="image" style={[styles.clipboardWrap, large && styles.clipboardWrapLarge]}>
+    <View accessibilityLabel={`${mascotName} holding a completed checklist`} accessibilityRole="image" style={[styles.clipboardWrap, large && styles.clipboardWrapLarge]}>
       <Image accessibilityIgnoresInvertColors accessible={false} contentFit="contain" source={onboardingV3Assets.saveMoneyReveal} style={styles.clipboardKiko} />
     </View>
   );
@@ -609,8 +617,9 @@ export function ClipboardKikoArt({ large = false }: { large?: boolean }) {
 
 /** Completion art is decorative; the plan summary and CTA stay native. */
 export function CelebrateKikoArt() {
+  const mascotName = useMascotName();
   return (
-    <View accessibilityLabel="Kiko celebrating the new plan" accessibilityRole="image" style={styles.celebrateWrap}>
+    <View accessibilityLabel={`${mascotName} celebrating the new plan`} accessibilityRole="image" style={styles.celebrateWrap}>
       <Image accessibilityIgnoresInvertColors accessible={false} contentFit="contain" source={onboardingV3Assets.saveMoneyComplete} style={styles.celebrateKiko} />
     </View>
   );
@@ -669,13 +678,12 @@ export function AnswerCardStack({ items }: { items: readonly AnswerCard[] }) {
       {items.map((item) => (
         <View accessibilityLabel={`${item.label}: ${item.value}`} key={item.id} style={[styles.answerCard, branchShadow]}>
           <View style={[styles.answerGlyph, { backgroundColor: palette.accentSoft }]}>
-            <item.icon color={palette.accent} height={22} strokeWidth={1.8} width={22} />
+            <item.icon color={palette.accent} height={40} strokeWidth={1.8} width={40} />
           </View>
           <View style={styles.answerText}>
             <Text maxFontSizeMultiplier={1.2} style={styles.answerLabel}>{item.label}</Text>
             <Text maxFontSizeMultiplier={1.3} style={styles.answerValue}>{item.value}</Text>
           </View>
-          <CheckCircle color={palette.accent} height={18} strokeWidth={1.8} width={18} />
         </View>
       ))}
     </View>
@@ -879,13 +887,13 @@ const styles = StyleSheet.create({
   payoffLabel: { color: colors.ink, fontFamily: fontFamilies.bold, fontSize: 13 },
   payoffValue: { color: colors.ink, fontFamily: fontFamilies.extraBold, fontSize: 34, lineHeight: 38 },
 
-  answerStack: { gap: 10 },
+  answerStack: { gap: 12 },
   answerCard: {
     alignItems: 'center', backgroundColor: branchSurfaces.card, borderColor: branchSurfaces.cardBorder,
-    borderRadius: branchSurfaces.tileRadius, borderWidth: 1, flexDirection: 'row', gap: 14, paddingHorizontal: 14, paddingVertical: 14,
+    borderRadius: branchSurfaces.tileRadius, borderWidth: 1, flexDirection: 'row', gap: 16, minHeight: 88, paddingHorizontal: 18, paddingVertical: 16,
   },
-  answerGlyph: { alignItems: 'center', borderRadius: 14, height: 44, justifyContent: 'center', width: 44 },
-  answerText: { flex: 1, gap: 2 },
-  answerLabel: { color: branchSurfaces.muted, fontFamily: fontFamilies.semibold, fontSize: 12 },
-  answerValue: { color: branchSurfaces.ink, fontFamily: fontFamilies.semibold, fontSize: 16, lineHeight: 21 },
+  answerGlyph: { alignItems: 'center', borderRadius: 18, height: 60, justifyContent: 'center', width: 60 },
+  answerText: { flex: 1, gap: 3 },
+  answerLabel: { color: branchSurfaces.muted, fontFamily: fontFamilies.semibold, fontSize: 14 },
+  answerValue: { color: branchSurfaces.ink, fontFamily: fontFamilies.semibold, fontSize: 19, lineHeight: 25 },
 });

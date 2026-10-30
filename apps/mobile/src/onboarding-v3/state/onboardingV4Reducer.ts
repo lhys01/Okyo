@@ -8,7 +8,10 @@ import type {
   PreferredTransformation,
   TakeoutFrequencyBucket,
   UniversalNeed,
+  SavingsBranchAnswers,
 } from './branchContracts';
+import { isSavingsCookingPriority } from './branchContracts';
+import { isMacroDetailPreference, normalizeOwnDailyReferences, type MacroDetailPreference } from './macroPreferences';
 import {
   addDietaryAllergy,
   addDietaryRestriction,
@@ -55,6 +58,7 @@ export type OnboardingV4Event =
   | { type: 'HYDRATE'; draft: OnboardingV4Draft; inFlightScan?: OnboardingV4InFlightScan | null; freeRecipeConsumed?: boolean; recipeId?: string | null; pendingPremiumAction?: OnboardingV4PendingPremiumAction | null }
   | { type: 'SPLASH_FINISHED' }
   | { type: 'CONTINUE' }
+  | { type: 'QUICK_START' }
   | { type: 'BACK' }
   | { type: 'GOAL_SELECTED'; goal: FuturePrimaryGoal }
   | { type: 'SAVINGS_TAKEOUT_FREQUENCY_ANSWERED'; value: TakeoutFrequencyBucket }
@@ -72,6 +76,11 @@ export type OnboardingV4Event =
   | { type: 'DIETARY_DISLIKES_CHANGED'; value: string[] }
   | { type: 'DIETARY_NONE_OF_THESE_TOGGLED' }
   | { type: 'DIETARY_SAVED' }
+  | { type: 'SETUP_COMMITTED'; submittedDraft: OnboardingV4Draft }
+  | { type: 'SAVINGS_PRIORITY_ANSWERED'; value: NonNullable<SavingsBranchAnswers['cookingPriority']> }
+  | { type: 'SAVINGS_COMPARISON_CONFIRMED'; cost: number; replacementsPerWeek: number }
+  | { type: 'SAVINGS_COMPARISON_SKIPPED' }
+  | { type: 'MACRO_DETAIL_SELECTED'; value: MacroDetailPreference }
   | { type: 'PLAN_COMMITTED' }
   | { type: 'SCAN_INPUT_METHOD_SELECTED'; method: OnboardingV4ScanInputMethod }
   | { type: 'SCAN_IMAGE_SELECTED' }
@@ -120,6 +129,7 @@ export function getOnboardingV4PremiumDestinationStep(action: OnboardingV4Pendin
 /** hit_macros needs the compact grouped form only for the two paths that actually use calculated/entered numbers — not_sure never reaches macroDetails, even if resolved to hit_macros, per Step 05's contract. */
 function requiresMacroDetails(draft: OnboardingV4Draft): boolean {
   return draft.initialGoal === 'hit_macros'
+    && !draft.macroAnswers.detailPreference
     && (draft.macroAnswers.targetPath === 'known' || draft.macroAnswers.targetPath === 'estimate');
 }
 
@@ -132,6 +142,10 @@ const EMPTY_MACRO_CALCULATOR_INPUTS: OnboardingV4Draft['macroAnswers']['calculat
 });
 
 export function onboardingV4Reducer(state: OnboardingV4State, event: OnboardingV4Event): OnboardingV4State {
+  if (event.type === 'SETUP_COMMITTED') {
+    if ((state.step !== 'dietarySafety' && state.step !== 'plan') || event.submittedDraft !== state.draft || !isDietarySafetyAnswered(state.draft.dietaryAnswers)) return state;
+    return { ...state, step: 'scanEntry', draft: { ...state.draft, dietaryAnswers: completeDietarySafety(state.draft.dietaryAnswers), planCommitted: true } };
+  }
   if (event.type === 'HYDRATE') return { ...state, draft: event.draft, inFlightScan: event.inFlightScan ?? null, freeRecipeConsumed: event.freeRecipeConsumed ?? false, recipeId: event.recipeId ?? null, pendingPremiumAction: event.pendingPremiumAction ?? null };
   if (event.type === 'RESULT_RESTORED') return { ...state, step: getOnboardingV4PremiumDestinationStep(state.pendingPremiumAction), recipeId: event.recipeId, freeRecipeConsumed: true, inFlightScan: null };
 
@@ -144,16 +158,20 @@ export function onboardingV4Reducer(state: OnboardingV4State, event: OnboardingV
       return event.type === 'SPLASH_FINISHED' ? { ...state, step: state.freeRecipeConsumed && state.recipeId ? getOnboardingV4PremiumDestinationStep(state.pendingPremiumAction) : resumeOnboardingV4Step(state.draft) } : state;
 
     case 'promise':
+      if (event.type === 'QUICK_START') return { ...state, step: 'dietarySafety', draft: setOnboardingV4InitialGoal(state.draft, 'not_sure') };
       return event.type === 'CONTINUE' ? { ...state, step: 'primaryGoal' } : state;
 
     case 'primaryGoal':
       if (event.type === 'GOAL_SELECTED' && isFuturePrimaryGoal(event.goal)) {
-        return { ...state, step: 'branchQ1', draft: setOnboardingV4InitialGoal(state.draft, event.goal) };
+        return { ...state, step: event.goal === 'not_sure' ? 'dietarySafety' : 'branchQ1', draft: setOnboardingV4InitialGoal(state.draft, event.goal) };
       }
       return event.type === 'BACK' ? { ...state, step: 'promise' } : state;
 
     case 'branchQ1': {
       if (event.type === 'BACK') return { ...state, step: 'primaryGoal' };
+      if (event.type === 'SAVINGS_PRIORITY_ANSWERED' && state.draft.initialGoal === 'save_money' && isSavingsCookingPriority(event.value)) {
+        return { ...state, draft: { ...state.draft, savingsAnswers: { ...state.draft.savingsAnswers, cookingPriority: event.value } } };
+      }
       if (event.type === 'SAVINGS_TAKEOUT_FREQUENCY_ANSWERED' && state.draft.initialGoal === 'save_money') {
         return { ...state, draft: { ...state.draft, savingsAnswers: { ...state.draft.savingsAnswers, takeoutFrequency: event.value } } };
       }
@@ -172,6 +190,21 @@ export function onboardingV4Reducer(state: OnboardingV4State, event: OnboardingV
 
     case 'branchQ2': {
       if (event.type === 'BACK') return { ...state, step: 'branchQ1' };
+      if (event.type === 'MACRO_DETAIL_SELECTED' && state.draft.initialGoal === 'hit_macros' && isMacroDetailPreference(event.value)) {
+        if (state.draft.macroAnswers.detailPreference === event.value) return state;
+        const knownTargets = event.value === 'own' && state.draft.macroAnswers.targetPath === 'known' ? normalizeOwnDailyReferences(state.draft.macroAnswers.knownTargets) : {};
+        return { ...state, draft: { ...state.draft, macroAnswers: { ...state.draft.macroAnswers, detailPreference: event.value, targetPath: event.value === 'own' ? 'known' : 'not_sure', knownTargets, calculatorInputs: EMPTY_MACRO_CALCULATOR_INPUTS } } };
+      }
+      if (event.type === 'MACRO_KNOWN_TARGETS_ANSWERED' && state.draft.initialGoal === 'hit_macros' && state.draft.macroAnswers.detailPreference === 'own') {
+        return { ...state, draft: { ...state.draft, macroAnswers: { ...state.draft.macroAnswers, knownTargets: normalizeOwnDailyReferences(event.value) } } };
+      }
+      if (event.type === 'SAVINGS_COMPARISON_SKIPPED' && state.draft.initialGoal === 'save_money') {
+        return { ...state, step: 'personalInsight', draft: { ...state.draft, savingsAnswers: { ...state.draft.savingsAnswers, comparisonStatus: 'skipped', spendPerMealDollars: null, replacementsPerWeek: undefined } } };
+      }
+      if (event.type === 'SAVINGS_COMPARISON_CONFIRMED' && state.draft.initialGoal === 'save_money') {
+        if (!Number.isFinite(event.cost) || event.cost < 1 || event.cost > 200 || !Number.isInteger(event.replacementsPerWeek) || event.replacementsPerWeek < 1 || event.replacementsPerWeek > 14) return state;
+        return { ...state, step: 'personalInsight', draft: { ...state.draft, savingsAnswers: { ...state.draft.savingsAnswers, comparisonStatus: 'answered', spendPerMealDollars: event.cost, replacementsPerWeek: event.replacementsPerWeek } } };
+      }
       if (event.type === 'SAVINGS_SPEND_PER_MEAL_ANSWERED' && state.draft.initialGoal === 'save_money') {
         return { ...state, draft: { ...state.draft, savingsAnswers: { ...state.draft.savingsAnswers, spendPerMealDollars: event.value } } };
       }
@@ -222,7 +255,7 @@ export function onboardingV4Reducer(state: OnboardingV4State, event: OnboardingV
       return event.type === 'CONTINUE' ? { ...state, step: 'dietarySafety', draft: { ...state.draft, insightViewed: true } } : state;
 
     case 'dietarySafety': {
-      if (event.type === 'BACK') return { ...state, step: 'personalInsight' };
+      if (event.type === 'BACK') return { ...state, step: state.draft.initialGoal === 'not_sure' ? 'primaryGoal' : 'personalInsight' };
       if (event.type === 'DIETARY_ALLERGY_TOGGLED') {
         const has = state.draft.dietaryAnswers.allergies.includes(event.value);
         const dietaryAnswers = has ? removeDietaryAllergy(state.draft.dietaryAnswers, event.value) : addDietaryAllergy(state.draft.dietaryAnswers, event.value);
@@ -249,6 +282,11 @@ export function onboardingV4Reducer(state: OnboardingV4State, event: OnboardingV
     }
 
     case 'plan': {
+      // Older drafts resume here, but the host now renders the dietary form.
+      // Route edits through the same safety setters as a fresh setup.
+      if (event.type === 'DIETARY_ALLERGY_TOGGLED' || event.type === 'DIETARY_RESTRICTION_TOGGLED' || event.type === 'DIETARY_DISLIKES_CHANGED' || event.type === 'DIETARY_NONE_OF_THESE_TOGGLED') {
+        return onboardingV4Reducer({ ...state, step: 'dietarySafety' }, event);
+      }
       if (event.type === 'BACK') return { ...state, step: 'dietarySafety' };
       // The real async canonical-profile commit happens in OnboardingV4.tsx
       // (onboardingV4CanonicalCommit.ts) — this reducer only records success
@@ -323,7 +361,7 @@ export function onboardingV4Reducer(state: OnboardingV4State, event: OnboardingV
 }
 
 export function isBranchQ1Answered(draft: OnboardingV4Draft): boolean {
-  if (draft.initialGoal === 'save_money') return draft.savingsAnswers.takeoutFrequency !== null;
+  if (draft.initialGoal === 'save_money') return Boolean(draft.savingsAnswers.cookingPriority) || draft.savingsAnswers.takeoutFrequency !== null;
   if (draft.initialGoal === 'eat_healthier') return draft.healthAnswers.healthierDefinition !== null;
   if (draft.initialGoal === 'hit_macros') return draft.macroAnswers.macroFocus !== null;
   if (draft.initialGoal === 'not_sure') return draft.notSureAnswers.universalNeed !== null;
@@ -331,9 +369,12 @@ export function isBranchQ1Answered(draft: OnboardingV4Draft): boolean {
 }
 
 export function isBranchQ2Answered(draft: OnboardingV4Draft): boolean {
-  if (draft.initialGoal === 'save_money') return draft.savingsAnswers.spendPerMealDollars !== null;
+  if (draft.initialGoal === 'save_money') return draft.savingsAnswers.comparisonStatus === 'skipped' || draft.savingsAnswers.spendPerMealDollars !== null;
   if (draft.initialGoal === 'eat_healthier') return draft.healthAnswers.healthBarrier !== null;
-  if (draft.initialGoal === 'hit_macros') return draft.macroAnswers.targetPath !== null;
+  if (draft.initialGoal === 'hit_macros') {
+    if (draft.macroAnswers.detailPreference === 'own') return normalizeOwnDailyReferences(draft.macroAnswers.knownTargets).proteinGrams !== undefined;
+    return draft.macroAnswers.detailPreference !== undefined || draft.macroAnswers.targetPath !== null;
+  }
   if (draft.initialGoal === 'not_sure') return draft.resolvedPrimaryGoal !== null;
   return false;
 }
@@ -359,6 +400,12 @@ export function isMacroDetailsAnswered(draft: OnboardingV4Draft): boolean {
  */
 export function resumeOnboardingV4Step(draft: OnboardingV4Draft): OnboardingV4Step {
   if (draft.initialGoal === null) return 'promise';
+  // Neutral users do not need branch answers, even when resuming an older
+  // draft. Existing historical answers remain available but never gate entry.
+  if (draft.initialGoal === 'not_sure') {
+    if (draft.dietaryAnswers.completed) return draft.planCommitted ? 'scanEntry' : 'plan';
+    return 'dietarySafety';
+  }
   if (!isBranchQ1Answered(draft)) return 'branchQ1';
   if (!isBranchQ2Answered(draft)) return 'branchQ2';
   if (requiresMacroDetails(draft) && !isMacroDetailsAnswered(draft)) return 'macroDetails';

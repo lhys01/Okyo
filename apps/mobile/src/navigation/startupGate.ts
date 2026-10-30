@@ -1,7 +1,8 @@
 export type OnboardingStartupStatus = 'loading' | 'onboardingRequired' | 'onboardingComplete';
 export type StartupRoute = 'WelcomeScreen' | 'MainTabs' | null;
 
-export function getOnboardingStartupStatus(completed: boolean | null): OnboardingStartupStatus {
+export function getOnboardingStartupStatus(completed: boolean | null, freshOnboardingRequired = false): OnboardingStartupStatus {
+  if (freshOnboardingRequired) return 'onboardingRequired';
   if (completed === null) {
     return 'loading';
   }

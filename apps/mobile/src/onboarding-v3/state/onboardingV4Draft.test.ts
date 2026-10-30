@@ -23,7 +23,7 @@ function createMemoryStorage() {
 
 test('the current and legacy schema version numbers are distinct', () => {
   assert.equal(ONBOARDING_V4_DRAFT_SCHEMA_VERSION_LEGACY_STEP03, 1);
-  assert.equal(ONBOARDING_V4_DRAFT_SCHEMA_VERSION, 5);
+  assert.equal(ONBOARDING_V4_DRAFT_SCHEMA_VERSION, 7);
   assert.notEqual(ONBOARDING_V4_DRAFT_SCHEMA_VERSION, ONBOARDING_V4_DRAFT_SCHEMA_VERSION_LEGACY_STEP03);
 });
 

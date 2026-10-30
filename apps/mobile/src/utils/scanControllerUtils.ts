@@ -2,6 +2,13 @@ import type { CreateScanResult } from '../api/types';
 
 export const HOME_UPLOAD_TARGET_SCREEN = 'AnalysisLoadingScreen' as const;
 
+export function getScanResultNavigationTarget(recipeId: string | undefined, scanSessionId: string | undefined) {
+  return {
+    screen: 'ResultSummaryScreen' as const,
+    params: { recipeId, scanSessionId },
+  };
+}
+
 export function getHomeResetState() {
   return {
     index: 0,

@@ -1,5 +1,6 @@
 import type { Recipe, RecipeIngredient, RecipeStep } from '../mocks';
 import { getRecipeStepTiming, type RecipeStepTiming } from './recipeIntegrity';
+import { getSafeRecipeIngredientName, normalizeRecipeStepTitle, normalizeRecipeStepWording } from './recipeStepWording';
 
 export type GuidedCookingStep = {
   chefTip?: string;
@@ -29,7 +30,7 @@ export type GuidedCookingStep = {
 };
 
 export function getGuidedIngredientChipLabel(ingredient: Pick<RecipeIngredient, 'name' | 'quantity'>) {
-  const name = cleanDisplayText(ingredient.name);
+  const name = getSafeRecipeIngredientName(cleanDisplayText(ingredient.name));
   const quantity = cleanDisplayText(ingredient.quantity);
 
   return quantity ? `${quantity} ${name}`.trim() : name;
@@ -122,6 +123,10 @@ export function buildGuidedCookingSteps(recipe: Recipe | null): GuidedCookingSte
 
   return displaySteps.map((step, index) => {
     const parsedStep = getStepCopy(step, index);
+    const normalizedTitle = normalizeRecipeStepTitle(parsedStep.title, step.text, recipeIngredients);
+    const normalizedFullInstruction = normalizeRecipeStepWording(step.text, recipeIngredients);
+    const normalizeCopy = (copy?: string) => copy ? normalizeRecipeStepWording(cleanDisplayText(copy), recipeIngredients) : undefined;
+    const rawTip = getStepTip(step, index, displaySteps.length, cookingTerms, spicePairings) ?? undefined;
     const phase = getStepPhaseName(step);
     const phaseIndex = (phaseRunning.get(phase) ?? 0) + 1;
     phaseRunning.set(phase, phaseIndex);
@@ -130,32 +135,34 @@ export function buildGuidedCookingSteps(recipe: Recipe | null): GuidedCookingSte
     const hasDecision = Boolean(step.decisionPoint && step.ifYes && step.ifNo);
 
     return {
-      chefTip: step.chefTip ? cleanDisplayText(step.chefTip) : undefined,
+      chefTip: normalizeCopy(step.chefTip),
       estimatedMinutes,
       elapsedMinutes: step.elapsedMinutes,
       timing,
       ingredientsUsed: step.ingredientsUsed?.length
         ? resolveIngredientsFromNames(step.ingredientsUsed, recipeIngredients)
         : getStepIngredients(step.text, recipeIngredients),
-      instruction: parsedStep.body || step.text,
+      instruction: normalizedTitle !== parsedStep.title || !parsedStep.body
+        ? normalizedFullInstruction
+        : normalizeRecipeStepWording(parsedStep.body, recipeIngredients),
       phase,
       phaseStepIndex: phaseIndex,
       phaseStepCount: phaseTotals.get(phase) ?? 1,
-      why: step.why,
-      commonMistake: step.commonMistake,
-      commonQuestion: step.commonQuestion,
-      commonQuestionAnswer: step.commonQuestionAnswer,
+      why: normalizeCopy(step.why),
+      commonMistake: normalizeCopy(step.commonMistake),
+      commonQuestion: normalizeCopy(step.commonQuestion),
+      commonQuestionAnswer: normalizeCopy(step.commonQuestionAnswer),
       cookingTerm: step.cookingTerm,
-      decisionPoint: hasDecision ? step.decisionPoint : undefined,
-      ifYes: hasDecision ? step.ifYes : undefined,
-      ifNo: hasDecision ? step.ifNo : undefined,
-      doneWhen: step.doneWhen,
-      safetyNote: getRelevantSafetyNote(step),
+      decisionPoint: hasDecision ? normalizeCopy(step.decisionPoint) : undefined,
+      ifYes: hasDecision ? normalizeCopy(step.ifYes) : undefined,
+      ifNo: hasDecision ? normalizeCopy(step.ifNo) : undefined,
+      doneWhen: normalizeCopy(step.doneWhen),
+      safetyNote: normalizeCopy(getRelevantSafetyNote(step)),
       stepNumber: index + 1,
-      tip: getStepTip(step, index, displaySteps.length, cookingTerms, spicePairings) ?? undefined,
-      title: parsedStep.title || `Step ${index + 1}`,
+      tip: rawTip ? { ...rawTip, body: normalizeCopy(rawTip.body) ?? rawTip.body } : undefined,
+      title: normalizedTitle || `Step ${index + 1}`,
       toolsUsed: step.toolsUsed?.length ? step.toolsUsed.slice(0, 6) : getStepTools(step.text, recipeTools),
-      visualCue: step.lookFor ?? step.visualCue,
+      visualCue: normalizeCopy(step.lookFor ?? step.visualCue),
     };
   });
 }

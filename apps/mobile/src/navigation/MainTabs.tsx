@@ -1,5 +1,8 @@
+import { useLaunchDestinationReady } from '../startup/LaunchScreen';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { useNavigation } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
 import {
   Camera,
@@ -11,11 +14,16 @@ import {
   Settings,
   User,
 } from 'iconoir-react-native';
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, fontFamilies } from '../components/OkyoUI';
-import { ScanFab } from '../components/okyo/ScanFab';
+import { ScanActionSheetProvider } from '../components/okyo/ScanActionSheetContext';
+import { ScanActionSheet, ScanFab } from '../components/okyo/ScanFab';
+import { TourProvider, useTourAnchor } from '../tour/TourContext';
+import { TourOverlay } from '../tour/TourOverlay';
+import { useOkyoAuth } from '../auth/useOkyoAuth';
 import { useStartPickedScan } from '../hooks/useStartPickedScan';
 import { GroceryListScreen } from '../screens/GroceryListScreen';
 import { HomeScreen } from '../screens/HomeScreen';
@@ -25,7 +33,9 @@ import { RecipeDetailScreen, RecipeStepsScreen } from '../screens/RecipeDetailSc
 import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
 import { RestaurantPacksScreen } from '../screens/RestaurantPacksScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
+import { IdeaBoardScreen } from '../screens/IdeaBoardScreen';
 import { DietaryPreferencesScreen } from '../screens/DietaryPreferencesScreen';
+import { PersonalizationScreen } from '../screens/PersonalizationScreen';
 import { NutritionTargetsScreen } from '../screens/NutritionTargetsScreen';
 import { PrivacyDataScreen } from '../screens/PrivacyDataScreen';
 import { HelpSupportScreen } from '../screens/HelpSupportScreen';
@@ -34,7 +44,10 @@ import { NotificationPreferencesScreen } from '../screens/NotificationPreference
 import { StatsProgressScreen } from '../screens/StatsProgressScreen';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getHomeResetState } from '../utils/scanControllerUtils';
+import { shouldHideMainTabBar } from '../utils/mainTabBarPolicy';
 import type { MainTabParamList } from './types';
+
+export { shouldHideMainTabBar } from '../utils/mainTabBarPolicy';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
@@ -46,9 +59,11 @@ const tabLabels: Record<MainTabRouteName, string> = {
   LibraryScreen: 'Liked',
   ProfileScreen: 'Profile',
   SettingsScreen: 'Settings',
+  IdeaBoardScreen: 'Idea board',
   // Settings sub-screens: reachable by navigation, deliberately absent from
   // visibleTabOrder so they never appear in the bottom bar.
   DietaryPreferencesScreen: 'Dietary',
+  PersonalizationScreen: 'Personalization',
   NutritionTargetsScreen: 'Nutrition targets',
   PrivacyDataScreen: 'Privacy',
   HelpSupportScreen: 'Help',
@@ -68,22 +83,8 @@ const visibleTabOrder: MainTabRouteName[] = [
   'SettingsScreen',
 ];
 
-export function shouldHideMainTabBar(route: { name: string; params?: unknown } | undefined) {
-  // Keep detail screens clean. The floating nav/FAB can overlap the
-  // dietary-preferences content and appear as an unrelated dark circle.
-  if (route?.name === 'DietaryPreferencesScreen') {
-    return true;
-  }
-
-  if (route?.name !== 'RecipeStepsScreen') {
-    return false;
-  }
-
-  return (route.params as { completion?: unknown } | undefined)?.completion !== true;
-}
-
 function TabIcon({ color, focused, routeName }: { color: string; focused: boolean; routeName: MainTabRouteName }) {
-  const iconSize = focused ? 27 : 26;
+  const iconSize = 26;
   const strokeWidth = focused ? 2.2 : 1.9;
 
   switch (routeName) {
@@ -106,7 +107,7 @@ function TabIcon({ color, focused, routeName }: { color: string; focused: boolea
   }
 }
 
-function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
+function FloatingTabBar({ descriptors, navigation, onOpenSheet, sheetVisible, state }: BottomTabBarProps & { onOpenSheet: () => void; sheetVisible: boolean }) {
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, 12);
   const routesByName = Object.fromEntries(
@@ -117,7 +118,8 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
     navigate: (screen: string, params?: unknown) => void;
     reset: (state: ReturnType<typeof getHomeResetState>) => void;
   } | undefined;
-  const startPickedScan = useStartPickedScan(rootNavigation);
+  const fabAnchorRef = useTourAnchor('home-add-scan');
+  const groceryTabAnchorRef = useTourAnchor('grocery-tab');
 
   if (shouldHideMainTabBar(focusedRoute)) {
     return null;
@@ -192,6 +194,7 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
         accessibilityRole="button"
         accessibilityState={focused ? { selected: true } : undefined}
         hitSlop={8}
+        ref={routeName === 'GroceryListScreen' ? groceryTabAnchorRef : undefined}
         style={({ pressed }) => [styles.sideTab, pressed ? styles.tabPressed : null]}
         testID={options?.tabBarButtonTestID}
         onLongPress={() => onLongPress(routeName)}
@@ -207,7 +210,7 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
 
   return (
     <View pointerEvents="box-none" style={[styles.tabBarRoot, { bottom: 0, height: 0, left: 0, position: 'absolute', right: 0 }]}>
-      <View style={[styles.tabBarPill, { bottom: 34 }]}>
+      <View style={[styles.tabBarPill, { bottom: bottomInset }]}>
         <BlurView intensity={34} pointerEvents="none" style={styles.tabBarBlur} tint="light" />
         <View style={styles.sideTabRow}>
           {visibleTabOrder.map(renderSideTab)}
@@ -220,18 +223,28 @@ function FloatingTabBar({ descriptors, navigation, state }: BottomTabBarProps) {
         // the nav, not floating disconnected — while most of the FAB is
         // still clearly above the pill. Never as low as bottom:37, which
         // nested the FAB almost entirely inside the pill's own band.
-        bottom={82}
+        bottom={bottomInset + 48}
+        fabRef={fabAnchorRef}
+        onOpenSheet={onOpenSheet}
+        sheetVisible={sheetVisible}
+        tourActionId="home-add-scan"
         right={8}
-        onDescribeMeal={() => rootNavigation?.navigate('DescribeMealScreen')}
-        onTakePhoto={() => void startPickedScan('camera')}
-        onUpload={() => void startPickedScan('photos')}
       />
     </View>
   );
 }
 
 export function MainTabs() {
+  const rootNavigation = useNavigation() as unknown as { navigate: (screen: string, params?: unknown) => void };
+  const startPickedScan = useStartPickedScan(rootNavigation);
+  const [scanSheetVisible, setScanSheetVisible] = useState(false);
+  const openScanSheet = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    setScanSheetVisible(true);
+  }, []);
   const hasHydrated = useOkyoStore((state) => state.hasHydrated);
+  const auth = useOkyoAuth();
+  useLaunchDestinationReady(hasHydrated);
 
   if (!hasHydrated) {
     return (
@@ -243,7 +256,11 @@ export function MainTabs() {
   }
 
   return (
+    <TourProvider canStart={auth.isAvailable && auth.isLoaded && auth.isSignedIn}>
+    <ScanActionSheetProvider value={openScanSheet}>
+    <View style={styles.mainTabsRoot}>
     <Tab.Navigator
+      backBehavior="history"
       detachInactiveScreens={false}
       initialRouteName="HomeScreen"
       tabBar={(props) => {
@@ -253,7 +270,7 @@ export function MainTabs() {
           return null;
         }
 
-        return <FloatingTabBar {...props} />;
+        return <FloatingTabBar {...props} onOpenSheet={openScanSheet} sheetVisible={scanSheetVisible} />;
       }}
       screenOptions={{
         animation: 'shift',
@@ -273,7 +290,9 @@ export function MainTabs() {
       <Tab.Screen name="LibraryScreen" component={LibraryScreen} options={{ title: 'Liked' }} />
       <Tab.Screen name="ProfileScreen" component={ProfileScreen} options={{ title: 'Profile' }} />
       <Tab.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
+      <Tab.Screen name="IdeaBoardScreen" component={IdeaBoardScreen} options={{ title: 'Idea board' }} />
       <Tab.Screen name="DietaryPreferencesScreen" component={DietaryPreferencesScreen} options={{ title: 'Dietary preferences' }} />
+      <Tab.Screen name="PersonalizationScreen" component={PersonalizationScreen} options={{ title: 'Personalization' }} />
       <Tab.Screen name="NutritionTargetsScreen" component={NutritionTargetsScreen} options={{ title: 'Nutrition targets' }} />
       <Tab.Screen name="PrivacyDataScreen" component={PrivacyDataScreen} options={{ title: 'Privacy & data' }} />
       <Tab.Screen name="HelpSupportScreen" component={HelpSupportScreen} options={{ title: 'Help & support' }} />
@@ -285,12 +304,18 @@ export function MainTabs() {
       <Tab.Screen name="RecipeStepsScreen" component={RecipeStepsScreen} options={{ title: 'Steps' }} />
       <Tab.Screen name="GroceryListScreen" component={GroceryListScreen} options={{ title: 'Grocery' }} />
     </Tab.Navigator>
+    <ScanActionSheet onClose={() => setScanSheetVisible(false)} onDescribeMeal={() => rootNavigation.navigate('DescribeMealScreen')} onTakePhoto={() => void startPickedScan('camera')} onUpload={() => void startPickedScan('photos')} visible={scanSheetVisible} />
+    <TourOverlay />
+    </View>
+    </ScanActionSheetProvider>
+    </TourProvider>
   );
 }
 
 const inactiveGray = '#a39b8e';
 
 const styles = StyleSheet.create({
+  mainTabsRoot: { flex: 1 },
   loadingState: {
     alignItems: 'center',
     backgroundColor: colors.background,
@@ -360,10 +385,10 @@ const styles = StyleSheet.create({
   sideLabel: {
     color: inactiveGray,
     fontFamily: fontFamilies.bold,
-    fontSize: 10.5,
+    fontSize: 11,
     fontWeight: '600',
     includeFontPadding: false,
-    lineHeight: 13,
+    lineHeight: 14,
     maxWidth: '100%',
     textAlign: 'center',
   },

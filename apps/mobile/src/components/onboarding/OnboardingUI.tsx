@@ -21,9 +21,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { ScanStatus } from '../../api/types';
 import { KikoMascot, type KikoMascotPose } from '../KikoMascot';
 import type { Recipe } from '../../mocks';
+import { normalizeRecipeStepWording } from '../../utils/recipeStepWording';
 import { colors, onboardingFontFamilies as fontFamilies, shadows } from '../../theme/okyoTheme';
 import { getConfiguredFreeTrialDays, getSubscriptionPricing } from '../../utils/purchaseAvailability';
 import { INITIAL_SCAN_PROGRESS_STATE, nextScanProgress, type ScanProgressState } from '../../utils/scanProgress';
+import { useChosenMascotName } from '../../state/useMascotName';
+import { getFoxDisplayName, getFoxSubjectName } from '../../state/foxDisplayName';
 
 export const onboardingColors = {
   background: colors.stoneCream,
@@ -54,7 +57,7 @@ export type OnboardingOption = {
 // ─── Loading steps with personality ──────────────────────────────────────────
 
 const LOADING_STEPS = [
-  'Kiko is studying your food',
+  'Studying your food',
   'Identifying the dish',
   'Matching ingredients',
   'Building your recipe',
@@ -555,7 +558,7 @@ function OnboardingBuildingPlanScreen({ progress }: { progress: number }) {
   }, [dot1, dot2, dot3]);
 
   return (
-    <OnboardingScreenShell canGoBack={false} progress={progress} scroll={false}>
+    <OnboardingScreenShell canGoBack={false} progress={progress}>
       <View style={styles.loadingPlanContent}>
         <KikoMascot pose="recipeCard" size={200} />
         <Text style={styles.loadingPlanLabel}>BUILDING YOUR PLAN...</Text>
@@ -587,6 +590,9 @@ function OnboardingScanLoadingScreen({
   scanStatus: ScanStatus | 'pending' | null;
   userImageUri: string;
 }) {
+  const chosenMascotName = useChosenMascotName();
+  const mascotName = getFoxDisplayName(chosenMascotName);
+  const subjectName = getFoxSubjectName(chosenMascotName);
   const [stepIndex, setStepIndex] = useState(0);
   const [reduceMotion, setReduceMotion] = useState(false);
   const stepAnim = useRef(new Animated.Value(1)).current;
@@ -701,28 +707,28 @@ function OnboardingScanLoadingScreen({
     return () => clearInterval(interval);
   }, [reduceMotion, stepAnim]);
 
-  const currentStep = LOADING_STEPS[stepIndex] ?? LOADING_STEPS[0];
+  const currentStep = stepIndex === 0 ? `${subjectName} is studying your food` : (LOADING_STEPS[stepIndex] ?? LOADING_STEPS[0]);
   const scanLineTranslate = scanLine.interpolate({ inputRange: [0, 1], outputRange: [12, 214] });
 
   return (
-    <OnboardingScreenShell canGoBack={false} progress={progress} scroll={false}>
+    <OnboardingScreenShell canGoBack={false} progress={progress}>
       <View style={styles.loadingContent}>
         <View style={[styles.loadingUserImageStage, { borderColor: onboardingColors.primary }]}>
-          <Image source={{ uri: stableUserImageUri }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+          <Image accessibilityLabel="Selected dish photo" source={{ uri: stableUserImageUri }} style={StyleSheet.absoluteFillObject} resizeMode="contain" />
           <View style={styles.loadingUserImageOverlay} />
           {!reduceMotion ? <Animated.View style={[styles.loadingScanLine, { transform: [{ translateY: scanLineTranslate }] }]} /> : null}
         </View>
         <View style={styles.loadingKikoRow}>
           <KikoMascot pose="scanning" size={58} />
-          <Text style={styles.loadingKikoText}>Kiko is on it</Text>
+          <Text style={styles.loadingKikoText}>{subjectName} is on it</Text>
         </View>
         <View style={styles.loadingHeadlineWrap}>
-          <Animated.Text numberOfLines={2} style={[styles.loadingHeadline, { opacity: stepAnim }]}>
+          <Animated.Text numberOfLines={3} style={[styles.loadingHeadline, { opacity: stepAnim }]}>
             {currentStep}
           </Animated.Text>
         </View>
         <Text style={styles.loadingBody}>
-          Hang tight — Kiko is looking for the details that make this dish yours.
+          Hang tight — {mascotName} is looking for the details that make this dish yours.
         </Text>
         <View accessibilityLabel="Scanning your food" accessibilityRole="progressbar" style={styles.loadingBar}>
           <Animated.View
@@ -783,7 +789,9 @@ export function OnboardingFirstResultScreen({
     >
       <Animated.View
         style={{
-          flex: 1,
+          flexBasis: 'auto',
+          flexGrow: 1,
+          flexShrink: 0,
           opacity: introAnim,
           transform: [
             {
@@ -819,7 +827,7 @@ export function OnboardingFirstResultScreen({
 
         {/* The user's selected photo stays attached to the generated recipe. */}
         <View style={styles.resultImageCard}>
-          <Image source={{ uri: imageUri }} resizeMode="cover" style={styles.resultImage} />
+          <Image accessibilityLabel="Scanned dish photo" source={{ uri: imageUri }} resizeMode="contain" style={styles.resultImage} />
         </View>
 
         <View style={styles.resultCard}>
@@ -844,14 +852,17 @@ export function OnboardingFirstResultScreen({
 
           <Text style={styles.resultSectionTitle}>How to make it</Text>
           <View style={styles.recipeSteps}>
-            {recipe.steps.map((step, index) => (
+            {recipe.steps.map((rawStep, index) => {
+              const step = normalizeRecipeStepWording(rawStep, recipe.ingredients);
+              return (
               <View key={`${index}-${step}`} style={styles.recipeStepRow}>
                 <View style={styles.recipeStepNumber}>
                   <Text style={styles.recipeStepNumberText}>{index + 1}</Text>
                 </View>
                 <Text style={styles.recipeListText}>{step}</Text>
               </View>
-            ))}
+              );
+            })}
           </View>
         </View>
       </Animated.View>
@@ -1127,7 +1138,9 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   shellContent: {
-    flex: 1,
+    flexBasis: 'auto',
+    flexGrow: 1,
+    flexShrink: 0,
     paddingHorizontal: 20,
     paddingTop: 26,
   },
@@ -1393,7 +1406,9 @@ const styles = StyleSheet.create({
   // Loading screen — "Building Your Plan" (no user image)
   loadingPlanContent: {
     alignItems: 'center',
-    flex: 1,
+    flexBasis: 'auto',
+    flexGrow: 1,
+    flexShrink: 0,
     justifyContent: 'center',
     paddingHorizontal: 28,
   },
@@ -1432,15 +1447,18 @@ const styles = StyleSheet.create({
   // Loading screen — scan in progress (has user image)
   loadingContent: {
     alignItems: 'center',
-    flex: 1,
+    flexBasis: 'auto',
+    flexGrow: 1,
+    flexShrink: 0,
     justifyContent: 'center',
     paddingHorizontal: 24,
   },
   loadingUserImageStage: {
+    aspectRatio: 1.45,
     backgroundColor: onboardingColors.primarySoft,
     borderRadius: 44,
     borderWidth: 2,
-    height: 230,
+    maxHeight: 230,
     overflow: 'hidden',
     width: '100%',
     maxWidth: 330,
@@ -1475,7 +1493,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   loadingHeadlineWrap: {
-    height: 68,
+    minHeight: 68,
     justifyContent: 'center',
     marginTop: 32,
     width: '100%',
@@ -1555,9 +1573,10 @@ const styles = StyleSheet.create({
     lineHeight: 40,
   },
   resultImageCard: {
+    aspectRatio: 1.35,
     backgroundColor: onboardingColors.card,
     borderRadius: 34,
-    height: 256,
+    maxHeight: 256,
     marginBottom: 16,
     overflow: 'hidden',
     position: 'relative',

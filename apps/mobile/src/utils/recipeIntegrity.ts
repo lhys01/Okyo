@@ -15,7 +15,10 @@ export function normalizeRecipeForCanonicalStorage<T extends Recipe>(recipe: T):
   }
 
   const nutritionEstimate = normalizeNutritionEstimate(recipe.nutritionEstimate);
-  if (!nutritionEstimate) {
+  // The Development API contract allows an absent nutrition estimate. Keep a
+  // usable recipe instead of rejecting the entire successful scan; invalid
+  // estimates that are present still fail validation rather than being shown.
+  if (recipe.nutritionEstimate != null && !nutritionEstimate) {
     return null;
   }
 
@@ -39,7 +42,7 @@ export function normalizeRecipeForCanonicalStorage<T extends Recipe>(recipe: T):
       ...step,
       id: step.id ?? stableRecipePartId('step', step.title || step.text, index),
     })),
-    nutritionEstimate,
+    ...(nutritionEstimate ? { nutritionEstimate } : {}),
   };
 }
 

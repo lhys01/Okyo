@@ -69,7 +69,7 @@ test('the Save Money spending and savings visuals use the "Eating out" label', (
   const screen = read('screens/SaveMoneyBranchScreen.tsx');
   const visuals = read('branch-ui/SaveMoneyVisuals.tsx');
   assert.match(visuals, /Eating out vs\. making it at home/);
-  assert.match(screen, /label="Eating out, weekly"/);
+  assert.match(screen, /label="Meals eaten out per week"/);
 });
 
 test('every Pressable in the branch kit carries a label, a role, and a state', () => {
@@ -91,36 +91,64 @@ test('every animated branch surface respects Reduce Motion', () => {
   }
 });
 
-test('every branch uses one continuous progress bar that advances per screen', () => {
+test('Savings retains route progress while Health and Macros share question-count progress', () => {
   const scaffold = read('branch-ui/BranchScaffold.tsx');
   assert.match(scaffold, /accessibilityRole="progressbar"/);
   assert.match(scaffold, /accessibilityValue=\{\{ min: 0, max: total, now: answered \}\}/);
   const helper = read('branch-ui/branchProgress.ts');
   assert.match(helper, /export function getBranchProgress/);
+  const healthScreen = read('screens/HealthBranchScreen.tsx');
+  const healthVisuals = read('screens/HealthVisuals.tsx');
+  assert.match(healthScreen, /headerProgress=\{<HealthProgress question=\{progressQuestion\}/);
+  assert.match(healthVisuals, /gradient-1-1920x1080\.mp4/);
   // One notch per screen (intro excluded, complete = 100%), one continuous fill.
-  assert.match(helper, /order\.filter\(\(step\) => step !== 'intro'\)/);
-  assert.match(helper, /sequence\.indexOf\(currentStep\)/);
-  for (const file of ['screens/SaveMoneyBranchScreen.tsx', 'screens/HealthBranchScreen.tsx', 'screens/MacrosBranchScreen.tsx']) {
-    const screen = read(file);
-    assert.match(screen, /progressVariant="continuous"/, `${file} must use the continuous bar`);
-    assert.match(screen, /getBranchProgress\(\w+, step\)/, `${file} must derive progress from step position`);
-  }
+  assert.match(helper, /resolveCanonicalProgressSnapshot\(\{ routeOrder: order, currentRoute: currentStep, hiddenRoutes: \['intro'\] \}\)/);
+  const canonicalProgress = read('../onboarding/canonical/progress.ts');
+  assert.match(canonicalProgress, /routeOrder\.filter/);
+  assert.match(canonicalProgress, /visible\.indexOf\(currentRoute\)/);
+  const savings = read('screens/SaveMoneyBranchScreen.tsx');
+  assert.match(savings, /progressVariant="continuous"/);
+  assert.match(savings, /visibleIndex = visibleSteps\.indexOf\(state\.currentStep/);
+  assert.match(savings, /answered: Math\.max\(0, visibleIndex\), total: visibleSteps\.length/);
+  const macros = read('screens/MacrosBranchScreen.tsx');
+  assert.match(macros, /const progress = variant === 'A' \? Math\.max\(MACROS_PROGRESS_QUESTION_INDEX\[step\], 1\)/);
+  assert.match(macros, /headerProgress=\{\s*step === "intro" \? \([\s\S]*?<HealthProgress question=\{progress\} total=\{progressTotal\}/);
+});
+
+test('all goal branches use the same completed-plan progress position and footer', () => {
+  const plan = read('screens/BranchPersonalizedPlanScreen.tsx');
+  assert.match(plan, /progress=\{getFinalBranchPlanProgress\(branch, variant\)\}/);
+  assert.match(read('branch-ui/branchPlanProgress.ts'), /SAVE_MONEY_VISIBLE_STEPS\.filter/);
+  assert.match(plan, /progressVariant="continuous"/);
+  assert.match(plan, /label=\{plan && !error \? 'Continue to signature' : 'Try again'\}/);
+  assert.match(plan, /branch=\{branch\}/);
+  assert.match(plan, /<SavingsFinalPlan/);
+  assert.match(plan, /<HealthPlanSummary/);
+  assert.match(plan, /<MacrosPlanScreen/);
+});
+
+test('shared onboarding header reserves development-menu FAB clearance without changing release spacing', () => {
+  const scaffold = read('branch-ui/BranchScaffold.tsx');
+  assert.match(scaffold, /DEV_MENU_HEADER_CLEARANCE = 64/);
+  assert.match(scaffold, /paddingRight: __DEV__ \? 20 \+ DEV_MENU_HEADER_CLEARANCE : 20/);
+  assert.match(scaffold, /progress: \{[^}]*flex: 1, flexDirection: 'row'/);
+  assert.match(scaffold, /progressLabel: \{[^}]*fontSize: 12/);
 });
 
 test('the savings reveal states its arithmetic and never claims banked money', () => {
   const screen = read('screens/SaveMoneyBranchScreen.tsx');
   const visuals = read('branch-ui/SaveMoneyVisuals.tsx');
   assert.match(visuals, /Eating out vs\. making it at home/);
-  assert.match(visuals, /An estimate for now — Okyo will calculate your actual savings when you cook a recipe\./);
+  assert.match(visuals, /Monthly estimate:/);
+  assert.match(visuals, /Yearly estimate:/);
   assert.match(visuals, /function SavingsBar/);
   assert.doesNotMatch(visuals, /YOU KEEP/);
   assert.doesNotMatch(`${screen}\n${visuals}`, /you have saved|money saved so far/i);
 });
 
-test('the branch kit introduces no nutrition targets and no downstream routing', () => {
+test('branch previews avoid downstream product routing and Macros labels entered targets as user-owned', () => {
   const sources = [...kitFiles.map((file) => file.source), ...branchScreens.map(read)].join('\n');
-  assert.doesNotMatch(sources, /\b\d{3,4}\s?(kcal|calories)\b/i);
-  assert.doesNotMatch(sources, /\b\d{2,3}\s?g of protein\b/i);
+  assert.match(read('components/MacroTargetSlider.tsx'), /This is your target\. You can change it anytime\./);
   assert.doesNotMatch(sources, /revenueCat|Paywall|dietaryPreferences|ScanInputScreen|generateRecipe/i);
 });
 
@@ -137,28 +165,33 @@ test('the Health visual moments label example nutrition and make no medical clai
   const screen = read('screens/HealthBranchScreen.tsx');
   const visuals = read('screens/HealthVisuals.tsx');
   assert.match(visuals, /export function HealthNutritionExample/);
-  assert.match(visuals, /<HealthNutritionExample/);
-  assert.match(visuals, /Example nutrition only\./);
+  assert.match(visuals, /Example nutrition — not your personal target\./);
   assert.match(visuals, /Example recipe nutrition:/);
-  assert.doesNotMatch(`${screen}\n${visuals}`, /lose weight|weight loss|BMI|body mass|diagnos|cure|treat\b/i);
+  assert.doesNotMatch(`${screen}\n${visuals}`, /lose weight|weight loss|BMI|body mass|\bdiagnose\b|\bdiagnosis:\s|cure|treat\b/i);
 });
 
-test('the Macros reveal makes no fabricated numbers, deficit language, or clinical claims', () => {
+test('the Macros reveal shows only user-entered targets and makes no clinical claims', () => {
   const screen = read('screens/MacrosBranchScreen.tsx');
-  assert.match(screen, /This is a preference range, not medical advice\./);
-  assert.match(screen, /qualified professional/);
-  assert.doesNotMatch(screen, /recommended daily|deficit|BMI|body mass|diagnos/i);
-  assert.match(screen, /MacrosPlanVisual/);
-  assert.doesNotMatch(screen, /\bRR\b|\bEx\b|\b\d+\s?(kcal|calories)\b/i);
+  const results = read('screens/BranchPersonalizedPlanScreen.tsx');
+  assert.match(screen, /MacroTargetSlider/);
+  assert.match(results, /targetSummary\(draft\)/);
+  assert.doesNotMatch(screen, /recommended daily|BMI|body mass|\bdiagnose\b|\bdiagnosis:\s/i);
+  assert.doesNotMatch(screen, /starting estimate is available for adults 18\+/);
+  assert.match(screen, /activityHoursPerWeek/);
+  assert.match(screen, /Estimate only — not medical advice\./);
+  assert.match(results, /MacrosPlanScreen/);
+  assert.doesNotMatch(screen, /<MacrosPlanScreen/);
+  assert.doesNotMatch(screen, /\bRR\b|\bEx\b/i);
 });
 
 test('Macros completion stays on the completed single branch', () => {
   const screen = read('screens/MacrosBranchScreen.tsx');
   const host = read('OnboardingV3.tsx');
-  assert.match(screen, /disabled=\{isComplete \? isFinalizing : !canContinue\}/);
-  assert.match(screen, /label=\{isComplete \? \(isFinalizing \? 'Finishing…' : 'Done'\) : 'Next'\}/);
-  assert.match(screen, /onPress=\{isComplete \? \(\) => \{ void done\(\); \} : next\}/);
-  assert.match(screen, /handoffStarted/);
+  assert.match(screen, /disabled=\{!canContinue \|\| isFinishing \|\| isTransitioning\}/);
+  assert.match(screen, /step === "intro" \? "Build my plan" : "Continue"/);
+  assert.match(screen, /completionStarted/);
   assert.doesNotMatch(screen, /onChooseAnotherGoal/);
-  assert.match(host, /<MacrosBranchScreen onBack=\{controller\.back\} onComplete=\{controller\.completeBranchPreview\} userName=\{state\.profile\.name\} \/>/);
+  assert.match(host, /<MacrosBranchScreen variant=\{questionVariant\} ageYears=\{state\.profile\.age \?\? null\} onAgeChange=\{controller\.selectAgeValue\} onBack=\{controller\.back\} onComplete=\{async \(draft\) => \{/);
+  assert.match(host, /controller\.setPersonalizedAnswer\('macrosFocus', focus\)/);
+  assert.match(host, /controller\.beginBranchPlan\(\)/);
 });

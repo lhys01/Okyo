@@ -54,26 +54,31 @@ test('the shared artwork page uses the native shell and real Back/Next controls'
   assert.match(source, /page/);
 });
 
-test('all routed pages use seven native indicators and no autoplay timers', () => {
+test('all six showcase pages use native indicators and no autoplay timers', () => {
   const pager = readFileSync(resolve(process.cwd(), 'src/onboarding-v3/showcase/ShowcasePager.tsx'), 'utf8');
   const shell = readPage('ShowcasePageShell.tsx');
-  assert.match(pager, /showcasePages\.map\(\(page, index\)/);
+  assert.match(pager, /introPages\.map\(\(page, index\)/);
   assert.match(pager, /<OnboardingBackButton/);
   assert.match(pager, /<OnboardingCTA label="Next"/);
   assert.doesNotMatch(shell, /OnboardingBackButton|OnboardingCTA|Array\.from/);
   assert.doesNotMatch(pager + shell, /setInterval|setTimeout|withRepeat/);
 });
 
-test('ShowcasePager owns one fixed header and enlarged shared artwork region', () => {
+test('ShowcasePager owns one fixed header and a responsive, scrollable shared artwork region', () => {
   const pager = readFileSync(resolve(process.cwd(), 'src/onboarding-v3/showcase/ShowcasePager.tsx'), 'utf8');
   const shell = readPage('ShowcasePageShell.tsx');
   assert.equal((pager.match(/<OnboardingBackButton/g) ?? []).length, 1);
   assert.equal((pager.match(/<OnboardingCTA/g) ?? []).length, 1);
   assert.match(pager, /<SafeAreaView edges=\{carouselChromeVisible \? \['top', 'bottom'\] : \[\]\}/);
   assert.match(pager, /<PagerView/);
-  assert.match(shell, /height: 430/);
+  assert.match(pager, /getShowcaseResponsiveLayout\(/);
+  assert.match(pager, /<ShowcaseResponsiveLayoutProvider layout=\{responsiveLayout\}>/);
+  assert.match(shell, /<ScrollView/);
+  assert.match(shell, /height: layout\.heroHeight/);
+  assert.doesNotMatch(shell, /height: 430/);
   assert.match(shell, /maxWidth: 392/);
   assert.match(shell, /contentFit="contain"/);
+  assert.match(shell, /maxFontSizeMultiplier=\{2\}/);
 });
 
 test('screen-only derivatives keep the supplied artwork dimensions', () => {

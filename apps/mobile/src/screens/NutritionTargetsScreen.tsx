@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FormScreenSkeleton } from '../components/Skeleton';
 import type { MainTabParamList } from '../navigation/types';
 import { NUTRITION_CALCULATION_VERSION, type NutritionTargets } from '../onboarding-v3/state/nutritionTargets';
 import { onboardingV3Persistence } from '../onboarding-v3/state/onboardingV3Persistence';
@@ -75,12 +76,12 @@ export function NutritionTargetsScreen() {
     }
   };
 
-  if (!profile) return <View accessibilityLabel="Loading nutrition targets" accessibilityRole="progressbar" style={styles.loading}><ActivityIndicator color={colors.coral} /></View>;
+  if (!profile) return <SafeAreaView style={styles.safeArea}><FormScreenSkeleton cards={4} /></SafeAreaView>;
   if (!profile.nutritionTargets || !draft) {
     return <SafeAreaView style={styles.safeArea}><View style={styles.header}><Pressable accessibilityLabel="Go back" accessibilityRole="button" onPress={goBack} style={styles.back}><NavArrowLeft color={colors.ink} height={25} width={25} /></Pressable><Text style={styles.title}>Nutrition targets</Text></View><View style={styles.empty}><Text style={styles.emptyTitle}>Set targets during macro onboarding</Text><Text style={styles.emptyBody}>Choose Hit my macros during onboarding to create starting targets you can edit here.</Text></View></SafeAreaView>;
   }
 
-  return <SafeAreaView style={styles.safeArea}><View style={styles.header}><Pressable accessibilityLabel="Go back" accessibilityRole="button" onPress={goBack} style={styles.back}><NavArrowLeft color={colors.ink} height={25} width={25} /></Pressable><Text style={styles.title}>Nutrition targets</Text></View><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled"><Text style={styles.intro}>These are starting targets, not medical advice. Adjust them whenever your needs change.</Text>{targetFields.map((field) => <View key={field.key} style={styles.targetCard}><Text style={styles.targetLabel}>{field.label}</Text><View style={styles.inputRow}><TextInput accessibilityLabel={`${field.label} target`} keyboardType="number-pad" maxLength={4} onChangeText={(value) => setDraft((current) => current ? { ...current, [field.key]: value.replace(/[^0-9]/g, '') } : current)} style={styles.input} value={draft[field.key]} /><Text style={styles.suffix}>{field.suffix}</Text></View></View>)}<Pressable accessibilityLabel="Save nutrition targets" accessibilityRole="button" disabled={saving} onPress={() => void save()} style={[styles.save, saving && styles.disabled]}>{saving ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.saveText}>Save targets</Text>}</Pressable></ScrollView></SafeAreaView>;
+  return <SafeAreaView style={styles.safeArea}><View style={styles.header}><Pressable accessibilityLabel="Go back" accessibilityRole="button" onPress={goBack} style={styles.back}><NavArrowLeft color={colors.ink} height={25} width={25} /></Pressable><Text style={styles.title}>Nutrition targets</Text></View><ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.content} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled"><Text style={styles.intro}>These are starting targets, not medical advice. Adjust them whenever your needs change.</Text>{targetFields.map((field) => <View key={field.key} style={styles.targetCard}><Text style={styles.targetLabel}>{field.label}</Text><View style={styles.inputRow}><TextInput accessibilityLabel={`${field.label} target`} keyboardType="number-pad" maxLength={4} onChangeText={(value) => setDraft((current) => current ? { ...current, [field.key]: value.replace(/[^0-9]/g, '') } : current)} style={styles.input} value={draft[field.key]} /><Text style={styles.suffix}>{field.suffix}</Text></View></View>)}<Pressable accessibilityLabel="Save nutrition targets" accessibilityRole="button" disabled={saving} onPress={() => void save()} style={[styles.save, saving && styles.disabled]}>{saving ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.saveText}>Save targets</Text>}</Pressable></ScrollView></SafeAreaView>;
 }
 
 const styles = StyleSheet.create({
@@ -88,14 +89,14 @@ const styles = StyleSheet.create({
   loading: { alignItems: 'center', backgroundColor: colors.background, flex: 1, justifyContent: 'center' },
   header: { alignItems: 'center', flexDirection: 'row', gap: 8, paddingHorizontal: spacing.gutter, paddingVertical: 10 },
   back: { alignItems: 'center', height: 44, justifyContent: 'center', marginLeft: -10, width: 44 },
-  title: { color: colors.ink, fontFamily: fontFamilies.extraBold, fontSize: 22 },
+  title: { color: colors.ink, flexShrink: 1, fontFamily: fontFamilies.extraBold, fontSize: 22 },
   content: { paddingBottom: 44, paddingHorizontal: spacing.gutter },
   intro: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 15, lineHeight: 22, marginBottom: 20, marginTop: 4 },
   targetCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.panel, borderWidth: 1, marginBottom: 12, padding: 16 },
   targetLabel: { color: colors.ink, fontFamily: fontFamilies.bold, fontSize: 16 },
   inputRow: { alignItems: 'center', flexDirection: 'row', gap: 8, marginTop: 10 },
-  input: { backgroundColor: colors.canvasSunk, borderRadius: 12, color: colors.ink, flex: 1, fontFamily: fontFamilies.extraBold, fontSize: 24, minHeight: 50, paddingHorizontal: 12 },
-  suffix: { color: colors.muted, fontFamily: fontFamilies.body, fontSize: 14, minWidth: 76 },
+  input: { backgroundColor: colors.canvasSunk, borderRadius: 12, color: colors.ink, flex: 1, fontFamily: fontFamilies.extraBold, fontSize: 24, minHeight: 50, minWidth: 0, paddingHorizontal: 12 },
+  suffix: { color: colors.muted, flexShrink: 1, fontFamily: fontFamilies.body, fontSize: 14, minWidth: 76 },
   save: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radius.button, justifyContent: 'center', marginTop: 14, minHeight: 54 },
   saveText: { color: colors.surface, fontFamily: fontFamilies.extraBold, fontSize: 16 },
   empty: { alignItems: 'center', flex: 1, justifyContent: 'center', padding: spacing.xl },

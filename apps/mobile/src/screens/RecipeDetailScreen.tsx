@@ -15,13 +15,13 @@ import {
   User,
 } from 'iconoir-react-native';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Animated,
   Image,
   Alert,
   Keyboard,
+  KeyboardAvoidingView,
   LayoutAnimation,
   Pressable,
   ScrollView,
@@ -29,6 +29,7 @@ import {
   Text,
   TextInput,
   View,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -39,10 +40,10 @@ const FEEDBACK_REASONS = {
   disliked: ['Didn’t taste good', 'Too spicy', 'Too salty', 'Too sweet', 'Too bland', 'Texture was wrong', 'Too complicated', 'Took too long', 'Too expensive', 'Ingredients were hard to find', 'Recipe didn’t turn out right', 'Something else'],
 } as const;
 
-import { analyticsEvents, track } from '../analytics/track';
 import { CORRECTION_FAILURE_MESSAGE, correctScanRecipe } from '../api/client';
 import { FoodImage } from '../components/FoodImage';
-import { colors, fontFamilies } from '../components/OkyoUI';
+import { FitText } from '../components/FitText';
+import { colors, fontFamilies, iconSizes, typography } from '../components/OkyoUI';
 import { RecipeLikeButton } from '../components/RecipeLikeButton';
 import { RecipeNutritionCards } from '../components/RecipeNutritionCards';
 import { RecipeCostSummary, RecipeQuickFacts } from '../components/RecipeAssistantOverview';
@@ -62,6 +63,7 @@ import {
   type RecipePresentationMode,
 } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { useMascotName } from '../state/useMascotName';
 import { findFoodPreferenceConflicts, useFoodPreferences } from '../state/foodPreferences';
 import { classifyDietarySafetyPrompt } from '../utils/dietarySafetyPrompt';
 import { foodPreferencesPersistence, toApiFoodPreferences } from '../state/foodPreferences';
@@ -71,16 +73,27 @@ import { resolveActiveCookingStep } from '../state/activeCooking';
 import { recipeColors, recipeShadows } from '../theme/recipeTheme';
 import { guidedCookingTypography } from '../theme/guidedCookingTypography';
 import { getRealScanImageUri, getRecipeImageSource, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { isUserScanRecipe } from '../utils/recipeImageSource';
 import { formatRecipeDuration, getRecipeTiming } from '../utils/recipeIntegrity';
 import { buildGuidedCookingSteps, getGuidedIngredientChipLabel } from '../utils/guidedCookingSteps';
 import { getNextGuidedCookingPreview } from '../utils/guidedCookingPreview';
+import { formatFinishByTime, getRemainingGuidedCookingMinutes, hasUsableRecipeTimingData } from '../utils/guidedCookingTime';
 import { getConciseGuidedInstruction } from '../utils/guidedInstruction';
 import { getGuidedStepDensity } from '../utils/guidedStepDensity';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
-import { getCompactRecipeDescription, getCookingCtaLabel } from '../utils/recipePresentation';
+import { getRecipeDescription, getCookingCtaLabel } from '../utils/recipePresentation';
+import { getRequiredRecipeEquipment } from '../utils/recipeEquipment';
 import { getHomeResetState } from '../utils/scanControllerUtils';
-import { buildCorrectionRequest, getRecipeCorrectionSourceId } from '../utils/recipeCorrection';
+import {
+  buildCorrectionRequest,
+  canSubmitCorrection,
+  getCorrectionErrorMessage,
+  getRecipeCorrectionSourceId,
+  validateCorrectionNote,
+} from '../utils/recipeCorrection';
+import { RecipeEditCard } from '../components/RecipeEditCard';
+import { RecipeUpdatingStatus } from '../components/RecipeUpdatingStatus';
 import { useReduceMotion } from '../hooks/useAccessibilityPreferences';
 
 const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
@@ -95,6 +108,7 @@ type RecipeStepsNavigation = CompositeNavigationProp<
 >;
 type RecipeStepsRoute = RouteProp<MainTabParamList, 'RecipeStepsScreen'>;
 export function RecipeDetailScreen() {
+  const mascotName = useMascotName();
   const navigation = useNavigation<RecipeDetailNavigation>();
   const route = useRoute<RecipeDetailRoute>();
   const routeRecipeId = route.params?.recipeId;
@@ -106,7 +120,6 @@ export function RecipeDetailScreen() {
   const toggleRecipeLiked = useOkyoStore((state) => state.toggleRecipeLiked);
   const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
   const recipesById = useOkyoStore((state) => state.recipesById);
-  const addRecipeToGrocery = useOkyoStore((state) => state.addRecipeToGrocery);
   const toggleIngredientInGrocery = useOkyoStore((state) => state.toggleIngredientInGrocery);
   const groceryRecipeIds = useOkyoStore((state) => state.groceryRecipeIds);
   const groceryIngredientSelections = useOkyoStore((state) => state.groceryIngredientSelections ?? {});
@@ -118,8 +131,21 @@ export function RecipeDetailScreen() {
   const unlockBadge = useOkyoStore((state) => state.unlockBadge);
   const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
   const [isUpdatingStyle, setIsUpdatingStyle] = useState(false);
+  const [stylePendingMode, setStylePendingMode] = useState<RecipePresentationMode | null>(null);
+  const correctionInFlightRef = useRef(false);
+  const styleAbortControllerRef = useRef<AbortController | null>(null);
   const [styleError, setStyleError] = useState<string | null>(null);
-  const getRecipePresentationVariant = useOkyoStore((state) => state.getRecipePresentationVariant);
+  const [failedStyleMode, setFailedStyleMode] = useState<RecipePresentationMode | null>(null);
+  // Inline "Customize recipe" free-text editor. Kept on this screen so it works
+  // for curated / inspiration recipes too (they never create a scan session,
+  // which the Result screen's editor requires).
+  const [isCustomizing, setIsCustomizing] = useState(false);
+  const [customizeText, setCustomizeText] = useState('');
+  const [customizeError, setCustomizeError] = useState<string | null>(null);
+  const [isSubmittingCustomize, setIsSubmittingCustomize] = useState(false);
+  const customizeAbortControllerRef = useRef<AbortController | null>(null);
+  const [customizeLayoutY, setCustomizeLayoutY] = useState<number | null>(null);
+  const overviewScrollRef = useRef<ScrollView>(null);
   const cacheRecipePresentationVariant = useOkyoStore((state) => state.cacheRecipePresentationVariant);
   const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId);
   const activeCookingRecipe = resolveCanonicalRecipe(recipesById, activeCookingSession?.recipeId);
@@ -130,9 +156,9 @@ export function RecipeDetailScreen() {
   const canShowSavings = restaurantPrice > 0 && (recipe?.estimatedSavings ?? 0) > 0;
   const selectedPresentationMode = recipe?.selectedPresentationMode ?? 'Normal';
   const ingredientGroups = getSafeIngredientGroups(recipe);
-  const equipment = getSafeTextList(recipe?.equipment);
+  const equipment = getRequiredRecipeEquipment(recipe);
   const displayTitle = cleanDisplayText(recipe?.title ?? '');
-  const displayDescription = getCompactRecipeDescription(cleanDisplayText(recipe?.description ?? ''));
+  const displayDescription = getRecipeDescription(cleanDisplayText(recipe?.description ?? ''));
   const ingredientCount = getIngredientCount(recipe);
   const fallbackIngredients = (Array.isArray(recipe?.ingredients) ? recipe.ingredients : [])
     .filter((ingredient) => ingredient.name.trim());
@@ -143,6 +169,7 @@ export function RecipeDetailScreen() {
       : [];
   const recipeTiming = recipe ? getRecipeTiming(recipe) : { handsOnMinutes: 0, waitingMinutes: 0, totalMinutes: 0 };
   const recipeImageUrl = getRecipeImageUrl(recipe);
+  const hasRecipeImage = Boolean(recipeImageUrl);
   const recipeImageStatus = getRecipeImageStatus(recipe);
   const displayServings = recipe ? (recipeServingOverrides[recipe.id] ?? recipe.servings) : 2;
   const selectedIngredientIds = recipe
@@ -178,13 +205,15 @@ export function RecipeDetailScreen() {
       });
     });
 
-    if (routeMode && !isRecipeMode(routeMode)) {
-      track(analyticsEvents.RESULT_ERROR, {
-        errorMessage: 'Recipe mode was missing or invalid.',
-        screen: 'RecipeDetailScreen',
-      });
-    }
   }, [recipe?.id, recipeImageUrl, routeMode, routeRecipeId]);
+
+  useEffect(() => () => {
+    styleAbortControllerRef.current?.abort();
+    styleAbortControllerRef.current = null;
+    customizeAbortControllerRef.current?.abort();
+    customizeAbortControllerRef.current = null;
+    correctionInFlightRef.current = false;
+  }, []);
 
   const goBack = () => {
     if (navigation.canGoBack()) {
@@ -196,9 +225,10 @@ export function RecipeDetailScreen() {
   };
 
   const choosePresentationMode = async (mode: RecipePresentationMode) => {
-    if (recipe && mode !== recipe.selectedPresentationMode && !isUpdatingStyle) {
+    if (recipe && mode !== recipe.selectedPresentationMode && !isUpdatingStyle && !correctionInFlightRef.current) {
       void Haptics.selectionAsync().catch(() => undefined);
       setStyleError(null);
+      setFailedStyleMode(null);
       const baseRecipe = recipe.baseRecipe ?? recipe;
       const baseScan = recipe.baseScanResult ?? recipe.scanResult;
       if (mode === 'Normal') {
@@ -208,43 +238,49 @@ export function RecipeDetailScreen() {
           setStyleError(CORRECTION_FAILURE_MESSAGE);
         }
       } else {
-        const cachedVariant = getRecipePresentationVariant(recipe.id, mode);
+        correctionInFlightRef.current = true;
+        const abortController = new AbortController();
+        styleAbortControllerRef.current = abortController;
+        setStylePendingMode(mode);
         setIsUpdatingStyle(true);
         try {
-          if (cachedVariant) {
-            if (!correctRecipe(recipe.id, cachedVariant.recipe, cachedVariant.scanResult)) throw new Error('style update failed');
-          } else {
-            const direction = mode === 'Lighter'
-              ? 'Create a lighter version of this recipe while preserving the core dish. Reduce calories where practical and update ingredients, quantities, instructions, nutrition, cost, and relevant metadata.'
-              : mode === 'More Protein'
-                ? 'Create a higher-protein version of this recipe while preserving its cuisine, dietary restrictions, allergies, and existing ingredient logic. Use context-appropriate proteins such as beans, tofu, dairy, eggs, seeds, or more of an existing protein where appropriate; do not blindly add meat. Update ingredients, quantities, instructions, nutrition, cost, and relevant metadata.'
-                : 'Create a healthier version of this recipe while preserving the identity of the dish. Update ingredients, quantities, instructions, nutrition, cost, and relevant metadata.';
-            // Always adapt from the immutable original, not the currently displayed
-            // variant, so switching styles repeatedly never compounds drift.
-            const preferences = await foodPreferencesPersistence.read();
-            const profile = await onboardingV3Persistence.readPersonalizedProfile();
-            const result = await correctScanRecipe(getRecipeCorrectionSourceId(baseRecipe), {
-              ...buildCorrectionRequest({ canonicalRecipeId: recipe.id, correctionNote: direction, currentRecipe: baseRecipe, expectedSourceRecipeId: getRecipeCorrectionSourceId(baseRecipe), goalContext: buildGoalContext(profile), mode: selectedMode, scanSessionId }),
-              ...toApiFoodPreferences(preferences),
-            });
-            const updatedRecipe = result.recipe ?? result.recipes?.[0];
-            if (!updatedRecipe || !result.scan || !correctRecipe(recipe.id, updatedRecipe, result.scan)) throw new Error('style update failed');
-            cacheRecipePresentationVariant(recipe.id, mode, updatedRecipe, result.scan);
-          }
+          const direction = mode === 'Lighter'
+            ? 'Create a lighter version of this recipe while preserving the core dish. Reduce calories where practical and update ingredients, quantities, instructions, nutrition, cost, and relevant metadata.'
+            : mode === 'More Protein'
+              ? 'Create a higher-protein version of this recipe while preserving its cuisine, dietary restrictions, allergies, and existing ingredient logic. Use context-appropriate proteins such as beans, tofu, dairy, eggs, seeds, or more of an existing protein where appropriate; do not blindly add meat. Update ingredients, quantities, instructions, nutrition, cost, and relevant metadata.'
+              : 'Create a healthier version of this recipe while preserving the identity of the dish. Update ingredients, quantities, instructions, nutrition, cost, and relevant metadata.';
+          const sourceId = getRecipeCorrectionSourceId(recipe);
+          const preferences = await foodPreferencesPersistence.read();
+          if (abortController.signal.aborted) return;
+          const profile = await onboardingV3Persistence.readPersonalizedProfile();
+          if (abortController.signal.aborted) return;
+          const result = await correctScanRecipe(sourceId, {
+            ...buildCorrectionRequest({ canonicalRecipeId: recipe.id, correctionNote: direction, currentRecipe: recipe, expectedSourceRecipeId: sourceId, goalContext: buildGoalContext(profile), mode: selectedMode, scanSessionId }),
+            ...toApiFoodPreferences(preferences),
+          }, abortController.signal);
+          if (abortController.signal.aborted) return;
+          const updatedRecipe = result.recipe ?? result.recipes?.[0];
+          if (!updatedRecipe || !result.scan || !correctRecipe(recipe.id, updatedRecipe, result.scan)) throw new Error('style update failed');
+          cacheRecipePresentationVariant(recipe.id, mode, updatedRecipe, result.scan);
           setRecipePresentationMode(recipe.id, mode);
+          setFailedStyleMode(null);
         } catch {
-          setStyleError(CORRECTION_FAILURE_MESSAGE);
+          if (!abortController.signal.aborted) {
+            setStyleError(CORRECTION_FAILURE_MESSAGE);
+            setFailedStyleMode(mode);
+          }
         } finally {
-          setIsUpdatingStyle(false);
+          if (styleAbortControllerRef.current === abortController) {
+            styleAbortControllerRef.current = null;
+            correctionInFlightRef.current = false;
+            setIsUpdatingStyle(false);
+            setStylePendingMode(null);
+          }
         }
       }
     }
     uiLog('RecipeDetailScreen', 'choose_mode', { mode });
-    track(analyticsEvents.MODE_SELECTED, {
-      dishName: recipe?.title ?? scanResult?.dishName ?? 'Missing recipe',
-      mode,
-      screen: 'RecipeDetailScreen',
-    });
+
   };
 
   const toggleSelectedRecipeLike = () => {
@@ -259,12 +295,7 @@ export function RecipeDetailScreen() {
     if (!isLiked) {
       awardXPOnce(`save-recipe-${recipe.id}`, 5);
       unlockBadge('first-dupe');
-      track(analyticsEvents.RECIPE_SAVED, {
-        dishName: recipe.title,
-        mode: recipe.mode,
-        savings: canShowSavings ? recipe.estimatedSavings : 0,
-        screen: 'RecipeDetailScreen',
-      });
+
     }
   };
 
@@ -280,20 +311,108 @@ export function RecipeDetailScreen() {
     });
   };
 
-  const openRecipeEditor = () => {
+  // Opens the inline customize editor, optionally pre-filled (e.g. from the
+  // dietary-safety prompts). Replaces the old cross-screen navigation that
+  // dead-ended on "Scan something first" for curated recipes.
+  const revealCustomizer = (prefill = '') => {
     if (!recipe) {
       return;
     }
-    navigation.navigate('MainTabs', { screen: 'ResultSummaryScreen', params: { recipeId: recipe.id } });
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setCustomizeText(prefill);
+    setCustomizeError(null);
+    setIsCustomizing(true);
   };
 
-  const openGroceryList = () => {
-    if (!recipe) {
+  const openRecipeEditor = () => revealCustomizer();
+
+  const cancelCustomizer = () => {
+    styleAbortControllerRef.current?.abort();
+    styleAbortControllerRef.current = null;
+    setIsUpdatingStyle(false);
+    setStylePendingMode(null);
+    customizeAbortControllerRef.current?.abort();
+    customizeAbortControllerRef.current = null;
+    correctionInFlightRef.current = false;
+    setIsSubmittingCustomize(false);
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setIsCustomizing(false);
+    setCustomizeText('');
+    setCustomizeError(null);
+  };
+
+  const cancelStyleUpdate = () => {
+    styleAbortControllerRef.current?.abort();
+    styleAbortControllerRef.current = null;
+    correctionInFlightRef.current = false;
+    setIsUpdatingStyle(false);
+    setStylePendingMode(null);
+  };
+
+  const submitCustomization = async () => {
+    if (!recipe || isSubmittingCustomize || correctionInFlightRef.current) {
       return;
     }
-    addRecipeToGrocery(recipe.id);
-    navigation.navigate('GroceryListScreen', { mode: selectedMode, recipeId: recipe.id });
+    const note = customizeText.trim();
+    const invalid = validateCorrectionNote(note, mascotName);
+    if (invalid) {
+      setCustomizeError(invalid);
+      return;
+    }
+
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    correctionInFlightRef.current = true;
+    const abortController = new AbortController();
+    customizeAbortControllerRef.current = abortController;
+    setIsSubmittingCustomize(true);
+    setCustomizeError(null);
+    try {
+      const sourceId = getRecipeCorrectionSourceId(recipe);
+      const preferences = await foodPreferencesPersistence.read();
+      const profile = await onboardingV3Persistence.readPersonalizedProfile();
+      const result = await correctScanRecipe(sourceId, {
+        ...buildCorrectionRequest({
+          canonicalRecipeId: recipe.id,
+          correctionNote: note,
+          currentRecipe: recipe,
+          expectedSourceRecipeId: sourceId,
+          goalContext: buildGoalContext(profile),
+          mode: selectedMode,
+          scanSessionId,
+        }),
+        ...toApiFoodPreferences(preferences),
+      }, abortController.signal);
+      if (abortController.signal.aborted) return;
+      const updatedRecipe = result.recipe ?? result.recipes?.[0];
+      if (!updatedRecipe || !result.scan || !correctRecipe(recipe.id, updatedRecipe, result.scan)) {
+        throw new Error('customize update failed');
+      }
+
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setIsCustomizing(false);
+      setCustomizeText('');
+    } catch (error) {
+      if (!abortController.signal.aborted) setCustomizeError(getCorrectionErrorMessage(error));
+    } finally {
+      if (customizeAbortControllerRef.current === abortController) {
+        customizeAbortControllerRef.current = null;
+        correctionInFlightRef.current = false;
+        setIsSubmittingCustomize(false);
+      }
+    }
   };
+
+  // Bring the customize editor into view once it has mounted and measured.
+  useEffect(() => {
+    if (!isCustomizing || customizeLayoutY == null) {
+      return;
+    }
+    const targetY = Math.max(0, customizeLayoutY - 90);
+    const raf = requestAnimationFrame(() => {
+      overviewScrollRef.current?.scrollTo({ y: targetY, animated: true });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [isCustomizing, customizeLayoutY]);
 
   const openCookingSteps = () => {
     if (!recipe) {
@@ -310,7 +429,7 @@ export function RecipeDetailScreen() {
         [
           { text: 'Go back', style: 'cancel' },
           { text: 'Review recipe' },
-          { text: 'Make this work for me', onPress: () => navigation.navigate('MainTabs', { screen: 'ResultSummaryScreen', params: { recipeId: recipe.id, customizeInstruction: `Replace every ingredient that conflicts with my ${conflict.preference} ${conflict.category}. Preserve the dish while updating ingredients, steps, nutrition, timing, and cost.` } }) },
+          { text: 'Make this work for me', onPress: () => revealCustomizer(`Replace every ingredient that conflicts with my ${conflict.preference} ${conflict.category}. Preserve the dish while updating ingredients, steps, nutrition, timing, and cost.`) },
         ],
       );
       return;
@@ -339,6 +458,7 @@ export function RecipeDetailScreen() {
       completion: false,
       mode: selectedMode,
       recipeId: recipe.id,
+      returnTo: 'RecipeDetailScreen',
     });
     if (activeCookingSession && activeCookingSession.recipeId !== recipe.id) {
       Alert.alert(
@@ -349,6 +469,7 @@ export function RecipeDetailScreen() {
             completion: false,
             mode: activeCookingRecipe?.selectedMode ?? selectedMode,
             recipeId: activeCookingSession.recipeId,
+            returnTo: 'RecipeDetailScreen',
           }) },
           { text: 'End & Start This', style: 'destructive', onPress: () => {
             endCookingRecipe(activeCookingSession.recipeId);
@@ -385,25 +506,30 @@ export function RecipeDetailScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardAvoiding}>
       <ScrollView
+        ref={overviewScrollRef}
         contentContainerStyle={styles.screenContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.heroCard}>
-          <FoodImage
+          {hasRecipeImage ? <FoodImage
             fallbackLabel="Recipe image"
             imageSource={getRecipeImageSource(recipe)}
             imageStatus={recipeImageStatus}
             imageUrl={recipeImageUrl}
-            showFallbackLabel
+            disableFallback={isUserScanRecipe(recipe)}
             style={styles.recipePhoto}
           >
             <Pressable
+              accessibilityLabel="Back"
               accessibilityRole="button"
               onPress={goBack}
               style={({ pressed }) => [styles.circleBackButton, pressed ? styles.pressed : null]}
             >
-              <NavArrowLeft color={colors.charcoal} height={23} strokeWidth={2.35} width={23} />
+              <NavArrowLeft color={colors.charcoal} height={iconSizes.large} strokeWidth={2.35} width={iconSizes.large} />
             </Pressable>
             <RecipeLikeButton
               compact
@@ -412,30 +538,47 @@ export function RecipeDetailScreen() {
               style={styles.circleSaveButton}
             />
             <Pressable accessibilityLabel="Share recipe" accessibilityRole="button" onPress={openShareRecipe} style={({ pressed }) => [styles.circleShareButton, pressed ? styles.pressed : null]}>
-              <ShareAndroid color={colors.charcoal} height={21} strokeWidth={2.1} width={21} />
+              <ShareAndroid color={colors.charcoal} height={iconSizes.medium} strokeWidth={2.1} width={iconSizes.medium} />
             </Pressable>
-          </FoodImage>
+          </FoodImage> : (
+            <View style={styles.noImageHeader}>
+              <Pressable accessibilityLabel="Back" accessibilityRole="button" onPress={goBack} style={styles.circleBackButton}>
+                <NavArrowLeft color={colors.charcoal} height={iconSizes.large} strokeWidth={2.35} width={iconSizes.large} />
+              </Pressable>
+            </View>
+          )}
 
           <View style={styles.overviewPanel}>
             <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.82}
-              numberOfLines={1}
               style={styles.recipeTitle}
             >
               {displayTitle}
             </Text>
-            <Text numberOfLines={2} style={styles.description}>{displayDescription}</Text>
+            <Text style={styles.description}>{displayDescription}</Text>
             <RecipeQuickFacts recipe={recipe} />
             <FoodSafetyNotice
               conflicts={foodConflicts}
-              onAdapt={() => navigation.navigate('MainTabs', { screen: 'ResultSummaryScreen', params: { recipeId: recipe.id, customizeInstruction: 'Replace every ingredient that conflicts with my saved allergies and dietary restrictions while preserving the dish. Update ingredients, steps, nutrition, timing, and cost.' } })}
+              onAdapt={() => revealCustomizer('Replace every ingredient that conflicts with my saved allergies and dietary restrictions while preserving the dish. Update ingredients, steps, nutrition, timing, and cost.')}
             />
             <RecipePrimaryActions
               onCook={openCookingSteps}
               onCustomize={openRecipeEditor}
-              onGroceries={openGroceryList}
+              showGroceries={false}
+              showIcons={false}
             />
+            {isCustomizing ? (
+              <View onLayout={(event) => setCustomizeLayoutY(event.nativeEvent.layout.y)}>
+                <RecipeEditCard
+                  canSubmit={canSubmitCorrection(customizeText)}
+                  correctionError={customizeError}
+                  correctionText={customizeText}
+                  isCorrecting={isSubmittingCustomize || isUpdatingStyle}
+                  onCancel={cancelCustomizer}
+                  onChangeCorrectionText={setCustomizeText}
+                  onSubmitCorrection={() => void submitCustomization()}
+                />
+              </View>
+            ) : null}
             <RecipeNutritionCards nutrition={recipe.nutritionEstimate} />
             <RecipeCostSummary recipe={recipe} restaurantPrice={restaurantPrice || undefined} servings={displayServings} />
 
@@ -443,11 +586,24 @@ export function RecipeDetailScreen() {
               <Text style={styles.sectionSmallTitle}>Choose your style</Text>
               <RecipeModeTabs
                 selectedMode={selectedPresentationMode}
-                isUpdating={isUpdatingStyle}
+                isUpdating={isUpdatingStyle || isSubmittingCustomize}
                 onSelectMode={(mode) => void choosePresentationMode(mode)}
               />
+              {isUpdatingStyle && stylePendingMode ? (
+                <RecipeUpdatingStatus
+                  message={getUpdatingRecipeMessage(stylePendingMode)}
+                  onCancel={cancelStyleUpdate}
+                />
+              ) : null}
               {styleError ? (
-                <Text accessibilityLiveRegion="polite" style={styles.modeError}>{styleError}</Text>
+                <View style={styles.styleErrorRow}>
+                  <Text accessibilityLiveRegion="polite" style={styles.modeError}>{styleError}</Text>
+                  {failedStyleMode ? (
+                    <Pressable accessibilityRole="button" onPress={() => void choosePresentationMode(failedStyleMode)} hitSlop={8}>
+                      <Text style={styles.styleRetryText}>Try again</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               ) : null}
             </View>
 
@@ -486,11 +642,13 @@ export function RecipeDetailScreen() {
           </View>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 export function RecipeStepsScreen() {
+  const mascotName = useMascotName();
   const navigation = useNavigation<RecipeStepsNavigation>();
   const route = useRoute<RecipeStepsRoute>();
   const routeRecipeId = route.params?.recipeId;
@@ -506,6 +664,7 @@ export function RecipeStepsScreen() {
   const recipeFeedbackById = useOkyoStore((state) => state.recipeFeedbackById ?? {});
   const saveRecipeFeedback = useOkyoStore((state) => state.saveRecipeFeedback);
   const recipe = resolveCanonicalRecipe(recipesById, routeRecipeId);
+  const recipeTiming = recipe ? getRecipeTiming(recipe) : { handsOnMinutes: 0, waitingMinutes: 0, totalMinutes: 0 };
   const selectedMode = getSafeRecipeMode(routeMode ?? recipe?.selectedMode ?? storeSelectedMode);
   const selectedScanImage = recipe?.originalImage ?? null;
   const guidedSteps = useMemo(() => buildGuidedCookingSteps(recipe), [recipe]);
@@ -531,6 +690,15 @@ export function RecipeStepsScreen() {
   const stepDensity = activeStep ? getGuidedStepDensity(activeStep) : 'medium';
   const nextStepPreview = getNextGuidedCookingPreview(guidedSteps, safeActiveStepIndex);
   const progress = guidedSteps.length > 0 ? ((safeActiveStepIndex + 1) / guidedSteps.length) * 100 : 0;
+  const hasUsableTimingData = hasUsableRecipeTimingData(recipe);
+  const totalCookingMinutes = recipe && Number.isFinite(recipe.totalTimeMinutes) && (recipe.totalTimeMinutes ?? 0) > 0
+    ? Math.ceil(recipe.totalTimeMinutes ?? 0)
+    : recipeTiming.totalMinutes;
+  const remainingCookingMinutes = getRemainingGuidedCookingMinutes(
+    hasUsableTimingData ? guidedSteps.map((step) => step.timing.elapsedMinutes) : [],
+    safeActiveStepIndex,
+    hasUsableTimingData ? totalCookingMinutes : null,
+  );
   useEffect(() => {
     uiLog('RecipeStepsScreen', 'enter', { recipeId: routeRecipeId, routeMode, selectedMode });
     const _traceUri = recipeImageUrl ?? null;
@@ -554,12 +722,6 @@ export function RecipeStepsScreen() {
       });
     });
 
-    if (routeMode && !isRecipeMode(routeMode)) {
-      track(analyticsEvents.RESULT_ERROR, {
-        errorMessage: 'Recipe steps mode was missing or invalid.',
-        screen: 'RecipeStepsScreen',
-      });
-    }
   }, [routeMode, routeRecipeId, selectedMode]);
 
   useEffect(() => {
@@ -661,7 +823,12 @@ export function RecipeStepsScreen() {
 
   const goBack = () => {
     if (routeRecipeId) {
-      navigation.navigate('RecipeDetailScreen', { mode: selectedMode, recipeId: routeRecipeId });
+      const returnTo = route.params?.returnTo ?? 'RecipeDetailScreen';
+      if (returnTo === 'ResultSummaryScreen') {
+        navigation.navigate('ResultSummaryScreen', { recipeId: routeRecipeId });
+      } else {
+        navigation.navigate('RecipeDetailScreen', { mode: selectedMode, recipeId: routeRecipeId });
+      }
       return;
     }
     navigation.navigate('HomeScreen');
@@ -761,7 +928,7 @@ export function RecipeStepsScreen() {
               onPress={() => setCompletionVisible(false)}
               style={({ pressed }) => [styles.smallBackButton, pressed ? styles.pressed : null]}
             >
-              <NavArrowLeft color={colors.charcoal} height={22} strokeWidth={2.35} width={22} />
+              <NavArrowLeft color={colors.charcoal} height={iconSizes.large} strokeWidth={2.35} width={iconSizes.large} />
               <Text style={styles.smallBackText}>Steps</Text>
             </Pressable>
           </View>
@@ -771,9 +938,9 @@ export function RecipeStepsScreen() {
               <CompletionRecipeImage uri={completionImageUri} />
               <Image
                 accessibilityIgnoresInvertColors
-                accessibilityLabel="Kiko enjoying a bowl of pasta"
+                accessibilityLabel={`${mascotName} enjoying a bowl of pasta`}
                 resizeMode="contain"
-                source={require('../../assets/kiko-static/approved/kiko-ramen.png')}
+                source={require('../../assets/kiko-static/approved/kiko-ramen-sticker.png')}
                 style={styles.completionMascotArt}
               />
               <Text style={styles.completionEyebrow}>You made it!</Text>
@@ -823,7 +990,7 @@ export function RecipeStepsScreen() {
                     pressed ? styles.pressed : null,
                   ]}
                 >
-                  <ShareAndroid color={colors.charcoal} height={18} strokeWidth={2.1} width={18} />
+                  <ShareAndroid color={colors.charcoal} height={iconSizes.medium} strokeWidth={2.1} width={iconSizes.medium} />
                   <Text style={styles.completionShareText}>Share</Text>
                 </Pressable>
                 <Pressable
@@ -843,18 +1010,21 @@ export function RecipeStepsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.safeArea}>
       <ActiveCookingKeepAwake />
       <View style={styles.guidedScreenContent}>
-        <View style={styles.simpleTopBar}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={goBack}
-            style={({ pressed }) => [styles.smallBackButton, pressed ? styles.pressed : null]}
-          >
-            <NavArrowLeft color={colors.charcoal} height={22} strokeWidth={2.35} width={22} />
-              <Text style={styles.smallBackText}>Back</Text>
+          <View style={styles.guidedHeaderRow}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={goBack}
+              style={({ pressed }) => [styles.guidedHeaderSide, styles.guidedHeaderStart, pressed ? styles.pressed : null]}
+            >
+              <NavArrowLeft color={colors.charcoal} height={iconSizes.large} strokeWidth={2.35} width={iconSizes.large} />
+              <Text numberOfLines={1} style={styles.smallBackText}>Back</Text>
             </Pressable>
+            <FitText minimumFontScale={0.72} style={styles.guidedHeaderTotal}>
+              {hasUsableTimingData ? `${totalCookingMinutes} min total` : 'Total time unavailable'}
+            </FitText>
             {!showCompletion && recipe ? (
               <Pressable
                 accessibilityRole="button"
@@ -870,77 +1040,83 @@ export function RecipeStepsScreen() {
                     } },
                   ],
                 )}
-                style={({ pressed }) => [styles.smallBackButton, pressed ? styles.pressed : null]}
+                style={({ pressed }) => [styles.guidedHeaderSide, styles.guidedHeaderEnd, pressed ? styles.pressed : null]}
               >
                 <Text style={styles.smallBackText}>End</Text>
               </Pressable>
             ) : null}
           </View>
 
-        <View style={styles.guidedProgressRow}>
-          <View style={styles.guidedProgressTrack}>
-            <View style={[styles.guidedProgressFill, { width: `${progress}%` }]} />
-          </View>
-          <Text style={styles.guidedProgressText}>{safeActiveStepIndex + 1} of {guidedSteps.length}</Text>
-        </View>
-
-        {activeStep ? (
-          <View style={[styles.guidedStepCard, stepDensity === 'short' ? styles.guidedStepCardShort : null]}>
-            <View style={[styles.guidedStepCardContent, stepDensity === 'short' ? styles.guidedStepCardContentShort : null]}>
-              <Text
-                numberOfLines={2}
-                style={styles.guidedStepTitle}
-              >
-                {activeStep.title}
-              </Text>
-              <ScrollView
-                nestedScrollEnabled
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={stepDensity === 'short' ? styles.guidedInstructionContentShort : undefined}
-                style={[styles.guidedInstructionScroll, stepDensity === 'long' ? styles.guidedInstructionScrollLong : null]}
-              >
-                <Text
-                  maxFontSizeMultiplier={1.5}
-                  style={styles.guidedInstruction}
-                >
-                  {getConciseGuidedInstruction(activeStep.instruction)}
-                </Text>
-                {activeStep.visualCue || activeStep.doneWhen ? (
-                  <GuidanceBlock
-                    label="Done when"
-                    text={activeStep.doneWhen ?? activeStep.visualCue ?? ''}
-                    tone="success"
-                  />
-                ) : null}
-                {activeStep.commonMistake || (activeStep.safetyNote && !isDuplicateSafetyCue(activeStep.doneWhen ?? activeStep.visualCue, activeStep.safetyNote)) || activeStep.chefTip ? (
-                  <GuidanceBlock
-                    label="Watch out"
-                    text={(activeStep.safetyNote && !isDuplicateSafetyCue(activeStep.doneWhen ?? activeStep.visualCue, activeStep.safetyNote)) ? activeStep.safetyNote : activeStep.commonMistake ?? activeStep.chefTip ?? ''}
-                    tone="warning"
-                  />
-                ) : null}
-                {activeStep.cookingTerm ? (
-                  <GuidanceBlock label={activeStep.cookingTerm.term} text={activeStep.cookingTerm.meaning} />
-                ) : activeStep.tip ? (
-                  <GuidanceBlock label={activeStep.tip.title} text={activeStep.tip.body} />
-                ) : null}
-                {activeStep.ingredientsUsed.length > 0 ? (
-                  <StepChips label="Ingredients" values={activeStep.ingredientsUsed.map(getGuidedIngredientChipLabel)} />
-                ) : null}
-                {activeStep.toolsUsed.length > 0 ? <StepChips label="Equipment" values={activeStep.toolsUsed} /> : null}
-              </ScrollView>
+        <ScrollView
+          contentContainerStyle={styles.guidedBodyContent}
+          showsVerticalScrollIndicator={false}
+          style={styles.guidedBodyScroll}
+        >
+          <View style={styles.guidedProgressRow}>
+            <View style={styles.guidedProgressTrack}>
+              <View style={[styles.guidedProgressFill, { width: `${progress}%` }]} />
             </View>
+            <Text style={styles.guidedProgressText}>{safeActiveStepIndex + 1} of {guidedSteps.length}</Text>
           </View>
-        ) : null}
+          <View style={styles.guidedFinishByRow}>
+            <FinishByTime remainingMinutes={remainingCookingMinutes} />
+          </View>
 
-        {nextStepPreview ? (
-          <View accessibilityLabel={`Up next, ${nextStepPreview}.`} accessible style={styles.guidedNextPreview}>
-            <Text style={styles.guidedNextPreviewLabel}>UP NEXT</Text>
-            <Text numberOfLines={1} style={styles.guidedNextPreviewText}>{nextStepPreview}</Text>
-            <NavArrowRight color={recipeColors.muted} height={16} strokeWidth={2.2} width={16} />
-          </View>
-        ) : null}
+          {activeStep ? (
+            <View style={[styles.guidedStepCard, stepDensity === 'short' ? styles.guidedStepCardShort : null]}>
+              <View style={[styles.guidedStepCardContent, stepDensity === 'short' ? styles.guidedStepCardContentShort : null]}>
+                <Text
+                  numberOfLines={2}
+                  style={styles.guidedStepTitle}
+                >
+                  {activeStep.title}
+                </Text>
+                <View
+                  style={[styles.guidedInstructionContent, stepDensity === 'short' ? styles.guidedInstructionContentShort : null]}
+                >
+                  <Text
+                    maxFontSizeMultiplier={1.5}
+                    style={styles.guidedInstruction}
+                  >
+                    {getConciseGuidedInstruction(activeStep.instruction)}
+                  </Text>
+                  {activeStep.visualCue || activeStep.doneWhen ? (
+                    <GuidanceBlock
+                      label="Done when"
+                      text={activeStep.doneWhen ?? activeStep.visualCue ?? ''}
+                      tone="success"
+                    />
+                  ) : null}
+                  {activeStep.commonMistake || (activeStep.safetyNote && !isDuplicateSafetyCue(activeStep.doneWhen ?? activeStep.visualCue, activeStep.safetyNote)) || activeStep.chefTip ? (
+                    <GuidanceBlock
+                      label="Watch out"
+                      text={(activeStep.safetyNote && !isDuplicateSafetyCue(activeStep.doneWhen ?? activeStep.visualCue, activeStep.safetyNote)) ? activeStep.safetyNote : activeStep.commonMistake ?? activeStep.chefTip ?? ''}
+                      tone="warning"
+                    />
+                  ) : null}
+                  {activeStep.cookingTerm ? (
+                    <GuidanceBlock label={activeStep.cookingTerm.term} text={activeStep.cookingTerm.meaning} />
+                  ) : activeStep.tip && activeStep.tip.title.trim().toLowerCase() !== 'flavor booster' ? (
+                    <GuidanceBlock label={activeStep.tip.title} text={activeStep.tip.body} />
+                  ) : null}
+                  {activeStep.ingredientsUsed.length > 0 ? (
+                    <StepChips label="Ingredients" values={activeStep.ingredientsUsed.map(getGuidedIngredientChipLabel)} />
+                  ) : null}
+                  {activeStep.toolsUsed.length > 0 ? <StepChips label="Equipment" values={activeStep.toolsUsed} /> : null}
+                </View>
+              </View>
+            </View>
+          ) : null}
+        </ScrollView>
+
         <View style={styles.guidedControlArea}>
+          {nextStepPreview ? (
+            <View accessibilityLabel={`Up next, ${nextStepPreview}.`} accessible style={styles.guidedNextPreview}>
+              <Text style={styles.guidedNextPreviewLabel}>UP NEXT</Text>
+              <Text numberOfLines={2} style={styles.guidedNextPreviewText}>{nextStepPreview}</Text>
+              <NavArrowRight color={recipeColors.muted} height={16} strokeWidth={2.2} width={16} />
+            </View>
+          ) : null}
           <View style={styles.guidedNavRow}>
             <Pressable
               accessibilityLabel="Previous cooking step"
@@ -981,6 +1157,17 @@ function ActiveCookingKeepAwake() {
   useKeepAwake('okyo-guided-cooking');
   return null;
 }
+
+const FinishByTime = memo(function FinishByTime({ remainingMinutes }: { remainingMinutes: number | null }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return <Text style={styles.guidedFinishBy}>{formatFinishByTime(now, remainingMinutes)}</Text>;
+});
 
 function GuidanceBlock({ label, text, tone = 'info' }: { label: string; text: string; tone?: 'info' | 'success' | 'warning' }) {
   const isSuccess = tone === 'success';
@@ -1172,25 +1359,25 @@ function RecipeModeTabs({ isUpdating = false, selectedMode, onSelectMode }: Reci
               pressed ? styles.pressed : null,
             ]}
           >
-            {isSelectedUpdating ? (
-              <View accessibilityLabel="Updating recipe" accessibilityRole="progressbar">
-                <ActivityIndicator color={colors.coralDark} size="small" />
-              </View>
-            ) : (
-              <Text
-                adjustsFontSizeToFit
-                minimumFontScale={0.78}
-                numberOfLines={1}
-                style={[styles.modeTabText, isSelected ? styles.modeTabTextSelected : null]}
-              >
-                {mode}
-              </Text>
-            )}
+            <Text
+              adjustsFontSizeToFit
+              minimumFontScale={0.78}
+              numberOfLines={1}
+              style={[styles.modeTabText, isSelected ? styles.modeTabTextSelected : null]}
+            >
+              {mode}
+            </Text>
           </Pressable>
         );
       })}
     </Animated.View>
   );
+}
+
+function getUpdatingRecipeMessage(mode: RecipePresentationMode): string {
+  if (mode === 'Lighter') return 'Updating lighter recipe';
+  if (mode === 'Healthier') return 'Updating healthier recipe';
+  return 'Updating recipe';
 }
 
 type InfoCardProps = {
@@ -1338,13 +1525,18 @@ const styles = StyleSheet.create({
     backgroundColor: recipeColors.background,
     flex: 1,
   },
+  keyboardAvoiding: { flex: 1 },
   screenContent: {
     flexGrow: 1,
-    paddingBottom: 132,
+    paddingBottom: 24,
     paddingHorizontal: 20,
   },
   heroCard: {
     marginTop: 2,
+  },
+  noImageHeader: {
+    height: 58,
+    position: 'relative',
   },
   recipePhoto: {
     aspectRatio: 0.98,
@@ -1406,10 +1598,8 @@ const styles = StyleSheet.create({
     paddingTop: 0,
   },
   recipeTitle: {
+    ...typography.hero,
     color: recipeColors.charcoal,
-    fontFamily: fontFamilies.display,
-    fontSize: 36,
-    fontWeight: '800',
     letterSpacing: 0,
     lineHeight: 40,
     minWidth: 0,
@@ -1432,26 +1622,21 @@ const styles = StyleSheet.create({
     width: 20,
   },
   quickStatValue: {
+    ...typography.bodyEmphasis,
     color: recipeColors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 15,
-    fontWeight: '800',
-    lineHeight: 18,
     textAlign: 'center',
   },
   quickStatLabel: {
+    ...typography.captionSmall,
     color: recipeColors.muted,
     fontFamily: fontFamilies.bold,
-    fontSize: 11,
     fontWeight: '700',
     marginTop: 2,
     textAlign: 'center',
   },
   description: {
+    ...typography.bodySmall,
     color: recipeColors.text,
-    fontFamily: fontFamilies.body,
-    fontSize: 15,
-    lineHeight: 21,
     marginTop: 8,
   },
   nutritionSummary: {
@@ -1489,9 +1674,8 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   sectionSmallTitle: {
+    ...typography.section,
     color: recipeColors.charcoal,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 18,
     fontWeight: '800',
     lineHeight: 23,
   },
@@ -1537,6 +1721,18 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     marginTop: 6,
+  },
+  styleErrorRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  styleRetryText: {
+    color: colors.coralDark,
+    fontFamily: fontFamilies.bold,
+    fontSize: 12,
+    paddingVertical: 8,
   },
   previewSection: {
     marginTop: 22,
@@ -1762,6 +1958,37 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     paddingHorizontal: 20,
   },
+  guidedHeaderRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    marginTop: 4,
+    minHeight: 56,
+  },
+  guidedHeaderSide: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    minHeight: 42,
+    minWidth: 82,
+  },
+  guidedHeaderStart: {
+    justifyContent: 'flex-start',
+  },
+  guidedHeaderEnd: {
+    justifyContent: 'flex-end',
+  },
+  guidedHeaderTotal: {
+    color: recipeColors.muted,
+    flex: 1,
+    fontFamily: fontFamilies.semibold,
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  guidedBodyScroll: {
+    flex: 1,
+  },
+  guidedBodyContent: {
+    paddingBottom: 32,
+  },
   guidedHeader: {
     marginTop: 0,
     minHeight: 0,
@@ -1786,9 +2013,26 @@ const styles = StyleSheet.create({
     gap: 7,
     marginTop: 2,
   },
+  guidedFinishByRow: {
+    alignItems: 'flex-end',
+    marginTop: 3,
+    minHeight: 16,
+  },
   guidedProgressText: {
     color: recipeColors.muted,
     ...guidedCookingTypography.progress,
+  },
+  guidedFinishBy: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.semibold,
+    fontSize: 11,
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+  guidedTotalTime: {
+    color: recipeColors.muted,
+    fontFamily: fontFamilies.semibold,
+    fontSize: 11,
   },
   guidedProgressTrack: {
     backgroundColor: recipeColors.creamDeep,
@@ -1826,12 +2070,9 @@ const styles = StyleSheet.create({
     ...guidedCookingTypography.instruction,
     maxWidth: 370,
   },
-  guidedInstructionScroll: {
-    flexGrow: 0,
+  guidedInstructionContent: {
     marginTop: 6,
-    maxHeight: 320,
   },
-  guidedInstructionScrollLong: { maxHeight: 270 },
   guidedInstructionContentShort: {
     gap: 10,
     justifyContent: 'space-evenly',
@@ -1842,7 +2083,7 @@ const styles = StyleSheet.create({
   guidanceSuccess: { backgroundColor: recipeColors.greenSoft },
   guidanceWarning: { backgroundColor: colors.coralSoft },
   guidanceHeading: { alignItems: 'center', flexDirection: 'row', gap: 6 },
-  guidanceLabel: { color: recipeColors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 12, fontWeight: '900' },
+  guidanceLabel: { color: recipeColors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 12, fontWeight: '800' },
   guidanceText: { color: recipeColors.text, fontFamily: fontFamilies.body, fontSize: 12.5, lineHeight: 17, marginTop: 2 },
   feedbackTitle: { color: recipeColors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 16, fontWeight: '800', marginTop: 13 },
   feedbackRow: { flexDirection: 'row', gap: 6, marginTop: 7, width: '100%' },
@@ -1892,7 +2133,7 @@ const styles = StyleSheet.create({
     marginHorizontal: -20,
     marginTop: 'auto',
     paddingHorizontal: 20,
-    paddingBottom: 4,
+    paddingBottom: 8,
     paddingTop: 12,
     borderTopColor: 'rgba(238, 228, 214, 0.75)',
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -1910,7 +2151,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     gap: 7,
-    marginTop: 9,
+    marginBottom: 10,
     paddingHorizontal: 12,
     paddingVertical: 9,
   },
@@ -1980,7 +2221,7 @@ const styles = StyleSheet.create({
     color: colors.coralDark,
     fontFamily: fontFamilies.extraBold,
     fontSize: 24,
-    fontWeight: '900',
+    fontWeight: '800',
     letterSpacing: 0,
     lineHeight: 29,
     marginTop: -8,

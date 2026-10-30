@@ -1,0 +1,11 @@
+{
+  "status": "approved",
+  "approvalType": "counsel_approved",
+  "approvedBy": "Roberto Ferrito",
+  "approvedAt": "2026-10-28",
+  "manifestSha256": "9af8bfca443955e7bedec314fc2bd16812234fcc0fa5b5875f23ce34daaa910e",
+  "reviewRequired": [
+    "Keep Apple privacy declarations synchronized if Production vendors or telemetry settings change"
+  ],
+  "generationNote": "October 29, 2026: CocoaPods reserialized the manifest. All collected-data, tracking, and required-reason declarations are identical to the reviewed Expo configuration; approval scope and date are unchanged."
+}

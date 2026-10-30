@@ -1,0 +1,355 @@
+{
+  "generatedAt": "2026-10-28T05:26:17.300Z",
+  "gitHead": "59fc96ad29171c1460d2ef4bb9c57a9c258ec22f",
+  "workspace": "Includes pre-existing uncommitted changes. No commit or deployment created.",
+  "tests": {
+    "security": {
+      "tests": 14,
+      "pass": 14,
+      "fail": 0
+    },
+    "api": {
+      "tests": 280,
+      "pass": 280,
+      "fail": 0
+    },
+    "mobile": {
+      "tests": 1636,
+      "pass": 1636,
+      "fail": 0
+    },
+    "waitlist": {
+      "tests": 5,
+      "pass": 5,
+      "fail": 0
+    },
+    "websitePublication": {
+      "tests": 3,
+      "pass": 3,
+      "fail": 0
+    }
+  },
+  "artifacts": {
+    "native": {
+      "scanned": 235,
+      "findings": []
+    },
+    "website": {
+      "scanned": 136,
+      "findings": []
+    },
+    "editor": {
+      "scanned": 46,
+      "findings": []
+    },
+    "api": {
+      "scanned": 136,
+      "findings": []
+    }
+  },
+  "history": {
+    "scope": "--history",
+    "scanned": 4542,
+    "findings": []
+  },
+  "historicalLocalApps": {
+    "scope": "--artifacts",
+    "scanned": 1217,
+    "findings": []
+  },
+  "dependencies": {
+    ".": {
+      "counts": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 1,
+        "critical": 0,
+        "total": 1
+      },
+      "advisories": [
+        {
+          "package": "image-size",
+          "severity": "high",
+          "direct": false,
+          "fixAvailable": true,
+          "via": [
+            {
+              "title": "image-size: JXL and HEIF parsers allow denial of service through infinite loops",
+              "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq",
+              "range": ">=1.2.0 <=2.0.2"
+            },
+            {
+              "title": "image-size: ICNS parser allows denial of service through an infinite loop",
+              "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr",
+              "range": ">=0.6.3 <=2.0.2"
+            }
+          ]
+        }
+      ]
+    },
+    "apps/api": {
+      "counts": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "advisories": []
+    },
+    "apps/mobile": {
+      "counts": {
+        "info": 0,
+        "low": 7,
+        "moderate": 0,
+        "high": 3,
+        "critical": 0,
+        "total": 10
+      },
+      "advisories": [
+        {
+          "package": "@clerk/expo",
+          "severity": "low",
+          "direct": true,
+          "fixAvailable": false,
+          "via": [
+            "expo"
+          ]
+        },
+        {
+          "package": "@expo/cli",
+          "severity": "high",
+          "direct": false,
+          "fixAvailable": false,
+          "via": [
+            "@expo/config",
+            "@expo/metro-config",
+            "@expo/prebuild-config",
+            "zod"
+          ]
+        },
+        {
+          "package": "@expo/config",
+          "severity": "low",
+          "direct": false,
+          "fixAvailable": false,
+          "via": [
+            "deepmerge"
+          ]
+        },
+        {
+          "package": "@expo/local-build-cache-provider",
+          "severity": "low",
+          "direct": false,
+          "fixAvailable": false,
+          "via": [
+            "@expo/config"
+          ]
+        },
+        {
+          "package": "@expo/metro-config",
+          "severity": "low",
+          "direct": false,
+          "fixAvailable": true,
+          "via": [
+            "@expo/config"
+          ]
+        },
+        {
+          "package": "@expo/prebuild-config",
+          "severity": "low",
+          "direct": false,
+          "fixAvailable": {
+            "name": "expo-splash-screen",
+            "version": "58.0.11",
+            "isSemVerMajor": true
+          },
+          "via": [
+            "@expo/config"
+          ]
+        },
+        {
+          "package": "deepmerge",
+          "severity": "low",
+          "direct": false,
+          "fixAvailable": false,
+          "via": [
+            {
+              "title": "deepmerge mergeObject() allows prototype poisoning of returned objects",
+              "url": "https://github.com/advisories/GHSA-gcqx-w48m-w2h4",
+              "range": ">=4.2.0 <=4.3.1"
+            }
+          ]
+        },
+        {
+          "package": "expo",
+          "severity": "high",
+          "direct": true,
+          "fixAvailable": false,
+          "via": [
+            "@expo/cli",
+            "@expo/config",
+            "@expo/local-build-cache-provider",
+            "@expo/metro-config"
+          ]
+        },
+        {
+          "package": "expo-splash-screen",
+          "severity": "low",
+          "direct": true,
+          "fixAvailable": {
+            "name": "expo-splash-screen",
+            "version": "58.0.11",
+            "isSemVerMajor": true
+          },
+          "via": [
+            "@expo/prebuild-config"
+          ]
+        },
+        {
+          "package": "zod",
+          "severity": "high",
+          "direct": false,
+          "fixAvailable": false,
+          "via": [
+            {
+              "title": "Zod can exhaust memory while validating oversized constrained collections",
+              "url": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+              "range": "<4.6.6"
+            }
+          ]
+        }
+      ]
+    },
+    "apps/web": {
+      "counts": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "advisories": []
+    },
+    "app-store-screenshots": {
+      "counts": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "advisories": []
+    }
+  },
+  "liveReadOnlyChecks": [
+    {
+      "url": "https://okyoapp.com/",
+      "status": 404,
+      "headers": {
+        "cacheControl": "public, max-age=5",
+        "contentType": "application/json",
+        "nosniff": null,
+        "frameOptions": null
+      },
+      "credentialFindings": []
+    },
+    {
+      "url": "https://okyoapp.com/.env",
+      "status": 404,
+      "headers": {
+        "cacheControl": "public, max-age=5",
+        "contentType": "application/json",
+        "nosniff": null,
+        "frameOptions": null
+      },
+      "credentialFindings": []
+    },
+    {
+      "url": "https://okyoapp.com/.git/config",
+      "status": 404,
+      "headers": {
+        "cacheControl": "public, max-age=5",
+        "contentType": "application/json",
+        "nosniff": null,
+        "frameOptions": null
+      },
+      "credentialFindings": []
+    },
+    {
+      "url": "https://stunning-empathy-production-production.up.railway.app/health",
+      "status": 200,
+      "headers": {
+        "cacheControl": null,
+        "contentType": "application/json; charset=utf-8",
+        "nosniff": null,
+        "frameOptions": null
+      },
+      "credentialFindings": []
+    },
+    {
+      "url": "https://stunning-empathy-production-production.up.railway.app/ready",
+      "status": 503,
+      "headers": {
+        "cacheControl": null,
+        "contentType": "application/json; charset=utf-8",
+        "nosniff": null,
+        "frameOptions": null
+      },
+      "credentialFindings": []
+    },
+    {
+      "url": "https://stunning-empathy-production-production.up.railway.app/debug/ai-config",
+      "status": 404,
+      "headers": {
+        "cacheControl": null,
+        "contentType": "application/json; charset=utf-8",
+        "nosniff": null,
+        "frameOptions": null
+      },
+      "credentialFindings": []
+    },
+    {
+      "url": "https://stunning-empathy-production-production.up.railway.app/internal/metrics",
+      "status": 404,
+      "headers": {
+        "cacheControl": null,
+        "contentType": "text/html; charset=utf-8",
+        "nosniff": "nosniff",
+        "frameOptions": null
+      },
+      "credentialFindings": []
+    }
+  ],
+  "bundleHashes": [
+    {
+      "path": "apps/mobile/.artifacts/security-export/_expo/static/js/android/index-14342788a2fde83f047a1971054cdb86.hbc",
+      "sha256": "58b2709bb5420a412563063332682b8390579c02f4d9d181d0d7d583766792d2"
+    },
+    {
+      "path": "apps/mobile/.artifacts/security-export/_expo/static/js/ios/index-9046c14820e0fa46d674a5bc9b8439c8.hbc",
+      "sha256": "04015d3420241fa49078d6640ac1ac578e6c68b9e0cd8e522e8ed3628da3516e"
+    }
+  ],
+  "releasePreflight": {
+    "passed": false,
+    "blockers": [
+      "Existing privacy and legal reviews are not approved",
+      "Production Clerk publishable key is missing or invalid",
+      "Production RevenueCat iOS SDK configuration is incomplete"
+    ]
+  },
+  "limitations": [
+    "Native exports used inert public configuration, not approved release credentials",
+    "New signed archive not built because existing release preflight fails",
+    "Deployed configuration, signing key custody, remote secret-manager permissions and unfetched Git refs were not audited"
+  ],
+  "source": {
+    "scanned": 2563,
+    "findings": []
+  }
+}

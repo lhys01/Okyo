@@ -21,7 +21,7 @@ export const pageStyles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     lineHeight: 20,
-    marginTop: 9,
+    marginTop: 18,
     maxWidth: 350,
     textAlign: 'center',
   },

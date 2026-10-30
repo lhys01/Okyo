@@ -42,6 +42,20 @@ test('completed onboarding renders main tabs', () => {
   assert.equal(getStartupRoute(status), 'MainTabs');
 });
 
+test('confirmed account deletion forces the fresh onboarding route even while stale completion is true', () => {
+  const status = getOnboardingStartupStatus(true, true);
+
+  assert.equal(status, 'onboardingRequired');
+  assert.equal(getStartupRoute(status), 'WelcomeScreen');
+});
+
+test('confirmed account deletion can render onboarding before completion storage hydration finishes', () => {
+  const status = getOnboardingStartupStatus(null, true);
+
+  assert.equal(status, 'onboardingRequired');
+  assert.equal(getStartupRoute(status), 'WelcomeScreen');
+});
+
 test('completing onboarding persists the flag', async () => {
   const storage = createMemoryStorage();
   const persistence = createOnboardingPersistence(storage);

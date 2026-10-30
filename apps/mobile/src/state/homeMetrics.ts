@@ -27,10 +27,12 @@ const emptyCopy = 'Cook a meal to see this. Your totals will appear here.';
 
 export function selectHomeMetrics(input: HomeMetricInput): Record<HomeMetricKind, HomeMetric> {
   const selectedDayKey = input.selectedDayKey ?? toLocalDateKey((input.now ?? new Date()).toISOString()) ?? '';
+  const dayMeals = input.completedMeals.filter((meal) => toLocalDateKey(meal.completedAt) === selectedDayKey);
+  const dayLabel = formatDayLabel(selectedDayKey);
   return {
-    savings: selectSavingsMetric(input.completedMeals, input.now ?? new Date()),
-    macros: selectMacrosMetric(input.completedMeals, selectedDayKey),
-    health: selectHealthMetric(input.completedMeals),
+    savings: selectSavingsMetric(dayMeals, dayLabel),
+    macros: selectMacrosMetric(dayMeals, selectedDayKey, dayLabel),
+    health: selectHealthMetric(dayMeals, dayLabel),
   };
 }
 
@@ -44,25 +46,25 @@ export function isFutureDateKey(selectedDateKey: string, now: Date = new Date())
   return selectedDateKey > toDateKey(now);
 }
 
-export function getHomeActivityDates(recipesById: Record<string, CanonicalRecipe>): readonly string[] {
-  return [...new Set(Object.values(recipesById).filter(isRealRecipe).flatMap((recipe) => (
+export function getHomeActivityDates(recipesById: Record<string, CanonicalRecipe>, completedMeals: readonly CompletedMeal[] = []): readonly string[] {
+  const recipeDates = Object.values(recipesById).filter(isRealRecipe).flatMap((recipe) => (
     [recipe.scanCompletedAt, recipe.cookingCompletedAt, recipe.savedAt].filter((value): value is string => Boolean(value))
-  )).map(toLocalDateKey).filter((value): value is string => Boolean(value)))];
+  ));
+  return [...new Set([...recipeDates, ...completedMeals.map((meal) => meal.completedAt)]
+    .map(toLocalDateKey).filter((value): value is string => Boolean(value)))];
 }
 
-function selectSavingsMetric(meals: readonly CompletedMeal[], now: Date): HomeMetric {
-  const monthlyMeals = meals.filter((meal) => isSameMonth(meal.completedAt, now));
-  const monthlySavings = sum(monthlyMeals.map((meal) => nonNegative(meal.estimatedSavings)));
-  const validSavingsMeals = monthlyMeals.filter((meal) => meal.estimatedSavings !== undefined);
-  const mealsMade = monthlyMeals.length;
+function selectSavingsMetric(dayMeals: readonly CompletedMeal[], dayLabel: string): HomeMetric {
+  const daySavings = sum(dayMeals.map((meal) => nonNegative(meal.estimatedSavings)));
+  const validSavingsMeals = dayMeals.filter((meal) => meal.estimatedSavings !== undefined);
+  const mealsMade = dayMeals.length;
   const available = mealsMade > 0;
-  const lifetime = sum(meals.map((meal) => nonNegative(meal.estimatedSavings)));
-  const average = validSavingsMeals.length > 0 ? monthlySavings / validSavingsMeals.length : 0;
+  const average = validSavingsMeals.length > 0 ? daySavings / validSavingsMeals.length : 0;
 
   return available ? {
-    accessibilityLabel: `Savings. ${formatDollars(monthlySavings)} estimated saved this month.`,
+    accessibilityLabel: `Savings. ${formatDollars(daySavings)} estimated saved on ${dayLabel}.`,
     available: true,
-    caption: 'this month · estimated',
+    caption: `${dayLabel} · estimated`,
     kind: 'savings',
     label: 'Savings',
     // There is no user-defined savings target in the current product data.
@@ -71,9 +73,9 @@ function selectSavingsMetric(meals: readonly CompletedMeal[], now: Date): HomeMe
     stats: [
       { label: 'meals made', value: String(mealsMade) },
       { label: 'avg saved', value: formatDollars(average) },
-      { label: 'total saved', value: formatDollars(lifetime || monthlySavings) },
+      { label: 'total saved', value: formatDollars(daySavings) },
     ],
-    value: formatDollars(monthlySavings),
+    value: formatDollars(daySavings),
   } : emptyMetric('savings', 'Savings', 'estimated savings');
 }
 
@@ -95,12 +97,12 @@ export function selectCompletedMacrosForDay(
   };
 }
 
-function selectMacrosMetric(meals: readonly CompletedMeal[], selectedDayKey: string): HomeMetric {
-  const totals = selectCompletedMacrosForDay(meals, selectedDayKey);
+function selectMacrosMetric(dayMeals: readonly CompletedMeal[], selectedDayKey: string, dayLabel: string): HomeMetric {
+  const totals = selectCompletedMacrosForDay(dayMeals, selectedDayKey);
   return {
-    accessibilityLabel: `Macros. ${totals.calories} calories from ${totals.meals} completed meal${totals.meals === 1 ? '' : 's'} today.`,
+    accessibilityLabel: `Macros. ${totals.calories} calories from ${totals.meals} completed meal${totals.meals === 1 ? '' : 's'} on ${dayLabel}.`,
     available: totals.meals > 0,
-    caption: 'calories today',
+    caption: `calories · ${dayLabel}`,
     kind: 'macros',
     label: 'Macros',
     // Protein is an average, not progress toward a persisted target.
@@ -114,17 +116,17 @@ function selectMacrosMetric(meals: readonly CompletedMeal[], selectedDayKey: str
   };
 }
 
-function selectHealthMetric(meals: readonly CompletedMeal[]): HomeMetric {
-  if (meals.length === 0) return emptyMetric('health', 'Health', 'goal-friendly meals');
-  const friendlier = meals.filter((meal) => meal.goalFriendly);
-  const completed = meals.length;
+function selectHealthMetric(dayMeals: readonly CompletedMeal[], dayLabel: string): HomeMetric {
+  if (dayMeals.length === 0) return emptyMetric('health', 'Health', 'goal-friendly meals');
+  const friendlier = dayMeals.filter((meal) => meal.goalFriendly);
+  const completed = dayMeals.length;
   return {
-    accessibilityLabel: `Health. ${friendlier.length} goal-friendly Okyo meals.`,
+    accessibilityLabel: `Health. ${friendlier.length} goal-friendly Okyo meals on ${dayLabel}.`,
     available: true,
-    caption: 'goal-friendly meals · estimated',
+    caption: `goal-friendly meals · ${dayLabel}`,
     kind: 'health',
     label: 'Health',
-    progress: Math.min(1, friendlier.length / meals.length),
+    progress: Math.min(1, friendlier.length / dayMeals.length),
     stats: [
       { label: 'healthier edits', value: String(friendlier.length) },
       { label: 'meals cooked', value: String(completed) },
@@ -181,18 +183,20 @@ function isRealRecipe(recipe: CanonicalRecipe): boolean {
   return recipe.origin === 'scan' || recipe.origin === 'description';
 }
 
-function isSameMonth(value: string | undefined, now: Date): boolean {
-  if (!value) return false;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) && date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
-}
-
 function toLocalDateKey(value: string): string | null {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return null;
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function formatDayLabel(dayKey: string): string {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  return Number.isFinite(date.getTime()) && date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+    ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    : 'selected day';
 }
 
 function toDateKey(date: Date): string {

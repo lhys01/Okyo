@@ -217,30 +217,44 @@ export const kikoOnboardingInventory = Object.freeze([
 export type KikoOnboardingAssetId = (typeof kikoOnboardingInventory)[number]['id'];
 
 const kikoSourceLoaders: Record<KikoOnboardingAssetId, () => ImageSourcePropType> = {
-  kikoPointingUp: () => require('../../../assets/kiko-static/approved/kiko-vegetables.png'),
-  kikoWellnessPlan: () => require('../../../assets/kiko-static/approved/kiko-produce-crate.png'),
-  kikoMetricsCalculator: () => require('../../../assets/kiko-static/approved/kiko-flex.png'),
-  kikoServingDinner: () => require('../../../assets/kiko-static/approved/kiko-ramen.png'),
-  kikoChefProud: () => require('../../../assets/kiko-static/approved/kiko-soup.png'),
-  kikoChefBowl: () => require('../../../assets/kiko-static/approved/kiko-ramen.png'),
-  kikoDumbbells: () => require('../../../assets/kiko-static/approved/kiko-flex.png'),
-  kikoDessertJoy: () => require('../../../assets/kiko-static/approved/kiko-thinking.png'),
-  kikoBodybuilder: () => require('../../../assets/kiko-static/approved/kiko-flex.png'),
-  kikoMagicRecipeBook: () => require('../../../assets/kiko-static/approved/kiko-recipe.png'),
-  kikoNoodleBowl: () => require('../../../assets/kiko-static/approved/kiko-ramen.png'),
-  kikoConfidentShades: () => require('../../../assets/kiko-static/approved/kiko-flex.png'),
-  kikoFullBelly: () => require('../../../assets/kiko-static/approved/kiko-ramen.png'),
-  kikoGroceryBag: () => require('../../../assets/kiko-static/approved/kiko-grocery-bag.png'),
-  kikoSavings: () => require('../../../assets/kiko-static/approved/kiko-savings.png'),
-  kikoEncouragingFlex: () => require('../../../assets/kiko-static/approved/kiko-flex.png'),
-  kikoChefPan: () => require('../../../assets/kiko-static/approved/kiko-soup.png'),
-  kikoDeadlift: () => require('../../../assets/kiko-static/approved/kiko-flex.png'),
-  kikoChefChecklist: () => require('../../../assets/kiko-static/approved/kiko-recipe.png'),
-  kikoBroccoli: () => require('../../../assets/kiko-static/approved/kiko-vegetables.png'),
+  kikoPointingUp: () => require('../../../assets/kiko-static/approved/kiko-vegetables-sticker.png'),
+  kikoWellnessPlan: () => require('../../../assets/kiko-static/approved/kiko-produce-crate-sticker.png'),
+  kikoMetricsCalculator: () => require('../../../assets/kiko-static/approved/kiko-flex-sticker.png'),
+  kikoServingDinner: () => require('../../../assets/kiko-static/approved/kiko-ramen-sticker.png'),
+  kikoChefProud: () => require('../../../assets/kiko-static/approved/kiko-soup-sticker.png'),
+  kikoChefBowl: () => require('../../../assets/kiko-static/approved/kiko-ramen-sticker.png'),
+  kikoDumbbells: () => require('../../../assets/kiko-static/approved/kiko-flex-sticker.png'),
+  kikoDessertJoy: () => require('../../../assets/kiko-static/approved/kiko-thinking-sticker.png'),
+  kikoBodybuilder: () => require('../../../assets/kiko-static/approved/kiko-flex-sticker.png'),
+  kikoMagicRecipeBook: () => require('../../../assets/kiko-static/approved/kiko-recipe-sticker.png'),
+  kikoNoodleBowl: () => require('../../../assets/kiko-static/approved/kiko-ramen-sticker.png'),
+  kikoConfidentShades: () => require('../../../assets/kiko-static/approved/kiko-flex-sticker.png'),
+  kikoFullBelly: () => require('../../../assets/kiko-static/approved/kiko-ramen-sticker.png'),
+  kikoGroceryBag: () => require('../../../assets/kiko-static/approved/kiko-grocery-bag-sticker.png'),
+  kikoSavings: () => require('../../../assets/kiko-static/approved/kiko-savings-sticker.png'),
+  kikoEncouragingFlex: () => require('../../../assets/kiko-static/approved/kiko-flex-sticker.png'),
+  kikoChefPan: () => require('../../../assets/kiko-static/approved/kiko-soup-sticker.png'),
+  kikoDeadlift: () => require('../../../assets/kiko-static/approved/kiko-flex-sticker.png'),
+  kikoChefChecklist: () => require('../../../assets/kiko-static/approved/kiko-recipe-sticker.png'),
+  kikoBroccoli: () => require('../../../assets/kiko-static/approved/kiko-vegetables-sticker.png'),
 };
 
-export function getKikoOnboardingSource(id: KikoOnboardingAssetId): ImageSourcePropType {
-  return kikoSourceLoaders[id]();
+// These current stickers are selected by screen moment so the audited source
+// inventory above continues to describe the original onboarding artwork.
+const momentArtwork: Readonly<Record<string, () => ImageSourcePropType>> = Object.freeze({
+  'annual-spending-reveal': () => require('../../../assets/kiko-transparent/kiko-sitting-front-sticker.png'),
+  'savings-demonstration': () => require('../../../assets/kiko-transparent/kiko-curious-sticker.png'),
+  'favorite-foods-reveal': () => require('../../../assets/kiko-transparent/kiko-holding-bowl-sticker.png'),
+  'macro-transformation': () => require('../../../assets/kiko-transparent/kiko-thoughtful-sticker.png'),
+  'post-purchase-first-scan': () => require('../../../assets/kiko-transparent/kiko-paw-raised-sticker.png'),
+});
+
+export function getKikoOnboardingSource(id: KikoOnboardingAssetId, moment?: string): ImageSourcePropType {
+  return moment && momentArtwork[moment] ? momentArtwork[moment]() : kikoSourceLoaders[id]();
+}
+
+export function hasKikoMomentArtwork(moment?: string): boolean {
+  return Boolean(moment && momentArtwork[moment]);
 }
 
 export function resolveKikoOnboardingMotion(
@@ -273,18 +287,18 @@ export interface KikoOnboardingAssignment {
 
 export const kikoOnboardingAssignmentPlan = Object.freeze([
   { moment: 'questionnaire', branch: 'saveMoney', assetId: null, classification: 'none', position: 'none', size: 'none', motion: 'none', maximumKikos: 0, reasoning: 'Keep questions fast and uncluttered.' },
-  { moment: 'annual-spending-reveal', branch: 'saveMoney', assetId: 'kikoMetricsCalculator', classification: 'macros', position: 'lower-left beside result card', size: 'medium', motion: 'brief-scale', maximumKikos: 1, reasoning: 'The chart and calculator acknowledge the personalized number without adding dollar-sign theatrics.' },
-  { moment: 'savings-demonstration', branch: 'saveMoney', assetId: 'kikoSavings', classification: 'money', position: 'lower-right beside savings card', size: 'medium', motion: 'fade', maximumKikos: 1, reasoning: 'The only explicitly savings-oriented composition appears after value is demonstrated.' },
+  { moment: 'annual-spending-reveal', branch: 'saveMoney', assetId: 'kikoMetricsCalculator', classification: 'money', position: 'lower-left beside result card', size: 'medium', motion: 'brief-scale', maximumKikos: 1, reasoning: 'The surprised sticker reacts to the personalized spending reveal.' },
+  { moment: 'savings-demonstration', branch: 'saveMoney', assetId: 'kikoSavings', classification: 'money', position: 'lower-right beside savings card', size: 'medium', motion: 'fade', maximumKikos: 1, reasoning: 'The curious sticker accompanies the savings comparison.' },
   { moment: 'savings-projection-graph', branch: 'saveMoney', assetId: null, classification: 'none', position: 'none', size: 'none', motion: 'none', maximumKikos: 0, reasoning: 'The graph is the focal content.' },
-  { moment: 'favorite-foods-reveal', branch: 'eatHealthier', assetId: 'kikoBroccoli', classification: 'health', position: 'right of positive reveal copy, facing inward', size: 'medium', motion: 'fade', maximumKikos: 1, reasoning: 'It makes wellness feel warm and food-positive rather than clinical.' },
+  { moment: 'favorite-foods-reveal', branch: 'eatHealthier', assetId: 'kikoBroccoli', classification: 'health', position: 'right of positive reveal copy, facing inward', size: 'medium', motion: 'fade', maximumKikos: 1, reasoning: 'The fox holding a meal keeps this reveal food-positive.' },
   { moment: 'nutrition-data', branch: 'eatHealthier', assetId: null, classification: 'none', position: 'none', size: 'none', motion: 'none', maximumKikos: 0, reasoning: 'Nutrition values need visual priority.' },
-  { moment: 'macro-transformation', branch: 'hitMacros', assetId: 'kikoMetricsCalculator', classification: 'macros', position: 'left of before/after metric card', size: 'medium', motion: 'none', maximumKikos: 1, reasoning: 'The pose directly supports data explanation and remains static so numbers stay primary.' },
+  { moment: 'macro-transformation', branch: 'hitMacros', assetId: 'kikoMetricsCalculator', classification: 'macros', position: 'left of before/after metric card', size: 'medium', motion: 'none', maximumKikos: 1, reasoning: 'The thoughtful sticker accompanies the numbers without distracting from them.' },
   { moment: 'macro-result', branch: 'hitMacros', assetId: null, classification: 'none', position: 'none', size: 'none', motion: 'none', maximumKikos: 0, reasoning: 'The data-heavy result does not need a mascot.' },
   { moment: 'make-anything-you-see', branch: 'cookMore', assetId: 'kikoChefPan', classification: 'cooking', position: 'centered hero below headline', size: 'hero', motion: 'fade', maximumKikos: 1, reasoning: 'This is the strongest active cooking pose and naturally carries the branch hero.' },
   { moment: 'recipe-generation-transition', branch: 'cookMore', assetId: 'kikoMagicRecipeBook', classification: 'thinking', position: 'centered below progress copy', size: 'hero', motion: 'none', maximumKikos: 1, reasoning: 'The glowing recipe book supports anticipation without continuous motion.' },
   { moment: 'personalized-plan-ready', branch: 'shared', assetId: 'kikoChefChecklist', classification: 'celebration', position: 'lower-right beside completed plan card, facing inward', size: 'medium', motion: 'brief-scale', maximumKikos: 1, reasoning: 'The checklist makes the celebration specific to a completed plan.' },
   { moment: 'paywall', branch: 'shared', assetId: 'kikoConfidentShades', classification: 'paywall', position: 'top-right above plan choices', size: 'small', motion: 'fade', maximumKikos: 1, reasoning: 'Confident anticipation without sadness, begging, or guilt.' },
-  { moment: 'post-purchase-first-scan', branch: 'shared', assetId: 'kikoPointingUp', classification: 'postPurchase', position: 'lower-left, pointing toward scan actions', size: 'hero', motion: 'brief-scale', maximumKikos: 1, reasoning: 'The pointing pose directs attention into the first real food action.' },
+  { moment: 'post-purchase-first-scan', branch: 'shared', assetId: 'kikoPointingUp', classification: 'postPurchase', position: 'lower-left, welcoming the user to scan', size: 'hero', motion: 'brief-scale', maximumKikos: 1, reasoning: 'The waving sticker welcomes the user to the first real food action.' },
 ] satisfies readonly KikoOnboardingAssignment[]);
 
 export function getKikoOnboardingAssignment(

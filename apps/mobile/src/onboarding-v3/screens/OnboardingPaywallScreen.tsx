@@ -16,7 +16,7 @@ import { KikoOnboardingArtwork } from '../components/KikoOnboardingArtwork';
 import { getKikoOnboardingAssignment } from '../assets/kikoOnboardingRegistry';
 import { personalizedGoalContent, type PersonalizedOnboardingProfile } from '../state/personalizedOnboarding';
 
-export function OnboardingPaywallScreen({ allowDevelopmentPaywallBypass = true, developmentPreview, isBusy, error, profile, onPurchase, onRestore, onAlreadyEntitled, onDevSkipToHome, onDismissError }: {
+export function OnboardingPaywallScreen({ allowDevelopmentPaywallBypass = true, developmentPreview: requestedDevelopmentPreview, isBusy, error, profile, onPurchase, onRestore, onAlreadyEntitled, onDevSkipToHome, onPaymentsUnavailable, onDismissError }: {
   allowDevelopmentPaywallBypass?: boolean;
   developmentPreview?: { notice: string | null; onExit: () => void };
   isBusy: boolean;
@@ -26,8 +26,10 @@ export function OnboardingPaywallScreen({ allowDevelopmentPaywallBypass = true, 
   onRestore: () => void;
   onAlreadyEntitled: () => void;
   onDevSkipToHome: () => void;
+  onPaymentsUnavailable: () => void;
   onDismissError: () => void;
 }) {
+  const developmentPreview = typeof __DEV__ !== 'undefined' && __DEV__ ? requestedDevelopmentPreview : undefined;
   const entitlement = useEntitlement();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // App Store Review Guideline 3.1.2 requires the Terms and Privacy Policy to
@@ -58,11 +60,25 @@ export function OnboardingPaywallScreen({ allowDevelopmentPaywallBypass = true, 
       onDevSkipToHome();
       return;
     }
+    if (entitlement.status === 'unavailable' && !acceptedEntitlement.current) {
+      acceptedEntitlement.current = true;
+      onPaymentsUnavailable();
+      return;
+    }
     if (entitlement.status === 'ready' && entitlement.isEntitled && !acceptedEntitlement.current) {
       acceptedEntitlement.current = true;
       onAlreadyEntitled();
     }
-  }, [allowDevelopmentPaywallBypass, entitlement, onAlreadyEntitled, onDevSkipToHome]);
+  }, [allowDevelopmentPaywallBypass, entitlement, onAlreadyEntitled, onDevSkipToHome, onPaymentsUnavailable]);
+
+  if (entitlement.status === 'unavailable' && !developmentPreview) {
+    return (
+      <SafeAreaView edges={['top', 'bottom']} style={[styles.safeArea, styles.continuing]}>
+        <ActivityIndicator color={colors.coral} />
+        <Text style={styles.statusText}>Opening Okyo…</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
@@ -189,6 +205,7 @@ export function OnboardingPaywallScreen({ allowDevelopmentPaywallBypass = true, 
 
 const styles = StyleSheet.create({
   safeArea: { backgroundColor: colors.background, flex: 1 },
+  continuing: { alignItems: 'center', gap: 12, justifyContent: 'center' },
   previewHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
   previewLabel: { color: colors.coralDark, flex: 1, fontFamily: fontFamilies.bold, fontSize: 12, lineHeight: 17, paddingRight: 12 },
   previewExit: { alignItems: 'center', borderColor: colors.border, borderRadius: 999, borderWidth: 1, justifyContent: 'center', minHeight: 44, paddingHorizontal: 14 },

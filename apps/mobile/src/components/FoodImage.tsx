@@ -1,20 +1,25 @@
 import { Spark } from 'iconoir-react-native';
-import { type ReactNode, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
-  Image,
   StyleSheet,
   Text,
   View,
+  type ImageSourcePropType,
   type StyleProp,
   type ViewStyle,
-  type ImageSourcePropType,
 } from 'react-native';
 
+import { foodAssets } from '../../assets/food';
 import { colors } from '../theme/okyoTheme';
+import { normalizeRecipeImageUri } from '../utils/recipeImageSource';
+import { ResilientImage } from './ResilientImage';
 
 type FoodImageProps = {
   children?: ReactNode;
   fallbackLabel?: string;
+  disableFallback?: boolean;
+  fallbackSource?: ImageSourcePropType;
+  imageAccessibilityLabel?: string;
   imageStatus?: string | null;
   imageSource?: ImageSourcePropType;
   imageUrl?: string | null;
@@ -22,50 +27,53 @@ type FoodImageProps = {
   style?: StyleProp<ViewStyle>;
 };
 
+/**
+ * Recipe-only image surface. It deliberately delegates to the shared resolver
+ * with the `food` category so a missing recipe can use food photography while
+ * no non-food UI can inherit this fallback.
+ */
 export function FoodImage({
   children,
-  fallbackLabel = 'Image coming soon',
+  fallbackLabel = 'Recipe photo unavailable',
+  disableFallback = false,
+  fallbackSource,
+  imageAccessibilityLabel,
   imageStatus,
   imageSource,
   imageUrl,
   showFallbackLabel = false,
   style,
 }: FoodImageProps) {
-  // Track which URL most recently failed so the fallback fires on network errors
-  // (404, timeout, CDN removal) while still attempting any new/different URL.
-  const [errorUrl, setErrorUrl] = useState<string | null>(null);
-
-  const trimmed = typeof imageUrl === 'string' ? imageUrl.trim() : '';
-  const safeImageUrl = trimmed.length > 0 && trimmed !== errorUrl ? trimmed : null;
+  const safeImageUrl = normalizeRecipeImageUri(imageUrl);
+  const primarySource = imageSource ?? (safeImageUrl ? { uri: safeImageUrl } : undefined);
 
   return (
     <View style={[styles.frame, style]}>
-      {imageSource || safeImageUrl ? (
-        <Image
-          onError={() => setErrorUrl(safeImageUrl)}
-          resizeMode="cover"
-          source={imageSource ?? { uri: safeImageUrl! }}
-          style={styles.image}
-        />
-      ) : (
-        <View style={styles.fallbackContent}>
+      <ResilientImage
+        accessibilityLabel={imageAccessibilityLabel ?? fallbackLabel}
+        assetKind="food"
+        componentName="FoodImage"
+        contentFit="cover"
+        fallbackLabel={fallbackLabel}
+        disableFallback={disableFallback}
+        fallbackSource={fallbackSource ?? foodAssets.bowl}
+        imageId={safeImageUrl ?? (typeof imageSource === 'number' ? `asset:${imageSource}` : undefined)}
+        source={primarySource}
+        style={styles.image}
+      />
+      {showFallbackLabel && !primarySource ? (
+        <View pointerEvents="none" style={styles.fallbackContent}>
           <View style={styles.fallbackIcon}>
             <Spark color={colors.coral} height={22} strokeWidth={2.2} width={22} />
           </View>
-          {showFallbackLabel ? (
-            <Text numberOfLines={2} style={styles.fallbackText}>
-              {getFallbackLabel(fallbackLabel, imageStatus)}
-            </Text>
-          ) : null}
+          <Text numberOfLines={2} style={styles.fallbackText}>
+            {imageStatus === 'loading' ? 'Image loading' : fallbackLabel}
+          </Text>
         </View>
-      )}
+      ) : null}
       {children}
     </View>
   );
-}
-
-function getFallbackLabel(fallbackLabel: string, imageStatus?: string | null) {
-  return imageStatus === 'loading' ? 'Image loading' : fallbackLabel;
 }
 
 const styles = StyleSheet.create({

@@ -16,7 +16,8 @@ test('splash transitions into the restored pager whose first page uses the appro
   assert.match(pager, /<ValuePage \{\.\.\.pageProps\(2\)\}/);
   assert.match(pager, /<CustomizePage \{\.\.\.pageProps\(3\)\}/);
   assert.match(pager, /<AttributionPage[\s\S]*\{\.\.\.pageProps\(5\)\}/);
-  assert.match(pager, /<MeetKikoPage \{\.\.\.pageProps\(6\)\}/);
+  assert.doesNotMatch(pager, /<MeetKikoPage/);
+  assert.match(pager, /showcasePages\.slice\(0, -1\)/);
   assert.doesNotMatch(pager, /SavingsPage/);
   assert.match(descriptors, /id: 'hero', primaryAsset: 'approvedHeroArtwork'/);
 });
@@ -26,7 +27,7 @@ test('hero page renders the supplied approved artwork as one uncropped image', (
   assert.match(hero, /approvedHeroArtwork/);
   assert.match(hero, /contentFit="contain"/);
   assert.match(hero, /Math\.min\(windowWidth \/ ARTWORK\.width, windowHeight \/ ARTWORK\.height\)/);
-  assert.doesNotMatch(hero, /HeartSolid|ScanQrCode|PageEdit|<Text/);
+  assert.doesNotMatch(hero, /HeartSolid|ScanQrCode|PageEdit/);
 });
 
 test('Get started is a real accessible Pressable that advances to onboarding3', () => {
@@ -43,23 +44,24 @@ test('account and legal art have isolated non-crashing Pressable overlays withou
   assert.doesNotMatch(hero, /https?:\/\//);
 });
 
-test('the restored approved components hand off from onboarding11 to user Name without duplicate pages', () => {
+test('the restored approved components hand off to fox introduction and naming before food goals', () => {
   const host = read('OnboardingV3.tsx');
   const machine = read('controller/onboardingV3Machine.ts');
   const pager = read('showcase/ShowcasePager.tsx');
   const personalized = read('screens/PersonalizedOnboardingScreen.tsx');
   const approvedComponents = [
     'ScanPage', 'ValuePage', 'CustomizePage', 'CustomizeDetailsPage', 'AttributionPage',
-    'MeetKikoPage',
   ];
 
   for (const component of approvedComponents) {
     assert.match(pager, new RegExp(`<${component}`), component);
   }
   assert.match(host, /case 'nameFox':[\s\S]{0,180}<NameFoxScreen/);
-  assert.match(machine, /case 'showcase':[\s\S]{0,180}step: 'nameFox'/);
-  assert.match(machine, /case 'nameFox':[\s\S]{0,220}step: 'name'/);
-  assert.match(machine, /case 'name':[\s\S]{0,220}step: 'primaryGoal'/);
+  assert.match(machine, /case 'showcase':[\s\S]{0,180}step: 'foxIntro'/);
+  assert.match(machine, /case 'foxIntro':[\s\S]{0,180}step: 'nameFox'/);
+  assert.match(machine, /case 'primaryGoal':[\s\S]{0,600}step: 'branchIntro'/);
+  assert.match(machine, /case 'nameFox':[\s\S]{0,260}step: 'name'/);
+  assert.match(host, /<FoxIntroductionScreen/);
   assert.match(personalized, /What should we call you\?/);
   assert.equal((pager.match(/<AttributionPage/g) ?? []).length, 1);
   assert.doesNotMatch(pager, /SavingsPage|RecipeOutputPage|PersonalizedOnboardingScreen|KikoOnboardingArtwork/);

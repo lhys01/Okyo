@@ -47,12 +47,18 @@ test('destructive data control is not on the main Settings page', () => {
   assert.match(privacy, /clearSavedData/);
 });
 
-test('reset onboarding is development only', () => {
-  const devBlock = settings.slice(settings.indexOf('__DEV__'));
+test('A/B/C controls require a verified account capability, while reset tools remain development only', () => {
+  const devGate = settings.indexOf('{__DEV__ ? (');
+  const devBlock = settings.slice(devGate);
   assert.match(settings, /__DEV__/, 'dev tools must be gated');
+  assert.match(settings, /canManageOnboardingExperiment \?/, 'experiment picker must be admin-gated');
+  assert.match(settings, /getAccountCapabilities\(token\)/);
+  assert.match(settings, /auth\.isSignedIn && experimentCapability\?\.userId === auth\.userId/);
+  assert.match(settings, /experimentCapability\?\.allowed === true/);
   assert.match(devBlock, /Reset onboarding/, 'reset must live inside the __DEV__ block');
+  assert.match(settings, /const canManageOnboardingExperiment = __DEV__ && auth\.isSignedIn/);
   // ...and must not also appear outside the gate.
-  const beforeGate = settings.slice(0, settings.indexOf('__DEV__'));
+  const beforeGate = settings.slice(0, devGate);
   assert.doesNotMatch(beforeGate, /label="Reset onboarding"/);
 });
 

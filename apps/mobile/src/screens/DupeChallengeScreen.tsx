@@ -4,8 +4,8 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
+import { FitText } from '../components/FitText';
 import { BadgePill, PrimaryButton, ScreenContainer, colors, sharedStyles } from '../components/OkyoUI';
 import {
   defaultScanResult,
@@ -70,18 +70,7 @@ export function DupeChallengeScreen() {
     setSelectedMode(selectedMode);
     if (!startedXpAdded.current) {
       uiLog('DupeChallengeScreen', 'enter', { mode: selectedMode });
-      track(analyticsEvents.CHALLENGE_STARTED, {
-        dishName: recipe.title,
-        mode: selectedMode,
-        savings: recipe.estimatedSavings,
-        screen: 'DupeChallengeScreen',
-      });
-      if (!isRecipeMode(rawMode)) {
-        track(analyticsEvents.RESULT_ERROR, {
-          errorMessage: 'Challenge mode was missing or invalid.',
-          screen: 'DupeChallengeScreen',
-        });
-      }
+
       awardXPOnce(`start-dupe-challenge-${recipe.id}`, 15);
       startedXpAdded.current = true;
     }
@@ -101,12 +90,7 @@ export function DupeChallengeScreen() {
     const badgeUnlocked = getBadgeForChallenge(recipe.title, selectedMode, rating, savings);
     const challengeId = `challenge-${recipe.id}-${Date.now()}`;
 
-    track(analyticsEvents.ACCURACY_RATING_SUBMITTED, {
-      dishName: recipe.title,
-      mode: selectedMode,
-      rating,
-      screen: 'DupeChallengeScreen',
-    });
+
 
     completeChallenge({
       id: challengeId,
@@ -127,15 +111,7 @@ export function DupeChallengeScreen() {
     if (totalMoneySaved + savings >= 100) {
       unlockBadge('100-saved-club');
     }
-    track(analyticsEvents.CHALLENGE_COMPLETED, {
-      badgeName: badgeUnlocked,
-      dishName: recipe.title,
-      mode: selectedMode,
-      rating,
-      savings,
-      screen: 'DupeChallengeScreen',
-      xpAmount: xpEarned,
-    });
+
     navigation.navigate('ChallengeCompleteScreen', { challengeId });
   };
 
@@ -144,7 +120,7 @@ export function DupeChallengeScreen() {
       <Text style={styles.kicker}>Dupe Challenge</Text>
       <Text style={styles.title}>{recipe.title}</Text>
       <Text style={styles.description}>
-        Cook the mock recipe, compare it with the restaurant version, then rate how close you got.
+        Cook the recipe, compare it with the restaurant version, then rate how close you got.
       </Text>
       {!isRecipeMode(rawMode) ? (
         <View style={styles.fallbackNote}>
@@ -165,7 +141,7 @@ export function DupeChallengeScreen() {
         </View>
         <View style={styles.summaryRow}>
           <Text style={styles.summaryLabel}>Estimated savings</Text>
-          <Text style={styles.savingsValue}>{formatCurrency(recipe.estimatedSavings)}</Text>
+          <FitText minimumFontScale={0.68} style={styles.savingsValue}>{formatCurrency(recipe.estimatedSavings)}</FitText>
         </View>
       </View>
 

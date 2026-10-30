@@ -1,26 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import PagerView from 'react-native-pager-view';
-import Animated, { Easing, FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { prefetchOnboardingV3Assets } from '../assets/onboardingV3Assets';
 import { OnboardingBackButton } from '../components/OnboardingBackButton';
 import { OnboardingCTA } from '../components/OnboardingCTA';
 import { ONBOARDING_BACK_ROW_HEIGHT, ONBOARDING_BACK_ROW_TOP_GAP, ONBOARDING_HORIZONTAL_PADDING } from '../components/onboardingLayout';
-import { colors, homeRecipeCardShadow, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
-import { motionTokens } from '../motion/motionTokens';
-import { useReduceMotion } from '../motion/useReduceMotion';
+import { colors } from '../../theme/okyoTheme';
 import type { AttributionSource } from '../state/attribution';
 import { onboardingV3Log } from '../utils/onboardingV3Log';
 import { AttributionPage } from './pages/AttributionPage';
 import { CustomizePage } from './pages/CustomizePage';
 import { CustomizeDetailsPage } from './pages/CustomizeDetailsPage';
 import { HeroPage } from './pages/HeroPage';
-import { MeetKikoPage } from './pages/MeetKikoPage';
+import { ShowcaseResponsiveLayoutProvider } from './pages/ShowcasePageShell';
 import { ScanPage } from './pages/ScanPage';
 import { ValuePage } from './pages/ValuePage';
 import { showcasePages } from './showcasePages';
+import { getShowcaseResponsiveLayout } from './showcaseResponsiveLayout';
 
 export function ShowcasePager({
   initialPage = 0,
@@ -37,23 +36,26 @@ export function ShowcasePager({
   onPageChange?: (page: number) => void;
   onFinished: () => void;
 }) {
+  const { fontScale, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const responsiveLayout = getShowcaseResponsiveLayout({
+    windowHeight,
+    topInset: insets.top,
+    bottomInset: insets.bottom,
+    fontScale,
+  });
   const pager = useRef<PagerView>(null);
-  const reduceMotion = useReduceMotion();
-  const buttonScale = useSharedValue(1);
-  const buttonShadow = useSharedValue<number>(homeRecipeCardShadow.shadowOpacity);
-  const buttonAnimatedStyle = useAnimatedStyle(() => ({
-    shadowOpacity: buttonShadow.value,
-    transform: [{ scale: buttonScale.value }],
-  }));
+  const introPages = showcasePages.slice(0, -1);
+  const firstPage = Math.min(initialPage, introPages.length - 1);
   const pendingPageSource = useRef<'button' | null>(null);
-  const [showcasePage, setShowcasePage] = useState(initialPage);
+  const [showcasePage, setShowcasePage] = useState(firstPage);
   const moveTo = useCallback((page: number) => {
-    if (page < 0 || page >= showcasePages.length) return;
+    if (page < 0 || page >= introPages.length) return;
     pendingPageSource.current = 'button';
     pager.current?.setPage(page);
   }, []);
   const advance = useCallback(() => {
-    if (showcasePage === showcasePages.length - 1) onFinished();
+    if (showcasePage === introPages.length - 1) onFinished();
     else moveTo(showcasePage + 1);
   }, [moveTo, onFinished, showcasePage]);
   const next = useCallback(() => {
@@ -63,17 +65,8 @@ export function ShowcasePager({
   const back = useCallback(() => {
     if (showcasePage > 0) moveTo(showcasePage - 1);
   }, [moveTo, showcasePage]);
-  const pressIn = () => {
-    buttonScale.value = withTiming(reduceMotion ? 1 : motionTokens.cta.pressedScale, { duration: reduceMotion ? 0 : motionTokens.cta.pressInMs, easing: Easing.out(Easing.quad) });
-    buttonShadow.value = withTiming(homeRecipeCardShadow.shadowOpacity * 0.6, { duration: reduceMotion ? 0 : motionTokens.cta.pressInMs, easing: Easing.out(Easing.quad) });
-  };
-  const pressOut = () => {
-    buttonScale.value = withDelay(reduceMotion ? 0 : motionTokens.cta.releaseDelayMs, withTiming(1, { duration: reduceMotion ? 0 : motionTokens.cta.pressOutMs, easing: Easing.out(Easing.quad) }));
-    buttonShadow.value = withDelay(reduceMotion ? 0 : motionTokens.cta.releaseDelayMs, withTiming(homeRecipeCardShadow.shadowOpacity, { duration: reduceMotion ? 0 : motionTokens.cta.pressOutMs, easing: Easing.out(Easing.quad) }));
-  };
-
   useEffect(() => {
-    const assets = showcasePages.slice(showcasePage, showcasePage + 3).flatMap((page) => page.prefetchAssets);
+    const assets = introPages.slice(showcasePage, showcasePage + 3).flatMap((page) => page.prefetchAssets);
     void prefetchOnboardingV3Assets(assets).catch(() => undefined);
   }, [showcasePage]);
 
@@ -81,7 +74,7 @@ export function ShowcasePager({
   const pagerContent = (
     <View style={styles.pager}>
       <PagerView
-        initialPage={initialPage}
+        initialPage={firstPage}
         onPageSelected={(event) => {
           const page = event.nativeEvent.position;
           setShowcasePage(page);
@@ -107,49 +100,33 @@ export function ShowcasePager({
           onSkipAttribution={onAttributionSkipped}
         />
       </View>
-      <View collapsable={false} key="meetKiko" style={{ flex: 1 }}><MeetKikoPage {...pageProps(6)} /></View>
       </PagerView>
     </View>
   );
 
   const carouselChromeVisible = showcasePage > 0;
   return (
+    <ShowcaseResponsiveLayoutProvider layout={responsiveLayout}>
     <SafeAreaView edges={carouselChromeVisible ? ['top', 'bottom'] : []} style={styles.screen}>
       {carouselChromeVisible ? (
         <Animated.View entering={FadeIn.duration(300)} exiting={FadeOut.duration(220)} style={styles.header}>
           <OnboardingBackButton onPress={back} />
-          <View accessibilityLabel={`Showcase page ${showcasePage + 1} of ${showcasePages.length}`} accessibilityRole="image" style={styles.indicators}>
-            {showcasePages.map((page, index) => <View key={page.id} style={[styles.dot, index === showcasePage && styles.activeDot]} />)}
+          <View accessibilityLabel={`Showcase page ${showcasePage + 1} of ${introPages.length}`} accessibilityRole="image" style={styles.indicators}>
+            {introPages.map((page, index) => <View key={page.id} style={[styles.dot, index === showcasePage && styles.activeDot]} />)}
           </View>
         </Animated.View>
       ) : null}
       <View style={styles.content}>{pagerContent}</View>
       {carouselChromeVisible ? <Animated.View entering={FadeIn.duration(320)} exiting={FadeOut.duration(220)} style={styles.footer}>
-        {showcasePage === 6 ? (
-          <Animated.View style={[styles.meetKikoButton, buttonAnimatedStyle]}>
-          <Pressable
-            accessibilityLabel="Name your fox"
-            accessibilityRole="button"
-            accessibilityState={{ disabled: false }}
-            onPress={onFinished}
-            onPressIn={pressIn}
-            onPressOut={pressOut}
-            style={({ pressed }) => [styles.meetKikoButtonInner, pressed && styles.meetKikoButtonPressed]}
-            testID="meet-kiko-name-fox"
-            >
-            <Text maxFontSizeMultiplier={1.2} style={styles.meetKikoLabel}>Next</Text>
-          </Pressable>
-          </Animated.View>
-        ) : (
-          <OnboardingCTA label="Next"
-            accessibilityLabel={showcasePage === 5 ? 'Continue from attribution' : undefined}
-            disabled={showcasePage === 5 && attribution === null}
-            onPress={next}
-            testID={showcasePage === 5 ? 'attribution-next' : undefined}
-          />
-        )}
+        <OnboardingCTA label="Next"
+          accessibilityLabel={showcasePage === 5 ? 'Continue to food goals' : undefined}
+          disabled={showcasePage === 5 && attribution === null}
+          onPress={next}
+          testID={showcasePage === 5 ? 'attribution-next' : undefined}
+        />
       </Animated.View> : null}
     </SafeAreaView>
+    </ShowcaseResponsiveLayoutProvider>
   );
 }
 
@@ -166,8 +143,4 @@ const styles = StyleSheet.create({
   content: { flex: 1 },
   pager: { flex: 1 },
   footer: { paddingBottom: 6, paddingHorizontal: 16, paddingTop: 6 },
-  meetKikoButton: { alignSelf: 'center', maxWidth: 360, ...homeRecipeCardShadow, width: '86%' },
-  meetKikoButtonInner: { alignItems: 'center', backgroundColor: '#FFA8C2', borderRadius: 999, flexDirection: 'row', justifyContent: 'center', minHeight: 60, paddingHorizontal: 28, width: '100%' },
-  meetKikoButtonPressed: { opacity: 0.82, transform: [{ scale: 0.97 }] },
-  meetKikoLabel: { color: '#FFFFFF', fontFamily: fontFamilies.bold, fontSize: 17, fontWeight: 'normal' },
 });

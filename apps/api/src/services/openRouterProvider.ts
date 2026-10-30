@@ -1,10 +1,13 @@
+import { productionReadiness } from './productionReadiness.js';
 import { createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 
 import type { AiConfig } from '../config/aiConfig.js';
+import { isApprovedOpenRouterModel } from '../config/modelAllowlist.js';
 import type { Recipe, RecipeIngredient, RecipeMode, RecipeStep, ScanImageMetadata } from '../types.js';
 import type { FoodImageAnalysis, RecipeGenerationPreferences } from './aiService.js';
+export type { RecipeGenerationPreferences } from './aiService.js';
 import type { CorrectionGenerationContext } from './correctionIntent.js';
 import { formatCorrectionRecipeReferences } from './correctionPatch.js';
 import { isEpicureEnabled } from '../config/openRouter.js';
@@ -17,6 +20,21 @@ import {
   enrichRecipeContext,
   type EnrichedRecipeContext,
 } from './epicureService.js';
+import { emitAiGeneration, type AiRequestType } from '../observability/analytics.js';
+import { getRequestAbortSignal, getRequestContext, getRequestRemainingMs } from '../observability/requestContext.js';
+import { runWithAiExecutionGuard } from './aiExecutionGuard.js';
+import { reserveGlobalAiProviderCall } from '../middleware/costControls.js';
+
+/** Coarse map from an internal pipeline stage to an analytics request_type. */
+function stageToRequestType(stage: string | undefined): AiRequestType {
+  const s = (stage ?? '').toLowerCase();
+  if (s.includes('vision')) return 'vision';
+  if (s.includes('ask')) return 'ask';
+  if (s.includes('epicure')) return 'epicure';
+  if (s.includes('correct')) return 'correction';
+  if (s.includes('recipe') || s.includes('coaching') || s.includes('repair') || s.includes('coverage')) return 'recipe';
+  return 'unknown';
+}
 
 const openRouterEndpoint = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -31,6 +49,8 @@ const RICH_COOKING_INSTRUCTION_GUIDANCE =
   'Write practical, user-facing cooking instructions. For complex steps, usually use 2–5 concise sentences; simple actions may stay short. State exactly what to do, including useful cuts or preparation, technique, heat or temperature when relevant, grounded timing, and when to move on. Include a concrete visual, texture, or consistency cue. Add one brief mistake or safety note only when genuinely useful. Do not pad, repeat ingredient-chip text, invent timing, or use vague phrases such as "cook until done", "season to taste", "prepare the ingredients", or "mix everything". Keep doneWhen as one concise observable cue.';
 
 export type OpenRouterFailureReason =
+  | 'openrouter_disabled'
+  | 'openrouter_model_not_allowed'
   | 'openrouter_missing_key'
   | 'openrouter_http_error'
   | 'openrouter_timeout'
@@ -255,7 +275,7 @@ export const openRouterVisionOutputSchema = z.object({
     vegetables: z.string().optional().default(''),
     toppingsGarnish: z.string().optional().default(''),
     cookingMethod: z.string().optional().default(''),
-  }).optional().default({}),
+  }).optional().prefault({}),
   restaurantPriceEstimate: z.union([z.number(), z.string()]).optional(),
   homemadeCostEstimate: z.union([z.number(), z.string()]).optional(),
   confidenceReason: z.string().optional(),
@@ -264,8 +284,8 @@ export const openRouterVisionOutputSchema = z.object({
   // gracefully to undefined rather than failing the whole vision parse.
   epicureSuggestions: z.object({
     complementaryIngredients: z.array(z.string()).optional().default([]),
-    healthySubstitutions: z.record(z.string()).optional().default({}),
-    budgetSubstitutions: z.record(z.string()).optional().default({}),
+    healthySubstitutions: z.record(z.string(), z.string()).optional().default({}),
+    budgetSubstitutions: z.record(z.string(), z.string()).optional().default({}),
   }).optional().catch(undefined),
 });
 
@@ -437,7 +457,7 @@ const recipeVariantSchema = z.object({
   description: flexibleText,
   equipment: z.array(z.union([
     z.string(),
-    z.record(z.unknown()).transform((obj) => {
+    z.record(z.string(), z.unknown()).transform((obj) => {
       const r = obj as Record<string, unknown>;
       return String(r.name ?? r.item ?? r.tool ?? r.equipment ?? Object.values(r)[0] ?? '').trim();
     }),
@@ -446,7 +466,7 @@ const recipeVariantSchema = z.object({
   ingredients: z.array(
     z.union([
       z.string(),
-      z.record(z.unknown()).transform((obj) => {
+      z.record(z.string(), z.unknown()).transform((obj) => {
         const q = String((obj as Record<string, unknown>).quantity ?? (obj as Record<string, unknown>).amount ?? '');
         const n = String((obj as Record<string, unknown>).name ?? '');
         return [q, n].filter(Boolean).join(' ').trim();
@@ -462,7 +482,7 @@ const recipeVariantSchema = z.object({
   mistakeWarning: flexibleText,
   substitutions: z.array(z.union([
     z.string(),
-    z.record(z.unknown()).transform((obj) => {
+    z.record(z.string(), z.unknown()).transform((obj) => {
       const r = obj as Record<string, unknown>;
       const from = String(r.ingredient ?? r.name ?? r.from ?? '');
       const to = String(r.substitute ?? r.replacement ?? r.to ?? '');
@@ -482,7 +502,7 @@ const recipeVariantSchema = z.object({
   })).optional().default([]),
   spicePairings: z.array(z.union([
     z.string(),
-    z.record(z.unknown()).transform((obj) => {
+    z.record(z.string(), z.unknown()).transform((obj) => {
       const r = obj as Record<string, unknown>;
       const spice = String(r.spice ?? r.name ?? r.ingredient ?? '');
       const note = String(r.note ?? r.description ?? r.pairing ?? '');
@@ -551,7 +571,9 @@ export const recipeArrayFieldDefinitions = [
   { path: 'appliedChanges.supportsRequirementIndexes', kind: 'number[]' },
   { path: 'appliedChanges.affectedStepIndexes', kind: 'number[]' },
   { path: 'ingredientOperations', kind: 'object[]' },
+  { path: 'ingredientOperations.supportsRequirementIndexes', kind: 'number[]' },
   { path: 'stepOperations', kind: 'object[]' },
+  { path: 'stepOperations.result.ingredientReferences', kind: 'string[]' },
   { path: 'metadataPatch.equipment', kind: 'string[]', commaSafe: 'shortText' },
   { path: 'metadataPatch.substitutions', kind: 'string[]' },
   { path: 'metadataPatch.spicePairings', kind: 'string[]' },
@@ -1127,6 +1149,20 @@ const RECIPE_CACHE_TTL_MS = (() => {
   return (Number.isFinite(days) && days > 0 ? days : 7) * 24 * 60 * 60 * 1000;
 })();
 
+function recipeCacheOwnerPrefix(ownerKey = getRequestContext()?.ownerKey): string {
+  return `${ownerKey ? createHash('sha256').update(ownerKey).digest('hex') : 'shared'}:`;
+}
+
+export function clearUserRecipeCache(userId: string): void {
+  const prefix = recipeCacheOwnerPrefix(`user:${userId}`);
+  const failures: unknown[] = [];
+  for (const key of recipeCache.keys()) {
+    if (!key.startsWith(prefix)) continue;
+    try { recipeCache.delete(key); } catch (error) { failures.push(error); }
+  }
+  if (failures.length > 0) throw new Error('User recipe cache cleanup did not fully complete.');
+}
+
 function getRecipeCacheKey(analysis: FoodImageAnalysis, mode: RecipeMode): string {
   const data = JSON.stringify({
     d: analysis.dishName.trim().toLowerCase(),
@@ -1173,18 +1209,16 @@ function finalizeGeneratedRecipe(
     : storeRecipeCache(cacheKey, recipe, dish);
 }
 
-function getRecipeModelChain(config: AiConfig): string[] {
+export function getRecipeModelChain(config: AiConfig): string[] {
   // Fail-closed: Fable 5 never silently falls back to the cheap Gemini chain
   // (or a paid fallback) on failure. If it fails, the scan fails — no
   // cross-provider/cross-model downgrade happens without the user knowing.
   if (config.isFableActive) {
-    return [config.openRouterTextModel];
+    return isApprovedOpenRouterModel(config.openRouterTextModel) ? [config.openRouterTextModel] : [];
   }
 
   const models = [config.openRouterTextModel, ...RECIPE_FALLBACK_MODELS];
-  const paid = process.env.RECIPE_PAID_FALLBACK_MODEL?.trim();
-  if (paid) models.push(paid);
-  return [...new Set(models)];
+  return [...new Set(models.filter(isApprovedOpenRouterModel))].slice(0, 3);
 }
 
 export async function generateRecipeWithOpenRouter(input: {
@@ -1202,7 +1236,7 @@ export async function generateRecipeWithOpenRouter(input: {
 
   // Corrections are original-recipe-specific and must never reuse an ordinary
   // scan result with the same dish/mode cache key.
-  const cacheKey = getRecipeCacheKey(input.analysis, mode);
+  const cacheKey = `${recipeCacheOwnerPrefix()}${getRecipeCacheKey(input.analysis, mode)}`;
   // Never serve a cached recipe generated without the caller's dietary
   // restrictions/dislikes to a request that has them — restrictions are a
   // safety constraint, not a style preference the cache is allowed to ignore.
@@ -1210,10 +1244,10 @@ export async function generateRecipeWithOpenRouter(input: {
   const skipCache = Boolean(input.correction) || hasPersonalization;
   const cached = skipCache ? undefined : recipeCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    logOpenRouterDebug('recipe_cache_hit', { key: cacheKey.slice(0, 8), dish: input.analysis.dishName, mode });
+    logOpenRouterDebug('recipe_cache_hit', { key: cacheKey.slice(0, 8), mode });
     return cached.recipe;
   }
-  logOpenRouterDebug('recipe_cache_miss', { key: cacheKey.slice(0, 8), dish: input.analysis.dishName, mode });
+  logOpenRouterDebug('recipe_cache_miss', { key: cacheKey.slice(0, 8), mode });
 
   let enrichment: EnrichedRecipeContext | null = null;
   const visionEpicure = input.analysis.epicureSuggestions;
@@ -1251,7 +1285,6 @@ export async function generateRecipeWithOpenRouter(input: {
   const fullPromptChars = recipePrompt.length;
   const basePromptChars = fullPromptChars - (epicureSectionChars > 0 ? epicureSectionChars + 1 : 0);
   console.log('[prompt_size_comparison]', {
-    dish: input.analysis.dishName,
     mode,
     basePromptChars,
     epicureSectionChars,
@@ -1379,7 +1412,6 @@ export async function generateRecipeWithOpenRouter(input: {
 
   if (usedRecipeRetry || isFocusedCorrectionRepair || getOpenRouterMetrics().providerCallCount >= 3) {
     logOpenRouterDebug('openrouter_recipe_combined_check', {
-      dishName: input.analysis.dishName,
       issues,
       deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
       willModelRepair: false,
@@ -1400,7 +1432,6 @@ export async function generateRecipeWithOpenRouter(input: {
   }
 
   logOpenRouterDebug('openrouter_recipe_combined_check', {
-    dishName: input.analysis.dishName,
     issues,
     deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
     willModelRepair: true,
@@ -1708,7 +1739,6 @@ function logRecipeQualityRejection(
   const anatomy = analysis.anatomy ?? deriveDishAnatomy(analysis);
   console.warn('[recipe_quality_rejection]', JSON.stringify({
     source: analysis.mealDescription ? 'describe_idea' : 'scan',
-    dishName: analysis.dishName,
     dishFamily: anatomy.dishFamily,
     primaryComponentRoles: anatomy.primaryComponents.map((component) => component.role),
     firstValidationIssueCodes,
@@ -1727,7 +1757,6 @@ function logRecipeQualityDiagnostic(
   const anatomy = analysis.anatomy ?? deriveDishAnatomy(analysis);
   console.warn('[recipe-quality]', JSON.stringify({
     source: analysis.mealDescription ? 'describe_idea' : 'scan',
-    dishName: analysis.dishName,
     dishFamily: anatomy.dishFamily,
     softIssues,
     focusedRepairRan,
@@ -3093,36 +3122,74 @@ function formatPromptNumber(value: number): string {
   return String(Math.round(value * 100) / 100);
 }
 
-async function callOpenRouterJson(input: {
+export async function callOpenRouterJson(input: {
   config: AiConfig;
   maxTokens: number;
   messages: OpenRouterMessage[];
   model: string;
   stage?: string;
 }) {
+  return runWithAiExecutionGuard({
+    stage: input.stage ?? 'unknown',
+    operation: () => callOpenRouterJsonUnsafe(input),
+  });
+}
+
+async function callOpenRouterJsonUnsafe(input: {
+  config: AiConfig;
+  maxTokens: number;
+  messages: OpenRouterMessage[];
+  model: string;
+  stage?: string;
+}) {
+  const maxTokens = Math.max(1, Math.min(input.maxTokens, input.config.maxOutputTokens));
+
+  if (!isApprovedOpenRouterModel(input.model)) {
+    throw createOpenRouterError(input.config, input.model, 'openrouter_model_not_allowed', {
+      openRouterErrorMessage: 'The requested AI model is not approved.',
+    });
+  }
+
+  // Keep billable AI closed until readiness confirms the durable shared quota
+  // store and the explicit production gate. AI_ENABLED remains an immediate
+  // kill switch in every environment.
+  if (!input.config.enabled || (process.env.NODE_ENV === 'production' && !(await productionReadiness()).productionAiEnabled)) {
+    throw createOpenRouterError(input.config, input.model, 'openrouter_disabled');
+  }
   if (!input.config.openRouterApiKey) {
     throw createOpenRouterError(input.config, input.model, 'openrouter_missing_key', {
       openRouterErrorMessage: 'OpenRouter API key is missing.',
     });
   }
 
+  // Count actual provider attempts here so text scans, recipe generation,
+  // ask, correction, coaching, retries and model failovers share one cap.
+  getRequestAbortSignal()?.throwIfAborted();
+  await reserveGlobalAiProviderCall(input.model);
+
   recordOpenRouterCall(input.stage);
 
   logOpenRouterDebug('openrouter_call_start', {
     model: input.model,
     provider: input.config.provider,
-    maxTokens: input.maxTokens,
+    maxTokens,
     stage: input.stage ?? 'unknown',
   });
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), input.config.timeoutMs);
+  const requestSignal = getRequestAbortSignal();
+  const remainingRequestMs = getRequestRemainingMs();
+  const timeoutMs = Math.max(1, Math.min(input.config.timeoutMs, remainingRequestMs ?? input.config.timeoutMs));
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = requestSignal
+    ? AbortSignal.any([controller.signal, requestSignal])
+    : controller.signal;
   const startedAt = Date.now(); // [scan_timing] per-call latency
 
   try {
     const response = await fetch(openRouterEndpoint, {
       body: JSON.stringify({
-        max_tokens: input.maxTokens,
+        max_tokens: maxTokens,
         messages: input.messages,
         model: input.model,
         // Keep reasoning models from spending the whole budget thinking.
@@ -3141,7 +3208,7 @@ async function callOpenRouterJson(input: {
         'X-Title': 'Okyo',
       },
       method: 'POST',
-      signal: controller.signal,
+      signal,
     });
 
     logOpenRouterDebug('api_openrouter_response_status', {
@@ -3155,7 +3222,6 @@ async function callOpenRouterJson(input: {
         model: input.model,
         stage: input.stage ?? 'unknown',
         status: response.status,
-        message: errorMessage,
         durationMs: Date.now() - startedAt,
       });
       throw createOpenRouterError(input.config, input.model, 'openrouter_http_error', {
@@ -3180,22 +3246,32 @@ async function callOpenRouterJson(input: {
       promptTokens,
       completionTokens,
       totalTokens,
-      maxTokens: input.maxTokens,
+      maxTokens,
       finishReason: responseShape.finishReason,
       durationMs: Date.now() - startedAt,
     });
     logOpenRouterDebug('openrouter_call_finish', {
       model: input.model,
       provider: input.config.provider,
-      maxTokens: input.maxTokens,
+      maxTokens,
       stage: input.stage ?? 'unknown',
       finishReason: responseShape.finishReason,
+    });
+    emitAiGeneration({
+      requestType: stageToRequestType(input.stage),
+      provider: input.config.provider,
+      model: input.model,
+      inputTokens: promptTokens,
+      outputTokens: completionTokens,
+      totalTokens,
+      latencyMs: Date.now() - startedAt,
+      success: true,
     });
     recordOpenRouterFinish(responseShape.finishReason);
     const assistantText = extractAssistantTextFromOpenRouterResponse(responseJson, input.config, input.model);
     logOpenRouterDebug('api_openrouter_response_text_preview', {
       length: assistantText.length,
-      preview: assistantText.slice(0, 300),
+      preview: '[omitted]',
     });
     return parseJsonContent(
       assistantText,
@@ -3204,6 +3280,26 @@ async function callOpenRouterJson(input: {
       responseShape.finishReason,
     );
   } catch (error) {
+    // Preserve a request-level deadline/disconnect instead of treating it as an
+    // OpenRouter outage. This prevents cancelled mobile requests from tripping
+    // the provider circuit breaker or continuing into retry paths.
+    if (requestSignal?.aborted && requestSignal.reason instanceof Error) {
+      throw requestSignal.reason;
+    }
+    emitAiGeneration({
+      requestType: stageToRequestType(input.stage),
+      provider: input.config.provider,
+      model: input.model,
+      latencyMs: Date.now() - startedAt,
+      success: false,
+      failureCategory: isAbortError(error)
+        ? 'timeout'
+        : error instanceof TypeError
+          ? 'network'
+          : error instanceof OpenRouterProviderError
+            ? (error.failure.reason ?? 'provider_error')
+            : 'unknown',
+    });
     if (error instanceof OpenRouterProviderError) {
       recordOpenRouterFailure(error);
       throw error;
@@ -3273,7 +3369,7 @@ export async function askOkyoWithOpenRouter(input: {
 
 // ─── Model failover and backoff ───────────────────────────────────────────────
 
-type CallJsonBase = {
+export type CallJsonBase = {
   config: AiConfig;
   maxTokens: number;
   messages: OpenRouterMessage[];
@@ -3317,8 +3413,8 @@ function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string[]): Promise<unknown> {
-  const configuredModels = models.map((model) => model.trim()).filter(Boolean);
+export async function callOpenRouterJsonWithFailover(base: CallJsonBase, models: string[]): Promise<unknown> {
+  const configuredModels = [...new Set(models.filter(isApprovedOpenRouterModel).map((model) => model.trim()))].slice(0, 3);
   if (configuredModels.length === 0) {
     throw createOpenRouterError(base.config, base.config.openRouterTextModel || 'configured-recipe-model', 'openrouter_invalid_schema', {
       openRouterErrorMessage: 'No configured recipe model is available for this request.',
@@ -3492,7 +3588,7 @@ function getRecipeEditPrompt(input: {
     'Edit this recipe according to the user\'s request. Infer their intent naturally. Apply every requested change. Preserve everything that does not need to change.',
     `User\'s exact edit message: ${JSON.stringify(input.editMessage)}`,
     'Return the complete revised recipe. Apply all requested changes and preserve unrelated parts. Do not return a patch or persistent IDs.',
-    buildPreferencesPromptSection({
+    buildPreferencesPromptBlock({
       dietaryAllergies: input.dietaryAllergies,
       dietaryRestrictions: input.dietaryRestrictions,
       dietaryDislikes: input.dietaryDislikes,
@@ -3562,13 +3658,22 @@ function getRecipeEditOutputIssues(output: OpenRouterRecipeOutput): string[] {
 
 function hasMeaningfulPreferences(preferences: RecipeGenerationPreferences | undefined): boolean {
   if (!preferences) return false;
+  const context = preferences.goalContext;
   return Boolean(
     preferences.recipePriority ||
     preferences.cookingFrictionFollowUp ||
     preferences.dietaryAllergies?.length ||
     preferences.dietaryRestrictions?.length ||
-    Boolean(preferences.goalContext?.primaryGoal) ||
-    preferences.dietaryDislikes?.length,
+    preferences.dietaryDislikes?.length ||
+    context?.primaryGoal ||
+    context?.secondaryGoals?.length ||
+    context?.handsOnTimeMinutes ||
+    context?.defaultServings ||
+    context?.cookingPriority ||
+    context?.orderingFriction ||
+    context?.healthPriorities?.length ||
+    context?.trackingPreference ||
+    context?.nutritionTargets,
   );
 }
 
@@ -3594,7 +3699,7 @@ const FOLLOW_UP_GUIDANCE: Record<string, string> = {
 // alternative. Never merged into one ambiguous list. Returns '' when there's
 // nothing to say, so the base prompt is byte-identical to today's for
 // requests without preferences.
-function buildPreferencesPromptSection(preferences: RecipeGenerationPreferences | undefined): string {
+export function buildPreferencesPromptBlock(preferences: RecipeGenerationPreferences | undefined): string {
   if (!hasMeaningfulPreferences(preferences)) {
     return '';
   }
@@ -3668,7 +3773,7 @@ function getRecipePrompt(
     ? (analysis.detectedComponents ?? []).map((c) => c.name).filter(Boolean).slice(0, 8)
     : [];
   const correctionSection = getCorrectionPromptSection(correction);
-  const preferencesSection = buildPreferencesPromptSection(preferences);
+  const preferencesSection = buildPreferencesPromptBlock(preferences);
 
   if (correction) {
     return [

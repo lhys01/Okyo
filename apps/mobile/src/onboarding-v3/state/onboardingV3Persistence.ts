@@ -14,6 +14,16 @@ export const ATTRIBUTION_STORAGE_KEY = 'okyo:onboarding-attribution:v1';
 export const DIETARY_STORAGE_KEY = 'okyo:dietary:v1';
 export const PERSONALIZED_PROFILE_STORAGE_KEY = 'okyo:personalized-onboarding-profile:v1';
 export const PERSONALIZED_PROGRESS_STORAGE_KEY = 'okyo:personalized-onboarding-progress:v1';
+const mascotNameListeners = new Set<() => void>();
+
+export function subscribeToMascotName(listener: () => void): () => void {
+  mascotNameListeners.add(listener);
+  return () => { mascotNameListeners.delete(listener); };
+}
+
+function notifyMascotNameChanged() {
+  mascotNameListeners.forEach((listener) => listener());
+}
 
 /**
  * Bump this when the persisted profile shape changes in a way that needs
@@ -49,9 +59,14 @@ export function createOnboardingV3Persistence(storage: OnboardingV3Storage) {
     async readMascotName() {
       return sanitizeMascotName(await storage.getItem(MASCOT_NAME_STORAGE_KEY));
     },
+    async readChosenMascotName(): Promise<string | null> {
+      const value = await storage.getItem(MASCOT_NAME_STORAGE_KEY);
+      return value?.trim() ? sanitizeMascotName(value) : null;
+    },
     async writeMascotName(value: string) {
       const mascotName = sanitizeMascotName(value);
       await storage.setItem(MASCOT_NAME_STORAGE_KEY, mascotName);
+      notifyMascotNameChanged();
       return mascotName;
     },
     async readAttribution(): Promise<AttributionSource | null> {
@@ -108,6 +123,7 @@ export function createOnboardingV3Persistence(storage: OnboardingV3Storage) {
         storage.removeItem(PERSONALIZED_PROFILE_STORAGE_KEY),
         storage.removeItem(PERSONALIZED_PROGRESS_STORAGE_KEY),
       ]);
+      notifyMascotNameChanged();
     },
   };
 }

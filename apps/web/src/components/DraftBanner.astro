@@ -1,0 +1,53 @@
+---
+interface Props {
+  version: string;
+  knownGaps: string[];
+}
+
+const { version, knownGaps } = Astro.props;
+---
+
+<aside class="draft-banner" aria-labelledby="draft-banner-title" data-draft="legal">
+  <p id="draft-banner-title" class="draft-banner__title">DRAFT — NOT IN EFFECT</p>
+  <p>
+    This is version {version}, shown for internal and counsel review only. It has not been approved,
+    is not Okyo's published policy, and must not be relied on.
+  </p>
+  <details>
+    <summary>Known gaps to fix before approval</summary>
+    <ul>{knownGaps.map((gap) => <li>{gap}</li>)}</ul>
+  </details>
+</aside>
+
+<style>
+  .draft-banner {
+    max-width: var(--prose-max);
+    margin-bottom: var(--space-xxl);
+    padding: var(--space-xl);
+    background: #fff8db;
+    border: 3px solid var(--ink);
+    border-radius: var(--radius-panel-lg);
+    font-size: var(--text-body);
+    color: var(--ink);
+  }
+
+  .draft-banner__title {
+    margin-bottom: var(--space-sm);
+    font-size: clamp(1.375rem, 1vw + 1.1rem, 1.75rem);
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+
+  .draft-banner summary {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .draft-banner ul {
+    margin: var(--space-sm) 0 0;
+    padding-left: 1.25rem;
+  }
+</style>

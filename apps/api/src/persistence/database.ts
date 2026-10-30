@@ -26,22 +26,30 @@ export function database(): Database {
   return pool;
 }
 
+/** Pool health counters for internal metrics; does not open a connection. */
+export function getDatabasePoolSnapshot() {
+  return {
+    configured: databaseConfigured(),
+    initialized: Boolean(pool),
+    total: pool?.totalCount ?? 0,
+    idle: pool?.idleCount ?? 0,
+    waiting: pool?.waitingCount ?? 0,
+  };
+}
+
 export async function databaseHealthy(): Promise<boolean> {
   try {
-    // Read AND rollback a write: catches missing migration and read-only roles.
-    await database().query(`WITH probe AS (
-      INSERT INTO okyo_private.okyo_runtime(kind,id,owner,payload,expires_at)
-      VALUES ('health','probe','system','{}',now())
-      ON CONFLICT(kind,id,owner) DO UPDATE SET expires_at=now() RETURNING id
-    ) SELECT id, to_regprocedure('okyo_private.okyo_reserve_quota(text[],integer[])') IS NOT NULL AS quota FROM probe`);
+    // Readiness runs frequently. Check schema and grants without creating a
+    // health row or competing with application writes on every probe.
     const result = await database().query(`SELECT
       has_function_privilege(current_user, 'okyo_private.okyo_reserve_quota(text[],integer[])', 'EXECUTE') AS quota,
       has_function_privilege(current_user, 'okyo_private.okyo_cleanup_runtime()', 'EXECUTE') AS cleanup,
       has_schema_privilege(current_user, 'okyo_private', 'USAGE') AS schema_usage,
       has_table_privilege(current_user, 'okyo_private.okyo_runtime', 'SELECT,INSERT,UPDATE,DELETE') AS runtime_dml,
-      has_table_privilege(current_user, 'okyo_private.okyo_quota', 'SELECT,INSERT,UPDATE,DELETE') AS quota_dml`);
+      has_table_privilege(current_user, 'okyo_private.okyo_quota', 'SELECT,INSERT,UPDATE,DELETE') AS quota_dml,
+      has_table_privilege(current_user, 'okyo_private.idea_submissions', 'INSERT') AS idea_insert`);
     return result.rows[0]?.quota === true && result.rows[0]?.cleanup === true && result.rows[0]?.schema_usage === true &&
-      result.rows[0]?.runtime_dml === true && result.rows[0]?.quota_dml === true;
+      result.rows[0]?.runtime_dml === true && result.rows[0]?.quota_dml === true && result.rows[0]?.idea_insert === true;
   } catch { return false; }
 }
 

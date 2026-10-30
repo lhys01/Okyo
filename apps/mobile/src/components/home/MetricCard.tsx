@@ -3,7 +3,8 @@ import { Image, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
 import type { HomeMetric, HomeMetricKind } from '../../state/homeMetrics';
-import { colors, radius, shadows, typography } from '../../theme/okyoTheme';
+import { colors, iconSizes, radius, shadows, typography } from '../../theme/okyoTheme';
+import { FitText } from '../FitText';
 
 const metricArtwork: Partial<Record<HomeMetricKind, number>> = {
   savings: require('../../../assets/food/states/home-savings-transparent.png'),
@@ -26,7 +27,7 @@ const accents: Record<HomeMetricKind, string> = {
 
 export function MetricCard({ futureDay, height, metric, width }: { futureDay?: boolean; height: number; metric: HomeMetric; width: number }) {
   const accent = accents[metric.kind];
-  const futureMessage = futureDay
+  const futureMessage = futureDay && metric.kind === 'savings'
     ? 'Cook a meal to see this.\nYour totals will appear here.'
     : null;
   const accessibilityLabel = futureMessage
@@ -40,9 +41,9 @@ export function MetricCard({ futureDay, height, metric, width }: { futureDay?: b
         <Text style={styles.label}>{metric.label}</Text>
         <View style={styles.primaryRow}>
           <View style={styles.primaryCopy}>
-            {futureMessage ? <Text maxFontSizeMultiplier={1.25} style={styles.futureMessage}>{futureMessage}</Text> : <>
-              <Text maxFontSizeMultiplier={1.2} style={[styles.value, metric.kind === 'macros' || metric.available ? { color: accent } : null]}>{metric.value}</Text>
-              <Text maxFontSizeMultiplier={1.5} style={styles.caption}>{metric.caption}</Text>
+            {futureMessage ? <Text style={styles.futureMessage}>{futureMessage}</Text> : <>
+              <FitText minimumFontScale={0.6} style={[styles.value, metric.kind === 'macros' || metric.available ? { color: accent } : null]}>{metric.value}</FitText>
+              <Text style={styles.caption}>{metric.caption}</Text>
             </>}
           </View>
           <MetricVisual accent={accent} kind={metric.kind} progress={metric.progress} />
@@ -52,8 +53,8 @@ export function MetricCard({ futureDay, height, metric, width }: { futureDay?: b
         {metric.stats.map((stat) => (
           <View key={stat.label} style={styles.stat}>
             <View style={styles.statCopy}>
-              <Text maxFontSizeMultiplier={1.2} numberOfLines={1} style={styles.statValue}>{stat.value}</Text>
-              <Text maxFontSizeMultiplier={1.5} numberOfLines={2} style={styles.statLabel}>{stat.label}</Text>
+              <FitText minimumFontScale={0.7} style={styles.statValue}>{stat.value}</FitText>
+              <Text style={styles.statLabel}>{stat.label}</Text>
             </View>
           </View>
         ))}
@@ -86,7 +87,7 @@ function MetricIcon({ accent, kind }: { accent: string; kind: HomeMetricKind }) 
       importantForAccessibility="no-hide-descendants"
       style={styles.iconVisual}
     >
-      {artwork ? <Image accessibilityIgnoresInvertColors resizeMode="contain" source={artwork} style={styles.metricArtwork} /> : <Icon color={accent} height={34} width={34} />}
+      {artwork ? <Image accessibilityIgnoresInvertColors resizeMode="contain" source={artwork} style={styles.metricArtwork} /> : <Icon color={accent} height={iconSizes.feature} width={iconSizes.feature} />}
     </View>
   );
 }
@@ -112,7 +113,7 @@ const styles = StyleSheet.create({
   // The bundled illustrations include transparent breathing room, so give
   // their containers a little more room while keeping the same card layout.
   iconVisual: { alignItems: 'center', height: 136, justifyContent: 'center', width: 136 },
-  macroPrimaryArtwork: { height: 148, width: 148 },
+  macroPrimaryArtwork: { height: 128, width: 128 },
   metricArtwork: { height: 136, width: 136 },
   futureMessage: { color: colors.ink, fontFamily: typography.heading.fontFamily, fontSize: 14, fontWeight: '700', lineHeight: 19, maxWidth: 190 },
   label: { ...typography.label },

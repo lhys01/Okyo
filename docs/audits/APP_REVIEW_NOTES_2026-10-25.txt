@@ -1,0 +1,13 @@
+Okyo is a cooking app that turns a prepared-food photo or typed dish description into an editable inspired-by recipe. Recipes are not official restaurant recipes. Food identification, ingredients, nutrition, calories, macros, cooking times, costs and potential savings are estimates. Users can correct results, customize recipes and retry an unclear photo.
+
+Onboarding offers Save Money on Food, Eat Healthier and Hit My Macros goals. Users can name their fox assistant and set preferences. Apple and Google are the account sign-in options.
+
+From Home, the scan control offers the camera, photo library and a typed dish description. Food analysis and recipe customization require an internet connection. Users can save or unsave recipes, add ingredients to Grocery and follow Cook Mode. Grocery choices and cooking progress are stored on the device.
+
+Privacy Policy and Terms are accessible from the opening screen and Settings. Settings > Privacy & data includes account deletion with two confirmation steps and a separate local-data removal option. Account deletion returns to the first onboarding screen. Deleting an account does not cancel an App Store subscription.
+
+Subscriptions are purchased through the App Store. Available plans show the Store's localized price, billing period and renewal terms. Restore purchases is available on the paywall.
+
+Okyo does not diagnose, treat, cure, prevent or monitor diseases. It does not provide medical-device functionality or claim medical accuracy. Users must check ingredients, allergens and food safety themselves.
+
+Support: support.okyo@gmail.com

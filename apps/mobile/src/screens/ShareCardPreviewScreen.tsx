@@ -23,7 +23,6 @@ import { Alert, Image, LayoutAnimation, Pressable, ScrollView, Share, StyleSheet
 import { captureRef } from 'react-native-view-shot';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { analyticsEvents, track } from '../analytics/track';
 import { KikoMascot } from '../components/KikoMascot';
 import { colors } from '../components/OkyoUI';
 import {
@@ -84,7 +83,7 @@ export function ShareCardPreviewScreen() {
   const shareImage = canonicalRecipe?.originalImage ??
     scanContext?.image ??
     (selectedScanImage?.source === 'mock' ? selectedScanImage : null);
-  const isDemoScan = shareImage?.source === 'mock';
+  const isDemoScan = typeof __DEV__ !== 'undefined' && __DEV__ && shareImage?.source === 'mock';
   const routeRecipe = scanContext?.recipe ?? null;
   const recipe = requestedRecipeId
     ? canonicalRecipe
@@ -161,7 +160,7 @@ export function ShareCardPreviewScreen() {
       },
       ranking: {
         cardType: 'ranking',
-        eyebrow: topLeaderboardEntry.category,
+        eyebrow: `Example ranking · ${topLeaderboardEntry.category}`,
         dishName: topLeaderboardEntry.displayName,
         restaurantPrice: fallbackScanResult.restaurantPrice,
         homemadeCost: cardRecipe.estimatedHomemadeCost,
@@ -187,7 +186,7 @@ export function ShareCardPreviewScreen() {
       },
       restaurant_pack: {
         cardType: 'restaurant_pack',
-        eyebrow: selectedPack.name,
+        eyebrow: `Example pack · ${selectedPack.name}`,
         dishName: packDish?.dishName ?? selectedPack.name,
         restaurantPrice: packDish?.restaurantPrice ?? 0,
         homemadeCost: packDish?.homemadeCost ?? 0,
@@ -246,22 +245,11 @@ export function ShareCardPreviewScreen() {
 
     didTrackGenerated.current = true;
     if (missingScanResult) {
-      track(analyticsEvents.RESULT_ERROR, {
-        cardType,
-        errorMessage: 'Share card opened without a latest scan result.',
-        screen: 'ShareCardPreviewScreen',
-      });
+
       return;
     }
 
-    track(analyticsEvents.SHARE_CARD_GENERATED, {
-      cardType,
-      dishName: cardData.dishName,
-      mode: cardData.selectedMode,
-      savings: cardData.estimatedSavings,
-      packName: cardType === 'restaurant_pack' ? selectedPack.name : undefined,
-      screen: 'ShareCardPreviewScreen',
-    });
+
   }, [cardData.dishName, cardData.estimatedSavings, cardData.selectedMode, cardType, missingScanResult, selectedPack.name]);
 
   useEffect(() => {
@@ -296,22 +284,11 @@ export function ShareCardPreviewScreen() {
   const shareCard = async () => {
     try {
       uiLog('ShareCardPreviewScreen', 'share_tapped', { cardType, dishName: cardData.dishName });
-      track(analyticsEvents.SHARE_TAPPED, {
-        cardType,
-        dishName: cardData.dishName,
-        savings: cardData.estimatedSavings,
-        screen: 'ShareCardPreviewScreen',
-      });
+
       const didShareImage = await shareImageCard();
       if (didShareImage) {
         awardXPOnce(`share-card-${cardType}-${selectedMode}`, 20);
-        track(analyticsEvents.SHARE_COMPLETED, {
-          cardType,
-          dishName: cardData.dishName,
-          savings: cardData.estimatedSavings,
-          screen: 'ShareCardPreviewScreen',
-          source: 'image',
-        });
+
         return;
       }
 
@@ -321,13 +298,7 @@ export function ShareCardPreviewScreen() {
       }
 
       awardXPOnce(`share-card-${cardType}-${selectedMode}`, 20);
-      track(analyticsEvents.SHARE_COMPLETED, {
-        cardType,
-        dishName: cardData.dishName,
-        savings: cardData.estimatedSavings,
-        screen: 'ShareCardPreviewScreen',
-        source: 'caption',
-      });
+
     } catch {
       Alert.alert('Share unavailable', 'This device could not open the native share sheet.');
     }

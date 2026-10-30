@@ -7,5 +7,11 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1"
+  },
+  "scripts": {
+    "security:audit": "node scripts/security/audit.mjs",
+    "security:history": "node scripts/security/audit.mjs --history",
+    "security:artifacts": "node scripts/security/audit.mjs --artifacts",
+    "test:security": "node --experimental-strip-types --test scripts/security/*.test.mjs"
   }
 }

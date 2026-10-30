@@ -1,5 +1,5 @@
 import * as ImagePicker from 'expo-image-picker';
-import { ArrowRight, BookStack, Camera, MagicWand } from 'iconoir-react-native';
+import { ArrowRight, MagicWand } from 'iconoir-react-native';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,6 +15,10 @@ import { ONBOARDING_BACK_ROW_HEIGHT, ONBOARDING_BACK_ROW_TOP_GAP, ONBOARDING_HOR
 import { OnboardingCTA } from '../components/OnboardingCTA';
 import { getKikoOnboardingAssignment } from '../assets/kikoOnboardingRegistry';
 import { KikoOnboardingArtwork } from '../components/KikoOnboardingArtwork';
+import { stickerIcons } from '../assets/onboardingStickerIcons';
+
+const MealSticker = stickerIcons.meal;
+const RecipeSticker = stickerIcons.bread;
 
 export function ScanInputScreen({
   userName,
@@ -85,7 +89,7 @@ export function ScanInputScreen({
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.heroRow}>
             {postPurchaseKiko?.assetId && postPurchaseKiko.size === 'hero' ? (
-              <KikoOnboardingArtwork assetId={postPurchaseKiko.assetId} sizeRole="hero" style={styles.postPurchaseKiko} />
+              <KikoOnboardingArtwork assetId={postPurchaseKiko.assetId} moment={postPurchaseKiko.moment} sizeRole="hero" style={styles.postPurchaseKiko} />
             ) : null}
             <View style={styles.heroCopy}>
               <Text style={styles.eyebrow}>Okyo Pro unlocked</Text>
@@ -109,9 +113,9 @@ export function ScanInputScreen({
               <View style={styles.visualCopy}>
                 <Text style={styles.visualEyebrow}>Your dish, decoded</Text>
                 <View style={styles.visualFlow}>
-                  <View style={styles.visualIcon}><Camera color={colors.coralDark} height={22} strokeWidth={2.3} width={22} /></View>
+                  <View style={styles.visualIcon}><MealSticker height={26} width={26} /></View>
                   <ArrowRight color={colors.muted} height={18} width={18} />
-                  <View style={[styles.visualIcon, styles.recipeIcon]}><BookStack color={colors.green} height={22} strokeWidth={2.3} width={22} /></View>
+                  <View style={[styles.visualIcon, styles.recipeIcon]}><RecipeSticker height={26} width={26} /></View>
                 </View>
                 <Text style={styles.visualText}>Prepared dish to editable recipe</Text>
               </View>

@@ -4,7 +4,6 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
 import { EmptyState, PrimaryButton, ScreenContainer, SecondaryButton, StatCard, colors } from '../components/OkyoUI';
 import type { RootStackParamList } from '../navigation/types';
@@ -32,10 +31,7 @@ export function ChallengeCompleteScreen() {
     uiLog('ChallengeCompleteScreen', 'enter', { challengeId: route.params?.challengeId });
 
     didTrackMissingChallenge.current = true;
-    track(analyticsEvents.RESULT_ERROR, {
-      errorMessage: 'Challenge complete opened without a completed challenge.',
-      screen: 'ChallengeCompleteScreen',
-    });
+
   }, [challenge]);
 
   if (!challenge) {

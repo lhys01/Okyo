@@ -1,227 +1,123 @@
-// Dynamic, answer-driven copy for the Eat Healthier branch. Pure functions so
-// the insight/response/approach/reveal screens and their tests share one source
-// of truth. No medical claims, no invented metrics — every line is a plain
-// restatement of what the user chose and how Okyo will use it.
-import type {
-  HealthBarrierId,
-  HealthCommitmentId,
-  HealthDefinitionId,
-  HealthDraft,
-  FoodStyleId,
-  MealToImproveId,
-} from './healthBranch';
+// Answer-derived copy only: preferences are not medical causes or promises.
+import type { HealthBarrierId, HealthCommitmentId, HealthDefinitionId, HealthDraft, FoodStyleId, MealToImproveId, HealthProblemId, CookingFrequencyId, MealPriorityId } from './healthBranch';
 
+export const HEALTH_PROBLEM_LABELS: Record<HealthProblemId, string> = {
+  too_much_takeout: 'Too much takeout', meals_unbalanced: 'Meals feel unbalanced',
+  not_enough_whole_foods: 'Not enough whole foods', portions_off: 'Portions feel off',
+  low_energy: 'Low energy', eating_inconsistent: 'Eating feels inconsistent',
+};
 export const HEALTH_DEFINITION_LABELS: Record<HealthDefinitionId, string> = {
-  more_balanced_meals: 'More balanced meals',
-  more_whole_foods: 'More whole foods',
-  more_vegetables_fruit: 'More vegetables and fruit',
-  more_energy: 'More energy',
-  better_portions: 'Better portions',
-  less_takeout: 'Less takeout',
-  something_else: 'Something else',
+  more_balanced_meals: 'More balanced meals', more_whole_foods: 'More whole foods',
+  more_vegetables_fruit: 'More fruits and vegetables', more_energy: 'More energy',
+  better_portions: 'Better portions', less_takeout: 'Less takeout',
 };
-
 export const HEALTH_BARRIER_LABELS: Record<HealthBarrierId, string> = {
-  not_enough_time: 'I do not have enough time',
-  too_expensive: 'Healthy food feels too expensive',
-  dont_know_what_to_cook: 'I do not know what to cook',
-  feels_boring: 'Healthy meals feel boring',
-  struggle_consistency: 'I struggle to stay consistent',
-  too_hungry_tired: 'I am usually too hungry or tired',
-  something_else: 'Something else',
+  not_enough_time: 'Not enough time', too_expensive: 'Costs too much',
+  dont_know_what_to_cook: 'Unsure what to cook', feels_boring: 'Healthy food feels boring',
+  struggle_consistency: 'Hard to stay consistent', too_hungry_tired: 'Too hungry or tired',
 };
-
 export const MEAL_TO_IMPROVE_LABELS: Record<MealToImproveId, string> = {
-  breakfast: 'Breakfast',
-  lunch: 'Lunch',
-  dinner: 'Dinner',
-  snacks: 'Snacks',
-  it_varies: 'It varies',
+  breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snacks: 'Snacks', it_varies: 'It varies',
 };
-
+export const COOKING_FREQUENCY_LABELS: Record<CookingFrequencyId, string> = {
+  almost_never: 'Almost never', one_to_two_week: '1–2 times a week', three_to_four_week: '3–4 times a week',
+  five_to_six_week: '5–6 times a week', every_day: 'Every day',
+};
+export const MEAL_PRIORITY_LABELS: Record<MealPriorityId, string> = {
+  tastes_good: 'Tastes good', quick_to_make: 'Quick to make', keeps_me_full: 'Keeps me full',
+  costs_less: 'Costs less', simple_ingredients: 'Simple ingredients',
+};
 export const FOOD_STYLE_LABELS: Record<FoodStyleId, string> = {
-  comfort_food: 'Comfort food',
-  fresh_colorful: 'Fresh and colorful',
-  high_protein: 'High-protein meals',
-  quick_simple: 'Quick and simple',
-  international: 'International flavors',
-  a_bit_of_everything: 'A little bit of everything',
+  comfort_food: 'Comfort food', fresh_colorful: 'Fresh and colorful', high_protein: 'High-protein meals',
+  quick_simple: 'Quick and simple', international: 'International flavors', a_bit_of_everything: 'A little of everything',
 };
-
 export const HEALTH_COMMITMENT_LABELS: Record<HealthCommitmentId, string> = {
-  few_meals_weekly: 'A few healthier meals each week',
-  small_changes_daily: 'Small changes most days',
-  improve_gradually: 'I want to improve gradually',
-  not_sure: 'I am not sure yet',
+  most_meals_healthier: 'Make most meals healthier', one_meal_daily: 'One healthier meal a day',
+  few_meals_weekly: 'A few healthier meals weekly', small_changes_days: 'Small changes a few days',
+  one_change_at_a_time: 'One change at a time',
 };
-
-// Screen 3 — personalized insight after "what healthier means".
-const MEANING_INSIGHT: Record<HealthDefinitionId, string> = {
-  more_balanced_meals: 'We’ll help you build meals that feel satisfying and well-rounded.',
-  more_whole_foods: 'We’ll make it easier to add nourishing ingredients without making meals boring.',
-  more_vegetables_fruit: 'We’ll find simple ways to add more color and variety to your meals.',
-  more_energy: 'We’ll focus on meals that feel satisfying and support your everyday routine.',
-  better_portions: 'We’ll help you find portions that feel comfortable—not restrictive.',
-  less_takeout: 'We’ll find easy homemade options for the meals you usually order.',
-  something_else: 'We’ll shape your recipes and suggestions around what matters most to you.',
+const PROBLEM_PHRASE: Record<HealthProblemId, string> = {
+  too_much_takeout: 'too much takeout', meals_unbalanced: 'meals feeling unbalanced',
+  not_enough_whole_foods: 'not enough whole foods', portions_off: 'portions feeling off',
+  low_energy: 'low energy', eating_inconsistent: 'inconsistent eating',
 };
-export function meaningInsightBody(definition: HealthDefinitionId | null): string {
-  return definition ? MEANING_INSIGHT[definition] : MEANING_INSIGHT.something_else;
-}
-
-// Screen 5 — response to the biggest obstacle.
-const BARRIER_RESPONSE: Record<HealthBarrierId, { title: string; body: string }> = {
-  not_enough_time: {
-    title: 'We’ll keep it practical.',
-    body: 'Okyo will prioritize simple recipes, shorter prep, and meals that fit busy days.',
-  },
-  too_expensive: {
-    title: 'Healthy does not have to be expensive.',
-    body: 'We’ll look for affordable ingredients and flexible recipes that make sense for your budget.',
-  },
-  dont_know_what_to_cook: {
-    title: 'You do not have to figure it out alone.',
-    body: 'Okyo will turn your ideas and ingredients into clear recipes you can actually follow.',
-  },
-  feels_boring: {
-    title: 'Healthy food should still be exciting.',
-    body: 'We’ll keep flavor, variety, and the foods you enjoy at the center.',
-  },
-  struggle_consistency: {
-    title: 'Small changes are easier to keep.',
-    body: 'We’ll help you build an approach that is flexible instead of all-or-nothing.',
-  },
-  too_hungry_tired: {
-    title: 'We’ll keep meals filling.',
-    body: 'Okyo will lean toward satisfying portions and simple recipes for the days you’re running low.',
-  },
-  something_else: {
-    title: 'We’ll work with your real life.',
-    body: 'Okyo adapts recipes and suggestions to the parts of cooking that get in your way.',
-  },
+const BARRIER_PHRASE: Record<HealthBarrierId, string> = {
+  not_enough_time: 'not enough time', too_expensive: 'the cost',
+  dont_know_what_to_cook: 'being unsure what to cook', feels_boring: 'healthy food feeling boring',
+  struggle_consistency: 'difficulty staying consistent', too_hungry_tired: 'feeling too hungry or tired',
 };
-export function barrierResponse(barrier: HealthBarrierId | null): { title: string; body: string } {
-  return barrier ? BARRIER_RESPONSE[barrier] : BARRIER_RESPONSE.something_else;
-}
-
-// Screen 7 — meal-specific insight.
-const MEAL_INSIGHT: Record<MealToImproveId, string> = {
-  breakfast: 'We’ll help you start the day with easier, more satisfying options.',
-  lunch: 'We’ll focus on lunches that are practical, filling, and easy to repeat.',
-  dinner: 'We’ll make dinner feel more balanced without making it feel like work.',
-  snacks: 'We’ll help you find snacks that fit your hunger and your routine.',
-  it_varies: 'We’ll keep the plan flexible so it can work across your whole day.',
-};
-export function mealInsightBody(meal: MealToImproveId | null): string {
-  return meal ? MEAL_INSIGHT[meal] : MEAL_INSIGHT.it_varies;
-}
-
-const MEANING_PHRASE: Record<HealthDefinitionId, string> = {
-  more_balanced_meals: 'More balanced',
-  more_whole_foods: 'More whole foods in your',
-  more_vegetables_fruit: 'More color and variety in your',
-  more_energy: 'More satisfying',
-  better_portions: 'Right-sized',
-  less_takeout: 'More homemade',
-  something_else: 'Better everyday',
+const BARRIER_EMPATHY: Record<HealthBarrierId, string> = {
+  not_enough_time: 'Finding time is hard.',
+  too_expensive: 'Eating well can get expensive.',
+  dont_know_what_to_cook: 'Knowing what to cook can be hard.',
+  feels_boring: 'Food should still feel enjoyable.',
+  struggle_consistency: 'Staying consistent can be hard.',
+  too_hungry_tired: 'Hungry or tired days can be hard.',
 };
 const MEAL_PLURAL: Record<MealToImproveId, string> = {
-  breakfast: 'breakfasts',
-  lunch: 'lunches',
-  dinner: 'dinners',
-  snacks: 'snacks',
-  it_varies: 'meals',
+  breakfast: 'breakfasts', lunch: 'lunches', dinner: 'dinners', snacks: 'snacks', it_varies: 'meals',
 };
-const BARRIER_QUALIFIER: Record<HealthBarrierId, string> = {
-  not_enough_time: ', without complicated recipes',
-  too_expensive: ', on an everyday budget',
-  dont_know_what_to_cook: ', with recipes you can follow',
-  feels_boring: ', without losing flavor',
-  struggle_consistency: ', in steps you can keep',
-  too_hungry_tired: ', that still fill you up',
-  something_else: '',
-};
-function mealPlural(meal: MealToImproveId | null): string {
-  return meal ? MEAL_PLURAL[meal] : 'meals';
+function mealPlural(meal: MealToImproveId | null): string { return meal ? MEAL_PLURAL[meal] : 'meals'; }
+function mealSingular(meal: MealToImproveId | null): string { return !meal || meal === 'it_varies' ? 'meals across your day' : meal; }
+
+export function problemDiagnosisHeadline(meal: MealToImproveId | null): string {
+  if (!meal || meal === 'it_varies') return 'You want changes across your day.';
+  if (meal === 'snacks') return 'Snacks are where you want the biggest change.';
+  return `${MEAL_TO_IMPROVE_LABELS[meal]} is where you want the biggest change.`;
 }
-
-// Screen 10 — the approach headline, composed from every answer.
-export function approachHeadline(draft: Pick<HealthDraft, 'healthDefinition' | 'healthBarrier' | 'mealToImprove' | 'foodStyles'>): string {
-  const phrase = draft.healthDefinition ? MEANING_PHRASE[draft.healthDefinition] : MEANING_PHRASE.something_else;
-  const meal = mealPlural(draft.mealToImprove);
-  let qualifier = draft.healthBarrier ? BARRIER_QUALIFIER[draft.healthBarrier] : '';
-  if (!qualifier && draft.foodStyles.includes('comfort_food')) qualifier = ', without giving up comfort food';
-  return `${phrase} ${meal}${qualifier}.`;
+export function problemAcknowledgement(barrier: HealthBarrierId | null): { title: string; body: string } {
+  return {
+    title: barrier ? BARRIER_EMPATHY[barrier] : 'Healthy eating can feel like a lot.',
+    body: 'You don’t need a perfect routine. We’ll keep the next steps practical and close to the food you already enjoy.',
+  };
 }
-
-const MEANING_START: Record<HealthDefinitionId, string> = {
-  more_balanced_meals: 'More balanced',
-  more_whole_foods: 'More nourishing',
-  more_vegetables_fruit: 'More colorful',
-  more_energy: 'More satisfying',
-  better_portions: 'Right-sized',
-  less_takeout: 'More homemade',
-  something_else: 'Easier',
-};
-
-// Screens 13 & 14 — the coral commitment card value.
-export function startingPointValue(
-  draft: Pick<HealthDraft, 'healthDefinition' | 'mealToImprove' | 'flexibleCommitment'>,
-  options: { lowercase?: boolean } = {},
-): string {
-  const gradual = draft.flexibleCommitment === 'small_changes_daily' || draft.flexibleCommitment === 'improve_gradually' || draft.flexibleCommitment === 'not_sure';
-  const raw = gradual
-    ? 'Small changes that fit your routine'
-    : `${draft.healthDefinition ? MEANING_START[draft.healthDefinition] : MEANING_START.something_else} ${mealPlural(draft.mealToImprove)}`;
-  return options.lowercase ? raw.charAt(0).toLowerCase() + raw.slice(1) : raw;
+export function problemDiagnosisBody(draft: Pick<HealthDraft, 'healthProblem' | 'healthBarrier' | 'mealToImprove' | 'cookingFrequency'>): string {
+  const problem = draft.healthProblem ? PROBLEM_PHRASE[draft.healthProblem] : 'your eating routine';
+  const barrier = draft.healthBarrier ? BARRIER_PHRASE[draft.healthBarrier] : 'your current challenges';
+  const baseline = draft.cookingFrequency === 'almost_never' ? 'you almost never cook'
+    : draft.cookingFrequency ? `you cook ${COOKING_FREQUENCY_LABELS[draft.cookingFrequency].toLowerCase()}` : 'you want a manageable start';
+  return `You said ${problem} is the main issue, and ${barrier} gets in the way. Since ${baseline}, we'll start by making ${mealSingular(draft.mealToImprove)} easier.`;
 }
-
-const BARRIER_CLAUSE: Record<HealthBarrierId, string> = {
-  not_enough_time: 'keep things practical when time is tight',
-  too_expensive: 'find options that fit your budget',
-  dont_know_what_to_cook: 'turn your ideas into clear recipes',
-  feels_boring: 'keep flavor and variety front and center',
-  struggle_consistency: 'make it easier to stay consistent',
-  too_hungry_tired: 'keep portions filling',
-  something_else: 'work around what gets in your way',
+const PRIORITY_ACTION: Record<MealPriorityId, string> = {
+  tastes_good: 'keeping flavor in the mix', quick_to_make: 'keeping it quick to make', keeps_me_full: 'keeping it filling',
+  costs_less: 'keeping costs down', simple_ingredients: 'keeping ingredients simple',
 };
-const STYLE_CLAUSE: Record<FoodStyleId, string> = {
-  comfort_food: 'keep room for the comfort food you love',
-  fresh_colorful: 'lean into fresh, colorful plates',
-  high_protein: 'keep protein at the center',
-  quick_simple: 'stick to quick, simple cooking',
-  international: 'keep global flavors in the mix',
-  a_bit_of_everything: 'keep plenty of variety',
-};
-const MEANING_VERB: Record<HealthDefinitionId, string> = {
-  more_balanced_meals: 'make more balanced',
-  more_whole_foods: 'add more whole foods to your',
-  more_vegetables_fruit: 'add more color to your',
-  more_energy: 'build more satisfying',
-  better_portions: 'find comfortable portions for your',
-  less_takeout: 'cook more of your',
-  something_else: 'improve your everyday',
-};
-
-// Screen 13 — the truthful, answer-driven summary sentence.
-export function revealSummary(
-  draft: Pick<HealthDraft, 'healthDefinition' | 'healthBarrier' | 'mealToImprove' | 'foodStyles'>,
-): string {
-  const meaningVerb = draft.healthDefinition ? MEANING_VERB[draft.healthDefinition] : MEANING_VERB.something_else;
-  const meal = mealPlural(draft.mealToImprove);
-  const barrier = draft.healthBarrier ? BARRIER_CLAUSE[draft.healthBarrier] : BARRIER_CLAUSE.something_else;
-  const style = draft.foodStyles.length ? STYLE_CLAUSE[draft.foodStyles[0]] : 'choose recipes that still match the food you enjoy';
-  return `We’ll help you ${meaningVerb} ${meal}, ${barrier}, and ${style}.`;
+export function solutionHeadline(definition: HealthDefinitionId | null, meal: MealToImproveId | null, priority: MealPriorityId | null): string {
+  const goal = definition ? HEALTH_DEFINITION_LABELS[definition] : 'A healthier routine';
+  return `${goal}, starting with easier homemade ${mealPlural(meal)}.`;
 }
-
-/** Screen 14 — the three plan-summary rows. */
-export function planSummaryRows(
-  draft: Pick<HealthDraft, 'healthDefinition' | 'healthBarrier' | 'mealToImprove' | 'foodStyles'>,
-): { id: string; label: string; value: string }[] {
-  const rows: { id: string; label: string; value: string }[] = [];
-  if (draft.healthDefinition) rows.push({ id: 'meaning', label: 'Healthier means', value: HEALTH_DEFINITION_LABELS[draft.healthDefinition] });
-  if (draft.healthBarrier) rows.push({ id: 'barrier', label: 'Biggest barrier', value: HEALTH_BARRIER_LABELS[draft.healthBarrier] });
-  if (draft.mealToImprove) rows.push({ id: 'meal', label: 'Starting with', value: MEAL_TO_IMPROVE_LABELS[draft.mealToImprove] });
-  else if (draft.foodStyles.length) rows.push({ id: 'style', label: 'Food you enjoy', value: draft.foodStyles.map((s) => FOOD_STYLE_LABELS[s]).join(', ') });
-  return rows.slice(0, 3);
+export function solutionSupport(meal: MealToImproveId | null, priority: MealPriorityId | null): string {
+  const priorityAction = priority ? PRIORITY_ACTION[priority] : 'fitting your routine';
+  return `Scan or describe a dish. Okyo gives you the recipe, then helps make ${mealSingular(meal)} easier while ${priorityAction}.`;
+}
+const STYLE_TAIL: Record<FoodStyleId, string> = {
+  comfort_food: 'still comfort food', fresh_colorful: 'with fresh, colorful ingredients',
+  high_protein: 'with protein at the center', quick_simple: 'while keeping it quick and simple',
+  international: 'with global flavors in the mix', a_bit_of_everything: 'with plenty of variety',
+};
+function commitmentStart(commitment: HealthCommitmentId | null, meal: MealToImproveId | null): string {
+  const singular = meal && meal !== 'it_varies' ? meal : 'meal';
+  const plural = mealPlural(meal);
+  if (commitment === 'most_meals_healthier') return `more homemade ${plural}`;
+  if (commitment === 'one_meal_daily') return `one easier homemade ${singular} a day`;
+  if (commitment === 'few_meals_weekly') return `a few easier homemade ${plural} each week`;
+  if (commitment === 'small_changes_days') return `small changes to homemade ${plural} a few days a week`;
+  if (commitment === 'one_change_at_a_time') return `one easier homemade ${singular} at a time`;
+  return `easier homemade ${plural}`;
+}
+export function revealSummary(draft: Pick<HealthDraft, 'healthDefinition' | 'mealToImprove' | 'foodStyles' | 'flexibleCommitment'>): string {
+  const start = commitmentStart(draft.flexibleCommitment, draft.mealToImprove);
+  const goal = draft.healthDefinition ? HEALTH_DEFINITION_LABELS[draft.healthDefinition].toLowerCase() : 'a healthier routine';
+  const style = draft.foodStyles.length ? STYLE_TAIL[draft.foodStyles[0]] : 'around the food you enjoy';
+  return `Start with ${start} — ${goal}, ${style}.`;
+}
+export function planSummaryRows(draft: HealthDraft): { id: string; label: string; value: string }[] {
+  return [
+    { id: 'problem', label: 'Your main challenge', value: draft.healthProblem ? HEALTH_PROBLEM_LABELS[draft.healthProblem] : 'Not yet specified' },
+    { id: 'barrier', label: 'What gets in the way', value: draft.healthBarrier ? HEALTH_BARRIER_LABELS[draft.healthBarrier] : 'Not yet specified' },
+    { id: 'meal', label: 'Hardest meal', value: draft.mealToImprove ? MEAL_TO_IMPROVE_LABELS[draft.mealToImprove] : 'Not yet specified' },
+    { id: 'goal', label: 'Your goal', value: draft.healthDefinition ? HEALTH_DEFINITION_LABELS[draft.healthDefinition] : 'Not yet specified' },
+    { id: 'priority', label: 'What matters most', value: draft.mealPriority ? MEAL_PRIORITY_LABELS[draft.mealPriority] : 'Not yet specified' },
+    { id: 'pace', label: 'Starting pace', value: draft.flexibleCommitment ? HEALTH_COMMITMENT_LABELS[draft.flexibleCommitment] : 'Not yet specified' },
+  ];
 }

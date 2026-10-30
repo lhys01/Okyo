@@ -7,6 +7,7 @@ import type { ScanImageMetadata } from '../../api/types';
 import { ScanEntryOptions } from '../../components/ScanEntryOptions';
 import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
 import { MAX_MEAL_DESCRIPTION_LENGTH, validateMealDescription } from '../../utils/mealDescription';
+import { requestPermissionWithNotice } from '../../privacy/requestPermissionWithNotice';
 import { getScanImageProcessingErrorMessage, preparePickedImage } from '../../utils/scanImageProcessing';
 import { OnboardingBackButton } from '../components/OnboardingBackButton';
 import { ONBOARDING_BACK_ROW_HEIGHT, ONBOARDING_BACK_ROW_TOP_GAP, ONBOARDING_HORIZONTAL_PADDING } from '../components/onboardingLayout';
@@ -53,10 +54,14 @@ export function FirstScanEntryScreen({ priorityEcho, description, onDescriptionC
     try {
       onMethodSelected('camera');
       onCameraPermissionPrompted?.();
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      onCameraPermissionResult?.(permission.granted);
-      if (!permission.granted) {
-        setError('Camera access is needed to take a photo. You can enable it in Settings, or use Upload a photo or Describe a dish instead.');
+      const permission = await requestPermissionWithNotice(
+        'camera',
+        ImagePicker.getCameraPermissionsAsync,
+        ImagePicker.requestCameraPermissionsAsync,
+      );
+      onCameraPermissionResult?.(permission === 'granted');
+      if (permission !== 'granted') {
+        if (permission === 'denied') setError('Camera access is needed to take a photo. You can enable it in Settings, or use Upload a photo or Describe a dish instead.');
         return;
       }
       const result = await ImagePicker.launchCameraAsync({ allowsEditing: false, base64: false, mediaTypes: ['images'], quality: 1 });

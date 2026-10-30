@@ -63,7 +63,7 @@ test('production readiness accepts only healthy durable persistence and local pr
     useDatabaseForTests({
       query: async (statement) => statement.includes('WITH probe')
         ? { rows: [{ id: 'probe' }] }
-        : { rows: [{ quota: true, cleanup: true, schema_usage: true, runtime_dml: true, quota_dml: true }] },
+        : { rows: [{ quota: true, cleanup: true, schema_usage: true, runtime_dml: true, quota_dml: true, idea_insert: true }] },
     });
 
     const readiness = await productionReadiness();

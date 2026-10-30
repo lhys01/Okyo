@@ -14,6 +14,10 @@ test('built-in food library images resolve from bundled recipe assets', () => {
   const assets = read('assets/food/index.ts');
   const recipeImages = read('src/utils/recipeImages.ts');
   const recommendationCard = read('src/components/RecommendationCard.tsx');
+  const foodImage = read('src/components/FoodImage.tsx');
+  const resilientImage = read('src/components/ResilientImage.tsx');
+  const library = read('src/screens/LibraryScreen.tsx');
+  const detail = read('src/screens/RecipeDetailScreen.tsx');
 
   const imageFiles = [...assets.matchAll(/require\('\.\/recipes\/([^']+)'\)/g)].map((match) => match[1]);
   assert.ok(imageFiles.length > 0);
@@ -22,10 +26,19 @@ test('built-in food library images resolve from bundled recipe assets', () => {
   }
 
   assert.match(assets, /getFoodLibraryImageAsset/);
+  assert.match(assets, /getFoodLibraryFallbackAsset/);
   assert.match(assets, /recipeId\.startsWith\('rec-\'\) \? foodAssets\.bowl/);
   assert.match(recipeImages, /getFoodLibraryImageAsset/);
   assert.match(recipeImages, /getRecipeImageSource/);
+  assert.match(recipeImages, /getRecipeImageFallbackSource/);
   assert.match(recommendationCard, /imageSource=\{getRecipeImageSource\(recipe\)\}/);
+  assert.match(recommendationCard, /fallbackSource=\{getRecipeImageFallbackSource\(recipe\)\}/);
+  assert.match(foodImage, /normalizeRecipeImageUri/);
+  assert.match(foodImage, /foodAssets\.bowl/);
+  assert.match(foodImage, /assetKind="food"/);
+  assert.match(resilientImage, /disableFallback \? null/);
+  assert.match(library, /disableFallback=\{isUserScanRecipe\(recipe\)\}/);
+  assert.match(detail, /disableFallback=\{isUserScanRecipe\(recipe\)\}/);
 });
 
 test('delete all data removes only the user scan-image directory', () => {

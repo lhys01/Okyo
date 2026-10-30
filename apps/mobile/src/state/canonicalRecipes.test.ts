@@ -171,6 +171,27 @@ test('a successful validated scan creates exactly one canonical recipe and one R
   assert.deepEqual(twice.recentRecipeIds, [recipeId]);
   assert.equal(twice.recipesById[recipeId].recipeId, recipeId);
   assert.equal(twice.recipesById[recipeId].sourceRecipeId, 'provider-spicy-rigatoni');
+  assert.equal(twice.recipesById[recipeId].imageUri, 'file:///documents/okyo-scan-images/meal.jpg');
+  assert.equal(twice.recipesById[recipeId].originalImage?.uri, 'file:///documents/okyo-scan-images/meal.jpg');
+});
+
+test('a user scan without a retained source photo never falls back to the model image', () => {
+  const state = commitSuccessfulScan(getEmptyCanonicalRecipeCollections(), {
+    activeScanSessionId: 'scan-photos-no-image',
+    image: null,
+    recipe: makeRecipe({ imageUri: 'https://example.test/rice-placeholder.jpg', imageUrl: 'https://example.test/rice-placeholder.jpg' }),
+    scan: makeScan(),
+    scanSessionId: 'scan-photos-no-image',
+    selectedMode: 'Normal',
+    source: 'photos',
+    status: 'success',
+  });
+
+  const recipe = state.recipesById['recipe-scan-photos-no-image'];
+  assert.equal(recipe.origin, 'scan');
+  assert.equal(recipe.originalImage, null);
+  assert.equal(recipe.imageUri, undefined);
+  assert.equal(recipe.imageUrl, undefined);
 });
 
 test('stale scan responses cannot replace a newer recipe', () => {
@@ -392,6 +413,7 @@ test('sequential corrections replace one canonical recipe and advance the latest
   const liked = saveCanonicalRecipe(initial, recipeId);
   const grocery = addCanonicalRecipeToGrocery(liked, recipeId);
   const originalImage = grocery.recipesById[recipeId].originalImage;
+  const originalImageUri = grocery.recipesById[recipeId].imageUri;
 
   const firstProviderRecipe = makeRecipe({
     id: 'provider-correction-1',
@@ -460,6 +482,8 @@ test('sequential corrections replace one canonical recipe and advance the latest
   assert.equal(third.recipesById[recipeId].recipeId, recipeId);
   assert.equal(third.recipesById[recipeId].sourceRecipeId, 'provider-correction-3');
   assert.deepEqual(third.recipesById[recipeId].originalImage, originalImage);
+  assert.equal(third.recipesById[recipeId].imageUri, originalImageUri);
+  assert.deepEqual(third.recipesById[recipeId].nutritionEstimate, thirdProviderRecipe.nutritionEstimate);
   assert.deepEqual(third.recentRecipeIds, [recipeId]);
   assert.deepEqual(third.savedRecipeIds, [recipeId]);
   assert.deepEqual(third.groceryRecipeIds, [recipeId]);
@@ -574,12 +598,13 @@ test('screen navigation passes recipeId and Home action order is stable', () => 
   assert.ok(homeSource.indexOf('<WeekStrip') < homeSource.indexOf('<MetricCarousel'));
   assert.ok(homeSource.indexOf('<MetricCarousel') < homeSource.indexOf('Recent dishes'));
   assert.ok(homeSource.indexOf('Recent dishes') < homeSource.indexOf('Today’s ideas'));
-  assert.ok(homeSource.includes('getRecommendationsForMealTime'));
-  assert.ok(homeSource.includes('getMealTimeForHour'));
+  assert.ok(homeSource.includes('getHomeIdeaIdsForLocalHour'));
+  assert.ok(homeSource.includes('setIdeaHour(new Date().getHours())'));
   assert.ok(homeSource.includes('compact'));
   // Home now surfaces exactly two ideas; the rest live behind Explore.
   assert.ok(homeSource.includes('HOME_IDEA_COUNT = 2'));
   assert.ok(homeSource.includes('slice(0, HOME_IDEA_COUNT)'));
-  assert.ok(entrySource.indexOf('label="Take photo"') < entrySource.indexOf('label="Upload photo"'));
-  assert.match(entrySource, /label="Upload photo"[\s\S]*label="Describe a dish"/);
+  const actionModelSource = readFileSync(path.join(srcDir, 'components', 'okyo', 'scanActionSheetModel.ts'), 'utf8');
+  assert.match(actionModelSource, /SCAN_SHEET_ACTIONS = \['Take photo', 'Upload photo', 'Describe a dish'\]/);
+  assert.match(entrySource, /createScanSheetActions/);
 });

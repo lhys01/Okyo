@@ -35,6 +35,11 @@ function analyticsPath(): string {
 }
 
 function isEnabled(): boolean {
+  // JSONL files on an application container are not a production analytics
+  // transport and multiply with every replica. Require an explicit opt-in.
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.EPICURE_ANALYTICS === 'true';
+  }
   return process.env.EPICURE_ANALYTICS !== 'off';
 }
 

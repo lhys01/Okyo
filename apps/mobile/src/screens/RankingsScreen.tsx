@@ -3,7 +3,6 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
 import { BadgePill, PrimaryButton, ScreenContainer, colors, sharedStyles } from '../components/OkyoUI';
 import { mockBadges, type Badge, type LeaderboardEntry } from '../mocks';
@@ -72,44 +71,12 @@ function getBadgeHint(badge: Badge, context: {
   }
 }
 
-function getFallbackEntries(section: string): LeaderboardEntry[] {
-  const entriesBySection: Record<string, LeaderboardEntry[]> = {
-    'Biggest Saver This Week': [
-      { id: 'mock-saver-1', rank: 1, displayName: 'Maya', category: section, value: '$92 saved', xp: 420 },
-      { id: 'mock-saver-2', rank: 2, displayName: 'Jordan', category: section, value: '$81 saved', xp: 390 },
-    ],
-    'Best Match Score': [
-      { id: 'mock-match-1', rank: 1, displayName: 'Avery', category: section, value: '9.4/10 match', xp: 360 },
-      { id: 'mock-match-2', rank: 2, displayName: 'Sam', category: section, value: '9.1/10 match', xp: 330 },
-    ],
-    'Most Dupes Completed': [
-      { id: 'mock-dupes-1', rank: 1, displayName: 'Riley', category: section, value: '7 dupes', xp: 410 },
-      { id: 'mock-dupes-2', rank: 2, displayName: 'Noah', category: section, value: '5 dupes', xp: 305 },
-    ],
-    'Best Savings Recipe': [
-      { id: 'mock-budget-1', rank: 1, displayName: 'Priya', category: section, value: '$34 saved', xp: 300 },
-      { id: 'mock-budget-2', rank: 2, displayName: 'Kai', category: section, value: '$28 saved', xp: 260 },
-    ],
-    'Wellness Challenge': [
-      { id: 'mock-healthy-1', rank: 1, displayName: 'Lena', category: section, value: '8.8/10 healthy', xp: 285 },
-      { id: 'mock-healthy-2', rank: 2, displayName: 'Theo', category: section, value: '8.4/10 healthy', xp: 245 },
-    ],
-    'Rising Cook': [
-      { id: 'mock-rising-1', rank: 1, displayName: 'Morgan', category: section, value: '+140 XP', xp: 270 },
-      { id: 'mock-rising-2', rank: 2, displayName: 'Jess', category: section, value: '+120 XP', xp: 240 },
-    ],
-  };
-
-  return entriesBySection[section] ?? [];
-}
-
 export function RankingsScreen() {
   const navigation = useNavigation<RankingsNavigation>();
   const xp = useOkyoStore((state) => state.xp);
   const unlockedBadges = useOkyoStore((state) => state.unlockedBadges);
   const recentBadgeUnlock = useOkyoStore((state) => state.recentBadgeUnlock);
   const clearRecentBadgeUnlock = useOkyoStore((state) => state.clearRecentBadgeUnlock);
-  const leaderboardEntries = useOkyoStore((state) => state.leaderboardEntries);
   const recipesById = useOkyoStore((state) => state.recipesById);
   const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
   const completedChallenges = useOkyoStore((state) => state.completedChallenges);
@@ -117,7 +84,6 @@ export function RankingsScreen() {
   const didTrackView = useRef(false);
   const safeXp = typeof xp === 'number' && Number.isFinite(xp) ? xp : 0;
   const safeUnlockedBadges = Array.isArray(unlockedBadges) ? unlockedBadges : [];
-  const safeLeaderboardEntries = Array.isArray(leaderboardEntries) ? leaderboardEntries : [];
   const safeSavedRecipes = resolveCanonicalRecipes(recipesById, savedRecipeIds);
   const safeCompletedChallenges = Array.isArray(completedChallenges) ? completedChallenges : [];
   const safeTotalMoneySaved = typeof totalMoneySaved === 'number' && Number.isFinite(totalMoneySaved)
@@ -164,10 +130,7 @@ export function RankingsScreen() {
     uiLog('RankingsScreen', 'enter', { xp: safeXp });
 
     didTrackView.current = true;
-    track(analyticsEvents.LEADERBOARD_VIEWED, {
-      screen: 'RankingsScreen',
-      xpAmount: safeXp,
-    });
+
   }, [safeXp]);
 
   const getUserValueForSection = (section: string) => {
@@ -196,9 +159,9 @@ export function RankingsScreen() {
 
       {!hasUserActivity ? (
         <View style={styles.lowActivityCard}>
-          <Text style={styles.lowActivityTitle}>Your ranking is warming up</Text>
+          <Text style={styles.lowActivityTitle}>Your cooking progress starts here</Text>
           <Text style={styles.lowActivityText}>
-            Scan, save, export a grocery list, or finish a Dupe Challenge to start earning XP. Mock leaderboards are still shown below.
+            Scan, save, export a grocery list, or finish a cooking challenge to start earning XP.
           </Text>
         </View>
       ) : null}
@@ -246,13 +209,12 @@ export function RankingsScreen() {
 
       <View style={styles.shareAction}>
         <PrimaryButton onPress={() => { uiLog('RankingsScreen', 'share_ranking'); navigation.navigate('ShareCardPreviewScreen', { cardType: 'ranking' }); }}>
-          Share Ranking
+          Share Progress
         </PrimaryButton>
       </View>
 
+      <Text accessibilityRole="text" style={styles.description}>Your cooking progress is calculated from your activity in Okyo.</Text>
       {leaderboardSections.map((section) => {
-        const seededEntries = safeLeaderboardEntries.filter((entry) => entry?.category === section);
-        const entries = seededEntries.length > 0 ? seededEntries : getFallbackEntries(section);
         const userEntry: LeaderboardEntry = {
           id: `you-${section}`,
           rank: 3,
@@ -265,9 +227,9 @@ export function RankingsScreen() {
         return (
           <View key={section} style={styles.leaderboardSection}>
             <Text style={styles.sectionTitle}>{section}</Text>
-            {[...entries.slice(0, 2), userEntry].map((entry) => (
+            {[userEntry].map((entry) => (
               <View key={entry.id} style={[styles.leaderRow, entry.displayName === 'You' ? styles.userRow : null]}>
-                <Text style={styles.rank}>#{entry.rank}</Text>
+                <Text style={styles.rank}>•</Text>
                 <View style={styles.leaderInfo}>
                   <Text style={styles.leaderName}>{entry.displayName}</Text>
                   <Text style={styles.leaderValue}>{entry.value}</Text>

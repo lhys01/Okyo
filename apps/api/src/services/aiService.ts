@@ -4,6 +4,8 @@ import { z } from 'zod';
 
 import { getAiConfig } from '../config/aiConfig.js';
 import type { AiConfig } from '../config/aiConfig.js';
+import { getRuntimeSafetyConfig } from '../config/runtimeSafety.js';
+import { getRequestContext } from '../observability/requestContext.js';
 import type {
   DetectedComponent,
   Difficulty,
@@ -73,7 +75,7 @@ import {
   storeGeneratedRecipeRevision,
   storeAnalysisContext,
   StaleRecipeRevisionError,
-} from '../store.js';
+} from '../persistence/aiState.js';
 
 // Bump when the vision/recipe prompt or post-processing pipeline changes substantially.
 // Any cached scan result with a different version is automatically stale.
@@ -86,18 +88,52 @@ type ScanCacheEntry =
   | { kind: 'rejection'; error: FoodRejectionError; expiresAt: number };
 // ponytail: in-memory only; add Redis/disk when multi-process deployment matters
 const scanCache = new Map<string, ScanCacheEntry>();
+const scanInFlight = new Map<string, { ownerKey?: string; promise: Promise<AiScanSuccessResult> }>();
 type CorrectionRequestOutcome =
   | { kind: 'success'; result: AiScanSuccessResult | null }
   | { kind: 'failure'; error: unknown };
-const correctionRequestResults = new Map<string, { outcome: CorrectionRequestOutcome; expiresAt: number }>();
-const correctionRequestInFlight = new Map<string, Promise<AiScanSuccessResult | null>>();
+const correctionRequestResults = new Map<string, { ownerKey?: string; outcome: CorrectionRequestOutcome; expiresAt: number }>();
+const correctionRequestInFlight = new Map<string, { ownerKey?: string; promise: Promise<AiScanSuccessResult | null> }>();
 const CORRECTION_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 const RECIPE_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 type RecipeRequestOutcome =
   | { kind: 'success'; result: AiScanSuccessResult }
   | { kind: 'failure'; error: unknown };
-const recipeRequestResults = new Map<string, { outcome: RecipeRequestOutcome; expiresAt: number }>();
-const recipeRequestInFlight = new Map<string, Promise<AiScanSuccessResult>>();
+const recipeRequestResults = new Map<string, { ownerKey?: string; outcome: RecipeRequestOutcome; expiresAt: number }>();
+const recipeRequestInFlight = new Map<string, { ownerKey?: string; promise: Promise<AiScanSuccessResult> }>();
+
+function currentOwnerKey(): string | undefined {
+  return getRequestContext()?.ownerKey;
+}
+
+function ownerScopedCachePrefix(ownerKey = currentOwnerKey()): string {
+  return `${ownerKey ? createHash('sha256').update(ownerKey).digest('hex') : 'shared'}:`;
+}
+
+function ownerScopedRequestKey(requestId: string, ownerKey = currentOwnerKey()): string {
+  return `${ownerScopedCachePrefix(ownerKey)}${requestId}`;
+}
+
+/** Clears short-lived result and in-flight caches owned by a deleted account. */
+export async function clearUserAiCaches(userId: string): Promise<void> {
+  const ownerKey = `user:${userId}`;
+  const prefix = ownerScopedCachePrefix(ownerKey);
+  const failures: unknown[] = [];
+  const attempt = (operation: () => void) => {
+    try { operation(); } catch (error) { failures.push(error); }
+  };
+  for (const key of scanCache.keys()) if (key.startsWith(prefix)) attempt(() => scanCache.delete(key));
+  for (const [key, entry] of scanInFlight) if (key.startsWith(prefix) || entry.ownerKey === ownerKey) attempt(() => scanInFlight.delete(key));
+  for (const [key, entry] of recipeRequestResults) if (entry.ownerKey === ownerKey) attempt(() => recipeRequestResults.delete(key));
+  for (const [key, entry] of recipeRequestInFlight) if (entry.ownerKey === ownerKey) attempt(() => recipeRequestInFlight.delete(key));
+  for (const [key, entry] of correctionRequestResults) if (entry.ownerKey === ownerKey) attempt(() => correctionRequestResults.delete(key));
+  for (const [key, entry] of correctionRequestInFlight) if (entry.ownerKey === ownerKey) attempt(() => correctionRequestInFlight.delete(key));
+  try {
+    const { clearUserRecipeCache } = await import('./openRouterProvider.js');
+    clearUserRecipeCache(userId);
+  } catch (error) { failures.push(error); }
+  if (failures.length > 0) throw new Error('User AI cache cleanup did not fully complete.');
+}
 
 function createUniqueScanSourceRecipe(recipe: Recipe, scanId: string): Recipe {
   return {
@@ -135,8 +171,25 @@ function materializeCachedScanResult(cached: AiScanSuccessResult): AiScanSuccess
   };
 }
 
-function getScanCacheKey(dataUrl: string, mode: string): string {
-  return createHash('sha1').update(dataUrl).digest('hex') + ':' + mode + ':' + RECIPE_PIPELINE_VERSION;
+function getScanCacheKey(
+  dataUrl: string,
+  mode: string,
+  preferences: RecipeGenerationPreferences | undefined,
+): string {
+  // A recipe cache may never cross a dietary or goal constraint. The input is
+  // one-way hashed so preference text is not retained as a cache key.
+  const preferenceFingerprint = createHash('sha256')
+    .update(JSON.stringify(preferences ?? {}))
+    .digest('hex');
+  return createHash('sha256')
+    .update(dataUrl)
+    .update(':')
+    .update(mode)
+    .update(':')
+    .update(preferenceFingerprint)
+    .update(':')
+    .update(RECIPE_PIPELINE_VERSION)
+    .digest('hex');
 }
 
 const recipeModeSchema = z.enum(['Normal', 'Lighter', 'Healthier', 'More Protein']);
@@ -248,8 +301,8 @@ export const foodImageAnalysisSchema = z.object({
   // recipe generation uses these directly without a separate Epicure API call.
   epicureSuggestions: z.object({
     complementaryIngredients: z.array(z.string()).default([]),
-    healthySubstitutions: z.record(z.string()).default({}),
-    budgetSubstitutions: z.record(z.string()).default({}),
+    healthySubstitutions: z.record(z.string(), z.string()).default({}),
+    budgetSubstitutions: z.record(z.string(), z.string()).default({}),
   }).optional(),
   mealDescription: z.string().optional(),
   anatomy: z.object({
@@ -541,7 +594,6 @@ export async function generateRecipeFromDish(
       if (qualityIssues.length > 0) {
         console.warn('[recipe-quality]', JSON.stringify({
           source: input.analysis.mealDescription ? 'describe_idea' : 'scan',
-          dishName: input.analysis.dishName,
           softIssues: qualityIssues,
           delivered: true,
         }));
@@ -551,7 +603,7 @@ export async function generateRecipeFromDish(
         recipe: normalizedRecipe,
       };
       // Persist only the final post-repair ingredient list.
-      if (input.storeResult !== false) storeGeneratedRecipe(normalizedRecipe);
+      if (input.storeResult !== false) await storeGeneratedRecipe(normalizedRecipe);
     }
 
     return finalResult;
@@ -587,7 +639,6 @@ function recordRecipeQualityForResult(args: {
 
   void recordRecipeQuality({
     model: config.openRouterTextModel,
-    dish: analysis.dishName ?? 'unknown',
     category: analysis.broadDishCategory ?? 'unknown',
     score: finalScore,
     initialScore,
@@ -607,7 +658,7 @@ function recordRecipeQualityForResult(args: {
 export async function enrichRecipeCoaching(
   recipeId: string,
 ): Promise<{ structuredSteps: RecipeStep[] } | null> {
-  const recipe = getGeneratedRecipe(recipeId);
+  const recipe = await getGeneratedRecipe(recipeId);
   if (!recipe?.structuredSteps?.length) {
     return null;
   }
@@ -641,7 +692,23 @@ export function estimateIngredientCosts(input: EstimateIngredientCostsInput): In
 }
 
 export async function createAiScan(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
-  return runWithOpenRouterMetrics(() => createAiScanWithMetrics(input));
+  const scanCacheKey = input.image?.dataUrl
+    ? `${ownerScopedCachePrefix()}${getScanCacheKey(input.image.dataUrl, input.mode, input.preferences)}`
+    : null;
+  const existing = scanCacheKey ? scanInFlight.get(scanCacheKey) : undefined;
+  if (existing) {
+    // Simultaneous retries join the original paid work rather than duplicate it.
+    return existing.promise.then((result) => materializeCachedScanResult(result));
+  }
+
+  const work = runWithOpenRouterMetrics(() => createAiScanWithMetrics(input));
+  if (!scanCacheKey) return work;
+  scanInFlight.set(scanCacheKey, { ownerKey: currentOwnerKey(), promise: work });
+  try {
+    return await work;
+  } finally {
+    scanInFlight.delete(scanCacheKey);
+  }
 }
 
 export async function analyzePreparedDish(
@@ -681,14 +748,13 @@ async function analyzePreparedDishWithMetrics(
     passed: rejection === null,
     scanState: analysis.scanState,
     confidence: analysis.confidence,
-    dishName: analysis.dishName,
     visionModel: config.openRouterVisionModel,
     epicureSkipped: Boolean(rejection),
     recipeSkipped: true,
   });
   if (rejection) throw rejection;
 
-  const stored = storeAnalysisContext({
+  const stored = await storeAnalysisContext({
     analysis,
     config,
     mode: input.mode,
@@ -713,17 +779,20 @@ export async function generateRecipeForAnalysis(
   input: GenerateRecipeForAnalysisInput,
 ): Promise<AiScanSuccessResult> {
   const requestId = input.recipeRequestId;
-  const completed = requestId ? recipeRequestResults.get(requestId) : undefined;
+  const ownerKey = currentOwnerKey();
+  const requestKey = requestId ? ownerScopedRequestKey(requestId, ownerKey) : undefined;
+  const completed = requestKey ? recipeRequestResults.get(requestKey) : undefined;
   if (completed && completed.expiresAt > Date.now()) {
     if (completed.outcome.kind === 'failure') throw completed.outcome.error;
     return completed.outcome.result;
   }
-  if (completed) recipeRequestResults.delete(requestId!);
+  if (completed) recipeRequestResults.delete(requestKey!);
 
-  const inFlight = requestId ? recipeRequestInFlight.get(requestId) : undefined;
-  if (inFlight) return inFlight;
+  const inFlight = requestKey ? recipeRequestInFlight.get(requestKey) : undefined;
+  if (inFlight) return inFlight.promise;
 
-  const stored = getAnalysisContext(input.analysisId);
+  const work = (async () => {
+  const stored = await getAnalysisContext(input.analysisId);
   if (stored.status !== 'found') {
     if (stored.status === 'expired' || isUuid(input.analysisId)) {
       throw new AnalysisExpiredError();
@@ -731,7 +800,7 @@ export async function generateRecipeForAnalysis(
     throw new AnalysisNotFoundError();
   }
 
-  const work = runWithOpenRouterMetrics(() => buildScanResultFromAnalysis(stored.context.analysis, {
+  return runWithOpenRouterMetrics(() => buildScanResultFromAnalysis(stored.context.analysis, {
     config: stored.context.config,
     mode: input.mode ?? stored.context.mode,
     source: stored.context.source,
@@ -747,24 +816,27 @@ export async function generateRecipeForAnalysis(
     scanStartedAt: stored.context.scanStartedAt,
     scanCacheKey: null,
   }));
+  })();
   if (!requestId) return work;
 
-  recipeRequestInFlight.set(requestId, work);
+  recipeRequestInFlight.set(requestKey!, { ownerKey, promise: work });
   try {
     const result = await work;
-    recipeRequestResults.set(requestId, {
+    recipeRequestResults.set(requestKey!, {
+      ownerKey,
       outcome: { kind: 'success', result },
       expiresAt: Date.now() + RECIPE_IDEMPOTENCY_TTL_MS,
     });
     return result;
   } catch (error) {
-    recipeRequestResults.set(requestId, {
+    recipeRequestResults.set(requestKey!, {
+      ownerKey,
       outcome: { kind: 'failure', error },
       expiresAt: Date.now() + RECIPE_IDEMPOTENCY_TTL_MS,
     });
     throw error;
   } finally {
-    recipeRequestInFlight.delete(requestId);
+    recipeRequestInFlight.delete(requestKey!);
   }
 }
 
@@ -801,7 +873,7 @@ export async function createAiTextRecipe(input: { mealDescription: string; mode:
   if (!generated.recipe) throw new Error('RECIPE_MISSING: Recipe object was not generated');
   const scanId = `scan-text-${Date.now()}-${randomUUID()}`;
   const recipe = createUniqueScanSourceRecipe(generated.recipe, scanId);
-  storeGeneratedRecipe(recipe);
+  await storeGeneratedRecipe(recipe);
   const costEstimate = estimateIngredientCosts({ analysis, recipe });
   const scan: ScanResult = {
     id: scanId, dishName, bestGuessDishName: dishName, bestGuessNote: 'Based on your description; check the ingredients before cooking.',
@@ -844,14 +916,16 @@ export async function createAiRecipeCorrection(input: {
   goalContext?: RecipeGenerationPreferences['goalContext'];
 }): Promise<AiScanSuccessResult | null> {
   const requestId = input.diagnostics.correctionRequestId;
-  const completed = requestId ? correctionRequestResults.get(requestId) : undefined;
+  const ownerKey = currentOwnerKey();
+  const requestKey = requestId ? ownerScopedRequestKey(requestId, ownerKey) : undefined;
+  const completed = requestKey ? correctionRequestResults.get(requestKey) : undefined;
   if (completed && completed.expiresAt > Date.now()) {
     if (completed.outcome.kind === 'failure') throw completed.outcome.error;
     return completed.outcome.result;
   }
-  if (completed) correctionRequestResults.delete(requestId!);
-  const inFlight = requestId ? correctionRequestInFlight.get(requestId) : undefined;
-  if (inFlight) return inFlight;
+  if (completed) correctionRequestResults.delete(requestKey!);
+  const inFlight = requestKey ? correctionRequestInFlight.get(requestKey) : undefined;
+  if (inFlight) return inFlight.promise;
 
   const work = runWithOpenRouterMetrics(async () => {
     try {
@@ -861,22 +935,24 @@ export async function createAiRecipeCorrection(input: {
     }
   });
   if (!requestId) return work;
-  correctionRequestInFlight.set(requestId, work);
+  correctionRequestInFlight.set(requestKey!, { ownerKey, promise: work });
   try {
     const result = await work;
-    correctionRequestResults.set(requestId, {
+    correctionRequestResults.set(requestKey!, {
+      ownerKey,
       outcome: { kind: 'success', result },
       expiresAt: Date.now() + CORRECTION_IDEMPOTENCY_TTL_MS,
     });
     return result;
   } catch (error) {
-    correctionRequestResults.set(requestId, {
+    correctionRequestResults.set(requestKey!, {
+      ownerKey,
       outcome: { kind: 'failure', error },
       expiresAt: Date.now() + CORRECTION_IDEMPOTENCY_TTL_MS,
     });
     throw error;
   } finally {
-    correctionRequestInFlight.delete(requestId);
+    correctionRequestInFlight.delete(requestKey!);
   }
 }
 
@@ -896,7 +972,7 @@ async function createAiRecipeCorrectionWithMetrics(input: {
   dietaryDislikes?: string[];
   goalContext?: RecipeGenerationPreferences['goalContext'];
 }): Promise<AiScanSuccessResult | null> {
-  const sourceMetadata = getGeneratedRecipeRevisionMetadata(input.recipeId);
+  const sourceMetadata = await getGeneratedRecipeRevisionMetadata(input.recipeId);
   input.diagnostics.canonicalRecipeId = input.canonicalRecipeId;
   input.diagnostics.scanSessionId = input.scanSessionId;
   input.diagnostics.latestStoredRevisionId = input.recipeId;
@@ -913,7 +989,7 @@ async function createAiRecipeCorrectionWithMetrics(input: {
 
   let existingRecipe: Recipe | null;
   try {
-    existingRecipe = getCurrentGeneratedRecipe(input.recipeId);
+    existingRecipe = await getCurrentGeneratedRecipe(input.recipeId);
   } catch (error) {
     if (error instanceof StaleRecipeRevisionError) {
       input.diagnostics.correctionKind = 'stale_race';
@@ -926,8 +1002,8 @@ async function createAiRecipeCorrectionWithMetrics(input: {
     // request routed to another instance must not make a locally persisted
     // mobile recipe impossible to customize, so rehydrate this exact revision
     // from the validated request snapshot.
-    storeGeneratedRecipe({ ...input.currentRecipe, id: input.recipeId });
-    existingRecipe = getCurrentGeneratedRecipe(input.recipeId);
+    await storeGeneratedRecipe({ ...input.currentRecipe, id: input.recipeId });
+    existingRecipe = await getCurrentGeneratedRecipe(input.recipeId);
   }
   if (!existingRecipe) return null;
 
@@ -981,7 +1057,7 @@ async function createAiRecipeCorrectionWithMetrics(input: {
 
   const scanId = existingRecipe.scanResultId;
   const costEstimate = estimateIngredientCosts({ analysis, recipe });
-  const revision = storeGeneratedRecipeRevision(input.recipeId, recipe);
+  const revision = await storeGeneratedRecipeRevision(input.recipeId, recipe);
   recipe = revision.recipe;
   input.diagnostics.generatedRevisionId = recipe.id;
   input.diagnostics.parentRevisionId = revision.parentRevisionId;
@@ -1229,7 +1305,7 @@ async function buildScanResultFromAnalysis(
 
   const scanId = `scan-${Date.now()}-${randomUUID()}`;
   const recipe = createUniqueScanSourceRecipe(generatedRecipe.recipe, scanId);
-  storeGeneratedRecipe(recipe);
+  await storeGeneratedRecipe(recipe);
 
   const costEstimate = estimateIngredientCosts({ analysis, recipe });
   const usedOpenRouterAnalysis = analysis.notes.includes('OpenRouter test output; verify before using.');
@@ -1288,7 +1364,6 @@ async function buildScanResultFromAnalysis(
   logFinalScanResult(result);
 
   console.log('[scan_timing]', {
-    dish: analysis.dishName,
     scanState: analysis.scanState,
     visionMs: context.visionMs,
     recipeMs,
@@ -1300,13 +1375,27 @@ async function buildScanResultFromAnalysis(
   });
 
   if (context.scanCacheKey) {
-    scanCache.set(context.scanCacheKey, {
+    putScanCache(context.scanCacheKey, {
       kind: 'success',
       result,
       expiresAt: Date.now() + SCAN_CACHE_TTL_MS,
     });
   }
   return result;
+}
+
+function putScanCache(key: string, value: ScanCacheEntry): void {
+  const now = Date.now();
+  for (const [existingKey, entry] of scanCache) {
+    if (entry.expiresAt <= now) scanCache.delete(existingKey);
+  }
+  const maxEntries = getRuntimeSafetyConfig().maxInMemoryScanCacheEntries;
+  while (scanCache.size >= maxEntries) {
+    const oldest = scanCache.keys().next().value;
+    if (oldest === undefined) break;
+    scanCache.delete(oldest);
+  }
+  scanCache.set(key, value);
 }
 
 async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<AiScanSuccessResult> {
@@ -1364,7 +1453,7 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
   // without re-running vision or recipe generation. Only keyed when a real dataUrl
   // is present; placeholder / URI-only scans fall through to live generation.
   const scanCacheKey = input.image?.dataUrl
-    ? getScanCacheKey(input.image.dataUrl, input.mode)
+    ? `${ownerScopedCachePrefix()}${getScanCacheKey(input.image.dataUrl, input.mode, input.preferences)}`
     : null;
   if (scanCacheKey) {
     const cached = scanCache.get(scanCacheKey);
@@ -1372,7 +1461,7 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
       console.log('[scan_cache]', { hit: true, mode: input.mode, keyPrefix: scanCacheKey.slice(0, 8), ttl: 'valid' });
       if (cached.kind === 'success') {
         const result = materializeCachedScanResult(cached.result);
-        if (result.recipe) storeGeneratedRecipe(result.recipe);
+        if (result.recipe) await storeGeneratedRecipe(result.recipe);
         return result;
       }
       throw cached.error;
@@ -1399,7 +1488,6 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
       visible: foodDrinkVisible,
       scanState: analysis.scanState,
     });
-    logScanDebug('api_scan_first_dish_name', { dishName: analysis.dishName });
     logScanDebug('api_scan_first_confidence', { confidence: analysis.confidence });
 
     // Hard food gate: reject non-food/unclear images before Epicure or recipe generation.
@@ -1409,14 +1497,12 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
       passed: foodGatePassed,
       scanState: analysis.scanState,
       confidence: analysis.confidence,
-      dishName: analysis.dishName,
       visionModel: config.openRouterVisionModel,
       epicureSkipped: !foodGatePassed,
       recipeSkipped: !foodGatePassed,
     });
     if (rejection) {
     console.log('[scan_timing]', {
-      dish: analysis.dishName,
       scanState: analysis.scanState,
       visionMs,
       recipeMs: 0,
@@ -1428,7 +1514,7 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
       rejected: rejection.rejectionType,
     });
       if (scanCacheKey) {
-        scanCache.set(scanCacheKey, { kind: 'rejection', error: rejection, expiresAt: Date.now() + SCAN_REJECTION_CACHE_TTL_MS });
+        putScanCache(scanCacheKey, { kind: 'rejection', error: rejection, expiresAt: Date.now() + SCAN_REJECTION_CACHE_TTL_MS });
       }
       throw rejection;
     }
@@ -1446,7 +1532,6 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
     });
   } catch (error) {
     // Fail-closed: throw on any provider error. Never return rejected scans.
-    const errorMessage = error instanceof Error ? error.message : String(error);
     console.log('[scan_timing]', {
       providerCallCount: getOpenRouterMetrics().providerCallCount,
       deterministicRepairMs: getOpenRouterMetrics().deterministicRepairMs,
@@ -1457,7 +1542,7 @@ async function createAiScanWithMetrics(input: AnalyzeFoodImageInput): Promise<Ai
     });
     console.error('api_scan_provider_failure', {
       model: config.openRouterVisionModel,
-      errorMessage,
+      errorCategory: error instanceof OpenRouterProviderError ? error.failure.reason : 'unknown',
     });
     throw error;
   }
@@ -2657,18 +2742,17 @@ function getRecipeIngredients(values: string[], analysis: FoodImageAnalysis, mod
     ? simpleNormalized.slice(0, 8)
     : simpleNormalized;
   console.log('[ingredient_quality]', {
-    dish: analysis.dishName,
     mode,
     beforeCount: beforeNames.length,
     afterCount: finalList.length,
-    added: finalList
+    addedCount: finalList
       .map((ing) => ing.name)
-      .filter((name) => !beforeNames.some((beforeName) => ingredientsMatch(beforeName, name))),
-    modified: finalList
+      .filter((name) => !beforeNames.some((beforeName) => ingredientsMatch(beforeName, name))).length,
+    modifiedCount: finalList
       .map((ing) => ing.name)
       .filter((name) =>
         !beforeNames.includes(name) &&
-        beforeNames.some((beforeName) => ingredientsMatch(beforeName, name))),
+        beforeNames.some((beforeName) => ingredientsMatch(beforeName, name))).length,
   });
   return finalList.map((ingredient, index) => ({
     ...ingredient,
@@ -2872,7 +2956,7 @@ function getStructuredSteps(
   const corrected = validateStepPhaseOrder(compressed) ? compressed : correctStepPhaseOrder(compressed);
   if (!validateStepPhaseOrder(corrected)) {
     console.warn('[recipe-validator] phase ordering could not be fully corrected', {
-      dishName: analysis.dishName,
+      issue: 'phase_order',
     });
   }
 
@@ -2888,8 +2972,7 @@ function getStructuredSteps(
   const violations = validateCausality(causalCorrected);
   if (violations.length > 0) {
     console.warn('[recipe-causality] dependency violations after correction', {
-      dishName: analysis.dishName,
-      violations,
+      violationCount: violations.length,
     });
   }
 
@@ -3395,12 +3478,11 @@ function logCoachingTrends(data: {
   console.log('[recipe-quality] coaching trends', {
     model: data.model,
     category: data.category,
-    dish: data.dishName,
     initialScore: data.initialScore,
     finalScore: data.finalScore,
     delta: delta > 0 ? `+${delta}` : String(delta),
     repairApplied: data.repairApplied,
-    ...(data.weakFieldTypes?.length ? { weakFieldTypes: [...new Set(data.weakFieldTypes)] } : {}),
+    weakFieldCount: data.weakFieldTypes?.length ?? 0,
   });
 }
 
@@ -5138,11 +5220,13 @@ function auditStepCoachingQuality(
   recipeIngredients?: string[],
 ): CoachingWarningResult {
   const result = collectV1RecipeWarnings(steps, analysis, dishName, recipeIngredients);
-  for (const { tag, ctx } of result.warnings) {
-    console.warn(tag, ctx);
+  if (process.env.NODE_ENV !== 'production') {
+    for (const { tag, ctx } of result.warnings) {
+      console.warn(tag, ctx);
+    }
   }
   const summaryLines = [
-    `[recipe-quality] Recipe Quality Summary — ${dishName}`,
+    '[recipe-quality] Recipe Quality Summary',
     `  Score: ${result.score}/100 (${steps.length} steps)`,
   ];
   if (result.totalWarnings > 0) {
@@ -5187,9 +5271,6 @@ function getMatchScoreFromConfidence(confidence: number) {
 
 function logFinalScanResult(result: AiScanSuccessResult) {
   const hasFoodEvidence = hasScanFoodEvidence(result.scan, result.recipe);
-  logScanDebug('api_scan_final_dish_name', {
-    dishName: result.scan.dishName,
-  });
   logScanDebug('api_scan_final_has_recipe', {
     hasRecipe: Boolean(result.recipe),
   });
@@ -5198,10 +5279,8 @@ function logFinalScanResult(result: AiScanSuccessResult) {
   logScanDebug('api_scan_final_response', {
     status: 'success',
     scanState: result.scan.scanState,
-    dishName: result.scan.dishName,
     hasRecipe: Boolean(result.recipe),
     hasFoodEvidence,
-    fallbackReason: result.fallbackReason,
     uploadedImage: result.uploadedImage,
   });
 }
@@ -5587,15 +5666,13 @@ async function ensureComponentCoverage(
   if (repairNeeded) {
     if (getOpenRouterMetrics().providerCallCount >= 3) {
       console.warn('[component-coverage] repair skipped_provider_call_cap', {
-        dish: analysis.dishName,
         providerCallCount: getOpenRouterMetrics().providerCallCount,
-        missing: missingPrimaryComponents,
+        missingCount: missingPrimaryComponents.length,
       });
     } else {
     console.log('[component-coverage] repair triggered', {
-      dish: analysis.dishName,
       coveragePercent,
-      missing: missingPrimaryComponents,
+      missingCount: missingPrimaryComponents.length,
     });
     try {
       const repairOutput = await callComponentRepairWithOpenRouter({
@@ -5616,7 +5693,6 @@ async function ensureComponentCoverage(
       repairAddedComponents = repairedRecipe.ingredients.length - recipe.ingredients.length;
     } catch (repairError) {
       console.warn('[component-coverage] repair failed', {
-        dish: analysis.dishName,
         reason: repairError instanceof OpenRouterProviderError ? repairError.failure.reason : 'unknown',
       });
     }
@@ -5629,13 +5705,11 @@ async function ensureComponentCoverage(
   const finalCoveragePercent = finalAssessment.coveragePercent;
 
   void recordPlatterCoverage({
-    dish: analysis.dishName,
     model: config.openRouterTextModel,
     broadDishCategory: analysis.broadDishCategory,
     detectedComponentCount: detected.length,
     generatedComponentCount: generated.length,
     missingComponentCount: missingComponents.length,
-    missingComponentNames: missingComponents,
     coveragePercent,
     finalCoveragePercent,
     repairTriggered: repairNeeded,

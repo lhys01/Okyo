@@ -23,7 +23,7 @@ export function getCostControlConfig(): CostControlConfig {
     scanRateLimitWindowMs: getPositiveInteger(process.env.SCAN_RATE_LIMIT_WINDOW_MS, 60_000),
     scanRateLimitMax: getPositiveInteger(process.env.SCAN_RATE_LIMIT_MAX, 10),
     aiDailyRequestCap: getPositiveInteger(process.env.AI_DAILY_REQUEST_CAP, 200),
-    maxScanImageBytes: getPositiveInteger(process.env.MAX_SCAN_IMAGE_BYTES, 10_000_000),
+    maxScanImageBytes: getPositiveInteger(process.env.MAX_SCAN_IMAGE_BYTES, 2_500_000),
     imageGenEnabled: process.env.IMAGE_GEN_ENABLED === 'true',
     imageGenDailyRequestCap: getPositiveInteger(process.env.IMAGE_GEN_DAILY_REQUEST_CAP, 0),
     fableDailyRequestCap: Math.min(

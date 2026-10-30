@@ -4,8 +4,8 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { analyticsEvents, track } from '../analytics/track';
 import { uiLog } from '../utils/uiDebug';
+import { FitText } from '../components/FitText';
 import {
   BadgePill,
   PrimaryButton,
@@ -122,18 +122,11 @@ export function RestaurantPackDetailScreen() {
 
     didTrackView.current = true;
     if (!pack) {
-      track(analyticsEvents.RESULT_ERROR, {
-        errorMessage: 'Restaurant pack was missing or not found.',
-        packName: packId,
-        screen: 'RestaurantPackDetailScreen',
-      });
+
       return;
     }
 
-    track(analyticsEvents.RESTAURANT_PACK_VIEWED, {
-      packName: pack.name,
-      screen: 'RestaurantPackDetailScreen',
-    });
+
   }, [pack, packId]);
 
   if (!pack) {
@@ -176,13 +169,13 @@ export function RestaurantPackDetailScreen() {
     <ScreenContainer>
       <Text style={styles.kicker}>Discover</Text>
       <Text style={styles.title}>{pack.name}</Text>
-      <Text style={styles.disclaimer}>Curated recipes made for home kitchens.</Text>
+      <Text style={styles.disclaimer}>Example recipes inspired by restaurant dishes. Prices and savings are estimates, not live restaurant prices.</Text>
       <Text style={styles.description}>{getPackDescription(pack.name)}</Text>
 
       <View style={styles.summaryCard}>
         <View>
           <Text style={styles.summaryLabel}>Average savings</Text>
-          <Text style={styles.savings}>{formatCurrency(getAverageSavings(pack))}</Text>
+          <FitText minimumFontScale={0.68} style={styles.savings}>{formatCurrency(getAverageSavings(pack))}</FitText>
         </View>
         <View>
           <Text style={styles.summaryLabel}>Dishes</Text>
@@ -204,15 +197,15 @@ export function RestaurantPackDetailScreen() {
             <View style={styles.priceGrid}>
               <View style={styles.priceCell}>
                 <Text style={styles.priceLabel}>Restaurant</Text>
-                <Text style={styles.priceValue}>{formatCurrency(dish.restaurantPrice)}</Text>
+                <FitText minimumFontScale={0.68} style={styles.priceValue}>{formatCurrency(dish.restaurantPrice)}</FitText>
               </View>
               <View style={styles.priceCell}>
                 <Text style={styles.priceLabel}>Homemade</Text>
-                <Text style={styles.priceValue}>{formatCurrency(dish.homemadeCost)}</Text>
+                <FitText minimumFontScale={0.68} style={styles.priceValue}>{formatCurrency(dish.homemadeCost)}</FitText>
               </View>
               <View style={styles.priceCell}>
                 <Text style={styles.priceLabel}>Savings</Text>
-                <Text style={styles.dishSavings}>{formatCurrency(dish.estimatedSavings)}</Text>
+                <FitText minimumFontScale={0.68} style={styles.dishSavings}>{formatCurrency(dish.estimatedSavings)}</FitText>
               </View>
             </View>
             <View style={styles.actions}>
@@ -224,7 +217,7 @@ export function RestaurantPackDetailScreen() {
           <View style={styles.dishCard}>
             <Text style={styles.dishName}>No dishes in this pack yet</Text>
             <Text style={styles.description}>
-              This pack exists, but its mock dish list is empty.
+              Recipes for this pack aren’t available right now.
             </Text>
           </View>
         )}

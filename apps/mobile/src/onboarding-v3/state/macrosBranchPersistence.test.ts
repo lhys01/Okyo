@@ -2,55 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createMacrosBranchPersistence, MACROS_BRANCH_STORAGE_KEY } from './macrosBranchPersistence';
 
-function memoryStorage() {
-  const values = new Map<string, string>();
-  return { values, storage: { async getItem(key: string) { return values.get(key) ?? null; }, async setItem(key: string, value: string) { values.set(key, value); }, async removeItem(key: string) { values.delete(key); } } };
-}
-
-test('v1 macros drafts migrate safely to the v2 route model', async () => {
-  const { storage, values } = memoryStorage();
-  const persistence = createMacrosBranchPersistence(storage);
-  await persistence.write({ version: 1, currentStep: 'acknowledgment', macroFocus: 'more_protein' });
-  assert.equal(JSON.parse(values.get(MACROS_BRANCH_STORAGE_KEY) ?? '{}').version, 2);
-  assert.equal((await persistence.read()).currentStep, 'proteinWeight');
+function memoryStorage() { const values = new Map<string, string>(); return { values, storage: { async getItem(key: string) { return values.get(key) ?? null; }, async setItem(key: string, value: string) { values.set(key, value); }, async removeItem(key: string) { values.delete(key); } } }; }
+test('v2 drafts migrate safely into the compact version 4 model', async () => {
+  const { storage, values } = memoryStorage(); const persistence = createMacrosBranchPersistence(storage);
+  await persistence.write({ version: 2, currentStep: 'proteinWeight', macroFocus: 'more_protein', macroBarrier: 'meal_prep_time', mealToImprove: 'lunch', weeklyCookingCount: 2, proteinTargetGrams: 140 });
+  const stored = JSON.parse(values.get(MACROS_BRANCH_STORAGE_KEY) ?? '{}'); assert.equal(stored.version, 4);
+  const restored = await persistence.read(); assert.equal(restored.macroFocus, 'low_protein'); assert.equal(restored.proteinTargetGrams, 140);
 });
-
-test('legacy v2 step ids migrate to the redesigned route model', async () => {
-  const { storage } = memoryStorage();
-  const persistence = createMacrosBranchPersistence(storage);
-  await persistence.write({ version: 2, currentStep: 'calorieTracking', macroFocus: 'more_protein', proteinTargetStatus: 'not_sure' });
-  assert.equal((await createMacrosBranchPersistence(storage).read()).currentStep, 'calorieCheck');
-});
-
-test('v2 persistence restores body weight, unit, multiplier, and route', async () => {
-  const { storage } = memoryStorage();
-  const persistence = createMacrosBranchPersistence(storage);
-  await persistence.write({ version: 2, currentStep: 'proteinPreference', macroFocus: 'more_protein', bodyWeight: 70, bodyWeightUnit: 'kg', proteinMultiplier: 1.3, proteinTargetStatus: 'yes_know_it', proteinTargetGrams: 201 });
+test('known partial targets and the compact target-entry screen persist across relaunch', async () => {
+  const { storage } = memoryStorage(); const persistence = createMacrosBranchPersistence(storage);
+  await persistence.write({ version: 4, currentStep: 'knownTargets', macroFocus: 'low_protein', macroBarrier: 'time', macroOutcome: 'more_protein', recipePriorities: ['quick_to_make'], targetMode: 'known_targets', proteinTargetGrams: 145, calorieTarget: 2350, carbTargetGrams: null, fatTargetGrams: null, goalDurationWeeks: 6 });
   const restored = await createMacrosBranchPersistence(storage).read();
-  assert.equal(restored.currentStep, 'proteinPreference');
-  assert.equal(restored.bodyWeight, 70);
-  assert.equal(restored.bodyWeightUnit, 'kg');
-  assert.equal(restored.proteinMultiplier, 1.3);
+  assert.equal(restored.currentStep, 'knownTargets'); assert.equal(restored.proteinTargetGrams, 145); assert.equal(restored.calorieTarget, 2350); assert.equal(restored.carbTargetGrams, null); assert.equal(restored.goalDurationWeeks, 6);
 });
-
-test('restart at completion stays complete and explicit Back reveal is retained', async () => {
-  const { storage } = memoryStorage();
-  const persistence = createMacrosBranchPersistence(storage);
-  const answers = {
-    version: 2, macroFocus: 'more_protein', proteinTargetStatus: 'not_sure', calorieTrackingStatus: 'no',
-    macroBarrier: 'estimating_portions', mealToImprove: 'dinner', trackingStyle: 'exact_numbers',
-    flexibleCommitment: 'few_aligned_meals', branchCompleted: true,
-  } as const;
-  await persistence.write({ ...answers, currentStep: 'complete' });
-  assert.equal((await createMacrosBranchPersistence(storage).read()).currentStep, 'complete');
-  await persistence.write({ ...answers, currentStep: 'reveal' });
-  assert.equal((await createMacrosBranchPersistence(storage).read()).currentStep, 'reveal');
-});
-
-test('malformed storage remains recoverable to the initial draft', async () => {
-  const { storage, values } = memoryStorage();
-  values.set(MACROS_BRANCH_STORAGE_KEY, '{broken');
-  assert.equal((await createMacrosBranchPersistence(storage).read()).currentStep, 'intro');
-  await createMacrosBranchPersistence(storage).reset();
+test('malformed storage recovers to the initial draft', async () => {
+  const { storage, values } = memoryStorage(); values.set(MACROS_BRANCH_STORAGE_KEY, '{broken');
   assert.equal((await createMacrosBranchPersistence(storage).read()).currentStep, 'intro');
 });

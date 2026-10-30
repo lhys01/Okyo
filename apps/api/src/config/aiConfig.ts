@@ -1,6 +1,7 @@
 import { config as loadDotenv } from 'dotenv';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { selectApprovedOpenRouterModel } from './modelAllowlist.js';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const apiRoot = resolve(currentDir, '../..');
@@ -55,14 +56,14 @@ export type GetAiConfigOptions = {
 
 export function getAiConfig(options?: GetAiConfigOptions): AiConfig {
   const fableEnabled = process.env.FABLE_ENABLED === 'true';
-  const fableModel = process.env.FABLE_MODEL?.trim() || defaultFableModel;
+  const fableModel = selectApprovedOpenRouterModel(process.env.FABLE_MODEL, defaultFableModel);
   const isFableActive = fableEnabled && Boolean(options?.fableActive);
   const openRouterVisionModel = isFableActive
     ? fableModel
-    : process.env.OPENROUTER_VISION_MODEL?.trim() || defaultVisionModel;
+    : selectApprovedOpenRouterModel(process.env.OPENROUTER_VISION_MODEL, defaultVisionModel);
   const openRouterTextModel = isFableActive
     ? fableModel
-    : process.env.OPENROUTER_TEXT_MODEL?.trim() || defaultTextModel;
+    : selectApprovedOpenRouterModel(process.env.OPENROUTER_TEXT_MODEL, defaultTextModel);
 
   return {
     enabled: process.env.AI_ENABLED === 'true',

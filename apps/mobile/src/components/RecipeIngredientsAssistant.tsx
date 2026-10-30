@@ -4,11 +4,10 @@ import { Check } from 'iconoir-react-native';
 
 import { actionIcons } from '../assets/actionIcons';
 import type { Recipe, RecipeIngredient } from '../mocks';
+import { getRecipeIngredientDisplayGroups } from '../utils/recipeIngredientPresentation';
 import { scaleIngredient } from '../utils/servingScale';
-import { colors, fontFamilies } from './OkyoUI';
+import { colors, fontFamilies, iconSizes, typography } from './OkyoUI';
 import { recipeShadows } from '../theme/recipeTheme';
-
-const GENERIC_GROUP_NAMES = /^(main|ingredients?|finishing|for serving|to serve|serving|garnish|optional garnish)$/i;
 
 export function RecipeIngredientsAssistant({
   onAddIngredient,
@@ -24,9 +23,7 @@ export function RecipeIngredientsAssistant({
   servings: number;
 }) {
   const selectedIngredientIdSet = new Set(selectedIngredientIds.map((id) => id.trim().toLowerCase()));
-  const groups = recipe.ingredientGroups?.length
-    ? recipe.ingredientGroups
-    : [{ component: '', items: recipe.ingredients }];
+  const groups = getRecipeIngredientDisplayGroups(recipe);
   const changeServings = (nextServings: number) => {
     if (nextServings === servings) return;
     void Haptics.selectionAsync().catch(() => undefined);
@@ -47,8 +44,8 @@ export function RecipeIngredientsAssistant({
           </Pressable>
         </View>
       </View>
-      {groups.map((group) => (
-        <View key={group.component || 'ingredients'} style={styles.group}>
+      {groups.map((group, groupIndex) => (
+        <View key={`${group.component || 'ingredients'}-${groupIndex}`} style={styles.group}>
           {getGroupTitle(group.component) ? <Text style={styles.groupTitle}>{getGroupTitle(group.component)}</Text> : null}
           {group.items.map((source, index) => {
             const ingredient = scaleIngredient(source, recipe.servings, servings);
@@ -67,7 +64,7 @@ export function RecipeIngredientsAssistant({
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
                     onAddIngredient(ingredient);
                   }} style={({ pressed }) => [styles.groceryButton, isAdded ? styles.groceryButtonAdded : null, pressed ? styles.pressed : null]}>
-                    {isAdded ? <Check color={colors.coralDark} height={19} width={19} /> : <Image accessibilityElementsHidden resizeMode="contain" source={actionIcons.grocery} style={styles.groceryIcon} />}
+                    {isAdded ? <Check color={colors.coralDark} height={iconSizes.medium} width={iconSizes.medium} /> : <Image accessibilityElementsHidden resizeMode="contain" source={actionIcons.grocery} style={styles.groceryIcon} />}
                   </Pressable>
                 ) : null}
               </View>
@@ -85,20 +82,20 @@ export function RecipeIngredientsAssistant({
 const styles = StyleSheet.create({
   section: { marginTop: 20 },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  title: { color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 20, fontWeight: '800' },
+  title: { ...typography.section, color: colors.charcoal },
   servingsControl: { alignItems: 'center', backgroundColor: '#FFF8F7', borderRadius: 16, flexDirection: 'row', padding: 3, ...recipeShadows.card },
   servingButton: { alignItems: 'center', backgroundColor: '#FFF0F4', borderRadius: 12, height: 32, justifyContent: 'center', width: 32 },
   servingButtonDisabled: { opacity: 0.3 },
-  servingButtonText: { color: colors.coralDark, fontFamily: fontFamilies.extraBold, fontSize: 20, fontWeight: '800' },
-  servingsText: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 12, fontWeight: '700', minWidth: 72, textAlign: 'center' },
+  servingButtonText: { ...typography.numericStat, color: colors.coralDark },
+  servingsText: { ...typography.caption, color: colors.charcoal, flexShrink: 1, fontFamily: fontFamilies.bold, fontWeight: '700', minWidth: 72, textAlign: 'center' },
   group: { gap: 8, marginTop: 12 },
-  groupTitle: { color: colors.muted, fontFamily: fontFamilies.extraBold, fontSize: 11, fontWeight: '800', letterSpacing: 0.6, marginBottom: 1, textTransform: 'uppercase' },
+  groupTitle: { ...typography.label, color: colors.muted, fontSize: 11, letterSpacing: 0.6, marginBottom: 1 },
   row: { alignItems: 'center', backgroundColor: '#FFFDFC', borderRadius: 15, flexDirection: 'row', minHeight: 58, paddingHorizontal: 12, paddingVertical: 8, ...recipeShadows.card },
   nameWrap: { flex: 1, minWidth: 0 },
-  name: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 14, fontWeight: '700' },
-  pantry: { color: '#8A847D', fontFamily: fontFamilies.body, fontSize: 10.5, marginTop: 3 },
-  optional: { color: '#8A6A32', fontFamily: fontFamilies.bold, fontSize: 10.5, marginTop: 3 },
-  quantity: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 13, marginLeft: 10, textAlign: 'right' },
+  name: { ...typography.bodyEmphasis, color: colors.charcoal },
+  pantry: { ...typography.captionSmall, color: '#8A847D', marginTop: 3 },
+  optional: { ...typography.captionSmall, color: '#8A6A32', fontFamily: fontFamilies.bold, fontWeight: '700', marginTop: 3 },
+  quantity: { ...typography.bodySmall, color: colors.body, fontSize: 13, marginLeft: 10, textAlign: 'right' },
   groceryButton: { alignItems: 'center', backgroundColor: 'transparent', borderRadius: 17, height: 36, justifyContent: 'center', marginLeft: 5, width: 36 },
   groceryIcon: { height: 29, width: 29 },
   groceryButtonAdded: { backgroundColor: '#FFE5EC' },
@@ -108,6 +105,6 @@ const styles = StyleSheet.create({
 
 function getGroupTitle(value: string): string {
   const trimmed = value.trim();
-  if (!trimmed || GENERIC_GROUP_NAMES.test(trimmed)) return '';
+  if (!trimmed || /^(main|ingredients?|finishing|for serving|to serve|serving|garnish|optional garnish)$/i.test(trimmed)) return '';
   return trimmed.replace(/^of\s+/i, '').trim();
 }

@@ -11,5 +11,5 @@ export const guidedCookingTypography = {
   chip: { fontFamily: fontFamilies.bold, fontSize: 12, fontWeight: '700' as const },
   upNext: { fontFamily: fontFamilies.bold, fontSize: 13, fontWeight: '700' as const, lineHeight: 18 },
   button: { fontFamily: fontFamilies.extraBold, fontSize: 15, fontWeight: '800' as const },
-  primaryButton: { fontFamily: fontFamilies.extraBold, fontSize: 16, fontWeight: '900' as const },
+  primaryButton: { fontFamily: fontFamilies.extraBold, fontSize: 16, fontWeight: '800' as const },
 } as const;

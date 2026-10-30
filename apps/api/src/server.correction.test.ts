@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import http, { type Server } from 'node:http';
 import test, { after } from 'node:test';
+import { resetCostControlsForTests } from './middleware/costControls.js';
 
 import type { Recipe } from './types.js';
 import {
@@ -197,6 +198,9 @@ async function editStoredRecipe(input: {
   correctionRequestId?: string;
   requestOverrides?: Record<string, unknown>;
 }) {
+  // Each case is an independent API request from the same loopback IP. Reset
+  // the in-memory limiter so suite order does not consume the production cap.
+  resetCostControlsForTests();
   storeGeneratedRecipe(input.source);
   const originalFetch = globalThis.fetch;
   const prompts: string[] = [];

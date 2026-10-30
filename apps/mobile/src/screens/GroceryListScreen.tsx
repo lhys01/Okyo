@@ -14,15 +14,18 @@ import {
   ShareAndroid,
   Spark,
 } from 'iconoir-react-native';
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Image, Pressable, Share, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Pressable, Share, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { analyticsEvents, track } from '../analytics/track';
+import { useTour, useTourAnchor } from '../tour/TourContext';
+import { COACH_DOCK_TARGET_CLEARANCE } from '../tour/coachDockGeometry';
+
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
-import { colors } from '../components/OkyoUI';
+import { colors, fontFamilies, iconSizes, typography } from '../components/OkyoUI';
+import { mainTabHeading, spacing } from '../theme/okyoTheme';
 import {
   getSafeRecipeMode,
   isRecipeMode,
@@ -40,6 +43,7 @@ import {
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getModeLabel } from '../utils/modeDisplay';
 import { getRecipeImageSource, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { isUserScanRecipe } from '../utils/recipeImageSource';
 import { uiLog } from '../utils/uiDebug';
 import { scaleIngredient } from '../utils/servingScale';
 
@@ -75,6 +79,16 @@ const CHECKED_GROCERY_ITEMS_KEY = 'okyo:grocery-checked-items:v1';
 
 export function GroceryListScreen() {
   const navigation = useNavigation<GroceryListNavigation>();
+  const groceryScanAnchorRef = useTourAnchor('grocery-scan-dish');
+  const groceryScrollRef = useRef<ScrollView>(null);
+  const { active: tourActive, registerScrollRef, reportScrollOffset, requestRemeasure } = useTour();
+  useEffect(() => {
+    registerScrollRef('GroceryListScreen', groceryScrollRef);
+  }, [registerScrollRef]);
+  const onTourScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    reportScrollOffset('GroceryListScreen', event.nativeEvent.contentOffset.y);
+    requestRemeasure();
+  };
   const route = useRoute<GroceryListRoute>();
   const routeRecipeId = route.params?.recipeId;
   const routeMode = route.params?.mode;
@@ -141,22 +155,12 @@ export function GroceryListScreen() {
     uiLog('GroceryListScreen', 'enter', { mode: routeMode ?? 'saved_recipes' });
 
     didTrackView.current = true;
-    if (routeMode && !isRecipeMode(routeMode)) {
-      track(analyticsEvents.RESULT_ERROR, {
-        errorMessage: 'Grocery list mode was missing or invalid.',
-        screen: 'GroceryListScreen',
-      });
-    }
 
     if (!hasRecipeContext) {
       return;
     }
 
-    track(analyticsEvents.GROCERY_LIST_VIEWED, {
-      dishName: recipe?.title ?? 'Missing recipe',
-      mode: selectedMode,
-      screen: 'GroceryListScreen',
-    });
+
   }, [hasRecipeContext, recipe?.title, routeMode, selectedMode]);
 
   const goBack = () => {
@@ -223,12 +227,7 @@ export function GroceryListScreen() {
       await Clipboard.setStringAsync(listText);
       awardXPOnce(`export-grocery-list-${recipe.id}`, 10);
       unlockBadge('grocery-exporter');
-      track(analyticsEvents.GROCERY_LIST_EXPORTED, {
-        dishName: recipe?.title ?? 'Missing recipe',
-        mode: selectedMode,
-        screen: 'GroceryListScreen',
-        source: 'copy',
-      });
+
       Alert.alert('Copied', 'Grocery list copied.');
     } catch {
       Alert.alert('Copy unavailable', 'The grocery list could not be copied on this device.');
@@ -250,12 +249,7 @@ export function GroceryListScreen() {
 
       awardXPOnce(`export-grocery-list-${recipe.id}`, 10);
       unlockBadge('grocery-exporter');
-      track(analyticsEvents.GROCERY_LIST_EXPORTED, {
-        dishName: recipe?.title ?? 'Missing recipe',
-        mode: selectedMode,
-        screen: 'GroceryListScreen',
-        source: 'share',
-      });
+
     } catch {
       Alert.alert('Share unavailable', 'The grocery list could not be shared on this device.');
     }
@@ -263,10 +257,11 @@ export function GroceryListScreen() {
 
   if (!hasRecipeContext) {
     return (
-      <ScreenFrame onBack={() => navigation.navigate('HomeScreen')} showBack={false} title="Grocery">
+      <ScreenFrame onBack={() => navigation.navigate('HomeScreen')} onScroll={onTourScroll} scrollRef={groceryScrollRef} showBack={false} title="Grocery" tourActive={tourActive}>
+        <View>
         {savedGroceryRecipes.length > 0 ? (
           <View style={styles.savedRecipeList}>
-            {savedGroceryRecipes.map((savedRecipe) => {
+            {savedGroceryRecipes.map((savedRecipe, index) => {
               const targetServings = recipeServingOverrides[savedRecipe.id] ?? savedRecipe.servings;
               const groceryRecipe = targetServings === savedRecipe.servings ? savedRecipe : {
                 ...savedRecipe,
@@ -279,29 +274,31 @@ export function GroceryListScreen() {
               const isExpanded = expandedRecipeIds.includes(savedRecipe.id);
 
               return (
-                <SavedRecipeGroceryCard
-                  key={savedRecipe.id}
-                  checkedItemIds={checkedItemIds}
-                  isExpanded={isExpanded}
-                  items={savedItems}
-                  onOpenRecipe={() => openSavedRecipe(savedRecipe)}
-                  onToggle={() => toggleSavedRecipe(savedRecipe.id)}
-                  onToggleItem={toggleItem}
-                  recipe={savedRecipe}
-                />
+                <View key={savedRecipe.id}>
+                  <SavedRecipeGroceryCard
+                    checkedItemIds={checkedItemIds}
+                    isExpanded={isExpanded}
+                    items={savedItems}
+                    onOpenRecipe={() => openSavedRecipe(savedRecipe)}
+                    onToggle={() => toggleSavedRecipe(savedRecipe.id)}
+                    onToggleItem={toggleItem}
+                    recipe={savedRecipe}
+                  />
+                </View>
               );
             })}
           </View>
         ) : (
           <View style={styles.savedEmptyCard}>
-            <Image accessibilityIgnoresInvertColors resizeMode="contain" source={require('../../assets/kiko-static/approved/kiko-shopping-cart.png')} style={styles.savedEmptyArt} />
+            <Image accessibilityIgnoresInvertColors resizeMode="contain" source={require('../../assets/kiko-static/approved/kiko-shopping-cart-sticker.png')} style={[styles.savedEmptyArt, tourActive && styles.savedEmptyArtTour]} />
             <Text style={styles.savedEmptyTitle}>Lookin a bit empty here?</Text>
             <Text style={styles.savedEmptyBody}>
               Scan your first meal and see best groceries.
             </Text>
-            <PrimaryAction compact icon={<Camera color="#fffdf8" height={20} strokeWidth={2.2} width={20} />} label="Scan a dish" onPress={() => navigation.navigate('HomeScreen')} />
+            <PrimaryAction compact icon={<Camera color="#fffdf8" height={iconSizes.medium} strokeWidth={2.2} width={iconSizes.medium} />} label="Scan a dish" onLayout={tourActive ? requestRemeasure : undefined} onPress={() => navigation.navigate('HomeScreen')} tourAnchorRef={groceryScanAnchorRef} />
           </View>
         )}
+        </View>
       </ScreenFrame>
     );
   }
@@ -363,7 +360,7 @@ export function GroceryListScreen() {
           onPress={shareList}
           style={({ pressed }) => [styles.controlButton, styles.controlButtonRight, pressed ? styles.pressed : null]}
         >
-          <ShareAndroid color={colors.charcoal} height={18} strokeWidth={2.15} width={18} />
+          <ShareAndroid color={colors.charcoal} height={iconSizes.medium} strokeWidth={2.15} width={iconSizes.medium} />
           <Text style={styles.controlText}>Share List</Text>
         </Pressable>
       </View>
@@ -419,7 +416,7 @@ export function GroceryListScreen() {
         <Text style={styles.allSetBody}>You're ready to make something delicious.</Text>
       </View>
 
-      <PrimaryAction icon={<PasteClipboard color="#fffdf8" height={20} strokeWidth={2.15} width={20} />} label="Copy List" onPress={copyList} />
+      <PrimaryAction icon={<PasteClipboard color="#fffdf8" height={iconSizes.medium} strokeWidth={2.15} width={iconSizes.medium} />} label="Copy List" onPress={copyList} />
     </ScreenFrame>
   );
 }
@@ -427,32 +424,34 @@ export function GroceryListScreen() {
 type ScreenFrameProps = {
   children: ReactNode;
   onBack: () => void;
+  onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  scrollRef?: RefObject<ScrollView | null>;
   showBack?: boolean;
   subtitle?: string;
   title: string;
+  tourActive?: boolean;
 };
 
-function ScreenFrame({ children, onBack, showBack = true, subtitle, title }: ScreenFrameProps) {
+function ScreenFrame({ children, onBack, onScroll, scrollRef, showBack = true, subtitle, title, tourActive = false }: ScreenFrameProps) {
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollRef} contentContainerStyle={[styles.screenContent, tourActive && { paddingBottom: 150 + COACH_DOCK_TARGET_CLEARANCE }]} onScroll={onScroll} scrollEventThrottle={32} showsVerticalScrollIndicator={false}>
         <View style={styles.topBar}>
           {showBack ? (
             <Pressable
+              accessibilityLabel="Back"
               accessibilityRole="button"
               onPress={onBack}
               style={({ pressed }) => [styles.backButton, pressed ? styles.pressed : null]}
             >
-              <NavArrowLeft color={colors.charcoal} height={22} strokeWidth={2.35} width={22} />
+              <NavArrowLeft color={colors.charcoal} height={iconSizes.large} strokeWidth={2.35} width={iconSizes.large} />
             </Pressable>
-          ) : (
-            <View style={styles.topSpacer} />
-          )}
-          <View pointerEvents="none" style={styles.titleGroup}>
+          ) : null}
+          {showBack ? <View pointerEvents="none" style={styles.titleGroup}>
             <Text numberOfLines={1} style={styles.topTitle}>{title}</Text>
             {subtitle ? <Text numberOfLines={1} style={styles.topSubtitle}>{subtitle}</Text> : null}
-          </View>
-          <View style={styles.topSpacer} />
+          </View> : <Text style={styles.hubTitle}>{title}</Text>}
+          {showBack ? <View style={styles.topSpacer} /> : null}
         </View>
         {children}
       </ScrollView>
@@ -490,7 +489,7 @@ function SavedRecipeGroceryCard({
         onPress={onToggle}
         style={({ pressed }) => [styles.savedRecipeHeader, pressed ? styles.pressed : null]}
       >
-        <FoodImage imageSource={getRecipeImageSource(recipe)} imageStatus={imageStatus} imageUrl={imageUrl} style={styles.savedRecipeImage} />
+        <FoodImage disableFallback={isUserScanRecipe(recipe)} imageSource={getRecipeImageSource(recipe)} imageStatus={imageStatus} imageUrl={imageUrl} style={styles.savedRecipeImage} />
         <View style={styles.savedRecipeCopy}>
           <Text numberOfLines={2} style={styles.savedRecipeTitle}>{cleanDisplayText(recipe.title)}</Text>
           <Text style={styles.savedRecipeMeta}>
@@ -540,7 +539,7 @@ function SavedRecipeGroceryCard({
             style={({ pressed }) => [styles.openRecipeLink, pressed ? styles.pressed : null]}
           >
             <Text style={styles.openRecipeLinkText}>Open recipe</Text>
-            <NavArrowRight color={colors.coral} height={18} strokeWidth={2.2} width={18} />
+            <NavArrowRight color={colors.coral} height={iconSizes.small} strokeWidth={2.2} width={iconSizes.small} />
           </Pressable>
         </View>
       ) : null}
@@ -578,14 +577,19 @@ type PrimaryActionProps = {
   compact?: boolean;
   icon?: ReactNode;
   label: string;
+  onLayout?: () => void;
   onPress: () => void;
+  tourAnchorRef?: RefObject<View | null>;
 };
 
-function PrimaryAction({ compact = false, icon, label, onPress }: PrimaryActionProps) {
+function PrimaryAction({ compact = false, icon, label, onLayout, onPress, tourAnchorRef }: PrimaryActionProps) {
   return (
     <Pressable
       accessibilityRole="button"
+      collapsable={false}
       onPress={onPress}
+      onLayout={onLayout}
+      ref={tourAnchorRef}
       style={({ pressed }) => [styles.primaryAction, compact ? styles.emptyPrimaryAction : null, pressed ? styles.pressed : null]}
     >
       {icon}
@@ -605,7 +609,7 @@ function RecipeSummaryRow({
 }) {
   return (
     <View style={styles.recipeSummaryRow}>
-      <FoodImage imageSource={getRecipeImageSource(recipe)} imageStatus={imageStatus} imageUrl={imageUrl} style={styles.recipeSummaryImage} />
+      <FoodImage disableFallback={isUserScanRecipe(recipe)} imageSource={getRecipeImageSource(recipe)} imageStatus={imageStatus} imageUrl={imageUrl} style={styles.recipeSummaryImage} />
       <View style={styles.recipeSummaryCopy}>
         <Text style={styles.recipeSummaryKicker}>Shopping for</Text>
         <Text numberOfLines={2} style={styles.recipeSummaryTitle}>{cleanDisplayText(recipe.title)}</Text>
@@ -619,10 +623,10 @@ function RecipeSummaryRow({
 
 function CategoryIcon({ category }: { category: GroceryCategory }) {
   const icon = category === 'Produce'
-    ? <Leaf color={colors.green} height={17} strokeWidth={2.2} width={17} />
+    ? <Leaf color={colors.green} height={iconSizes.medium} strokeWidth={2.2} width={iconSizes.medium} />
     : category === 'Spices' || category === 'Garnish'
-      ? <Spark color={colors.green} height={17} strokeWidth={2.2} width={17} />
-      : <Bag color={colors.green} height={17} strokeWidth={2.2} width={17} />;
+      ? <Spark color={colors.green} height={iconSizes.medium} strokeWidth={2.2} width={iconSizes.medium} />
+      : <Bag color={colors.green} height={iconSizes.medium} strokeWidth={2.2} width={iconSizes.medium} />;
 
   return <View style={styles.categoryIcon}>{icon}</View>;
 }
@@ -888,13 +892,13 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     gap: 12,
     paddingBottom: 150,
-    paddingHorizontal: 24,
+    paddingHorizontal: spacing.gutter,
+    paddingTop: spacing.md,
   },
   topBar: {
     alignItems: 'center',
     flexDirection: 'row',
-    marginTop: 6,
-    minHeight: 44,
+    minHeight: 34,
   },
   backButton: {
     alignItems: 'center',
@@ -915,15 +919,14 @@ const styles = StyleSheet.create({
     top: 0,
   },
   topTitle: {
+    ...typography.title,
     color: colors.charcoal,
-    fontSize: 26,
-    fontWeight: '700',
     textAlign: 'center',
   },
+  hubTitle: { ...mainTabHeading },
   topSubtitle: {
-    color: colors.charcoal,
-    fontSize: 12,
-    fontWeight: '500',
+    ...typography.caption,
+    color: colors.body,
     marginTop: 4,
     maxWidth: '100%',
     textAlign: 'center',
@@ -933,9 +936,7 @@ const styles = StyleSheet.create({
     width: 42,
   },
   savedHubIntro: {
-    color: colors.body,
-    fontSize: 15,
-    lineHeight: 22,
+    ...typography.bodySmall,
     marginTop: 4,
     textAlign: 'center',
   },
@@ -961,21 +962,17 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   savedRecipeTitle: {
+    ...typography.cardTitle,
     color: colors.charcoal,
-    fontSize: 16,
-    fontWeight: '800',
-    lineHeight: 21,
   },
   savedRecipeMeta: {
+    ...typography.caption,
     color: colors.body,
-    fontSize: 12,
-    fontWeight: '700',
     marginTop: 5,
   },
   savedRecipeToggle: {
+    ...typography.buttonSmall,
     color: colors.coral,
-    fontSize: 13,
-    fontWeight: '800',
   },
   savedIngredientPanel: {
     borderTopColor: colors.border,
@@ -996,26 +993,21 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
   },
   savedIngredientName: {
+    ...typography.bodyEmphasis,
     color: colors.charcoal,
     flex: 1,
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 20,
     minWidth: 0,
   },
   savedIngredientQuantity: {
+    ...typography.bodySmall,
     color: colors.body,
-    fontSize: 12,
     fontVariant: ['tabular-nums'],
-    fontWeight: '700',
     marginLeft: 12,
     maxWidth: 130,
     textAlign: 'right',
   },
   savedIngredientEmpty: {
-    color: colors.body,
-    fontSize: 14,
-    lineHeight: 20,
+    ...typography.bodySmall,
     paddingVertical: 16,
     textAlign: 'center',
   },
@@ -1028,9 +1020,8 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   openRecipeLinkText: {
+    ...typography.buttonSmall,
     color: colors.coral,
-    fontSize: 14,
-    fontWeight: '800',
   },
   savedEmptyCard: {
     alignItems: 'center',
@@ -1047,17 +1038,17 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.82 }],
     width: '100%',
   },
+  savedEmptyArtTour: {
+    height: 240,
+  },
   savedEmptyTitle: {
+    ...typography.section,
     color: colors.charcoal,
-    fontSize: 21,
-    fontWeight: '800',
-    lineHeight: 26,
     textAlign: 'center',
   },
   savedEmptyBody: {
+    ...typography.bodySmall,
     color: colors.body,
-    fontSize: 14,
-    lineHeight: 21,
     textAlign: 'center',
   },
   tabRow: {
@@ -1082,23 +1073,20 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   recipeSummaryKicker: {
+    ...typography.label,
     color: colors.coral,
     fontSize: 11,
-    fontWeight: '800',
     letterSpacing: 0.4,
     marginBottom: 3,
     textTransform: 'uppercase',
   },
   recipeSummaryTitle: {
+    ...typography.cardTitle,
     color: colors.charcoal,
-    fontSize: 17,
-    fontWeight: '800',
-    lineHeight: 21,
   },
   recipeSummaryMeta: {
+    ...typography.caption,
     color: colors.body,
-    fontSize: 12,
-    fontWeight: '700',
     marginTop: 4,
   },
   tabButton: {
@@ -1115,9 +1103,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.coral,
   },
   tabButtonText: {
+    ...typography.buttonSmall,
     color: colors.charcoal,
-    fontSize: 14,
-    fontWeight: '700',
     textAlign: 'center',
   },
   tabButtonTextSelected: {
@@ -1177,12 +1164,10 @@ const styles = StyleSheet.create({
     width: 26,
   },
   categoryTitle: {
+    ...typography.label,
     color: colors.green,
     flex: 1,
-    fontSize: 14,
     fontWeight: '700',
-    letterSpacing: 0.2,
-    textTransform: 'uppercase',
   },
   itemRow: {
     alignItems: 'center',
@@ -1211,10 +1196,9 @@ const styles = StyleSheet.create({
     borderColor: colors.green,
   },
   itemText: {
+    ...typography.bodySmall,
     color: colors.charcoal,
     flex: 1,
-    fontSize: 15,
-    lineHeight: 22,
     minWidth: 0,
   },
   itemTextChecked: {
@@ -1230,15 +1214,13 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   emptyTabTitle: {
+    ...typography.section,
     color: colors.charcoal,
-    fontSize: 18,
-    fontWeight: '700',
     marginTop: 8,
   },
   emptyTabBody: {
+    ...typography.bodySmall,
     color: colors.body,
-    fontSize: 14,
-    lineHeight: 20,
     marginTop: 6,
     textAlign: 'center',
   },
@@ -1285,6 +1267,11 @@ const styles = StyleSheet.create({
     color: '#fffdf8',
     fontSize: 17,
     fontWeight: '700',
+    // Match the 20px icon box so alignItems:'center' aligns the glyphs, not
+    // the font's leading — keeps icon + label optically centered as one group.
+    lineHeight: 20,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   emptyPrimaryAction: {
     marginTop: 0,

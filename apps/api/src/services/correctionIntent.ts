@@ -199,7 +199,7 @@ export class CorrectionRequestValidationError extends Error {
   readonly issues: string[];
 
   constructor(issues: string[]) {
-    super('Tell Kiko what you would like to change.');
+    super('Tell us what you would like to change.');
     this.name = 'CorrectionRequestValidationError';
     this.issues = issues;
   }

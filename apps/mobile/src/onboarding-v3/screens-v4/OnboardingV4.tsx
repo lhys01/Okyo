@@ -1,3 +1,4 @@
+import { useLaunchDestinationReady } from '../../startup/LaunchScreen';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Alert, Share, StyleSheet, Text, View } from 'react-native';
 import type { PurchasesPackage } from 'react-native-purchases';
@@ -8,14 +9,12 @@ import { commitOnboardingV4PlanToCanonicalProfile } from '../state/onboardingV4C
 import type { ScanImageMetadata } from '../../api/types';
 import { initialOnboardingV4State, isBranchQ1Answered, isBranchQ2Answered, isMacroDetailsAnswered, onboardingV4Reducer, type OnboardingV4State } from '../state/onboardingV4Reducer';
 import { getOnboardingV4StageLabel } from '../state/onboardingV4Route';
-import { trackOnboardingV4 } from '../../analytics/onboardingV4Events';
 import {
   onboardingV4AnswerSubmittedEvent,
   onboardingV4DietarySavedEvent,
   onboardingV4GoalSelectedEvent,
   onboardingV4FirstRecipeRevealedEvent,
   onboardingV4InsightViewedEvent,
-  onboardingV4PlanViewedEvent,
   onboardingV4PaywallViewedEvent,
   onboardingV4PurchaseEvent,
   onboardingV4MeaningfulActionSelectedEvent,
@@ -23,19 +22,19 @@ import {
   onboardingV4ScreenViewedEvent,
   onboardingV4StartedEvent,
 } from './onboardingV4Instrumentation';
-import { BRANCH_Q1_TITLE, BRANCH_Q2_TITLE, HEALTH_Q1_OPTIONS, HEALTH_Q2_OPTIONS, MACRO_Q1_OPTIONS, MACRO_Q2_OPTIONS, NOT_SURE_Q1_OPTIONS, NOT_SURE_Q2_OPTIONS, SAVINGS_Q1_OPTIONS } from './onboardingV4BranchCopy';
+import { BRANCH_Q1_TITLE, BRANCH_Q2_TITLE, HEALTH_Q1_OPTIONS, HEALTH_Q2_OPTIONS, MACRO_Q1_OPTIONS, NOT_SURE_Q1_OPTIONS, NOT_SURE_Q2_OPTIONS, SAVINGS_Q1_OPTIONS } from './onboardingV4BranchCopy';
 import { buildHealthPlanContent, buildMacrosPlanContent, buildNotSurePlanContent, buildSavingsPlanContent } from './onboardingV4PlanCopy';
 import { BranchQuestionScreen } from './BranchQuestionScreen';
 import { DietarySafetyScreen } from './DietarySafetyScreen';
 import { saveOnboardingV4DietarySafety } from '../state/onboardingV4DietarySave';
+import { createOnboardingV4SetupCommitter } from '../state/onboardingV4SetupCommit';
 import { FirstScanEntryScreen } from './FirstScanEntryScreen';
 import { MacroTargetSetupScreen } from './MacroTargetSetupScreen';
 import { PersonalInsightScreen } from './PersonalInsightScreen';
-import { PersonalPlanScreen } from './PersonalPlanScreen';
 import { PrimaryGoalScreen } from './PrimaryGoalScreen';
 import { PromiseScreen } from './PromiseScreen';
-import { SavingsSpendQuestionScreen } from './SavingsSpendQuestionScreen';
 import { SplashScreen } from '../screens/SplashScreen';
+import { SavingsSpendQuestionScreen } from './SavingsSpendQuestionScreen';
 import { PhotoConfirmScreen } from '../screens/PhotoConfirmScreen';
 import { FirstScanAnalyzingScreen } from './FirstScanAnalyzingScreen';
 import { ResumeFirstAttemptScreen } from './ResumeFirstAttemptScreen';
@@ -50,6 +49,7 @@ import { useOkyoStore } from '../../state/useOkyoStore';
 import { getEntitlementSnapshot, purchasePackage, restorePurchases, useEntitlement } from '../../services/revenueCat';
 import { buildGuidedCookingSteps } from '../../utils/guidedCookingSteps';
 import { OnboardingCookingScreen } from '../screens/OnboardingCookingScreen';
+import { MacroDetailScreen } from './MacroDetailScreen';
 import { V4CustomizationScreen } from './V4CustomizationScreen';
 import { V4PaywallScreen } from './V4PaywallScreen';
 import { decideOnboardingV4PremiumAccess, getCompletedCookRecovery, isCompletedCustomizationDestinationReady, onboardingV4PremiumActionPersistence, resumeOnboardingV4PremiumAction, type OnboardingV4PendingPremiumAction } from '../state/onboardingV4PremiumAction';
@@ -57,9 +57,8 @@ import type {
   HealthBarrier,
   HealthierDefinition,
   MacroFocus,
-  MacroTargetPath,
   PreferredTransformation,
-  TakeoutFrequencyBucket,
+  SavingsBranchAnswers,
   UniversalNeed,
 } from '../state/branchContracts';
 
@@ -69,6 +68,7 @@ type Props = {
   onRestore: () => void;
   isRestoring?: boolean;
 };
+const commitSetup = createOnboardingV4SetupCommitter({ saveDietary: saveOnboardingV4DietarySafety, commitProfile: commitOnboardingV4PlanToCanonicalProfile });
 /**
  * Top-level V4 flow wrapper (Okyo_Onboarding_V4_Implementation_Plan.md Step
  * 03/04/05): `splash → promise → primaryGoal → branchQ1 → branchQ2 →
@@ -83,14 +83,13 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
   const hasEmittedStartedRef = useRef(false);
   const lastViewedStepRef = useRef<string | null>(null);
   const hasHydratedRef = useRef(false);
+  useLaunchDestinationReady(hasHydratedRef.current && state.step !== 'splash' && state.step !== 'complete');
   const [isSavingDietary, setIsSavingDietary] = useState(false);
   const [dietarySaveError, setDietarySaveError] = useState<string | null>(null);
-  const [isCommittingPlan, setIsCommittingPlan] = useState(false);
-  const [planCommitError, setPlanCommitError] = useState<string | null>(null);
+  const setupBusyRef = useRef(false);
   const [scanImage, setScanImage] = useState<ScanImageMetadata | null>(null);
   const [scanPhase, setScanPhase] = useState<FirstScanPhase>('analysis');
   const scanAbortRef = useRef<AbortController | null>(null);
-  const hasEmittedPlanViewedRef = useRef(false);
   const hasEmittedScanInputSelectedRef = useRef(false);
   const hasEmittedRecipeRevealedRef = useRef(false);
   const lastPaywallViewedActionRef = useRef<string | null>(null);
@@ -148,7 +147,7 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
     if (state.step !== 'recipe' || !resultRecipe || !state.draft.resolvedPrimaryGoal || hasEmittedRecipeRevealedRef.current) return;
     hasEmittedRecipeRevealedRef.current = true;
     const event = onboardingV4FirstRecipeRevealedEvent(state.draft.resolvedPrimaryGoal);
-    void trackOnboardingV4(event.name, event.properties);
+
   }, [resultRecipe, state.draft.resolvedPrimaryGoal, state.step]);
 
   useEffect(() => {
@@ -208,7 +207,7 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
     if (state.step !== 'paywall' || !action || !state.draft.resolvedPrimaryGoal || lastPaywallViewedActionRef.current === action.actionId) return;
     lastPaywallViewedActionRef.current = action.actionId;
     const event = onboardingV4PaywallViewedEvent(action.type, state.draft.resolvedPrimaryGoal);
-    void trackOnboardingV4(event.name, event.properties);
+
   }, [state.draft.resolvedPrimaryGoal, state.pendingPremiumAction, state.step]);
 
   useEffect(() => {
@@ -253,42 +252,29 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
     if (hasEmittedStartedRef.current) return;
     hasEmittedStartedRef.current = true;
     const event = onboardingV4StartedEvent();
-    void trackOnboardingV4(event.name, event.properties);
+
   }, []);
 
   useEffect(() => {
     const event = onboardingV4ScreenViewedEvent(state.step, lastViewedStepRef.current);
     if (!event) return;
     lastViewedStepRef.current = state.step;
-    void trackOnboardingV4(event.name, event.properties);
-  }, [state.step]);
 
-  useEffect(() => {
-    if (state.step !== 'plan' || hasEmittedPlanViewedRef.current || !state.draft.resolvedPrimaryGoal) return;
-    hasEmittedPlanViewedRef.current = true;
-    const event = onboardingV4PlanViewedEvent(state.draft.resolvedPrimaryGoal);
-    void trackOnboardingV4(event.name, event.properties);
-  }, [state.step, state.draft.resolvedPrimaryGoal]);
+  }, [state.step]);
 
   const trackAnswer = (fieldId: string) => {
     const event = onboardingV4AnswerSubmittedEvent(state.step, fieldId);
-    void trackOnboardingV4(event.name, event.properties);
+
   };
 
   const stageLabel = getOnboardingV4StageLabel(state.step);
 
   if (state.step === 'splash') {
-    return (
-      <SplashScreen
-        appStartedAt={appStartedAt}
-        fontsLoaded={fontsLoaded}
-        onFinished={() => dispatch({ type: 'SPLASH_FINISHED' })}
-      />
-    );
+    return <SplashScreen appStartedAt={appStartedAt} fontsLoaded={fontsLoaded} onFinished={() => dispatch({ type: 'SPLASH_FINISHED' })} />;
   }
 
   if (state.step === 'promise') {
-    return <PromiseScreen isRestoring={isRestoring} onContinue={() => dispatch({ type: 'CONTINUE' })} onRestore={onRestore} />;
+    return <PromiseScreen isRestoring={isRestoring} onContinue={() => dispatch({ type: 'CONTINUE' })} onTryRecipe={() => dispatch({ type: 'QUICK_START' })} onRestore={onRestore} />;
   }
 
   if (state.step === 'primaryGoal') {
@@ -298,7 +284,7 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
         onSelect={(goal) => {
           dispatch({ type: 'GOAL_SELECTED', goal });
           const event = onboardingV4GoalSelectedEvent(goal);
-          void trackOnboardingV4(event.name, event.properties);
+
         }}
         selected={state.draft.initialGoal}
       />
@@ -313,9 +299,9 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
           canContinue={isBranchQ1Answered(state.draft)}
           onBack={() => dispatch({ type: 'BACK' })}
           onContinue={() => dispatch({ type: 'CONTINUE' })}
-          onSelect={(value) => { dispatch({ type: 'SAVINGS_TAKEOUT_FREQUENCY_ANSWERED', value: value as TakeoutFrequencyBucket }); trackAnswer('takeoutFrequency'); }}
+          onSelect={(value) => { dispatch({ type: 'SAVINGS_PRIORITY_ANSWERED', value: value as NonNullable<SavingsBranchAnswers['cookingPriority']> }); trackAnswer('cookingPriority'); }}
           options={SAVINGS_Q1_OPTIONS}
-          selected={state.draft.savingsAnswers.takeoutFrequency}
+          selected={state.draft.savingsAnswers.cookingPriority ?? null}
           stageLabel={stageLabel}
           title={BRANCH_Q1_TITLE.save_money}
         />
@@ -371,12 +357,12 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
     if (goal === 'save_money') {
       return (
         <SavingsSpendQuestionScreen
-          canContinue={isBranchQ2Answered(state.draft)}
           onBack={() => dispatch({ type: 'BACK' })}
-          onChange={(value) => { dispatch({ type: 'SAVINGS_SPEND_PER_MEAL_ANSWERED', value }); trackAnswer('spendPerMealDollars'); }}
-          onContinue={() => dispatch({ type: 'CONTINUE' })}
+          onConfirm={(cost, replacementsPerWeek) => { dispatch({ type: 'SAVINGS_COMPARISON_CONFIRMED', cost, replacementsPerWeek }); trackAnswer('comparison'); }}
+          onSkip={() => { dispatch({ type: 'SAVINGS_COMPARISON_SKIPPED' }); trackAnswer('comparisonSkipped'); }}
           stageLabel={stageLabel}
           value={state.draft.savingsAnswers.spendPerMealDollars}
+          replacementsPerWeek={state.draft.savingsAnswers.replacementsPerWeek}
         />
       );
     }
@@ -396,15 +382,12 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
     }
     if (goal === 'hit_macros') {
       return (
-        <BranchQuestionScreen
-          canContinue={isBranchQ2Answered(state.draft)}
+        <MacroDetailScreen
+          answers={state.draft.macroAnswers}
           onBack={() => dispatch({ type: 'BACK' })}
           onContinue={() => dispatch({ type: 'CONTINUE' })}
-          onSelect={(value) => { dispatch({ type: 'MACRO_TARGET_PATH_ANSWERED', value: value as MacroTargetPath }); trackAnswer('targetPath'); }}
-          options={MACRO_Q2_OPTIONS}
-          selected={state.draft.macroAnswers.targetPath}
-          stageLabel={stageLabel}
-          title={BRANCH_Q2_TITLE.hit_macros}
+          onSelect={(value) => { dispatch({ type: 'MACRO_DETAIL_SELECTED', value }); trackAnswer('detailPreference'); }}
+          onTargetsChange={(value) => { dispatch({ type: 'MACRO_KNOWN_TARGETS_ANSWERED', value }); trackAnswer('knownTargets'); }}
         />
       );
     }
@@ -450,27 +433,32 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
         onRevealed={() => {
           if (!state.draft.resolvedPrimaryGoal) return;
           const event = onboardingV4InsightViewedEvent(state.draft.resolvedPrimaryGoal);
-          void trackOnboardingV4(event.name, event.properties);
+
         }}
         stageLabel={stageLabel}
       />
     );
   }
 
-  if (state.step === 'dietarySafety') {
+  // 'plan' is retained only as a resume alias for older persisted drafts.
+  // It renders the same editable form, never another recap screen.
+  if (state.step === 'dietarySafety' || state.step === 'plan') {
     const handleSave = () => {
-      if (isSavingDietary) return; // guards duplicate writes/analytics from a double-tap
+      if (setupBusyRef.current) return;
+      setupBusyRef.current = true;
       setIsSavingDietary(true);
       setDietarySaveError(null);
-      void saveOnboardingV4DietarySafety(state.draft.dietaryAnswers).then((result) => {
+      const submittedDraft = state.draft;
+      void commitSetup(submittedDraft).then((result) => {
+        setupBusyRef.current = false;
         setIsSavingDietary(false);
         if (result.status === 'error') {
           setDietarySaveError(result.message);
           return; // stays on dietarySafety — no dispatch, no analytics
         }
-        dispatch({ type: 'DIETARY_SAVED' });
+        dispatch({ type: 'SETUP_COMMITTED', submittedDraft });
         const event = onboardingV4DietarySavedEvent(state.draft.dietaryAnswers);
-        void trackOnboardingV4(event.name, event.properties);
+
       });
     };
     return (
@@ -478,40 +466,12 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
         answers={state.draft.dietaryAnswers}
         errorMessage={dietarySaveError}
         isSaving={isSavingDietary}
-        onBack={() => dispatch({ type: 'BACK' })}
-        onDislikesChange={(value) => { dispatch({ type: 'DIETARY_DISLIKES_CHANGED', value }); trackAnswer('dislikes'); }}
+        onBack={() => { if (!setupBusyRef.current) dispatch({ type: 'BACK' }); }}
+        onDislikesChange={(value) => { if (setupBusyRef.current) return; dispatch({ type: 'DIETARY_DISLIKES_CHANGED', value }); trackAnswer('dislikes'); }}
         onSave={handleSave}
-        onToggleAllergy={(value) => { dispatch({ type: 'DIETARY_ALLERGY_TOGGLED', value }); trackAnswer('allergy'); }}
-        onToggleNoneOfThese={() => { dispatch({ type: 'DIETARY_NONE_OF_THESE_TOGGLED' }); trackAnswer('noneOfThese'); }}
-        onToggleRestriction={(value) => { dispatch({ type: 'DIETARY_RESTRICTION_TOGGLED', value }); trackAnswer('restriction'); }}
-        stageLabel={stageLabel}
-      />
-    );
-  }
-
-  if (state.step === 'plan') {
-    const handleCommit = () => {
-      if (isCommittingPlan) return; // guards duplicate writes from a double-tap
-      setIsCommittingPlan(true);
-      setPlanCommitError(null);
-      void commitOnboardingV4PlanToCanonicalProfile(state.draft).then(
-        () => {
-          setIsCommittingPlan(false);
-          dispatch({ type: 'PLAN_COMMITTED' });
-        },
-        () => {
-          setIsCommittingPlan(false);
-          setPlanCommitError("Okyo couldn't save your plan. Try again.");
-        },
-      );
-    };
-    return (
-      <PersonalPlanScreen
-        commitError={planCommitError}
-        draft={state.draft}
-        isCommitting={isCommittingPlan}
-        onBack={() => dispatch({ type: 'BACK' })}
-        onContinue={handleCommit}
+        onToggleAllergy={(value) => { if (setupBusyRef.current) return; dispatch({ type: 'DIETARY_ALLERGY_TOGGLED', value }); trackAnswer('allergy'); }}
+        onToggleNoneOfThese={() => { if (setupBusyRef.current) return; dispatch({ type: 'DIETARY_NONE_OF_THESE_TOGGLED' }); trackAnswer('noneOfThese'); }}
+        onToggleRestriction={(value) => { if (setupBusyRef.current) return; dispatch({ type: 'DIETARY_RESTRICTION_TOGGLED', value }); trackAnswer('restriction'); }}
         stageLabel={stageLabel}
       />
     );
@@ -527,15 +487,13 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
       if (!hasEmittedScanInputSelectedRef.current) {
         hasEmittedScanInputSelectedRef.current = true;
         const event = onboardingV4ScanInputSelectedEvent(method);
-        void trackOnboardingV4(event.name, event.properties);
+
       }
     };
     return (
       <FirstScanEntryScreen
         description={state.draft.scanInput.description}
         onBack={() => dispatch({ type: 'BACK' })}
-        onCameraPermissionPrompted={() => void trackOnboardingV4('camera_permission_prompted', { screen: 'scanEntry' })}
-        onCameraPermissionResult={(granted) => void trackOnboardingV4('camera_permission_result', { screen: 'scanEntry', permissionResult: granted ? 'granted' : 'denied' })}
         onDescriptionChange={(value) => dispatch({ type: 'SCAN_DESCRIPTION_CHANGED', value })}
         onDescriptionSubmitted={(value) => { dispatch({ type: 'SCAN_DESCRIPTION_CHANGED', value }); const scan = createOnboardingV4ScanSession('description', value); beginScan(scan, 'DESCRIPTION_SUBMITTED'); }}
         onImageSelected={(_method, image) => { setScanImage(image); dispatch({ type: 'SCAN_IMAGE_SELECTED' }); }}
@@ -550,7 +508,7 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
   }
 
   if (state.step === 'analyzing') {
-    return <FirstScanAnalyzingScreen phase={scanPhase} onCancel={() => { scanAbortRef.current?.abort(); scanAbortRef.current = null; void onboardingV4ScanPersistence.clearInFlightScan(); dispatch({ type: 'ANALYSIS_CANCELLED' }); }} />;
+    return <FirstScanAnalyzingScreen imageUri={state.inFlightScan?.imageUri ?? scanImage?.uri} description={state.inFlightScan?.mealDescription ?? state.draft.scanInput.description} phase={scanPhase} onCancel={() => { scanAbortRef.current?.abort(); scanAbortRef.current = null; void onboardingV4ScanPersistence.clearInFlightScan(); dispatch({ type: 'ANALYSIS_CANCELLED' }); }} />;
   }
 
   if (state.step === 'paywall' && state.pendingPremiumAction && state.draft.resolvedPrimaryGoal) {
@@ -566,20 +524,20 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
     const fail = (message: string, errorKind: string) => {
       dispatch({ type: 'PAYWALL_ERROR', message });
       const event = onboardingV4PurchaseEvent('purchase_failed', state.pendingPremiumAction!.type, state.draft.resolvedPrimaryGoal!, errorKind);
-      void trackOnboardingV4(event.name, event.properties);
+
     };
     const handlePurchase = async (pkg: PurchasesPackage) => {
       if (premiumRequestBusyRef.current) return;
       premiumRequestBusyRef.current = true;
       setIsPremiumRequestBusy(true);
       const started = onboardingV4PurchaseEvent('purchase_started', state.pendingPremiumAction!.type, state.draft.resolvedPrimaryGoal!);
-      void trackOnboardingV4(started.name, started.properties);
+
       try {
         const result = await purchasePackage(pkg);
         const verified = getEntitlementSnapshot();
         if (result.status === 'purchased' && verified.status === 'ready' && verified.isEntitled) {
           const success = onboardingV4PurchaseEvent('purchase_succeeded', state.pendingPremiumAction!.type, state.draft.resolvedPrimaryGoal!);
-          void trackOnboardingV4(success.name, success.properties);
+
           await resumePremiumAction(state.pendingPremiumAction!);
         } else if (result.status === 'cancelled') {
           await dismissPaywall();
@@ -602,7 +560,7 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
         const verified = getEntitlementSnapshot();
         if (result.status === 'restored' && result.isEntitled && verified.status === 'ready' && verified.isEntitled) {
           const restored = onboardingV4PurchaseEvent('purchase_restored', state.pendingPremiumAction!.type, state.draft.resolvedPrimaryGoal!);
-          void trackOnboardingV4(restored.name, restored.properties);
+
           await resumePremiumAction(state.pendingPremiumAction!);
         } else {
           fail('We couldn’t verify a restored subscription. Your free recipe is still here—try again.', result.status);
@@ -642,14 +600,16 @@ export function OnboardingV4({ appStartedAt, fontsLoaded, onRestore, isRestoring
   }
 
   if (state.step === 'recipe') {
-    if (!resultRecipe || !state.draft.resolvedPrimaryGoal) {
+    if (!resultRecipe) {
       return <View style={styles.recovery}><Text style={styles.recoveryTitle}>Your recipe is still being restored</Text><Text style={styles.recoveryBody}>Close and reopen Okyo in a moment. Your free result has not been regenerated.</Text></View>;
     }
     const handlePremiumAction = (action: V4PremiumAction, customizationText?: string) => {
       if (premiumRequestBusyRef.current) return;
       premiumRequestBusyRef.current = true;
-      const event = onboardingV4MeaningfulActionSelectedEvent(action, state.draft.resolvedPrimaryGoal!);
-      void trackOnboardingV4(event.name, event.properties);
+      if (state.draft.resolvedPrimaryGoal) {
+        const event = onboardingV4MeaningfulActionSelectedEvent(action, state.draft.resolvedPrimaryGoal);
+
+      }
       const existing = state.pendingPremiumAction;
       const operation = (existing?.status === 'paywall' || existing?.status === 'dismissed') && existing.type === action
         ? onboardingV4PremiumActionPersistence.write({ ...existing, status: 'pending_entitlement', ...(action === 'customize' && customizationText ? { customizationText } : {}) })

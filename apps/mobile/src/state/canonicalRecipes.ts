@@ -15,7 +15,6 @@ export const RECIPE_PRESENTATION_MODES: RecipePresentationMode[] = [
   'Normal',
   'Lighter',
   'Healthier',
-  'More Protein',
 ];
 
 export type RecipePresentationVariant = {
@@ -538,8 +537,12 @@ function createCanonicalScanRecipe(input: {
   selectedMode: RecipeMode;
   source: ScanSource;
 }): CanonicalRecipe {
-  const originalImage = getPersistableImage(input.image);
-  const imageUri = getRealImageUri(originalImage) ?? input.recipe.imageUri;
+  const isDescription = input.source === 'description';
+  const originalImage = isDescription ? null : getPersistableImage(input.image);
+  // A scan result's model-provided image is never a substitute for the photo
+  // the person uploaded. If the original cannot be retained, show the honest
+  // empty image state rather than an unrelated catalog image.
+  const imageUri = isDescription ? null : getRealImageUri(originalImage);
   const stableScan: ScanResult = {
     ...input.scan,
     recipeId: input.recipeId,
@@ -553,8 +556,8 @@ function createCanonicalScanRecipe(input: {
     origin: input.source === 'description' ? 'description' : 'scan',
     originalImage,
     imageStatus: imageUri ? 'ready' : input.recipe.imageStatus,
-    imageUri,
-    imageUrl: imageUri ?? input.recipe.imageUrl,
+    imageUri: imageUri ?? undefined,
+    imageUrl: imageUri ?? undefined,
     detectedDishName: input.scan.dishName,
     correctedDishName: null,
     selectedMode: input.selectedMode,

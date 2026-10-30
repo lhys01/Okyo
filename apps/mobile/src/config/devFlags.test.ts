@@ -73,14 +73,14 @@ test('ONBOARDING_V4_ENABLED master switch defaults to false — V4 rejected, leg
   assert.match(flags, /export const ONBOARDING_V4_ENABLED\s*=\s*false;/);
 });
 
-test('ONBOARDING_V4_ENABLED is referenced only by devFlags.ts and its one sanctioned gate insertion point (OnboardingV3.tsx, Step 03)', () => {
+test('ONBOARDING_V4_ENABLED is referenced only by devFlags.ts and the canonical configuration gate', () => {
   // Step 02 required this flag be unreferenced by any live screen; Step 03 is
   // the plan's designated first reader — `OnboardingV3.tsx`'s top-of-function
   // gate (`if (ONBOARDING_V4_ENABLED) return <OnboardingV4 .../>`-equivalent).
   // A route/type module documenting the future gate in a comment is not a
   // reference — only code outside comments that actually imports or reads the
   // flag counts, and only that one file may do so.
-  const sanctioned = resolve(process.cwd(), 'src/onboarding-v3/OnboardingV3.tsx');
+  const sanctioned = resolve(process.cwd(), 'src/onboarding/canonical/config.ts');
   const offenders: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -93,8 +93,8 @@ test('ONBOARDING_V4_ENABLED is referenced only by devFlags.ts and its one sancti
     }
   };
   walk(resolve(process.cwd(), 'src'));
-  assert.deepEqual(offenders, [], `ONBOARDING_V4_ENABLED referenced outside devFlags.ts/OnboardingV3.tsx in: ${offenders.join(', ')}`);
+  assert.deepEqual(offenders, [], `ONBOARDING_V4_ENABLED referenced outside devFlags.ts/canonical config in: ${offenders.join(', ')}`);
 
-  const onboardingV3Source = readFileSync(sanctioned, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-  assert.ok(onboardingV3Source.includes('ONBOARDING_V4_ENABLED'), 'OnboardingV3.tsx should be the one screen reading ONBOARDING_V4_ENABLED');
+  const canonicalConfigSource = readFileSync(sanctioned, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(canonicalConfigSource.includes('ONBOARDING_V4_ENABLED'), 'canonical config should be the one runtime reader of ONBOARDING_V4_ENABLED');
 });

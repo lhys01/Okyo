@@ -1,5 +1,6 @@
 import { macroFocusToGoal } from './branchContracts';
 import { calculateNutritionTargets } from './nutritionTargets';
+import { normalizeOwnDailyReferences } from './macroPreferences';
 import {
   emptyPersonalizedProfile,
   setDietaryPreferences,
@@ -49,6 +50,7 @@ export function mergeOnboardingV4DraftIntoCanonicalProfile(
         ...merged.savings,
         takeoutFrequency: draft.savingsAnswers.takeoutFrequency ?? merged.savings.takeoutFrequency,
         spendPerMeal: draft.savingsAnswers.spendPerMealDollars ?? merged.savings.spendPerMeal,
+        cookingPriority: draft.savingsAnswers.cookingPriority ?? merged.savings.cookingPriority,
       },
     };
   } else if (goal === 'eat_healthier') {
@@ -59,6 +61,14 @@ export function mergeOnboardingV4DraftIntoCanonicalProfile(
       ? [...new Set([...merged.health.healthChallenges, draft.healthAnswers.healthBarrier])]
       : merged.health.healthChallenges;
     merged = { ...merged, health: { ...merged.health, healthGoals, healthChallenges } };
+  } else if (goal === 'hit_macros' && draft.macroAnswers.detailPreference) {
+    // Do not run the legacy body-data calculator for the quick detail flow.
+    // Existing Settings targets stay untouched; these are separate references.
+    merged = { ...merged, macroPreferences: {
+      detail: draft.macroAnswers.detailPreference,
+      focus: draft.macroAnswers.macroFocus,
+      ownDailyReferences: draft.macroAnswers.detailPreference === 'own' ? normalizeOwnDailyReferences(draft.macroAnswers.knownTargets) : {},
+    } };
   } else if (goal === 'hit_macros') {
     const inputs = draft.macroAnswers.calculatorInputs;
     const nutritionProfile = {

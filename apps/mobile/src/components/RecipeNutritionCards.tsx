@@ -2,8 +2,9 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import type { Recipe } from '../mocks';
 import { isValidNutritionEstimate } from '../utils/nutrition';
-import { colors, fontFamilies } from './OkyoUI';
+import { colors, fontFamilies, typography } from './OkyoUI';
 import { recipeShadows } from '../theme/recipeTheme';
+import { FitText } from './FitText';
 
 export function RecipeNutritionCards({
   nutrition,
@@ -27,12 +28,12 @@ export function RecipeNutritionCards({
       <View style={styles.macroRow}>
         {macros.map((macro) => (
           <View key={macro.label} style={[styles.macroCard, macro.emphasis ? styles.calorieCard : null]}>
-            <Text adjustsFontSizeToFit minimumFontScale={0.7} numberOfLines={1} style={[styles.macroValue, macro.emphasis ? styles.calorieValue : null]}>
+            <FitText minimumFontScale={0.68} style={[styles.macroValue, macro.emphasis ? styles.calorieValue : null]}>
               {macro.value}
-            </Text>
-            <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.macroLabel}>
+            </FitText>
+            <FitText minimumFontScale={0.72} style={styles.macroLabel}>
               {macro.label}
-            </Text>
+            </FitText>
           </View>
         ))}
       </View>
@@ -57,10 +58,8 @@ const styles = StyleSheet.create({
     marginTop: 18,
   },
   eyebrow: {
+    ...typography.label,
     color: colors.muted,
-    fontFamily: fontFamilies.bold,
-    fontSize: 12,
-    fontWeight: '700',
     marginBottom: 8,
   },
   macroRow: {
@@ -80,16 +79,15 @@ const styles = StyleSheet.create({
   },
   calorieCard: { backgroundColor: '#FFF6F7', flex: 1.18 },
   macroValue: {
+    ...typography.numericStat,
     color: colors.charcoal,
-    fontFamily: fontFamilies.extraBold,
     fontSize: 16,
-    fontWeight: '800',
   },
   calorieValue: { color: colors.coralDark, fontSize: 21 },
   macroLabel: {
+    ...typography.captionSmall,
     color: colors.muted,
     fontFamily: fontFamilies.bold,
-    fontSize: 10.5,
     fontWeight: '700',
     marginTop: 2,
   },

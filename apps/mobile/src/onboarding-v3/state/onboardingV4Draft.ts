@@ -1,4 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  isMacroDetailPreference,
+  normalizeOwnDailyReferences,
+} from "./macroPreferences";
 
 import {
   emptyHealthBranchAnswers,
@@ -12,6 +16,7 @@ import {
   isMacroTargetPath,
   isPreferredTransformation,
   isTakeoutFrequencyBucket,
+  isSavingsCookingPriority,
   isUniversalNeed,
   resolveNotSurePrimaryGoal,
   type HealthBranchAnswers,
@@ -19,15 +24,23 @@ import {
   type NotSureBranchAnswers,
   type PreferredTransformation,
   type SavingsBranchAnswers,
-} from './branchContracts';
+} from "./branchContracts";
 import {
   emptyDietarySafetyAnswers,
   normalizeCustomDietaryEntries,
   type DietarySafetyAnswers,
-} from './dietaryContracts';
-import { isFuturePrimaryGoal, isPrimaryGoal, type FuturePrimaryGoal, type PrimaryGoal } from './personalizedOnboarding';
-import type { ActivityLevel, BiologicalSexForEstimate } from './nutritionTargets';
-import { MAX_MEAL_DESCRIPTION_LENGTH } from '../../utils/mealDescription';
+} from "./dietaryContracts";
+import {
+  isFuturePrimaryGoal,
+  isPrimaryGoal,
+  type FuturePrimaryGoal,
+  type PrimaryGoal,
+} from "./personalizedOnboarding";
+import type {
+  ActivityLevel,
+  BiologicalSexForEstimate,
+} from "./nutritionTargets";
+import { MAX_MEAL_DESCRIPTION_LENGTH } from "../../utils/mealDescription";
 
 /**
  * The versioned V4 onboarding draft (Okyo_Onboarding_V4_Implementation_Plan.md
@@ -81,7 +94,7 @@ export type OnboardingV4Draft = {
   scanInput: OnboardingV4ScanInputState;
 };
 
-export type OnboardingV4ScanInputMethod = 'camera' | 'library' | 'description';
+export type OnboardingV4ScanInputMethod = "camera" | "library" | "description";
 
 export type OnboardingV4ScanInputState = {
   method: OnboardingV4ScanInputMethod | null;
@@ -91,11 +104,12 @@ export type OnboardingV4ScanInputState = {
   hasSelectedImage: boolean;
 };
 
-export const emptyOnboardingV4ScanInputState: OnboardingV4ScanInputState = Object.freeze({
-  method: null,
-  description: '',
-  hasSelectedImage: false,
-});
+export const emptyOnboardingV4ScanInputState: OnboardingV4ScanInputState =
+  Object.freeze({
+    method: null,
+    description: "",
+    hasSelectedImage: false,
+  });
 
 export const emptyOnboardingV4Draft: OnboardingV4Draft = Object.freeze({
   initialGoal: null,
@@ -117,8 +131,25 @@ export const emptyOnboardingV4Draft: OnboardingV4Draft = Object.freeze({
  * `null` — it must never be written as `'not_sure'` into any canonical
  * consumer that only supports the three real goals.
  */
-export function setOnboardingV4InitialGoal(draft: OnboardingV4Draft, goal: FuturePrimaryGoal): OnboardingV4Draft {
-  return { ...draft, initialGoal: goal, resolvedPrimaryGoal: isPrimaryGoal(goal) ? goal : null };
+export function setOnboardingV4InitialGoal(
+  draft: OnboardingV4Draft,
+  goal: FuturePrimaryGoal,
+): OnboardingV4Draft {
+  if (draft.initialGoal === goal) return draft;
+  return {
+    ...draft,
+    initialGoal: goal,
+    resolvedPrimaryGoal: isPrimaryGoal(goal) ? goal : null,
+    // An upstream goal change invalidates the old answer-based reveal, not
+    // allergies or restrictions. A skipped goal never becomes a fake default.
+    savingsAnswers: { ...emptySavingsBranchAnswers },
+    healthAnswers: { ...emptyHealthBranchAnswers },
+    macroAnswers: { ...emptyMacroBranchAnswers, knownTargets: {} },
+    notSureAnswers: { ...emptyNotSureBranchAnswers },
+    insightViewed: goal === "not_sure",
+    planCommitted: false,
+    scanInput: { ...emptyOnboardingV4ScanInputState },
+  };
 }
 
 /**
@@ -129,11 +160,17 @@ export function setOnboardingV4InitialGoal(draft: OnboardingV4Draft, goal: Futur
  * set by `setOnboardingV4InitialGoal` and must never be second-guessed by a
  * transformation-chip tap.
  */
-export function setOnboardingV4PreferredTransformation(draft: OnboardingV4Draft, transformation: PreferredTransformation): OnboardingV4Draft {
-  if (draft.initialGoal !== 'not_sure') return draft;
+export function setOnboardingV4PreferredTransformation(
+  draft: OnboardingV4Draft,
+  transformation: PreferredTransformation,
+): OnboardingV4Draft {
+  if (draft.initialGoal !== "not_sure") return draft;
   return {
     ...draft,
-    notSureAnswers: { ...draft.notSureAnswers, preferredTransformation: transformation },
+    notSureAnswers: {
+      ...draft.notSureAnswers,
+      preferredTransformation: transformation,
+    },
     resolvedPrimaryGoal: resolveNotSurePrimaryGoal(transformation),
   };
 }
@@ -141,7 +178,7 @@ export function setOnboardingV4PreferredTransformation(draft: OnboardingV4Draft,
 // Reuses the same storage key Step 03 already wrote to (`onboardingV4Profile.ts`,
 // now removed) — this key itself has never changed shape publicly, only its
 // JSON payload; the envelope/schemaVersion below is what's new.
-export const ONBOARDING_V4_DRAFT_STORAGE_KEY = 'okyo:onboarding-v4-profile:v1';
+export const ONBOARDING_V4_DRAFT_STORAGE_KEY = "okyo:onboarding-v4-profile:v1";
 
 /**
  * Step 03's bare, unversioned `{"primaryGoal": ...}` shape (no envelope) is
@@ -159,14 +196,19 @@ export const ONBOARDING_V4_DRAFT_SCHEMA_VERSION_STEP06 = 3 as const;
 /** Adds `insightViewed` (Step 06 repair, resume-behavior fix). */
 export const ONBOARDING_V4_DRAFT_SCHEMA_VERSION_STEP06_REPAIR = 4 as const;
 /** The current shape — adds `planCommitted`/`scanInput` (Step 07). */
-export const ONBOARDING_V4_DRAFT_SCHEMA_VERSION = 5 as const;
+export const ONBOARDING_V4_DRAFT_SCHEMA_VERSION = 7 as const;
 
 type OnboardingV4DraftEnvelope = { schemaVersion: number; draft: unknown };
 
 function isEnvelope(value: unknown): value is OnboardingV4DraftEnvelope {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    && typeof (value as { schemaVersion?: unknown }).schemaVersion === 'number'
-    && typeof (value as { draft?: unknown }).draft === 'object' && (value as { draft?: unknown }).draft !== null;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as { schemaVersion?: unknown }).schemaVersion === "number" &&
+    typeof (value as { draft?: unknown }).draft === "object" &&
+    (value as { draft?: unknown }).draft !== null
+  );
 }
 
 /**
@@ -175,43 +217,94 @@ function isEnvelope(value: unknown): value is OnboardingV4DraftEnvelope {
  * exist on a device that ran this session's Step 03 build. Detected by the
  * presence of a `primaryGoal` key and the absence of an envelope.
  */
-function isLegacyStep03Shape(value: unknown): value is { primaryGoal: unknown } {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    && Object.prototype.hasOwnProperty.call(value, 'primaryGoal');
+function isLegacyStep03Shape(
+  value: unknown,
+): value is { primaryGoal: unknown } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.prototype.hasOwnProperty.call(value, "primaryGoal")
+  );
 }
 
-function migrateLegacyStep03Draft(legacy: { primaryGoal: unknown }): OnboardingV4Draft {
-  const goal = isFuturePrimaryGoal(legacy.primaryGoal) ? legacy.primaryGoal : null;
-  return goal ? setOnboardingV4InitialGoal(emptyOnboardingV4Draft, goal) : { ...emptyOnboardingV4Draft };
+function migrateLegacyStep03Draft(legacy: {
+  primaryGoal: unknown;
+}): OnboardingV4Draft {
+  const goal = isFuturePrimaryGoal(legacy.primaryGoal)
+    ? legacy.primaryGoal
+    : null;
+  return goal
+    ? setOnboardingV4InitialGoal(emptyOnboardingV4Draft, goal)
+    : { ...emptyOnboardingV4Draft };
 }
 
 function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
+  return typeof value === "string" ? value : undefined;
 }
 function asFiniteNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 /** Field-by-field validation (not a whole-object trust/discard decision) — a single malformed field never wipes its valid siblings. */
 function normalizeSavingsAnswers(value: unknown): SavingsBranchAnswers {
-  const candidate = (typeof value === 'object' && value !== null ? value : {}) as Partial<SavingsBranchAnswers>;
+  const candidate = (
+    typeof value === "object" && value !== null ? value : {}
+  ) as Partial<SavingsBranchAnswers>;
+  const skipped = candidate.comparisonStatus === "skipped";
+  const cost = asFiniteNumber(candidate.spendPerMealDollars);
+  const replacements = candidate.replacementsPerWeek;
+  const validReplacements =
+    typeof replacements === "number" &&
+    Number.isInteger(replacements) &&
+    replacements >= 1 &&
+    replacements <= 14;
   return {
-    takeoutFrequency: isTakeoutFrequencyBucket(candidate.takeoutFrequency) ? candidate.takeoutFrequency : null,
-    spendPerMealDollars: asFiniteNumber(candidate.spendPerMealDollars) ?? null,
+    takeoutFrequency: isTakeoutFrequencyBucket(candidate.takeoutFrequency)
+      ? candidate.takeoutFrequency
+      : null,
+    spendPerMealDollars: skipped ? null : (cost ?? null),
+    ...(isSavingsCookingPriority(candidate.cookingPriority)
+      ? { cookingPriority: candidate.cookingPriority }
+      : {}),
+    ...(skipped
+      ? { comparisonStatus: "skipped" as const }
+      : candidate.comparisonStatus === "answered" &&
+          cost !== undefined &&
+          cost >= 1 &&
+          cost <= 200 &&
+          validReplacements
+        ? {
+            comparisonStatus: "answered" as const,
+            replacementsPerWeek: replacements,
+          }
+        : {}),
   };
 }
 
 function normalizeHealthAnswers(value: unknown): HealthBranchAnswers {
-  const candidate = (typeof value === 'object' && value !== null ? value : {}) as Partial<HealthBranchAnswers>;
+  const candidate = (
+    typeof value === "object" && value !== null ? value : {}
+  ) as Partial<HealthBranchAnswers>;
   return {
-    healthierDefinition: isHealthierDefinition(candidate.healthierDefinition) ? candidate.healthierDefinition : null,
-    healthBarrier: isHealthBarrier(candidate.healthBarrier) ? candidate.healthBarrier : null,
+    healthierDefinition: isHealthierDefinition(candidate.healthierDefinition)
+      ? candidate.healthierDefinition
+      : null,
+    healthBarrier: isHealthBarrier(candidate.healthBarrier)
+      ? candidate.healthBarrier
+      : null,
   };
 }
 
-function normalizeKnownTargets(value: unknown): MacroBranchAnswers['knownTargets'] {
-  const candidate = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
-  const result: MacroBranchAnswers['knownTargets'] = {};
+function normalizeKnownTargets(
+  value: unknown,
+): MacroBranchAnswers["knownTargets"] {
+  const candidate = (
+    typeof value === "object" && value !== null ? value : {}
+  ) as Record<string, unknown>;
+  const result: MacroBranchAnswers["knownTargets"] = {};
   const calories = asFiniteNumber(candidate.calories);
   const proteinGrams = asFiniteNumber(candidate.proteinGrams);
   const carbsGrams = asFiniteNumber(candidate.carbsGrams);
@@ -223,38 +316,90 @@ function normalizeKnownTargets(value: unknown): MacroBranchAnswers['knownTargets
   return result;
 }
 
-const BIOLOGICAL_SEXES: readonly BiologicalSexForEstimate[] = ['female', 'male', 'prefer_not_to_say'];
-const ACTIVITY_LEVELS: readonly ActivityLevel[] = ['mostly_sitting', 'lightly_active', 'active', 'very_active'];
+const BIOLOGICAL_SEXES: readonly BiologicalSexForEstimate[] = [
+  "female",
+  "male",
+  "non_binary",
+  "prefer_not_to_say",
+];
+const ACTIVITY_LEVELS: readonly ActivityLevel[] = [
+  "mostly_sitting",
+  "lightly_active",
+  "active",
+  "very_active",
+];
 
-function normalizeCalculatorInputs(value: unknown): MacroBranchAnswers['calculatorInputs'] {
-  const candidate = (typeof value === 'object' && value !== null ? value : {}) as Partial<MacroBranchAnswers['calculatorInputs']>;
+function normalizeCalculatorInputs(
+  value: unknown,
+): MacroBranchAnswers["calculatorInputs"] {
+  const candidate = (
+    typeof value === "object" && value !== null ? value : {}
+  ) as Partial<MacroBranchAnswers["calculatorInputs"]>;
   const biologicalSex = asString(candidate.biologicalSex);
   const activityLevel = asString(candidate.activityLevel);
   return {
     ageYears: asFiniteNumber(candidate.ageYears) ?? null,
     heightCm: asFiniteNumber(candidate.heightCm) ?? null,
     weightKg: asFiniteNumber(candidate.weightKg) ?? null,
-    biologicalSex: biologicalSex && (BIOLOGICAL_SEXES as readonly string[]).includes(biologicalSex) ? (biologicalSex as BiologicalSexForEstimate) : null,
-    activityLevel: activityLevel && (ACTIVITY_LEVELS as readonly string[]).includes(activityLevel) ? (activityLevel as ActivityLevel) : null,
+    biologicalSex:
+      biologicalSex &&
+      (BIOLOGICAL_SEXES as readonly string[]).includes(biologicalSex)
+        ? (biologicalSex as BiologicalSexForEstimate)
+        : null,
+    activityLevel:
+      activityLevel &&
+      (ACTIVITY_LEVELS as readonly string[]).includes(activityLevel)
+        ? (activityLevel as ActivityLevel)
+        : null,
     trainingDaysPerWeek: asFiniteNumber(candidate.trainingDaysPerWeek) ?? null,
   };
 }
 
 function normalizeMacroAnswers(value: unknown): MacroBranchAnswers {
-  const candidate = (typeof value === 'object' && value !== null ? value : {}) as Partial<MacroBranchAnswers>;
+  const candidate = (
+    typeof value === "object" && value !== null ? value : {}
+  ) as Partial<MacroBranchAnswers>;
+  const detail = isMacroDetailPreference(candidate.detailPreference)
+    ? candidate.detailPreference
+    : undefined;
   return {
-    macroFocus: isMacroFocus(candidate.macroFocus) ? candidate.macroFocus : null,
-    targetPath: isMacroTargetPath(candidate.targetPath) ? candidate.targetPath : null,
-    knownTargets: normalizeKnownTargets(candidate.knownTargets),
-    calculatorInputs: candidate.calculatorInputs ? normalizeCalculatorInputs(candidate.calculatorInputs) : emptyMacroCalculatorInputs,
+    macroFocus: isMacroFocus(candidate.macroFocus)
+      ? candidate.macroFocus
+      : null,
+    targetPath: detail
+      ? detail === "own"
+        ? "known"
+        : "not_sure"
+      : isMacroTargetPath(candidate.targetPath)
+        ? candidate.targetPath
+        : null,
+    knownTargets: detail
+      ? detail === "own"
+        ? normalizeOwnDailyReferences(candidate.knownTargets)
+        : {}
+      : normalizeKnownTargets(candidate.knownTargets),
+    ...(detail ? { detailPreference: detail } : {}),
+    calculatorInputs: detail
+      ? emptyMacroCalculatorInputs
+      : candidate.calculatorInputs
+        ? normalizeCalculatorInputs(candidate.calculatorInputs)
+        : emptyMacroCalculatorInputs,
   };
 }
 
 function normalizeNotSureAnswers(value: unknown): NotSureBranchAnswers {
-  const candidate = (typeof value === 'object' && value !== null ? value : {}) as Partial<NotSureBranchAnswers>;
+  const candidate = (
+    typeof value === "object" && value !== null ? value : {}
+  ) as Partial<NotSureBranchAnswers>;
   return {
-    universalNeed: isUniversalNeed(candidate.universalNeed) ? candidate.universalNeed : null,
-    preferredTransformation: isPreferredTransformation(candidate.preferredTransformation) ? candidate.preferredTransformation : null,
+    universalNeed: isUniversalNeed(candidate.universalNeed)
+      ? candidate.universalNeed
+      : null,
+    preferredTransformation: isPreferredTransformation(
+      candidate.preferredTransformation,
+    )
+      ? candidate.preferredTransformation
+      : null,
   };
 }
 
@@ -271,11 +416,16 @@ function asStringArray(value: unknown): string[] {
  * dropped rather than silently hiding real answers).
  */
 function normalizeDietarySafetyAnswers(value: unknown): DietarySafetyAnswers {
-  const candidate = (typeof value === 'object' && value !== null ? value : {}) as Partial<DietarySafetyAnswers>;
+  const candidate = (
+    typeof value === "object" && value !== null ? value : {}
+  ) as Partial<DietarySafetyAnswers>;
   const allergies = asStringArray(candidate.allergies);
   const restrictions = asStringArray(candidate.restrictions);
   const dislikes = asStringArray(candidate.dislikes);
-  const groupsEmpty = allergies.length === 0 && restrictions.length === 0 && dislikes.length === 0;
+  const groupsEmpty =
+    allergies.length === 0 &&
+    restrictions.length === 0 &&
+    dislikes.length === 0;
   return {
     allergies,
     restrictions,
@@ -285,15 +435,26 @@ function normalizeDietarySafetyAnswers(value: unknown): DietarySafetyAnswers {
   };
 }
 
-const SCAN_INPUT_METHODS: readonly OnboardingV4ScanInputMethod[] = ['camera', 'library', 'description'];
-function isScanInputMethod(value: unknown): value is OnboardingV4ScanInputMethod {
-  return typeof value === 'string' && (SCAN_INPUT_METHODS as readonly string[]).includes(value);
+const SCAN_INPUT_METHODS: readonly OnboardingV4ScanInputMethod[] = [
+  "camera",
+  "library",
+  "description",
+];
+function isScanInputMethod(
+  value: unknown,
+): value is OnboardingV4ScanInputMethod {
+  return (
+    typeof value === "string" &&
+    (SCAN_INPUT_METHODS as readonly string[]).includes(value)
+  );
 }
 
 /** Never persists the picked image binary — only the method and the normalized description text, both small and safe to round-trip through storage. */
 function normalizeScanInputState(value: unknown): OnboardingV4ScanInputState {
-  const candidate = (typeof value === 'object' && value !== null ? value : {}) as Partial<OnboardingV4ScanInputState>;
-  const description = asString(candidate.description) ?? '';
+  const candidate = (
+    typeof value === "object" && value !== null ? value : {}
+  ) as Partial<OnboardingV4ScanInputState>;
+  const description = asString(candidate.description) ?? "";
   return {
     method: isScanInputMethod(candidate.method) ? candidate.method : null,
     description: description.trim().slice(0, MAX_MEAL_DESCRIPTION_LENGTH),
@@ -309,10 +470,15 @@ function normalizeScanInputState(value: unknown): OnboardingV4ScanInputState {
  * any recognizable field is kept, anything not is dropped to its default.
  */
 function normalizeOnboardingV4Draft(value: unknown): OnboardingV4Draft {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { ...emptyOnboardingV4Draft };
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return { ...emptyOnboardingV4Draft };
   const candidate = value as Partial<OnboardingV4Draft>;
-  const initialGoal = isFuturePrimaryGoal(candidate.initialGoal) ? candidate.initialGoal : null;
-  const resolvedFromStored = isPrimaryGoal(candidate.resolvedPrimaryGoal) ? candidate.resolvedPrimaryGoal : null;
+  const initialGoal = isFuturePrimaryGoal(candidate.initialGoal)
+    ? candidate.initialGoal
+    : null;
+  const resolvedFromStored = isPrimaryGoal(candidate.resolvedPrimaryGoal)
+    ? candidate.resolvedPrimaryGoal
+    : null;
   return {
     initialGoal,
     // Never trust a stored resolvedPrimaryGoal that disagrees with what
@@ -320,7 +486,10 @@ function normalizeOnboardingV4Draft(value: unknown): OnboardingV4Draft {
     // instead of trusting possibly-corrupted persisted state, except for the
     // not_sure->resolved case (an onboarding-time preferredTransformation
     // resolution), which is legitimately independent of initialGoal.
-    resolvedPrimaryGoal: initialGoal && isPrimaryGoal(initialGoal) ? initialGoal : resolvedFromStored,
+    resolvedPrimaryGoal:
+      initialGoal && isPrimaryGoal(initialGoal)
+        ? initialGoal
+        : resolvedFromStored,
     savingsAnswers: normalizeSavingsAnswers(candidate.savingsAnswers),
     healthAnswers: normalizeHealthAnswers(candidate.healthAnswers),
     macroAnswers: normalizeMacroAnswers(candidate.macroAnswers),
@@ -345,9 +514,14 @@ function normalizeOnboardingV4Draft(value: unknown): OnboardingV4Draft {
   };
 }
 
-type OnboardingV4DraftStorage = Pick<typeof AsyncStorage, 'getItem' | 'setItem'>;
+type OnboardingV4DraftStorage = Pick<
+  typeof AsyncStorage,
+  "getItem" | "setItem"
+>;
 
-export function createOnboardingV4DraftPersistence(storage: OnboardingV4DraftStorage) {
+export function createOnboardingV4DraftPersistence(
+  storage: OnboardingV4DraftStorage,
+) {
   return {
     async readDraft(): Promise<OnboardingV4Draft> {
       let raw: string | null = null;
@@ -375,14 +549,21 @@ export function createOnboardingV4DraftPersistence(storage: OnboardingV4DraftSto
     },
     async writeDraft(draft: OnboardingV4Draft): Promise<OnboardingV4Draft> {
       const sanitized = normalizeOnboardingV4Draft(draft);
-      const envelope: OnboardingV4DraftEnvelope = { schemaVersion: ONBOARDING_V4_DRAFT_SCHEMA_VERSION, draft: sanitized };
-      await storage.setItem(ONBOARDING_V4_DRAFT_STORAGE_KEY, JSON.stringify(envelope));
+      const envelope: OnboardingV4DraftEnvelope = {
+        schemaVersion: ONBOARDING_V4_DRAFT_SCHEMA_VERSION,
+        draft: sanitized,
+      };
+      await storage.setItem(
+        ONBOARDING_V4_DRAFT_STORAGE_KEY,
+        JSON.stringify(envelope),
+      );
       return sanitized;
     },
   };
 }
 
-export const onboardingV4DraftPersistence = createOnboardingV4DraftPersistence(AsyncStorage);
+export const onboardingV4DraftPersistence =
+  createOnboardingV4DraftPersistence(AsyncStorage);
 
 /**
  * TODO (a later step, not Step 04): once V4 onboarding truly completes for a

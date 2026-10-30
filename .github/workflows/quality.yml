@@ -1,0 +1,125 @@
+name: Quality gate
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [mobile, api]
+    defaults:
+      run:
+        working-directory: apps/${{ matrix.app }}
+    env:
+      NODE_ENV: test
+      AI_ENABLED: 'false'
+      PRODUCTION_AI_ENABLED: 'false'
+      ANALYTICS_ENABLED: 'off'
+      EXPO_PUBLIC_ANALYTICS_ENABLED: 'off'
+      SENTRY_ENABLED: 'off'
+      EXPO_PUBLIC_SENTRY_ENABLED: 'off'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - if: matrix.app == 'api'
+        run: npm run build
+      - if: matrix.app == 'mobile'
+        run: npm run validate-assets
+      - run: npm test
+      - if: always()
+        run: npm audit --omit=dev --audit-level=high
+      - if: always()
+        run: git diff --check
+
+  secret-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm run test:security
+      - run: npm run security:audit
+      - run: npm run security:history
+
+  public-clients:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [apps/web, app-store-screenshots]
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ${{ matrix.directory }}/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - if: always()
+        run: npm audit --audit-level=high
+
+  native-bundles:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    env:
+      NODE_ENV: production
+      EXPO_NO_DOTENV: '1'
+      EXPO_PUBLIC_OKYO_API_URL: https://api.okyo.example
+      EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_live_fixture
+      EXPO_PUBLIC_REVENUECAT_IOS_KEY: appl_fixture
+      EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID: pro
+      EXPO_PUBLIC_ANALYTICS_ENABLED: 'off'
+      EXPO_PUBLIC_SENTRY_ENABLED: 'off'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci --include=dev
+      - name: Add a backend-only canary without printing it
+        run: node -e "require('node:fs').appendFileSync(process.env.GITHUB_ENV, 'OPENROUTER_API_KEY=' + require('node:crypto').randomBytes(32).toString('hex') + '\n')"
+      - run: npx expo export --platform ios --platform android --output-dir .artifacts/security-export
+      - run: node ../../scripts/security/audit.mjs --artifacts .artifacts/security-export
+
+  waitlist:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/waitlist
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm test
+
+  root-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm audit --audit-level=high

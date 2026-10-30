@@ -29,10 +29,11 @@ test('result and recipe surfaces include warnings and pre-cook blocking', () => 
   assert.match(recipe, /Make this work for me/);
 });
 
-test('privacy deletion is honest about local data and account blocker', () => {
+test('privacy deletion distinguishes local cleanup from authenticated account deletion', () => {
   assert.match(privacy, /Delete all Okyo data/);
-  assert.match(privacy, /no account or sign-in backend/i);
-  assert.match(privacy, /founder\/legal verification/i);
+  assert.match(privacy, /No account is signed in\. Local data can still be deleted above\./);
+  assert.match(privacy, /deleteAuthenticatedAccount\(token\)/);
+  assert.match(privacy, /External providers handle retention under their own policies/i);
 });
 
 test('stats use completed recipes and label estimates', () => {

@@ -18,7 +18,7 @@ test('fresh Home metrics show honest zero values, not em dashes', () => {
   assert.equal(metrics.savings.value, '$0');
   assert.deepEqual(metrics.savings.stats.map((stat) => stat.value), ['0', '$0', '$0']);
   assert.equal(metrics.macros.value, '0');
-  assert.equal(metrics.macros.caption, 'calories today');
+  assert.equal(metrics.macros.caption, `calories · ${new Date(2026, 7, 5).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`);
   assert.deepEqual(metrics.macros.stats.map((stat) => stat.value), ['0g', '0g', '0g']);
   assert.deepEqual(metrics.macros.stats.map((stat) => stat.label), ['Protein', 'Fat', 'Carbs']);
   assert.equal(metrics.health.value, '0');
@@ -51,7 +51,7 @@ test('a completed recipe contributes its full nutrition totals on the completed 
   assert.equal(metrics.savings.value, '$12.50');
   assert.equal(metrics.savings.stats[0]?.value, '1');
   assert.equal(metrics.macros.value, '520');
-  assert.equal(metrics.macros.caption, 'calories today');
+  assert.equal(metrics.macros.caption, `calories · ${new Date(2026, 7, 4).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`);
   assert.deepEqual(metrics.macros.stats.map((stat) => [stat.label, stat.value]), [['Protein', '38g'], ['Fat', '18g'], ['Carbs', '54g']]);
   assert.equal(metrics.health.value, '1');
 });
@@ -73,14 +73,70 @@ test('two completed recipes on the selected day are summed and recipes from anot
   assert.deepEqual(metrics.macros.stats.map((stat) => [stat.label, stat.value]), [['Protein', '60g'], ['Fat', '30g'], ['Carbs', '100g']]);
 });
 
+test('switching between Friday and Saturday recalculates every Home total from that day alone', () => {
+  const fridayAtNoon = new Date(2026, 7, 7, 12).toISOString();
+  const saturdayAtNoon = new Date(2026, 7, 8, 12).toISOString();
+  const firstFriday = fixtureMeal(fixtureRecipe({ id: 'friday-1', cookingCompletedAt: fridayAtNoon, estimatedSavings: 20, nutritionEstimate: { calories: 2000, proteinGrams: 50, carbohydratesGrams: 200, fatGrams: 40 }, selectedPresentationMode: 'Healthier' }));
+  const secondFriday = fixtureMeal(fixtureRecipe({ id: 'friday-2', cookingCompletedAt: fridayAtNoon, estimatedSavings: 10, nutritionEstimate: { calories: 1000, proteinGrams: 25, carbohydratesGrams: 100, fatGrams: 20 } }));
+  const saturday = fixtureMeal(fixtureRecipe({ id: 'saturday', cookingCompletedAt: saturdayAtNoon, estimatedSavings: 4, nutritionEstimate: { calories: 1000, proteinGrams: 12, carbohydratesGrams: 90, fatGrams: 15 } }));
+  const completedMeals = [firstFriday, secondFriday, saturday];
+  const input = { completedMeals, now: new Date(2026, 7, 8, 12), recipesById: {} };
+  const friday = selectHomeMetrics({ ...input, selectedDayKey: '2026-08-07' });
+  const saturdayMetrics = selectHomeMetrics({ ...input, selectedDayKey: '2026-08-08' });
+  const fridayAgain = selectHomeMetrics({ ...input, selectedDayKey: '2026-08-07' });
+
+  assert.equal(friday.savings.value, '$30');
+  assert.deepEqual(friday.savings.stats.map((stat) => stat.value), ['2', '$15', '$30']);
+  assert.equal(friday.macros.value, '3000');
+  assert.deepEqual(friday.macros.stats.map((stat) => stat.value), ['75g', '60g', '300g']);
+  assert.equal(friday.health.value, '1');
+  assert.deepEqual(friday.health.stats.map((stat) => stat.value), ['1', '2', '1']);
+  assert.equal(friday.health.progress, 0.5);
+
+  assert.equal(saturdayMetrics.savings.value, '$4');
+  assert.deepEqual(saturdayMetrics.savings.stats.map((stat) => stat.value), ['1', '$4', '$4']);
+  assert.equal(saturdayMetrics.macros.value, '1000');
+  assert.deepEqual(saturdayMetrics.macros.stats.map((stat) => stat.value), ['12g', '15g', '90g']);
+  assert.equal(saturdayMetrics.health.value, '0');
+  assert.deepEqual(saturdayMetrics.health.stats.map((stat) => stat.value), ['0', '1', '0']);
+  assert.equal(saturdayMetrics.health.progress, 0);
+
+  const fridayLabel = new Date(2026, 7, 7).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const saturdayLabel = new Date(2026, 7, 8).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  assert.match(friday.savings.caption, new RegExp(fridayLabel));
+  assert.match(friday.macros.caption, new RegExp(fridayLabel));
+  assert.match(friday.health.caption, new RegExp(fridayLabel));
+  assert.match(saturdayMetrics.savings.caption, new RegExp(saturdayLabel));
+  assert.match(saturdayMetrics.macros.caption, new RegExp(saturdayLabel));
+  assert.match(saturdayMetrics.health.caption, new RegExp(saturdayLabel));
+  assert.deepEqual(fridayAgain, friday);
+  assert.equal(completedMeals.length, 3);
+});
+
 test('a zero-completion selected day stays at zero and missing nutrition contributes zero only for that field', () => {
   const partialNutrition = fixtureRecipe({ cookingCompletedAt: '2026-08-04T18:00:00.000Z', nutritionEstimate: { calories: 400, proteinGrams: 20, carbohydratesGrams: 40, fatGrams: undefined as unknown as number } });
   const zeroDay = selectHomeMetrics({ completedMeals: [fixtureMeal(partialNutrition)], now, recipesById: { [partialNutrition.id]: partialNutrition }, selectedDayKey: '2026-08-05' });
   assert.equal(zeroDay.macros.value, '0');
+  assert.equal(zeroDay.savings.value, '$0');
+  assert.deepEqual(zeroDay.savings.stats.map((stat) => stat.value), ['0', '$0', '$0']);
+  assert.equal(zeroDay.health.value, '0');
+  assert.deepEqual(zeroDay.health.stats.map((stat) => stat.value), ['0', '0', '0']);
   const completedDay = selectHomeMetrics({ completedMeals: [fixtureMeal(partialNutrition)], now, recipesById: { [partialNutrition.id]: partialNutrition }, selectedDayKey: '2026-08-04' });
   assert.equal(completedDay.macros.value, '400');
   assert.deepEqual(completedDay.macros.stats.map((stat) => stat.value), ['20g', '0g', '40g']);
   assert.doesNotMatch(completedDay.macros.caption, /average|averaged/i);
+});
+
+test('a historical selected day still shows its recorded meal after the calendar moves to a new month', () => {
+  const historicalMeal = fixtureMeal(fixtureRecipe({
+    cookingCompletedAt: new Date(2026, 6, 31, 12).toISOString(),
+    estimatedSavings: 9,
+    nutritionEstimate: { calories: 650, proteinGrams: 28, carbohydratesGrams: 60, fatGrams: 18 },
+  }));
+  const metrics = selectHomeMetrics({ completedMeals: [historicalMeal], now: new Date(2026, 7, 8, 12), recipesById: {}, selectedDayKey: '2026-07-31' });
+  assert.equal(metrics.savings.value, '$9');
+  assert.equal(metrics.macros.value, '650');
+  assert.equal(metrics.health.stats[1]?.value, '1');
 });
 
 test('carousel order follows the three primary profiles and defaults to savings', () => {
@@ -93,6 +149,18 @@ test('carousel order follows the three primary profiles and defaults to savings'
 test('week activity includes only real scan, saved, or cooked recipe dates', () => {
   const recipe = fixtureRecipe({ cookingCompletedAt: '2026-08-04T12:00:00.000Z', savedAt: '2026-08-05T12:00:00.000Z' });
   assert.deepEqual(getHomeActivityDates({ [recipe.id]: recipe }), ['2026-08-01', '2026-08-04', '2026-08-05']);
+});
+
+test('week activity retains an earlier completion when the same recipe was cooked again later', () => {
+  const firstCompletion = new Date(2026, 7, 7, 12).toISOString();
+  const latestCompletion = new Date(2026, 7, 8, 12).toISOString();
+  const recipe = fixtureRecipe({ cookingCompletedAt: latestCompletion });
+  const dates = getHomeActivityDates({ [recipe.id]: recipe }, [
+    { ...fixtureMeal(recipe), id: 'first-completion', completedAt: firstCompletion },
+    { ...fixtureMeal(recipe), id: 'second-completion', completedAt: latestCompletion },
+  ]);
+  assert.ok(dates.includes('2026-08-07'));
+  assert.ok(dates.includes('2026-08-08'));
 });
 
 function fixtureRecipe(overrides: Partial<CanonicalRecipe> = {}): CanonicalRecipe {

@@ -6,6 +6,10 @@ import { mergeOnboardingV4DraftIntoEmptyCanonicalProfile } from './onboardingV4C
 import { emptyOnboardingV4Draft, setOnboardingV4InitialGoal, setOnboardingV4PreferredTransformation } from './onboardingV4Draft';
 import { getV4ResolvedTransformationLabel, getV4ResultSectionOrder, resolveV4ResultRecipe } from './onboardingV4Result';
 
+test('neutral results lead with the usable recipe, not an invented savings or nutrition goal', () => {
+  assert.deepEqual(getV4ResultSectionOrder(null).slice(0, 3), ['overview', 'ingredients', 'steps']);
+});
+
 test('result hierarchy is savings-first, health-first, and macros-first by branch', () => {
   assert.equal(getV4ResultSectionOrder('save_money')[0], 'cost');
   assert.equal(getV4ResultSectionOrder('eat_healthier')[0], 'nutrition');

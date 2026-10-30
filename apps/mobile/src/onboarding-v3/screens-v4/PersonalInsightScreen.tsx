@@ -1,15 +1,16 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
+import { useEffect, useRef } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import Animated, { FadeInUp } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
-import { useReduceMotion } from '../motion/useReduceMotion';
+import { colors, onboardingFontFamilies as fontFamilies, radius, spacing } from '../../theme/okyoTheme';
+import { onboardingV3Assets } from '../assets/onboardingV3Assets';
 import { OnboardingBackButton } from '../components/OnboardingBackButton';
-import { ONBOARDING_BACK_ROW_HEIGHT, ONBOARDING_BACK_ROW_TOP_GAP, ONBOARDING_HORIZONTAL_PADDING } from '../components/onboardingLayout';
-import { OnboardingCTA } from '../components/OnboardingCTA';
+import { useReduceMotion } from '../motion/useReduceMotion';
 import type { OnboardingV4Draft } from '../state/onboardingV4Draft';
 import type { OnboardingV4StageLabel } from '../state/onboardingV4Route';
-import { buildHealthInsight, buildMacroInsight, buildNotSureInsight, buildSavingsInsight } from './onboardingV4BranchCopy';
+import { buildOnboardingReveal, MACRO_TEACHING_EXAMPLE } from './onboardingRevealContent';
 
 type Props = {
   stageLabel: OnboardingV4StageLabel | null;
@@ -19,123 +20,96 @@ type Props = {
   onRevealed?: () => void;
 };
 
-/**
- * The shared insight screen for all four branches (Okyo_Onboarding_V4_Implementation_Plan.md
- * Step 05). Tap-to-reveal is the accessible default — no hold gesture — and
- * Reduce Motion is respected by skipping the reveal fade entirely rather
- * than shortening it. Content is entirely answer-derived via
- * `onboardingV4BranchCopy.ts`'s pure builders; nothing here is a fabricated
- * default (no "150g protein"/"2,100 calories" placeholders).
- */
-export function PersonalInsightScreen({ stageLabel, draft, onBack, onContinue, onRevealed }: Props) {
-  const [revealed, setRevealed] = useState(false);
-  const reduceMotion = useReduceMotion();
+const dish = require('../../../assets/food/recipes/teriyaki-chicken-bowl.png');
 
+/** The payoff is visible on arrival. No extra tap, hold, or disabled CTA gate. */
+export function PersonalInsightScreen({ draft, onBack, onContinue, onRevealed }: Props) {
+  const content = buildOnboardingReveal(draft);
+  const reduceMotion = useReduceMotion();
+  const { height } = useWindowDimensions();
+  const notified = useRef(false);
+  useEffect(() => {
+    if (notified.current) return;
+    notified.current = true;
+    onRevealed?.();
+  }, [onRevealed]);
+  const money = content.kind === 'money';
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-      <View style={styles.header}>
-        <OnboardingBackButton onPress={onBack} />
-        {stageLabel ? <Text accessibilityRole="text" style={styles.stageLabel}>{stageLabel}</Text> : null}
-      </View>
-      <View style={styles.content}>
-        {revealed ? (
-          <InsightContent draft={draft} />
-        ) : (
-          <Pressable
-            accessibilityHint="Shows your personalized starting insight"
-            accessibilityLabel="Reveal your insight"
-            accessibilityRole="button"
-            onPress={() => { setRevealed(true); onRevealed?.(); }}
-            style={[styles.revealButton, reduceMotion && styles.revealButtonNoElevation]}
-            testID="personal-insight-reveal"
-          >
-            <Text style={styles.revealText}>Tap to see your plan</Text>
-          </Pressable>
-        )}
-      </View>
+    <SafeAreaView edges={['top', 'bottom']} style={styles.screen}>
+      <View style={styles.header}><OnboardingBackButton onPress={onBack} /></View>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Text accessibilityRole="header" style={styles.title}>{content.title}</Text>
+        <Animated.View entering={reduceMotion ? undefined : FadeInUp.duration(320)}>
+          {money ? (
+            <View style={styles.comparison}>
+              <Text style={styles.label}>Eating out</Text>
+              <Text style={styles.price}>{content.eatingOut}</Text>
+              <Text accessible={false} style={styles.arrow}>↓</Text>
+              <Text style={styles.label}>At home</Text>
+              <Text style={styles.homePrice}>{content.home}</Text>
+              <Image accessible={false} contentFit="contain" source={onboardingV3Assets.saveMoneyReveal} style={styles.receiptKiko} />
+            </View>
+          ) : (
+            <View style={styles.foodScene}>
+              <Image accessibilityLabel="Example chicken and rice bowl, not your generated recipe" accessibilityRole="image" contentFit="cover" source={dish} style={[styles.food, { height: Math.max(230, Math.min(350, height * 0.36)) }]} />
+              <Text style={styles.exampleLabel}>Example dish</Text>
+              {content.kind === 'health' ? <Image accessible={false} contentFit="contain" source={onboardingV3Assets.healthReveal} style={styles.foodKiko} /> : null}
+            </View>
+          )}
+          {content.kind === 'macros' ? (
+            <View style={styles.metrics}>
+              <Text style={styles.label}>Illustrative nutrition example</Text>
+              {content.metric === 'balanced' ? <Text style={styles.macroStrip}>38g protein · 65g carbs · 22g fat</Text> : (
+                <View style={styles.heroMetric}>
+                  <Text style={styles.metricNumber}>{content.metric === 'protein' ? MACRO_TEACHING_EXAMPLE.proteinGrams + 'g' : MACRO_TEACHING_EXAMPLE.calories}</Text>
+                  <Text style={styles.metricUnit}>{content.metric}</Text>
+                </View>
+              )}
+              {content.metric !== 'balanced' ? <Text style={styles.metricDetail}>{content.metric === 'protein' ? '610 calories · 65g carbs · 22g fat' : '38g protein · 65g carbs · 22g fat'}</Text> : null}
+              {content.ownTargets.length ? <View style={styles.targets}><Text style={styles.label}>Your own daily reference</Text><Text style={styles.targetValues}>{content.ownTargets.join(' · ')}</Text><Text style={styles.note}>Your numbers, not targets recommended by Okyo.</Text></View> : null}
+            </View>
+          ) : null}
+          {content.kind === 'health' ? <Text style={styles.suggestion}>{content.suggestion}</Text> : null}
+          <Text style={styles.summary}>{content.summary}</Text>
+          {content.kind === 'money' && content.replacementNote ? <Text style={styles.label}>{content.replacementNote}</Text> : null}
+          {'note' in content ? <Text style={styles.note}>{content.note}</Text> : null}
+        </Animated.View>
+      </ScrollView>
       <View style={styles.footer}>
-        <OnboardingCTA disabled={!revealed} label="Continue" onPress={onContinue} testID="personal-insight-continue" />
+        <Pressable accessibilityLabel="Try it on a dish" accessibilityRole="button" onPress={onContinue} style={({ pressed }) => [styles.primary, pressed && styles.pressed]} testID="personal-insight-continue"><Text style={styles.primaryLabel}>Try it on a dish</Text></Pressable>
       </View>
     </SafeAreaView>
   );
 }
 
-function InsightContent({ draft }: { draft: OnboardingV4Draft }) {
-  if (draft.initialGoal === 'not_sure') {
-    return (
-      <>
-        <Text style={styles.headline}>{buildNotSureInsight(draft.resolvedPrimaryGoal)}</Text>
-        <Text style={styles.note}>You started out not sure — we'll keep learning what works for you.</Text>
-      </>
-    );
-  }
-
-  if (draft.initialGoal === 'save_money') {
-    const insight = buildSavingsInsight(draft.savingsAnswers);
-    if (insight.isZeroFrequency) {
-      return (
-        <>
-          <Text style={styles.headline}>{insight.headline}</Text>
-          <Text style={styles.note}>{insight.formulaNote}</Text>
-        </>
-      );
-    }
-    return (
-      <>
-        <Text style={styles.headline}>{insight.headline}</Text>
-        <View style={styles.rangeRows}>
-          <Text style={styles.rangeRow}>{insight.weeklyLine}</Text>
-          <Text style={styles.rangeRow}>{insight.monthlyLine}</Text>
-          <Text style={styles.rangeRow}>{insight.yearlyLine}</Text>
-        </View>
-        <Text style={styles.note}>{insight.formulaNote}</Text>
-      </>
-    );
-  }
-
-  if (draft.initialGoal === 'eat_healthier') {
-    const insight = buildHealthInsight(draft.healthAnswers);
-    return (
-      <>
-        <Text style={styles.headline}>{insight.headline}</Text>
-        {insight.exampleLine ? <Text style={styles.example}>{insight.exampleLine}</Text> : null}
-        {insight.barrierNote ? <Text style={styles.note}>{insight.barrierNote}</Text> : null}
-      </>
-    );
-  }
-
-  // hit_macros
-  const insight = buildMacroInsight(draft.macroAnswers, draft.macroAnswers.calculatorInputs.ageYears);
-  if (insight.minorMessage) {
-    return (
-      <>
-        <Text style={styles.headline}>{insight.headline}</Text>
-        <Text style={styles.note}>{insight.minorMessage}</Text>
-      </>
-    );
-  }
-  return (
-    <>
-      <Text style={styles.headline}>{insight.headline}</Text>
-      {insight.rangeOrTargetLine ? <Text style={styles.rangeRow}>{insight.rangeOrTargetLine}</Text> : null}
-      {insight.focusNote ? <Text style={styles.note}>{insight.focusNote}</Text> : null}
-      {insight.disclaimer ? <Text style={styles.note}>{insight.disclaimer}</Text> : null}
-    </>
-  );
-}
-
 const styles = StyleSheet.create({
-  safeArea: { backgroundColor: colors.background, flex: 1 },
-  header: { alignItems: 'center', flexDirection: 'row', minHeight: ONBOARDING_BACK_ROW_HEIGHT, paddingHorizontal: ONBOARDING_HORIZONTAL_PADDING, paddingTop: ONBOARDING_BACK_ROW_TOP_GAP },
-  stageLabel: { color: colors.muted, flex: 1, fontFamily: fontFamilies.bold, fontSize: 13, letterSpacing: 0.4, marginLeft: 12, textTransform: 'uppercase' },
-  content: { flex: 1, justifyContent: 'center', paddingBottom: 22, paddingHorizontal: ONBOARDING_HORIZONTAL_PADDING },
-  revealButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 24, borderWidth: 1, minHeight: 120, justifyContent: 'center', paddingHorizontal: 24 },
-  revealButtonNoElevation: { elevation: 0, shadowOpacity: 0 },
-  revealText: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 18, textAlign: 'center' },
-  headline: { color: colors.charcoal, fontFamily: fontFamilies.personalizedDisplay, fontSize: 28, letterSpacing: -0.4, lineHeight: 34 },
-  rangeRows: { gap: 6, marginTop: 18 },
-  rangeRow: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 18, marginTop: 6 },
-  example: { color: colors.body, fontFamily: fontFamilies.medium, fontSize: 15, marginTop: 14 },
-  note: { color: colors.muted, fontFamily: fontFamilies.medium, fontSize: 13, marginTop: 14 },
-  footer: { paddingBottom: 8, paddingHorizontal: ONBOARDING_HORIZONTAL_PADDING, paddingTop: 10 },
+  screen: { flex: 1, backgroundColor: colors.surfaceMuted },
+  header: { minHeight: 48, paddingHorizontal: spacing.xl },
+  content: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg, paddingBottom: spacing.xl },
+  title: { color: colors.ink, fontFamily: fontFamilies.extraBold, fontSize: 40, lineHeight: 46, letterSpacing: -1.2 },
+  foodScene: { marginTop: spacing.xl, marginBottom: spacing.lg },
+  food: { width: '100%', borderRadius: radius.hero, backgroundColor: colors.creamDeep },
+  exampleLabel: { color: colors.body, fontFamily: fontFamilies.medium, fontSize: 13, lineHeight: 19, marginTop: spacing.sm },
+  foodKiko: { position: 'absolute', right: -8, bottom: -8, width: 100, height: 120 },
+  comparison: { marginTop: spacing.xxl, paddingRight: spacing.xxl, paddingBottom: 112 },
+  label: { color: colors.body, fontFamily: fontFamilies.semibold, fontSize: 14, lineHeight: 21 },
+  price: { color: colors.savings, fontFamily: fontFamilies.extraBold, fontSize: 64, lineHeight: 76, letterSpacing: -2 },
+  arrow: { color: colors.savings, fontSize: 36, marginVertical: spacing.md },
+  homePrice: { color: colors.ink, fontFamily: fontFamilies.bold, fontSize: 28, lineHeight: 35, marginTop: spacing.sm },
+  receiptKiko: { position: 'absolute', bottom: 0, right: 0, width: 90, height: 104 },
+  metrics: { marginTop: spacing.sm },
+  heroMetric: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', columnGap: spacing.md },
+  metricNumber: { color: colors.macros, fontFamily: fontFamilies.extraBold, fontSize: 64, lineHeight: 76, letterSpacing: -2 },
+  metricUnit: { color: colors.ink, fontFamily: fontFamilies.bold, fontSize: 22, lineHeight: 30 },
+  macroStrip: { color: colors.macros, fontFamily: fontFamilies.bold, fontSize: 24, lineHeight: 34, marginTop: spacing.sm },
+  metricDetail: { color: colors.body, fontFamily: fontFamilies.medium, fontSize: 15, lineHeight: 23 },
+  targets: { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: spacing.lg, marginTop: spacing.lg },
+  targetValues: { color: colors.ink, fontFamily: fontFamilies.semibold, fontSize: 16, lineHeight: 24, marginTop: spacing.xs },
+  suggestion: { color: colors.savings, fontFamily: fontFamilies.bold, fontSize: 22, lineHeight: 30, marginTop: spacing.sm },
+  summary: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 17, lineHeight: 25, marginTop: spacing.lg },
+  note: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 13, lineHeight: 20, marginTop: spacing.md },
+  footer: { paddingHorizontal: spacing.xl, paddingVertical: spacing.md },
+  primary: { backgroundColor: colors.coral, minHeight: 58, borderRadius: radius.button, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.lg },
+  primaryLabel: { color: colors.ink, fontFamily: fontFamilies.bold, fontSize: 17, lineHeight: 24, textAlign: 'center' },
+  pressed: { opacity: 0.8 },
 });

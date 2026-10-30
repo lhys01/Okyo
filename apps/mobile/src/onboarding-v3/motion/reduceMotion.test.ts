@@ -6,7 +6,9 @@ import test from 'node:test';
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory).flatMap((name) => {
     const path = join(directory, name);
-    return statSync(path).isDirectory() ? sourceFiles(path) : /\.tsx?$/.test(name) ? [path] : [];
+    return statSync(path).isDirectory()
+      ? sourceFiles(path)
+      : /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) ? [path] : [];
   });
 }
 
@@ -20,13 +22,22 @@ test('repeating decorative motion always consults Reduce Motion', () => {
   }
 });
 
-test('onboarding uses no JavaScript intervals and only splash/name-placeholder gates use timeouts', () => {
+test('onboarding uses no JavaScript intervals and confines timeouts to explicit UI and persistence jobs', () => {
   const root = resolve(process.cwd(), 'src/onboarding-v3');
   const matches = sourceFiles(root).filter((file) => !file.endsWith('.test.ts')).flatMap((file) => {
     const source = readFileSync(file, 'utf8');
     return /setInterval|setTimeout/.test(source) ? [file] : [];
   });
-  assert.deepEqual(matches.map((file) => file.replace(`${root}/`, '')).sort(), ['screens/NameFoxScreen.tsx', 'screens/SplashScreen.tsx']);
+  assert.deepEqual(matches.map((file) => file.replace(`${root}/`, '')).sort(), [
+    'components/HoldToReveal.tsx',
+    'components/OnboardingBackButton.tsx',
+    'components/OnboardingCTA.tsx',
+    'screens/HealthBranchScreen.tsx',
+    'screens/MacrosBranchScreen.tsx',
+    'screens/PersonalizedOnboardingScreen.tsx',
+    'screens/SaveMoneyBranchScreen.tsx',
+    'screens/SplashScreen.tsx',
+  ]);
 });
 
 test('live Reduce Motion changes cancel decorative splash and Kiko idle loops', () => {
@@ -34,7 +45,7 @@ test('live Reduce Motion changes cancel decorative splash and Kiko idle loops', 
   const splash = readFileSync(join(root, 'screens/SplashScreen.tsx'), 'utf8');
   const meetKiko = readFileSync(join(root, 'showcase/pages/MeetKikoPage.tsx'), 'utf8');
 
-  assert.match(splash, /else \{\s*rotation\.value = 0;/);
+  assert.doesNotMatch(splash, /withRepeat|rotation\.value/);
   assert.match(meetKiko, /else \{\s*idleY\.value = 0;\s*idleRotation\.value = 0;/);
 });
 

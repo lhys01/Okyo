@@ -26,10 +26,10 @@ test('splash -> promise -> primaryGoal -> branchQ1, in order', () => {
   assert.equal(state.draft.resolvedPrimaryGoal, 'eat_healthier');
 });
 
-test('each of the four goals is selectable and lands on branchQ1', () => {
+test('personalized goals open questions while Just show me goes directly to dietary safety', () => {
   for (const goal of ['save_money', 'eat_healthier', 'hit_macros', 'not_sure'] as const) {
     const next = onboardingV4Reducer(at('primaryGoal'), { type: 'GOAL_SELECTED', goal });
-    assert.equal(next.step, 'branchQ1');
+    assert.equal(next.step, goal === 'not_sure' ? 'dietarySafety' : 'branchQ1');
     assert.equal(next.draft.initialGoal, goal);
   }
 });
@@ -131,26 +131,26 @@ test('hit_macros (not_sure yet path): skips macroDetails entirely, straight to p
   assert.equal(state.step, 'personalInsight');
 });
 
-test('not_sure: Q2 resolves resolvedPrimaryGoal and reaches personalInsight directly, never through macroDetails even when resolved to hit_macros', () => {
+test('Just show me does not invent a goal or require the historical neutral questionnaire', () => {
   const state = run([
     { type: 'SPLASH_FINISHED' }, { type: 'CONTINUE' },
     { type: 'GOAL_SELECTED', goal: 'not_sure' },
     { type: 'NOT_SURE_UNIVERSAL_NEED_ANSWERED', value: 'Understand nutrition' }, { type: 'CONTINUE' },
     { type: 'NOT_SURE_TRANSFORMATION_ANSWERED', value: 'more_protein' }, { type: 'CONTINUE' },
   ]);
-  assert.equal(state.step, 'personalInsight');
-  assert.equal(state.draft.resolvedPrimaryGoal, 'hit_macros');
+  assert.equal(state.step, 'dietarySafety');
+  assert.equal(state.draft.resolvedPrimaryGoal, null);
   assert.equal(state.draft.initialGoal, 'not_sure', 'initialGoal history is preserved even after resolution');
 });
 
-test('not_sure never routes back to primaryGoal — BACK from branchQ2 goes to branchQ1, not primaryGoal', () => {
+test('Just show me can return from dietary safety to choose a goal', () => {
   const state = run([
     { type: 'SPLASH_FINISHED' }, { type: 'CONTINUE' },
     { type: 'GOAL_SELECTED', goal: 'not_sure' },
     { type: 'NOT_SURE_UNIVERSAL_NEED_ANSWERED', value: 'Just explore' }, { type: 'CONTINUE' },
   ]);
-  assert.equal(state.step, 'branchQ2');
-  assert.equal(onboardingV4Reducer(state, { type: 'BACK' }).step, 'branchQ1');
+  assert.equal(state.step, 'dietarySafety');
+  assert.equal(onboardingV4Reducer(state, { type: 'BACK' }).step, 'primaryGoal');
 });
 
 // --- Back navigation + dependent-answer clearing ----------------------------

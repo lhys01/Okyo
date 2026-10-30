@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { getRuntimeSafetyConfig } from './config/runtimeSafety.js';
+import { getRequestContext } from './observability/requestContext.js';
 import type { AiConfig } from './config/aiConfig.js';
 import type { FoodImageAnalysis } from './services/aiService.js';
 import {
@@ -22,9 +24,9 @@ import type {
   XpEventDefinition,
 } from './types.js';
 
-const savedRecipes: Recipe[] = [];
-const completedChallenges: CompletedChallenge[] = [];
-const awardedXpEvents: AwardedXpEvent[] = [];
+const savedRecipesByUser = new Map<string, Recipe[]>();
+const completedChallengesByUser = new Map<string, CompletedChallenge[]>();
+const awardedXpEventsByUser = new Map<string, AwardedXpEvent[]>();
 
 // Deferred coaching store: recipes awaiting on-demand coaching enrichment.
 // Keyed by recipe.id. TTL = 1 day (survives the typical user session).
@@ -35,6 +37,7 @@ type GeneratedRecipeEntry = {
   parentRevisionId?: string;
   rootRevisionId: string;
   supersededBy?: string;
+  ownerKey?: string;
 };
 const generatedRecipeStore = new Map<string, GeneratedRecipeEntry>();
 
@@ -50,6 +53,7 @@ export type StoredAnalysisContext = {
   visionMs: number;
   scanStartedAt: number;
   expiresAt: number;
+  ownerKey?: string;
 };
 
 const analysisStore = new Map<string, StoredAnalysisContext>();
@@ -58,9 +62,10 @@ export function storeAnalysisContext(
   context: Omit<StoredAnalysisContext, 'expiresAt'>,
   now = Date.now(),
 ): { analysisId: string; expiresAt: number } {
+  pruneAnalysisContexts(now);
   const analysisId = randomUUID();
   const expiresAt = now + ANALYSIS_TTL_MS;
-  analysisStore.set(analysisId, { ...context, expiresAt });
+  analysisStore.set(analysisId, { ...context, expiresAt, ownerKey: getRequestContext()?.ownerKey });
   return { analysisId, expiresAt };
 }
 
@@ -70,6 +75,7 @@ export function getAnalysisContext(
 ): { status: 'found'; context: StoredAnalysisContext } | { status: 'expired' | 'missing' } {
   const context = analysisStore.get(analysisId);
   if (!context) return { status: 'missing' };
+  if (context.ownerKey !== getRequestContext()?.ownerKey) return { status: 'missing' };
   if (context.expiresAt <= now) {
     analysisStore.delete(analysisId);
     return { status: 'expired' };
@@ -78,7 +84,8 @@ export function getAnalysisContext(
 }
 
 export function deleteAnalysisContext(analysisId: string): void {
-  analysisStore.delete(analysisId);
+  const context = analysisStore.get(analysisId);
+  if (context && context.ownerKey === getRequestContext()?.ownerKey) analysisStore.delete(analysisId);
 }
 
 export class StaleRecipeRevisionError extends Error {
@@ -94,10 +101,12 @@ export class StaleRecipeRevisionError extends Error {
 }
 
 export function storeGeneratedRecipe(recipe: Recipe): void {
+  pruneGeneratedRecipes();
   generatedRecipeStore.set(recipe.id, {
     recipe,
     expiresAt: Date.now() + GENERATED_RECIPE_TTL_MS,
     rootRevisionId: recipe.id,
+    ownerKey: getRequestContext()?.ownerKey,
   });
 }
 
@@ -124,6 +133,7 @@ export function storeGeneratedRecipeRevision(
   recipe: Recipe;
   rootRevisionId: string;
 } {
+  pruneGeneratedRecipes();
   const parent = getGeneratedRecipeEntry(parentRevisionId);
   if (!parent) {
     throw new StaleRecipeRevisionError(parentRevisionId);
@@ -140,6 +150,7 @@ export function storeGeneratedRecipeRevision(
     expiresAt: Date.now() + GENERATED_RECIPE_TTL_MS,
     parentRevisionId,
     rootRevisionId: parent.rootRevisionId,
+    ownerKey: parent.ownerKey,
   });
   return { parentRevisionId, recipe, rootRevisionId: parent.rootRevisionId };
 }
@@ -162,7 +173,35 @@ function getGeneratedRecipeEntry(recipeId: string): GeneratedRecipeEntry | null 
     generatedRecipeStore.delete(recipeId);
     return null;
   }
+  // Unit tests and internal helpers may seed legacy entries outside a request.
+  // Every HTTP-created entry has an ownerKey and remains request-scoped.
+  const currentOwnerKey = getRequestContext()?.ownerKey;
+  if (currentOwnerKey && entry.ownerKey && entry.ownerKey !== currentOwnerKey) return null;
   return entry;
+}
+
+function pruneAnalysisContexts(now: number): void {
+  for (const [id, context] of analysisStore) {
+    if (context.expiresAt <= now) analysisStore.delete(id);
+  }
+  const maxEntries = getRuntimeSafetyConfig().maxInMemoryAnalysisEntries;
+  while (analysisStore.size >= maxEntries) {
+    const oldest = analysisStore.keys().next().value;
+    if (oldest === undefined) break;
+    analysisStore.delete(oldest);
+  }
+}
+
+function pruneGeneratedRecipes(now = Date.now()): void {
+  for (const [id, entry] of generatedRecipeStore) {
+    if (entry.expiresAt <= now) generatedRecipeStore.delete(id);
+  }
+  const maxEntries = getRuntimeSafetyConfig().maxInMemoryGeneratedRecipeEntries;
+  while (generatedRecipeStore.size >= maxEntries) {
+    const oldest = generatedRecipeStore.keys().next().value;
+    if (oldest === undefined) break;
+    generatedRecipeStore.delete(oldest);
+  }
 }
 
 export function getScan(scanId: string) {
@@ -176,7 +215,8 @@ export function getRecipe(recipeId: string) {
   );
 }
 
-export function saveRecipe(recipe: Recipe) {
+export function saveRecipe(recipe: Recipe, userId: string) {
+  const savedRecipes = getUserCollection(savedRecipesByUser, userId);
   if (!savedRecipes.some((savedRecipe) => savedRecipe.id === recipe.id)) {
     savedRecipes.push(recipe);
   }
@@ -184,8 +224,8 @@ export function saveRecipe(recipe: Recipe) {
   return savedRecipes;
 }
 
-export function getLibrary() {
-  return [...savedRecipes];
+export function getLibrary(userId: string) {
+  return [...getUserCollection(savedRecipesByUser, userId)];
 }
 
 export function createChallenge(input: {
@@ -193,7 +233,7 @@ export function createChallenge(input: {
   mode: RecipeMode;
   rating: CompletedChallenge['rating'];
   matchScore?: number;
-}) {
+}, userId: string) {
   const recipe = getRecipe(input.recipeId);
 
   if (!recipe) {
@@ -217,11 +257,11 @@ export function createChallenge(input: {
     badgeUnlocked: getBadgeForChallenge(recipe.title, input.mode, input.rating, recipe.estimatedSavings),
   };
 
-  completedChallenges.push(challenge);
+  getUserCollection(completedChallengesByUser, userId).push(challenge);
   return challenge;
 }
 
-export function awardXp(eventType: string, sourceId?: string) {
+export function awardXp(userId: string, eventType: string, sourceId?: string) {
   const definition = findXpDefinition(eventType);
   const event: AwardedXpEvent = {
     id: `xp-${eventType}-${sourceId ?? 'manual'}-${Date.now()}`,
@@ -231,11 +271,13 @@ export function awardXp(eventType: string, sourceId?: string) {
     sourceId,
   };
 
-  awardedXpEvents.push(event);
+  getUserCollection(awardedXpEventsByUser, userId).push(event);
   return event;
 }
 
-export function getSavingsSummary() {
+export function getSavingsSummary(userId: string) {
+  const savedRecipes = getUserCollection(savedRecipesByUser, userId);
+  const completedChallenges = getUserCollection(completedChallengesByUser, userId);
   const savedRecipeSavings = savedRecipes.reduce((total, recipe) => total + recipe.estimatedSavings, 0);
   const challengeSavings = completedChallenges.reduce((total, challenge) => total + challenge.moneySaved, 0);
   const totalEstimatedSaved = savedRecipeSavings + challengeSavings;
@@ -251,7 +293,9 @@ export function getSavingsSummary() {
   };
 }
 
-export function getWeeklyRankings() {
+export function getWeeklyRankings(userId: string) {
+  const awardedXpEvents = getUserCollection(awardedXpEventsByUser, userId);
+  const completedChallenges = getUserCollection(completedChallengesByUser, userId);
   const xp = awardedXpEvents.reduce((total, event) => total + event.points, 0);
 
   return {
@@ -263,12 +307,41 @@ export function getWeeklyRankings() {
   };
 }
 
+export function clearUserData(userId: string): void {
+  const ownerKey = `user:${userId}`;
+  const failures: unknown[] = [];
+  const attempt = (operation: () => void) => {
+    try { operation(); } catch (error) { failures.push(error); }
+  };
+
+  attempt(() => savedRecipesByUser.delete(userId));
+  attempt(() => completedChallengesByUser.delete(userId));
+  attempt(() => awardedXpEventsByUser.delete(userId));
+  for (const [recipeId, entry] of generatedRecipeStore) {
+    if (entry.ownerKey === ownerKey) attempt(() => generatedRecipeStore.delete(recipeId));
+  }
+  for (const [analysisId, context] of analysisStore) {
+    if (context.ownerKey === ownerKey) attempt(() => analysisStore.delete(analysisId));
+  }
+
+  if (failures.length > 0) throw new Error('User data cleanup did not fully complete.');
+}
+
+function getUserCollection<T>(collections: Map<string, T[]>, userId: string): T[] {
+  let collection = collections.get(userId);
+  if (!collection) {
+    collection = [];
+    collections.set(userId, collection);
+  }
+  return collection;
+}
+
 export function getRestaurantPacks() {
-  return mockRestaurantPacks;
+  return mockRestaurantPacks.map(pack => ({ ...pack, provenance: 'static_example', pricesAreEstimates: true }));
 }
 
 export function getRestaurantPack(packId: string) {
-  return mockRestaurantPacks.find((pack) => pack.id === packId);
+  return getRestaurantPacks().find((pack) => pack.id === packId);
 }
 
 export function getXpDefinitions(): XpEventDefinition[] {

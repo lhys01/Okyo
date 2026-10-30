@@ -11,10 +11,12 @@ import { EMPTY_FOOD_PREFERENCES, findFoodPreferenceConflicts, type FoodPreferenc
 import { classifyDietarySafetyPrompt } from '../../utils/dietarySafetyPrompt';
 import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
 import { formatRecipeDuration, getRecipeTiming } from '../../utils/recipeIntegrity';
+import { normalizeRecipeStepWording } from '../../utils/recipeStepWording';
 import { LoadingOverlay } from '../components/LoadingOverlay';
 import { OnboardingBackButton } from '../components/OnboardingBackButton';
 import { ONBOARDING_BACK_ROW_HEIGHT, ONBOARDING_BACK_ROW_TOP_GAP, ONBOARDING_HORIZONTAL_PADDING } from '../components/onboardingLayout';
 import { OnboardingCTA } from '../components/OnboardingCTA';
+import { MacrosRecipePayoff } from './MacrosRecipePayoff';
 
 export function OnboardingRecipePreview({
   recipe,
@@ -22,6 +24,9 @@ export function OnboardingRecipePreview({
   mascotName,
   errorMessage,
   dietaryPreferences = EMPTY_FOOD_PREFERENCES,
+  macroFocus,
+  macroObstacle,
+  macroRecipePriorities,
   onBack,
   onContinue,
   onCook,
@@ -41,6 +46,9 @@ export function OnboardingRecipePreview({
    * not yet threaded through in older call sites, if any) keeps compiling.
    */
   dietaryPreferences?: FoodPreferences;
+  macroFocus?: string;
+  macroObstacle?: string | null;
+  macroRecipePriorities?: readonly string[];
   onBack: () => void;
   onContinue: () => void;
   onCook: () => void;
@@ -113,8 +121,8 @@ export function OnboardingRecipePreview({
     );
   };
   const steps = recipe.structuredSteps?.length
-    ? recipe.structuredSteps.map((step) => step.text)
-    : recipe.steps;
+    ? recipe.structuredSteps.map((step) => normalizeRecipeStepWording(step.text, recipe.ingredients))
+    : recipe.steps.map((step) => normalizeRecipeStepWording(step, recipe.ingredients));
   const saveTitle = () => {
     const next = title.trim();
     if (next) onEditTitle(next);
@@ -127,7 +135,7 @@ export function OnboardingRecipePreview({
       <View style={styles.header}><OnboardingBackButton onPress={onBack} /></View>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {imageUri ? <Image accessibilityLabel={`${recipe.title} photo`} contentFit="cover" source={{ uri: imageUri }} style={styles.hero} /> : null}
-        <Text style={styles.eyebrow}>{mascotName}'s personalized recipe</Text>
+        <Text style={styles.eyebrow}>{macroFocus ? 'Inspired by your dish' : `${mascotName}'s personalized recipe`}</Text>
         <View style={styles.titleRow}>
           {editingTitle ? (
             <TextInput
@@ -145,6 +153,7 @@ export function OnboardingRecipePreview({
           </Pressable>
         </View>
         <Text style={styles.description}>{recipe.description}</Text>
+        {macroFocus ? <MacrosRecipePayoff recipe={recipe} focus={macroFocus} obstacle={macroObstacle} priorities={macroRecipePriorities} /> : null}
 
         {hasSavedAllergies ? (
           <Text accessibilityRole="text" style={styles.allergyReminder}>
@@ -186,7 +195,7 @@ export function OnboardingRecipePreview({
             <Text style={styles.estimateNote}>AI estimate — your ingredients and local prices may differ.</Text>
           </RecipeSection>
         ) : null}
-        <NutritionSummary nutrition={recipe.nutritionEstimate} servings={recipe.servings} />
+        {!macroFocus ? <NutritionSummary nutrition={recipe.nutritionEstimate} servings={recipe.servings} /> : null}
       </ScrollView>
       <View style={styles.footer}>
         <OnboardingCTA label="Continue" onPress={onContinue} />

@@ -9,6 +9,7 @@ import type { CanonicalRecipe } from '../../state/canonicalRecipes';
 import { findFoodPreferenceConflicts, type FoodPreferences } from '../../state/foodPreferences';
 import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
 import { formatRecipeDuration, getRecipeTiming } from '../../utils/recipeIntegrity';
+import { normalizeRecipeStepWording } from '../../utils/recipeStepWording';
 import type { PreferredTransformation } from '../state/branchContracts';
 import type { PrimaryGoal } from '../state/personalizedOnboarding';
 import { getV4ResolvedTransformationLabel, getV4ResultSectionOrder, type V4ResultSection } from '../state/onboardingV4Result';
@@ -25,10 +26,12 @@ export function FreeRecipeResultScreen({ dietaryPreferences, initialGoalWasNotSu
   preferredTransformation: PreferredTransformation | null;
   priorityNote?: string | null;
   recipe: CanonicalRecipe;
-  selectedGoal: PrimaryGoal;
+  selectedGoal: PrimaryGoal | null;
 }) {
   const ingredients = recipe.ingredientGroups?.length ? recipe.ingredientGroups.flatMap((group) => group.items) : recipe.ingredients;
-  const steps = recipe.structuredSteps?.length ? recipe.structuredSteps.map((step) => step.text) : recipe.steps;
+  const steps = recipe.structuredSteps?.length
+    ? recipe.structuredSteps.map((step) => normalizeRecipeStepWording(step.text, ingredients))
+    : recipe.steps.map((step) => normalizeRecipeStepWording(step, ingredients));
   const conflicts = findFoodPreferenceConflicts(ingredients.map((item) => item.name), dietaryPreferences);
   const timing = getRecipeTiming(recipe);
   const imageUri = recipe.imageUri ?? recipe.imageUrl ?? recipe.originalImage?.uri;
@@ -44,7 +47,7 @@ export function FreeRecipeResultScreen({ dietaryPreferences, initialGoalWasNotSu
     actions: <View style={styles.actionsCard}><Text style={styles.sectionTitle}>Make it yours</Text><TextInput accessibilityLabel="Describe a recipe customization" maxLength={240} multiline onChangeText={setCustomization} placeholder="Try: less spicy, dairy-free, or higher protein" placeholderTextColor={colors.muted} style={styles.input} value={customization} /><Pressable accessibilityLabel="Customize this recipe" accessibilityRole="button" disabled={!customization.trim()} onPress={() => onPremiumAction('customize', customization.trim())} style={[styles.customizeButton, !customization.trim() && styles.disabled]}><Spark color={colors.coralDark} height={19} width={19} /><Text style={styles.customizeText}>Customize</Text></Pressable></View>,
   };
   return <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}><ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-    {imageUri ? <Image accessibilityLabel={`${recipe.title} photo`} contentFit="cover" source={{ uri: imageUri }} style={styles.hero} /> : <View accessibilityLabel="Recipe photo unavailable" accessibilityRole="image" style={styles.heroFallback}><Spark color={colors.coralDark} height={48} width={48} /></View>}
+    {imageUri ? <Image accessibilityLabel={`${recipe.title} photo`} contentFit="contain" source={{ uri: imageUri }} style={styles.hero} /> : <View accessibilityLabel="Recipe photo unavailable" accessibilityRole="image" style={styles.heroFallback}><Spark color={colors.coralDark} height={48} width={48} /></View>}
     <Text style={styles.eyebrow}>Your free personalized recipe</Text><Text style={styles.title}>{recipe.title}</Text>{recipe.detectedDishName ? <Text style={styles.dishName}>Based on your {recipe.detectedDishName} scan</Text> : null}<Text style={styles.description}>{recipe.description}</Text>
     {dietaryPreferences.allergies.length ? <Text accessibilityRole="alert" style={styles.allergyReminder}>You’ve saved allergies. Okyo’s automated ingredient check can miss things—verify every ingredient and label before cooking.</Text> : null}
     <FoodSafetyNotice conflicts={conflicts} />
@@ -56,7 +59,7 @@ export function FreeRecipeResultScreen({ dietaryPreferences, initialGoalWasNotSu
 }
 
 function CostSection({ recipe }: { recipe: CanonicalRecipe }) { const eatingOut = recipe.restaurantPriceEstimate ?? recipe.scanResult?.restaurantPrice; const homemade = recipe.estimatedHomemadeCost; const savings = typeof eatingOut === 'number' && eatingOut >= 0 && homemade >= 0 ? Math.max(0, eatingOut - homemade) : null; return <Card title="Estimated cost"><View style={styles.costRow}><Stat label="Eating out" value={typeof eatingOut === 'number' ? `$${eatingOut.toFixed(2)}` : 'Unavailable'} /><Stat label="Make at home" value={homemade >= 0 ? `$${homemade.toFixed(2)}` : 'Unavailable'} /></View><Text style={styles.savings}>{savings === null ? 'Savings estimate unavailable' : `About $${savings.toFixed(2)} estimated savings`}</Text><Text style={styles.note}>Local prices and portions vary.</Text></Card>; }
-function NutritionSection({ recipe, goal, priorityNote }: { recipe: CanonicalRecipe; goal: PrimaryGoal; priorityNote?: string | null }) { const nutrition = recipe.nutritionEstimate; return <Card title={goal === 'hit_macros' ? 'Estimated macros per serving' : 'Estimated nutrition per serving'}>{priorityNote ? <Text style={styles.priorityNote}>Your focus: {priorityNote}</Text> : null}{nutrition ? <View style={styles.nutritionGrid}><Stat label="Calories" value={String(Math.round(nutrition.calories))} /><Stat label="Protein" value={`${Math.round(nutrition.proteinGrams)}g`} /><Stat label="Carbs" value={`${Math.round(nutrition.carbohydratesGrams)}g`} /><Stat label="Fat" value={`${Math.round(nutrition.fatGrams)}g`} /></View> : <Text style={styles.note}>Nutrition estimate unavailable for this recipe.</Text>}<Text style={styles.note}>Estimated values, not medical advice.</Text></Card>; }
+function NutritionSection({ recipe, goal, priorityNote }: { recipe: CanonicalRecipe; goal: PrimaryGoal | null; priorityNote?: string | null }) { const nutrition = recipe.nutritionEstimate; return <Card title={goal === 'hit_macros' ? 'Estimated macros per serving' : 'Estimated nutrition per serving'}>{priorityNote ? <Text style={styles.priorityNote}>Your focus: {priorityNote}</Text> : null}{nutrition ? <View style={styles.nutritionGrid}><Stat label="Calories" value={String(Math.round(nutrition.calories))} /><Stat label="Protein" value={`${Math.round(nutrition.proteinGrams)}g`} /><Stat label="Carbs" value={`${Math.round(nutrition.carbohydratesGrams)}g`} /><Stat label="Fat" value={`${Math.round(nutrition.fatGrams)}g`} /></View> : <Text style={styles.note}>Nutrition estimate unavailable for this recipe.</Text>}<Text style={styles.note}>Estimated values, not medical advice.</Text></Card>; }
 function Card({ children, title }: { children: ReactNode; title: string }) { return <View style={styles.card}><Text style={styles.sectionTitle}>{title}</Text>{children}</View>; }
 function Stat({ label, value }: { label: string; value: string }) { return <View style={styles.stat}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text></View>; }
 function Action({ icon, label, onPress }: { icon: ReactNode; label: string; onPress: () => void }) { return <Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress} style={styles.action}>{icon}<Text style={styles.actionText}>{label}</Text></Pressable>; }

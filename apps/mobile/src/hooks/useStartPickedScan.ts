@@ -3,7 +3,9 @@ import { useCallback, useRef } from 'react';
 import { Alert } from 'react-native';
 
 import { useOkyoStore } from '../state/useOkyoStore';
+import { requestPermissionWithNotice } from '../privacy/requestPermissionWithNotice';
 import { preparePickedImage } from '../utils/scanImageProcessing';
+import { createPickedImagePreview } from '../utils/scanImageReference';
 import { startScan } from '../utils/scanController';
 import { HOME_UPLOAD_TARGET_SCREEN, shouldStartPickedUpload } from '../utils/scanControllerUtils';
 import { uiLog } from '../utils/uiDebug';
@@ -28,26 +30,16 @@ export function useStartPickedScan(navigator: Navigator, reasonPrefix = 'Home') 
       inFlight.current = true;
       try {
         if (source === 'camera') {
-          const permission = await ImagePicker.requestCameraPermissionsAsync();
-          if (!permission.granted) {
+          const permission = await requestPermissionWithNotice(
+            'camera',
+            ImagePicker.getCameraPermissionsAsync,
+            ImagePicker.requestCameraPermissionsAsync,
+          );
+          if (permission !== 'granted') {
             uiLog(reasonPrefix, 'camera_permission_denied');
-            Alert.alert(
-              'Camera permission needed',
-              'Okyo needs camera permission to take a food photo. You can allow camera access in Settings or use Upload instead.',
-            );
-            return;
-          }
-        }
-        if (source === 'photos') {
-          const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-          if (!permission.granted) {
-            uiLog(reasonPrefix, 'photo_library_permission_denied', { canAskAgain: permission.canAskAgain });
-            Alert.alert(
-              'Photo access needed',
-              permission.canAskAgain
-                ? 'Okyo needs photo access to choose a food photo. Allow access when prompted, then try again.'
-                : 'Okyo needs photo access to choose a food photo. Enable Photos access for Okyo in iPhone Settings, then try again.',
-            );
+            if (permission === 'denied') {
+              Alert.alert('Camera permission needed', 'You can allow camera access in Settings or use Upload instead.');
+            }
             return;
           }
         }
@@ -57,16 +49,18 @@ export function useStartPickedScan(navigator: Navigator, reasonPrefix = 'Home') 
             : await ImagePicker.launchImageLibraryAsync({ allowsEditing: false, base64: false, mediaTypes: ['images'], quality: 1 });
         const assets = result.assets ?? [];
         if (!shouldStartPickedUpload(result.canceled, assets.length) || !assets[0]) return;
-        const image = await preparePickedImage(assets[0], source);
+        const asset = assets[0];
+        const image = createPickedImagePreview(asset, source);
         await startScan({
           image,
+          prepareImage: () => preparePickedImage(asset, source),
           mode: useOkyoStore.getState().selectedMode,
           navigateToAnalysis: (scanSessionId) => navigator?.navigate(HOME_UPLOAD_TARGET_SCREEN, { scanSessionId }),
           reason: source === 'camera' ? `${reasonPrefix}.takePhoto` : `${reasonPrefix}.uploadPhoto`,
           source,
         });
-      } catch (error) {
-        uiLog(reasonPrefix, source === 'camera' ? 'camera_open_failed' : 'photo_library_open_failed', { error: String(error) });
+      } catch {
+        uiLog(reasonPrefix, source === 'camera' ? 'camera_open_failed' : 'photo_library_open_failed');
         Alert.alert(
           source === 'camera' ? 'Camera unavailable' : 'Photo upload unavailable',
           source === 'camera'

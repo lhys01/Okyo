@@ -24,7 +24,8 @@ export function onboardingV4ScreenViewedEvent(step: string, previouslyViewedStep
 }
 
 export function onboardingV4GoalSelectedEvent(goal: FuturePrimaryGoal): OnboardingV4EventToEmit {
-  return { name: 'primary_goal_selected', properties: { branch: goal } };
+  void goal;
+  return { name: 'primary_goal_selected', properties: { screen: 'welcome' } };
 }
 
 /**
@@ -39,7 +40,8 @@ export function onboardingV4AnswerSubmittedEvent(step: string, fieldId: string):
 
 /** Fires once per insight view (guarded by the same last-viewed-step ref OnboardingV4.tsx already uses for screen_viewed dedup) — branch only, never the insight's computed numbers. */
 export function onboardingV4InsightViewedEvent(branch: PrimaryGoal): OnboardingV4EventToEmit {
-  return { name: 'personal_insight_viewed', properties: { screen: 'personalInsight', branch } };
+  void branch;
+  return { name: 'personal_insight_viewed', properties: { screen: 'personalInsight' } };
 }
 
 /**
@@ -48,21 +50,17 @@ export function onboardingV4InsightViewedEvent(branch: PrimaryGoal): OnboardingV
  * names and free text never leave this function).
  */
 export function onboardingV4DietarySavedEvent(answers: DietarySafetyAnswers): OnboardingV4EventToEmit {
+  void answers;
   return {
     name: 'dietary_preferences_saved',
-    properties: {
-      screen: 'dietarySafety',
-      allergyCount: answers.allergies.length,
-      restrictionCount: answers.restrictions.length,
-      dislikeCount: answers.dislikes.length,
-      selectedNoneOfThese: answers.noneOfThese,
-    },
+    properties: { screen: 'dietarySafety' },
   };
 }
 
 /** Step 07. Branch only — never any of the plan's computed numbers or copy. */
 export function onboardingV4PlanViewedEvent(branch: PrimaryGoal): OnboardingV4EventToEmit {
-  return { name: 'personal_plan_viewed', properties: { screen: 'plan', branch } };
+  void branch;
+  return { name: 'personal_plan_viewed', properties: { screen: 'plan' } };
 }
 
 /** Step 07. The chosen method only — never the description text or the image itself. */
@@ -71,17 +69,21 @@ export function onboardingV4ScanInputSelectedEvent(method: OnboardingV4ScanInput
 }
 
 export function onboardingV4FirstRecipeRevealedEvent(branch: PrimaryGoal): OnboardingV4EventToEmit {
-  return { name: 'first_recipe_revealed', properties: { screen: 'recipe', branch } };
+  void branch;
+  return { name: 'first_recipe_revealed', properties: { screen: 'recipe' } };
 }
 
 export function onboardingV4MeaningfulActionSelectedEvent(actionType: 'cook' | 'customize', branch: PrimaryGoal): OnboardingV4EventToEmit {
-  return { name: 'meaningful_action_selected', properties: { screen: 'recipe', branch, actionType } };
+  void branch;
+  return { name: 'meaningful_action_selected', properties: { screen: 'recipe', actionType } };
 }
 
 export function onboardingV4PaywallViewedEvent(actionType: 'cook' | 'customize', branch: PrimaryGoal): OnboardingV4EventToEmit {
-  return { name: 'paywall_viewed', properties: { screen: 'paywall', source: 'first_recipe', branch, actionType } };
+  void branch;
+  return { name: 'paywall_viewed', properties: { screen: 'paywall', source: 'first_recipe', actionType } };
 }
 
 export function onboardingV4PurchaseEvent(name: 'purchase_started' | 'purchase_succeeded' | 'purchase_failed' | 'purchase_restored', actionType: 'cook' | 'customize', branch: PrimaryGoal, errorKind?: string): OnboardingV4EventToEmit {
-  return { name, properties: { screen: 'paywall', source: 'first_recipe', branch, actionType, ...(errorKind ? { errorKind } : {}) } };
+  void branch;
+  return { name, properties: { screen: 'paywall', source: 'first_recipe', actionType, ...(errorKind ? { errorKind } : {}) } };
 }

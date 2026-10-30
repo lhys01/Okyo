@@ -1,0 +1,33 @@
+{
+  "name": "okyo-web",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12 <23"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build && node ../../scripts/security/audit.mjs --artifacts dist",
+    "start": "node scripts/serve-public-site.mjs",
+    "preview": "astro preview",
+    "check": "astro check",
+    "typecheck": "astro check",
+    "test": "astro build && playwright test",
+    "sync:legal": "node scripts/sync-legal-drafts.mjs",
+    "check:launch": "node scripts/check-launch-ready.mjs",
+    "test:publication": "node --test scripts/public-site.test.mjs",
+    "prepare:publication": "PUBLIC_LEGAL_ONLY=true npm run build && node scripts/prepare-legal-publication.mjs"
+  },
+  "dependencies": {
+    "@fontsource/manrope": "5.3.0",
+    "astro": "7.3.5"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.61.1",
+    "@types/node": "^22.20.5",
+    "playwright-core": "1.61.1",
+    "typescript": "6.0.3"
+  }
+}

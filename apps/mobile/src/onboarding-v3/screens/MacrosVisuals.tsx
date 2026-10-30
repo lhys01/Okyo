@@ -1,185 +1,96 @@
-import { StyleSheet, Text, View } from 'react-native';
-import type { ComponentType } from 'react';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
-import { Check, Flash, MenuScale, Repeat } from 'iconoir-react-native';
 
 import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
 import { onboardingV3Assets } from '../assets/onboardingV3Assets';
+import { Apple, FireFlame, ScaleFrameReduce, StatsUpSquare, Target, Timer, Weight } from '../assets/onboardingStickerIcons';
 import { SettleIn } from '../branch-ui/BranchMoments';
 import { branchShadow, branchSurfaces } from '../branch-ui/branchTheme';
-import { HealthNutritionExample } from './HealthVisuals';
-import type { TrackingStyleId } from '../state/macrosBranch';
-
-type IconType = ComponentType<{ color?: string; height?: number; width?: number; strokeWidth?: number }>;
+import type { OnboardingGoal } from '../state/onboardingGoal';
+import type { MacroBarrierId, MacroRecipePriorityId } from '../state/macrosBranch';
+import { MACRO_BARRIER_LABELS } from '../state/macrosBranchCopy';
+import { GoalTimelineCard } from './OnboardingGoalScreens';
 
 export type MacrosSummaryRow = Readonly<{ id: string; label: string; value: string }>;
 
-/** Personalized approach, built from the user's own answers. */
-export function MacrosApproachScreen({ headline, supportText }: { headline: string; supportText: string }) {
-  return (
-    <SettleIn style={styles.message}>
-      <Image accessibilityElementsHidden contentFit="contain" source={onboardingV3Assets.macrosApproach} style={styles.sticker} />
-      <Text maxFontSizeMultiplier={1.2} style={styles.eyebrow}>HERE’S THE APPROACH WE’LL TAKE</Text>
-      <View style={[styles.approachCard, branchShadow]}>
-        <Text accessibilityRole="header" maxFontSizeMultiplier={1.2} style={styles.approachHeadline}>{headline}</Text>
-      </View>
-      <Text maxFontSizeMultiplier={1.3} style={styles.body}>{supportText}</Text>
-    </SettleIn>
-  );
+
+export function MacrosDiagnosisScreen({ title, body }: { title: string; body: string }) {
+  return <SettleIn style={styles.diagnosis}>
+    <Text style={styles.eyebrow}>YOUR STARTING POINT</Text>
+    <Text accessibilityRole="header" style={styles.diagnosisTitle}>{title}</Text>
+    <View style={[styles.diagnosisCard, branchShadow]}><Text style={styles.cardEyebrow}>WHAT WE HEARD</Text><Text style={styles.diagnosisBody}>{body}</Text></View>
+    <View style={styles.diagnosisArt}><View style={styles.blob} /><Image accessibilityElementsHidden contentFit="contain" source={onboardingV3Assets.macrosMealInsight} style={styles.diagnosisSticker} /></View>
+  </SettleIn>;
 }
 
-const BENEFITS: readonly { id: string; label: string; icon: IconType }[] = [
-  { id: 'match', label: 'Match recipes to what you’re aiming for', icon: Flash },
-  { id: 'level', label: 'Show nutrition at the level you chose', icon: MenuScale },
-  { id: 'adjust', label: 'Adjust a meal without recounting everything', icon: Repeat },
-];
-
-/** What Okyo handles, with an honest example-nutrition card. */
-export function MacrosWhatOkyoScreen() {
-  return (
-    <SettleIn style={styles.information}>
-      <Image accessibilityElementsHidden contentFit="contain" source={onboardingV3Assets.macrosWhatOkyo} style={styles.sticker} />
-      <Text accessibilityRole="header" maxFontSizeMultiplier={1.24} style={styles.title}>Okyo keeps the numbers useful.</Text>
-      <Text maxFontSizeMultiplier={1.3} style={styles.body}>
-        You choose what sounds good. Okyo handles the ingredients, the recipe, and the nutrition estimate.
-      </Text>
-      <View style={styles.benefitList}>
-        {BENEFITS.map((benefit) => (
-          <View accessibilityLabel={benefit.label} key={benefit.id} style={styles.benefitRow}>
-            <View style={styles.benefitGlyph}>
-              <benefit.icon color={colors.coralDark} height={20} strokeWidth={2} width={20} />
-            </View>
-            <Text maxFontSizeMultiplier={1.24} style={styles.benefitText}>{benefit.label}</Text>
-          </View>
-        ))}
-      </View>
-      <HealthNutritionExample />
-    </SettleIn>
-  );
+export function MacrosPlanScreen({ goal, rows, targets, message, startingPoint, proteinTarget, calorieTarget, carbTarget, fatTarget, onEditTargets, priorities = [], barrier }: { goal: OnboardingGoal | null; rows: readonly MacrosSummaryRow[]; targets: string | null; message: string; startingPoint: string; proteinTarget?: number | null; calorieTarget?: number | null; carbTarget?: number | null; fatTarget?: number | null; onEditTargets?: () => void; priorities?: readonly MacroRecipePriorityId[]; barrier?: MacroBarrierId | null }) {
+  const { height } = useWindowDimensions();
+  const compact = height < 900;
+  const byId = (id: string) => rows.find((row) => row.id === id)?.value ?? 'Your routine';
+  const supportRows = [
+    { id: 'startingPoint', label: 'Your starting point', value: startingPoint, detail: null, icon: Target, color: '#F35F8D', tint: '#FDE9F0' },
+    { id: 'focus', label: 'Main focus', value: byId('focus'), detail: null, icon: StatsUpSquare, color: '#25A968', tint: '#EAF8EF' },
+    { id: 'obstacle', label: 'What makes it harder', value: barrier ? MACRO_BARRIER_LABELS[barrier] : 'Keeping it realistic', detail: null, icon: Timer, color: '#EA9818', tint: '#FFF5E4' },
+  ] as const;
+  return <SettleIn style={[styles.plan, compact && styles.planCompact]}>
+    <View style={styles.planHeading}><Text accessibilityRole="header" style={[styles.planTitle, compact && styles.planTitleCompact]}>Your plan is ready.</Text><Text style={styles.planSupport}>Here’s what we’ll focus on first.</Text></View>
+    <GoalTimelineCard compact={compact} detail={null} emphasis="hero" goal={goal} />
+    <MacroTargetsSection calorieTarget={calorieTarget} carbTarget={carbTarget} fatTarget={fatTarget} onEdit={onEditTargets} proteinTarget={proteinTarget} />
+    <View style={styles.supportRows}>{supportRows.filter((row) => row.id !== 'obstacle' || barrier).map((row) => <View key={row.id} style={[styles.supportRow, { backgroundColor: row.tint }]}><View style={[styles.supportIcon, { backgroundColor: row.tint }]}><row.icon color={row.color} height={42} width={42} /></View><View style={styles.supportCopy}><Text style={styles.rowLabel}>{row.label}</Text><Text numberOfLines={2} style={styles.rowValue}>{row.value}</Text>{row.detail ? <Text style={styles.rowDetail}>{row.detail}</Text> : null}</View></View>)}</View>
+    <View style={[styles.closingPanel, compact && styles.closingPanelCompact]}><View style={styles.closingCopy}><Text style={styles.closingTitle}>You’re all set!</Text><Text numberOfLines={2} style={[styles.closingBody, compact && styles.closingBodyCompact]}>{message}</Text></View><Image accessibilityElementsHidden contentFit="contain" source={onboardingV3Assets.macrosPlanHero} style={[styles.closingSticker, compact && styles.closingStickerCompact]} /></View>
+  </SettleIn>;
 }
 
-const NUTRITION_COPY: Record<TrackingStyleId, string> = {
-  exact_numbers: 'See as much detail as you want—without turning food into a spreadsheet.',
-  flexible_ranges: 'Keep nutrition useful without making every gram a chore.',
-  simple_suggestions: 'Get simple nutrition guidance that fits real meals.',
-  just_show_info: 'Nutrition is there when you want it—not another task.',
-};
-
-/** The reassurance beat: a balanced meal photo, no invented numbers. */
-export function MacrosNutritionVisual({ trackingStyle }: { trackingStyle?: TrackingStyleId | null }) {
-  return (
-    <SettleIn style={styles.message}>
-      <Text accessibilityRole="header" maxFontSizeMultiplier={1.2} style={styles.title}>Nutrition without the homework.</Text>
-      <Text maxFontSizeMultiplier={1.3} style={styles.body}>{trackingStyle ? NUTRITION_COPY[trackingStyle] : NUTRITION_COPY.exact_numbers}</Text>
-      <View style={[styles.foodFrame, branchShadow]}>
-        <Image accessibilityLabel="Balanced salmon and vegetable meal" accessibilityRole="image" contentFit="cover" source={onboardingV3Assets.macrosNutritionMeal} style={styles.foodImage} testID="macros-nutrition-meal" />
-      </View>
-    </SettleIn>
-  );
-}
-
-/** Personalized reveal with the coral "Your starting point" card. */
-export function MacrosRevealScreen({ summary, startingPoint, proteinLine }: { summary: string; startingPoint: string; proteinLine: string }) {
-  return (
-    <SettleIn style={styles.message}>
-      <Image accessibilityElementsHidden contentFit="contain" source={onboardingV3Assets.macrosReveal} style={styles.sticker} />
-      <Text accessibilityRole="header" maxFontSizeMultiplier={1.24} style={styles.title}>Your macros plan is ready.</Text>
-      <Text maxFontSizeMultiplier={1.3} style={styles.body}>{summary}</Text>
-      <View accessibilityLabel={`Your starting point: ${startingPoint}. ${proteinLine}.`} style={[styles.commitmentCard, branchShadow]}>
-        <Text maxFontSizeMultiplier={1.2} style={styles.commitmentLabel}>Your starting point</Text>
-        <Text maxFontSizeMultiplier={1.24} style={styles.commitmentValue}>{startingPoint}</Text>
-        <Text maxFontSizeMultiplier={1.2} style={styles.commitmentNote}>{proteinLine} · your preference</Text>
-      </View>
-    </SettleIn>
-  );
-}
-
-/** The plan summary: hero pose, commitment card, three answer rows, reassurance strip. */
-export function MacrosPlanVisual({ startWith, rows, proteinLine }: { startWith: string; rows: readonly MacrosSummaryRow[]; proteinLine: string }) {
-  return (
-    <SettleIn style={styles.planSummary}>
-      <Image accessibilityElementsHidden contentFit="contain" source={onboardingV3Assets.macrosPlanHero} style={styles.planHero} />
-      <Text accessibilityRole="header" maxFontSizeMultiplier={1.2} style={styles.title}>Your macros plan is ready.</Text>
-      <Text maxFontSizeMultiplier={1.3} style={styles.body}>Built around your preferences—not a generic template.</Text>
-
-      <View accessibilityLabel={`Start with ${startWith}. ${proteinLine}.`} style={[styles.commitmentCard, branchShadow]}>
-        <Text maxFontSizeMultiplier={1.2} style={styles.commitmentLabel}>Start with</Text>
-        <Text maxFontSizeMultiplier={1.24} style={styles.commitmentValue}>{startWith}</Text>
-        <Text maxFontSizeMultiplier={1.2} style={styles.commitmentNote}>{proteinLine} · your preference</Text>
-      </View>
-
-      <View style={styles.summaryList}>
-        {rows.map((row) => (
-          <View accessibilityLabel={`${row.label}: ${row.value}`} key={row.id} style={[styles.summaryRow, branchShadow]}>
-            <View style={styles.summaryGlyph}><Check color={colors.surface} height={15} strokeWidth={3} width={15} /></View>
-            <View style={styles.summaryText}>
-              <Text maxFontSizeMultiplier={1.2} style={styles.summaryLabel}>{row.label}</Text>
-              <Text maxFontSizeMultiplier={1.24} style={styles.summaryValue}>{row.value}</Text>
-            </View>
-          </View>
-        ))}
-      </View>
-
-      <View style={[styles.reassuranceStrip, branchShadow]}>
-        <Flash color={colors.coral} height={18} width={18} />
-        <View style={styles.reassuranceText}>
-          <Text maxFontSizeMultiplier={1.2} style={styles.reassuranceTitle}>Keep the food you enjoy.</Text>
-          <Text maxFontSizeMultiplier={1.25} style={styles.reassuranceBody}>Okyo handles the numbers.</Text>
-        </View>
-      </View>
-    </SettleIn>
-  );
-}
-
-/** Small decorative accent for the reassurance-adjacent moments. */
-export function MacrosReassuranceAccent() {
-  return (
-    <View style={styles.accentRow}>
-      <Image accessibilityElementsHidden contentFit="contain" source={onboardingV3Assets.macrosAccentMotion} style={styles.accentDot} />
-      <Image accessibilityElementsHidden contentFit="contain" source={onboardingV3Assets.macrosAccentSparkle} style={styles.accentDot} />
-      <Image accessibilityElementsHidden contentFit="contain" source={onboardingV3Assets.macrosAccentPaw} style={styles.accentDot} />
-    </View>
-  );
+function MacroTargetsSection({ calorieTarget, proteinTarget, carbTarget, fatTarget, onEdit }: { calorieTarget?: number | null; proteinTarget?: number | null; carbTarget?: number | null; fatTarget?: number | null; onEdit?: () => void }) {
+  const items = [
+    { label: 'Daily calories', value: calorieTarget, unit: 'cal', icon: FireFlame },
+    { label: 'Protein', value: proteinTarget, unit: 'g', icon: Weight },
+    { label: 'Carbohydrates', value: carbTarget, unit: 'g', icon: Apple },
+    { label: 'Fat', value: fatTarget, unit: 'g', icon: ScaleFrameReduce },
+  ] as const;
+  return <View style={styles.targetsSection}>
+    <View style={styles.targetsHeader}><View><Text style={styles.targetsTitle}>Your daily targets</Text><Text style={styles.targetsSubtitle}>A clear starting point for each macro.</Text></View>{onEdit ? <Pressable accessibilityLabel="Edit daily targets" accessibilityRole="button" onPress={onEdit} style={styles.editButton}><Text style={styles.editLabel}>Edit</Text></Pressable> : null}</View>
+    <View style={styles.targetsGrid}>{items.map((item) => <View accessibilityLabel={`${item.label}: ${item.value === null || item.value === undefined ? 'Not set' : `${item.value.toLocaleString()} ${item.unit}`}`} key={item.label} style={styles.targetItem}><View style={styles.targetIcon}><item.icon color="#F35F8D" height={26} width={26} /></View><View style={styles.targetCopy}><Text style={styles.targetLabel}>{item.label}</Text><Text style={styles.targetValue}>{item.value === null || item.value === undefined ? 'Not set' : `${item.value.toLocaleString()} ${item.unit}`}</Text></View></View>)}</View>
+  </View>;
 }
 
 const styles = StyleSheet.create({
-  message: { alignItems: 'center', flex: 1, gap: 12, justifyContent: 'center', paddingBottom: 8, paddingTop: 8 },
-  information: { alignItems: 'center', gap: 10, paddingBottom: 8, paddingTop: 4 },
-  sticker: { height: 210, width: 236 },
-  eyebrow: { color: colors.coralDark, fontFamily: fontFamilies.bold, fontSize: 12, letterSpacing: 0.8, textAlign: 'center', textTransform: 'uppercase' },
-  title: { color: branchSurfaces.ink, fontFamily: fontFamilies.extraBold, fontSize: 27, letterSpacing: -0.6, lineHeight: 33, paddingHorizontal: 6, textAlign: 'center' },
-  body: { color: branchSurfaces.body, fontFamily: fontFamilies.body, fontSize: 16, lineHeight: 23, maxWidth: 340, textAlign: 'center' },
-
-  approachCard: { backgroundColor: colors.coralSoft, borderColor: colors.coral, borderRadius: branchSurfaces.cardRadius, borderWidth: 1, paddingHorizontal: 20, paddingVertical: 18, width: '100%' },
-  approachHeadline: { color: colors.coralDark, fontFamily: fontFamilies.extraBold, fontSize: 21, letterSpacing: -0.4, lineHeight: 28, textAlign: 'center' },
-
-  benefitList: { gap: 8, width: '100%' },
-  benefitRow: { alignItems: 'center', backgroundColor: branchSurfaces.card, borderColor: branchSurfaces.cardBorder, borderRadius: branchSurfaces.tileRadius, borderWidth: 1, flexDirection: 'row', gap: 12, minHeight: 54, paddingHorizontal: 12, paddingVertical: 9, ...branchShadow },
-  benefitGlyph: { alignItems: 'center', backgroundColor: colors.coralSoft, borderRadius: 12, height: 38, justifyContent: 'center', width: 38 },
-  benefitText: { color: branchSurfaces.ink, flex: 1, fontFamily: fontFamilies.semibold, fontSize: 15, lineHeight: 21 },
-
-  foodFrame: { borderColor: colors.border, borderRadius: 24, borderWidth: 1, marginTop: 2, overflow: 'hidden', width: '100%' },
-  foodImage: { height: 220, width: '100%' },
-
-  commitmentCard: { backgroundColor: colors.coralSoft, borderColor: colors.coral, borderRadius: branchSurfaces.cardRadius, borderWidth: 1, gap: 5, paddingHorizontal: 20, paddingVertical: 16, width: '100%' },
-  commitmentLabel: { color: colors.coralDark, fontFamily: fontFamilies.bold, fontSize: 12, letterSpacing: 0.8, textTransform: 'uppercase' },
-  commitmentValue: { color: branchSurfaces.ink, fontFamily: fontFamilies.extraBold, fontSize: 20, letterSpacing: -0.3, lineHeight: 26 },
-  commitmentNote: { color: branchSurfaces.muted, fontFamily: fontFamilies.semibold, fontSize: 12 },
-
-  planSummary: { alignItems: 'center', gap: 10, paddingBottom: 6 },
-  planHero: { height: 150, marginBottom: -6, width: 176 },
-  summaryList: { gap: 8, width: '100%' },
-  summaryRow: { alignItems: 'center', backgroundColor: branchSurfaces.card, borderColor: branchSurfaces.cardBorder, borderRadius: branchSurfaces.tileRadius, borderWidth: 1, flexDirection: 'row', gap: 12, paddingHorizontal: 12, paddingVertical: 9 },
-  summaryGlyph: { alignItems: 'center', backgroundColor: colors.coral, borderRadius: 999, height: 28, justifyContent: 'center', width: 28 },
-  summaryText: { flex: 1, gap: 2 },
-  summaryLabel: { color: branchSurfaces.muted, fontFamily: fontFamilies.semibold, fontSize: 12 },
-  summaryValue: { color: branchSurfaces.ink, fontFamily: fontFamilies.semibold, fontSize: 16, lineHeight: 21 },
-
-  reassuranceStrip: { alignItems: 'center', backgroundColor: colors.coralSoft, borderColor: colors.coral, borderRadius: branchSurfaces.cardRadius, borderWidth: 1, flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 14, width: '100%' },
-  reassuranceText: { flex: 1, gap: 2 },
-  reassuranceTitle: { color: branchSurfaces.ink, fontFamily: fontFamilies.extraBold, fontSize: 15, lineHeight: 20 },
-  reassuranceBody: { color: branchSurfaces.body, fontFamily: fontFamilies.body, fontSize: 14, lineHeight: 19 },
-
-  accentRow: { flexDirection: 'row', gap: 14, justifyContent: 'center', marginTop: 2 },
-  accentDot: { height: 28, width: 28 },
+  diagnosis: { alignItems: 'center', flex: 1, gap: 18, justifyContent: 'center', paddingVertical: 14 },
+  eyebrow: { color: colors.coralDark, fontFamily: fontFamilies.bold, fontSize: 12, letterSpacing: 1.1 },
+  diagnosisTitle: { color: branchSurfaces.ink, fontFamily: fontFamilies.extraBold, fontSize: 30, letterSpacing: -0.8, lineHeight: 36, textAlign: 'center' },
+  diagnosisCard: { backgroundColor: branchSurfaces.card, borderColor: branchSurfaces.cardBorder, borderRadius: 24, borderWidth: 1, gap: 10, paddingHorizontal: 20, paddingVertical: 18, width: '100%' },
+  cardEyebrow: { color: colors.coralDark, fontFamily: fontFamilies.bold, fontSize: 11, letterSpacing: 1, textAlign: 'center' },
+  diagnosisBody: { color: branchSurfaces.body, fontFamily: fontFamilies.body, fontSize: 16, lineHeight: 24, textAlign: 'center' },
+  diagnosisArt: { alignItems: 'center', height: 190, justifyContent: 'center', width: '100%' },
+  blob: { backgroundColor: '#FDEEF2', borderRadius: 999, height: 138, opacity: 0.8, position: 'absolute', width: 320 },
+  diagnosisSticker: { height: 190, width: 190 },
+  rowLabel: { color: branchSurfaces.muted, fontFamily: fontFamilies.body, fontSize: 15, lineHeight: 20 },
+  rowValue: { color: branchSurfaces.ink, fontFamily: fontFamilies.bold, fontSize: 19, lineHeight: 25 },
+  plan: { alignItems: 'center', gap: 12, paddingBottom: 4 }, planCompact: { gap: 8 },
+  planHeading: { alignItems: 'center', gap: 5 },
+  planTitle: { color: branchSurfaces.ink, fontFamily: fontFamilies.extraBold, fontSize: 30, lineHeight: 36 }, planTitleCompact: { fontSize: 27, lineHeight: 32 },
+  planSupport: { color: branchSurfaces.body, fontFamily: fontFamilies.body, fontSize: 15, lineHeight: 21 },
+  supportRows: { gap: 9, width: '100%' },
+  targetsSection: { backgroundColor: '#FFF9FA', borderColor: '#F7C8D6', borderRadius: 22, borderWidth: 1, gap: 12, padding: 14, width: '100%' },
+  targetsHeader: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between' },
+  targetsTitle: { color: branchSurfaces.ink, fontFamily: fontFamilies.bold, fontSize: 17, lineHeight: 22 },
+  targetsSubtitle: { color: branchSurfaces.muted, fontFamily: fontFamilies.body, fontSize: 12, lineHeight: 17, marginTop: 2 },
+  editButton: { backgroundColor: '#FDE9F0', borderRadius: 99, paddingHorizontal: 13, paddingVertical: 7 },
+  editLabel: { color: colors.coralDark, fontFamily: fontFamilies.bold, fontSize: 13 },
+  targetsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  targetItem: { alignItems: 'center', backgroundColor: colors.surface, borderColor: '#F7C8D6', borderRadius: 15, borderWidth: 1, flexDirection: 'row', gap: 8, minHeight: 62, paddingHorizontal: 9, paddingVertical: 8, width: '48%' },
+  targetIcon: { alignItems: 'center', backgroundColor: '#FDE9F0', borderRadius: 99, height: 38, justifyContent: 'center', width: 38 },
+  targetCopy: { flex: 1, gap: 1 },
+  targetLabel: { color: branchSurfaces.muted, fontFamily: fontFamilies.semibold, fontSize: 11, lineHeight: 15 },
+  targetValue: { color: branchSurfaces.ink, fontFamily: fontFamilies.bold, fontSize: 14, lineHeight: 18 },
+  supportRow: { alignItems: 'center', borderRadius: 24, flexDirection: 'row', gap: 16, minHeight: 90, paddingHorizontal: 18, paddingVertical: 13 },
+  supportIcon: { alignItems: 'center', borderRadius: 99, height: 60, justifyContent: 'center', width: 60 }, supportCopy: { flex: 1, gap: 3 },
+  rowDetail: { color: colors.coralDark, fontFamily: fontFamilies.semibold, fontSize: 12, lineHeight: 17 },
+  closingPanel: { alignItems: 'center', backgroundColor: '#FDE9F0', borderRadius: 24, flexDirection: 'row', minHeight: 128, overflow: 'hidden', paddingLeft: 18, width: '100%' },
+  closingPanelCompact: { minHeight: 108 },
+  closingCopy: { flex: 1, gap: 4, zIndex: 1 }, closingTitle: { color: branchSurfaces.ink, fontFamily: fontFamilies.extraBold, fontSize: 19 },
+  closingBody: { color: branchSurfaces.body, fontFamily: fontFamilies.body, fontSize: 12, lineHeight: 17 },
+  closingBodyCompact: { display: 'none' },
+  closingSticker: { height: 142, transform: [{ translateX: -10 }], width: 142 },
+  closingStickerCompact: { height: 108, transform: [{ translateX: -8 }], width: 108 },
 });

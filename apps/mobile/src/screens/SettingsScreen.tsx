@@ -6,22 +6,34 @@ import {
   Leaf,
   Lock,
   HelpCircle,
+  LightBulb,
   NavArrowRight,
   PrivacyPolicy,
   Sparks,
   StatsUpSquare,
   WarningTriangle,
 } from 'iconoir-react-native';
-import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import appConfig from '../../app.json';
-import { analyticsEvents, track } from '../analytics/track';
 import { onboardingV3Persistence } from '../onboarding-v3/state/onboardingV3Persistence';
+import { saveMoneyBranchPersistence } from '../onboarding-v3/state/saveMoneyBranchPersistence';
+import { healthBranchPersistence } from '../onboarding-v3/state/healthBranchPersistence';
+import { macrosBranchPersistence } from '../onboarding-v3/state/macrosBranchPersistence';
+import { onboardingQuestionExperiment, type OnboardingQuestionVariant } from '../onboarding-v3/state/onboardingQuestionExperiment';
+import { getAccountCapabilities } from '../api/client';
+import { canonicalOnboardingPersistence } from '../onboarding/canonical/persistence';
+import { resetCanonicalOnboarding } from '../onboarding/canonical/reset';
 import { primaryGoalLabels } from '../onboarding-v3/state/personalizedOnboarding';
+import { getFoxDisplayName } from '../state/foxDisplayName';
 import { useOkyoStore } from '../state/useOkyoStore';
-import { colors, fontFamilies, radius, spacing } from '../theme/okyoTheme';
+import { useTour } from '../tour/TourContext';
+import { tourPersistence } from '../tour/tourPersistence';
+import { useOkyoAuth } from '../auth/useOkyoAuth';
+import { resetRevenueCatIdentity } from '../services/revenueCat';
+import { colors, fontFamilies, mainTabHeading, radius, spacing } from '../theme/okyoTheme';
 import type { MainTabParamList } from '../navigation/types';
 import { uiLog } from '../utils/uiDebug';
 
@@ -30,7 +42,17 @@ type Navigation = NativeStackNavigationProp<MainTabParamList>;
 type IconComponent = ComponentType<{ color?: string; height?: number; width?: number }>;
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const avatarImage = require('../../assets/profile/okyo-avatar.png');
+const avatarImage = require('../../assets/profile/okyo-avatar-sticker.png');
+
+/**
+ * Loaded lazily for the same reason AuthGate does it: SignInScreen pulls in
+ * Clerk's native modules at import time, so a build without Clerk configured
+ * must never evaluate it. The row that mounts this is itself gated on
+ * `auth.isAvailable`, so the import only ever runs in a Clerk-enabled build.
+ */
+const LazySignInScreen = lazy(async () => ({
+  default: (await import('../auth/SignInScreen')).SignInScreen,
+}));
 
 /** Bottom nav is absolutely positioned, so content needs clearance to scroll past it. */
 const NAV_CLEARANCE = 132;
@@ -40,25 +62,30 @@ type ProfileSummary = {
   goalLabel: string | null;
   dietaryCount: number;
   nutritionTargetSummary: string | null;
+  mascotName: string | null;
 };
 
 export function SettingsScreen() {
   const navigation = useNavigation<Navigation>();
   const resetOnboarding = useOkyoStore((state) => state.resetOnboarding);
+  const personalizationComplete = useOkyoStore((state) => state.personalizationComplete);
   const appVersion = appConfig.expo.version;
   const didTrackView = useRef(false);
+  const resetOnboardingInFlight = useRef(false);
   const [profile, setProfile] = useState<ProfileSummary>({
     name: null,
     goalLabel: null,
     dietaryCount: 0,
     nutritionTargetSummary: null,
+    mascotName: null,
   });
+  const [experimentAssignment, setExperimentAssignment] = useState('Loading');
 
   useEffect(() => {
     if (didTrackView.current) return;
     didTrackView.current = true;
     uiLog('SettingsScreen', 'enter');
-    track(analyticsEvents.SETTINGS_VIEWED, { screen: 'SettingsScreen' });
+
   }, []);
 
   // Real persisted onboarding data drives the profile card. Nothing is invented:
@@ -66,16 +93,19 @@ export function SettingsScreen() {
   useFocusEffect(useCallback(() => {
     let cancelled = false;
     void Promise.all([
-      onboardingV3Persistence.readPersonalizedProfile(),
+      canonicalOnboardingPersistence.readSnapshot(),
       onboardingV3Persistence.readDietary(),
+      onboardingV3Persistence.readChosenMascotName(),
     ])
-      .then(([personalized, dietary]) => {
+      .then(([snapshot, dietary, mascotName]) => {
         if (cancelled) return;
+        const personalized = snapshot.profile;
         setProfile({
           name: personalized.name.trim() || null,
           goalLabel: personalized.primaryGoal ? primaryGoalLabels[personalized.primaryGoal] : null,
           dietaryCount: dietary.allergies.length + dietary.restrictions.length + dietary.avoidances.length + dietary.dislikes.length,
           nutritionTargetSummary: personalized.nutritionTargets ? `${personalized.nutritionTargets.calories} cal · ${personalized.nutritionTargets.proteinGrams}g protein` : null,
+          mascotName,
         });
       })
       .catch(() => undefined);
@@ -83,6 +113,33 @@ export function SettingsScreen() {
       cancelled = true;
     };
   }, []));
+
+  useFocusEffect(useCallback(() => {
+    let cancelled = false;
+    void Promise.all([onboardingQuestionExperiment.getAssignment(), onboardingQuestionExperiment.getOverride()]).then(([assignment, override]) => {
+      if (!cancelled) setExperimentAssignment(override ? `${override} · forced` : `${assignment} · random`);
+    });
+    return () => { cancelled = true; };
+  }, []));
+
+  const setExperimentVariant = useCallback((variant: OnboardingQuestionVariant | null, randomize = false) => {
+    const update = randomize
+      ? onboardingQuestionExperiment.resetAssignment()
+      : onboardingQuestionExperiment.setOverride(variant);
+    void update.then(async () => {
+      const assignment = await onboardingQuestionExperiment.getAssignment();
+      const override = await onboardingQuestionExperiment.getOverride();
+      setExperimentAssignment(override ? `${override} · forced` : `${assignment} · random`);
+    }).catch(() => setExperimentAssignment('Unavailable'));
+  }, []);
+
+  const chooseExperimentVariant = useCallback(() => {
+    Alert.alert('Onboarding experiment', 'Choose a version, then reset onboarding to preview it.', [
+      { text: 'A · Keep all questions', onPress: () => setExperimentVariant('A') },
+      { text: 'B · Remove score 3 questions', onPress: () => setExperimentVariant('B') },
+      { text: 'C · Short flow', onPress: () => setExperimentVariant('C') },
+    ]);
+  }, [setExperimentVariant]);
 
   const go = useCallback(
     (screen: keyof MainTabParamList) => {
@@ -92,10 +149,6 @@ export function SettingsScreen() {
     [navigation],
   );
 
-  const explainAccountDeletion = useCallback(() => {
-    Alert.alert('No Okyo account is connected', 'This build does not have an account or sign-in backend to delete. You can remove all locally stored Okyo data from Privacy & data.');
-  }, []);
-
   const confirmResetOnboarding = useCallback(() => {
     Alert.alert('Reset onboarding?', 'You will see the Okyo onboarding flow again.', [
       { text: 'Cancel', style: 'cancel' },
@@ -103,16 +156,94 @@ export function SettingsScreen() {
         text: 'Reset',
         style: 'destructive',
         onPress: () => {
+          if (resetOnboardingInFlight.current) return;
+          resetOnboardingInFlight.current = true;
           uiLog('SettingsScreen', 'reset_onboarding');
-          void onboardingV3Persistence.reset().catch((error: unknown) => {
-            uiLog('SettingsScreen', 'reset_onboarding_v3_failed', { error: String(error) });
-          });
-          resetOnboarding();
-          track(analyticsEvents.ONBOARDING_RESET, { screen: 'SettingsScreen' });
+          // Onboarding-owned reset only touches onboarding state — but the
+          // guided tour must be able to run again once the user completes
+          // onboarding a second time, so its own persisted status resets
+          // too. This does NOT open the tour now: MainTabs (and therefore
+          // TourProvider) doesn't mount again until onboarding is completed
+          // and the app lands on Home, which is exactly when it should.
+          void resetCanonicalOnboarding({
+            resetCanonicalPersistence: () => Promise.all([
+              canonicalOnboardingPersistence.reset(),
+              saveMoneyBranchPersistence.reset(),
+              healthBranchPersistence.reset(),
+              macrosBranchPersistence.reset(),
+            ]).then(() => undefined),
+            resetSession: resetOnboarding,
+            resetTour: () => tourPersistence.resetStatus(),
+            onError: (scope, error) => uiLog('SettingsScreen', scope === 'persistence' ? 'reset_onboarding_v3_failed' : 'reset_tour_for_onboarding_replay_failed', { error: String(error) }),
+          })
+            .then((result) => {
+
+            })
+            .finally(() => { resetOnboardingInFlight.current = false; });
         },
       },
     ]);
   }, [resetOnboarding]);
+
+  const auth = useOkyoAuth();
+  const [experimentCapability, setExperimentCapability] = useState<{ userId: string | null; allowed: boolean } | null>(null);
+  useEffect(() => {
+    let active = true;
+    setExperimentCapability(null);
+    if (__DEV__ && auth.isLoaded && auth.isSignedIn) {
+      void auth.getToken().then(token => token ? getAccountCapabilities(token) : null).then(capabilities => {
+        if (active) setExperimentCapability({ userId: auth.userId, allowed: capabilities?.canManageOnboardingExperiments === true });
+      }).catch(() => { /* Keep development controls hidden when verification fails. */ });
+    }
+    return () => { active = false; };
+  }, [auth.isLoaded, auth.isSignedIn, auth.userId]);
+  const canManageOnboardingExperiment = __DEV__ && auth.isSignedIn && experimentCapability?.userId === auth.userId && experimentCapability?.allowed === true;
+  const [signInVisible, setSignInVisible] = useState(false);
+  const openSignIn = useCallback(() => {
+    void Haptics.selectionAsync().catch(() => undefined);
+    setSignInVisible(true);
+  }, []);
+  const closeSignIn = useCallback(() => setSignInVisible(false), []);
+  const confirmSignOut = useCallback(() => {
+    Alert.alert('Sign out?', 'Your saved recipes stay on this device. Sign back in any time with email and password, Apple, or Google.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign out',
+        style: 'destructive',
+        onPress: () => {
+          uiLog('SettingsScreen', 'sign_out');
+          void Promise.all([
+            auth.signOut(),
+            resetRevenueCatIdentity(),
+          ]).catch(() => {
+            // Clerk/native errors can contain sensitive response details. Keep
+            // the event useful without forwarding raw exception text to logs.
+            uiLog('SettingsScreen', 'sign_out_failed');
+          });
+        },
+      },
+    ]);
+  }, [auth]);
+
+  const { devReset: devResetTour } = useTour();
+  const confirmResetTour = useCallback(() => {
+    Alert.alert('Reset guided tour?', 'You will see the post-onboarding feature tour again, starting now.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reset',
+        style: 'destructive',
+        onPress: () => {
+          uiLog('SettingsScreen', 'reset_feature_tour');
+          // Order matters: reset persisted state, THEN navigate to Home.
+          // `devResetTour()` only arms `pendingStart` — TourOverlay itself
+          // waits for Home to actually be focused before flipping the tour
+          // active, so it can never paint over this Settings screen.
+          devResetTour();
+          (navigation as any).navigate('MainTabs', { screen: 'HomeScreen' });
+        },
+      },
+    ]);
+  }, [devResetTour, navigation]);
 
   const profileSubtitle = [profile.goalLabel, profile.dietaryCount > 0 ? `${profile.dietaryCount} food preferences` : null]
     .filter(Boolean)
@@ -161,15 +292,30 @@ export function SettingsScreen() {
           /> : null}
           <Row
             icon={Bell}
-            isLast
             label="Notifications"
             onPress={() => go('NotificationPreferencesScreen')}
             tint={colors.coralSoft}
             tintIcon={colors.coralDark}
           />
+          <Row
+            icon={Sparks}
+            isLast
+            label="Personalization"
+            onPress={() => go('PersonalizationScreen')}
+            tint={colors.coralSoft}
+            tintIcon={colors.coralDark}
+            value={personalizationComplete ? getFoxDisplayName(profile.mascotName) : 'Finish personalization'}
+          />
         </Section>
 
-        <Section label="YOUR OKYO">
+        <Section label="ACTIVITY">
+          <Row
+            icon={LightBulb}
+            label="Idea board"
+            onPress={() => go('IdeaBoardScreen')}
+            tint={colors.coralSoft}
+            tintIcon={colors.coralDark}
+          />
           <Row
             icon={StatsUpSquare}
             isLast
@@ -180,26 +326,42 @@ export function SettingsScreen() {
           />
         </Section>
 
-        <Section label="PRIVACY">
+        <Section label="PRIVACY & ACCOUNT">
           <Row
             icon={Lock}
-            isLast
             label="Privacy & data"
             onPress={() => go('PrivacyDataScreen')}
             tint={colors.macrosSoft}
             tintIcon={colors.macros}
           />
-        </Section>
-
-        <Section label="ACCOUNT">
+          {auth.isAvailable && !auth.isSignedIn ? (
+            <Row
+              icon={Sparks}
+              label="Sign in"
+              onPress={openSignIn}
+              tint="#f3f0ff"
+              tintIcon={colors.charcoal}
+              value="Email, Apple, Google"
+            />
+          ) : null}
+          {auth.isAvailable && auth.isSignedIn ? (
+            <Row
+              icon={WarningTriangle}
+              label="Sign out"
+              onPress={confirmSignOut}
+              tint="#f3f0ff"
+              tintIcon={colors.charcoal}
+              value={auth.accountLabel ?? 'Signed in'}
+            />
+          ) : null}
           <Row
             icon={WarningTriangle}
             isLast
-            label="Delete account"
-            onPress={explainAccountDeletion}
+          label="Delete account"
+            onPress={() => go('PrivacyDataScreen')}
             tint="#fff0ee"
             tintIcon={colors.danger}
-            value="No account connected"
+            value={auth.isSignedIn ? (auth.accountLabel ?? 'Signed in') : 'Not connected'}
           />
         </Section>
 
@@ -221,13 +383,40 @@ export function SettingsScreen() {
           />
         </Section>
 
+        {canManageOnboardingExperiment ? (
+          <Section label="ADMIN TOOLS">
+            <Row
+              icon={StatsUpSquare}
+              label="Preview onboarding A/B/C"
+              onPress={chooseExperimentVariant}
+              tint={colors.canvasSunk}
+              tintIcon={colors.body}
+              value={experimentAssignment}
+            />
+            <Row
+              icon={Sparks}
+              label="Randomize onboarding version"
+              onPress={() => setExperimentVariant(null, true)}
+              tint={colors.canvasSunk}
+              tintIcon={colors.body}
+            />
+          </Section>
+        ) : null}
+
         {__DEV__ ? (
-          <Section label="DEVELOPMENT">
+          <Section label="DEVELOPER TOOLS">
+            <Row
+              icon={Sparks}
+              label="Reset onboarding"
+              onPress={confirmResetOnboarding}
+              tint={colors.canvasSunk}
+              tintIcon={colors.body}
+            />
             <Row
               icon={Sparks}
               isLast
-              label="Reset onboarding"
-              onPress={confirmResetOnboarding}
+              label="Reset guided tour"
+              onPress={confirmResetTour}
               tint={colors.canvasSunk}
               tintIcon={colors.body}
             />
@@ -236,6 +425,22 @@ export function SettingsScreen() {
 
         <Text style={styles.version}>Okyo v{appVersion}</Text>
       </ScrollView>
+
+      {signInVisible ? (
+        <Modal
+          animationType="slide"
+          onRequestClose={closeSignIn}
+          presentationStyle="pageSheet"
+          transparent={false}
+        >
+          <Suspense fallback={null}>
+            {/* onDone fires only after a real session is created; onSkip on
+                cancel/dismiss. Both just close the sheet — Settings re-reads
+                auth state from Clerk on the next render. */}
+            <LazySignInScreen onDone={closeSignIn} onSkip={closeSignIn} />
+          </Suspense>
+        </Modal>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -297,10 +502,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
   },
   title: {
-    color: colors.ink,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 28,
-    letterSpacing: -0.4,
+    ...mainTabHeading,
     marginBottom: spacing.lg,
   },
   profileCard: {
@@ -329,7 +531,7 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.body,
     fontSize: 13,
   },
-  section: { marginTop: spacing.xl },
+  section: { marginTop: spacing.lg },
   sectionLabel: {
     color: colors.muted,
     fontFamily: fontFamilies.semibold,
@@ -348,7 +550,7 @@ const styles = StyleSheet.create({
   row: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: spacing.md,
+    gap: spacing.sm,
     minHeight: 56,
     paddingHorizontal: spacing.md,
   },
@@ -367,13 +569,14 @@ const styles = StyleSheet.create({
     color: colors.ink,
     flex: 1,
     fontFamily: fontFamilies.medium,
-    fontSize: 15.5,
+    fontSize: 15,
+    minWidth: 0,
   },
   rowValue: {
     color: colors.muted,
     fontFamily: fontFamilies.body,
-    fontSize: 14,
-    maxWidth: 130,
+    fontSize: 13,
+    maxWidth: 108,
   },
   version: {
     color: colors.muted,

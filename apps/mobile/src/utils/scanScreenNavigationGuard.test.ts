@@ -66,10 +66,12 @@ test('HomeScreen scan-entry controls never target ScanScreen', () => {
   assert.equal(tabs.includes('ScanScreen'), false);
   assert.match(tabs, /onTakePhoto=\{\(\) => void startPickedScan\('camera'\)\}/);
   assert.match(tabs, /onUpload=\{\(\) => void startPickedScan\('photos'\)\}/);
-  assert.match(tabs, /onDescribeMeal=\{\(\) => rootNavigation\?\.navigate\('DescribeMealScreen'\)\}/);
-  // The upload target now lives in the scan hook shared by the FAB and the
-  // Home first-use CTA, so both entry points route to the same screen.
+  assert.match(tabs, /onDescribeMeal=\{\(\) => rootNavigation\.navigate\('DescribeMealScreen'\)\}/);
+  // The single sheet and its scan hook are owned by MainTabs; Home opens it
+  // through the shared context rather than mounting a second modal instance.
   assert.match(tabs, /useStartPickedScan/);
+  assert.equal((tabs.match(/<ScanActionSheet\b/g) ?? []).length, 1);
+  assert.match(readScreenSource('HomeScreen.tsx'), /useOpenScanActionSheet/);
   assert.match(
     readFileSync(path.join(srcDir, 'hooks', 'useStartPickedScan.ts'), 'utf8'),
     /HOME_UPLOAD_TARGET_SCREEN/,
@@ -119,25 +121,50 @@ test('ResultSummaryScreen never references ScanScreen in any branch', () => {
   const source = readScreenSource('ResultSummaryScreen.tsx');
   assert.equal(source.includes('ScanScreen'), false);
   assert.match(source, /getHomeResetState/);
-  assert.match(source, /navigation\.reset\(getFreshDescribeMealResetState\(\)\)/);
-  assert.match(source, /navigation\.reset\(getHomeResetState\(\)\)/);
+  assert.match(source, /rootNavigation\.reset\(getFreshDescribeMealResetState\(\)\)/);
+  assert.match(source, /rootNavigation\.reset\(getHomeResetState\(\)\)/);
 });
 
 test('fresh scan-entry screens reset to Home on Back or cancel', () => {
   assert.match(readScreenSource('DescribeMealScreen.tsx'), /navigation\.reset\(getHomeResetState\(\)\)/);
-  assert.match(readScreenSource('AnalysisLoadingScreen.tsx'), /navigation\.reset\(getHomeResetState\(\)\)/);
+  assert.doesNotMatch(readScreenSource('AnalysisLoadingScreen.tsx'), /getHomeResetState/);
 });
 
-test('AnalysisLoadingScreen back button and failure actions target HomeScreen, never ScanScreen', () => {
+test('AnalysisLoadingScreen renders its safe-area back button and preserves scan actions', () => {
   const source = readScreenSource('AnalysisLoadingScreen.tsx');
   assert.equal(source.includes('ScanScreen'), false);
-  assert.match(source, /getHomeResetState/);
+  assert.match(source, /import \{ BackButton \} from '\.\.\/components\/okyo\/BackButton'/);
+  assert.match(source, /<SafeAreaView style=\{styles\.safeArea\}>\s*<View style=\{styles\.topBar\}>\s*<BackButton onPress=\{handleGoBack\} \/>\s*<\/View>\s*<ScrollView/);
+  assert.match(source, /style=\{styles\.scroll\}/);
+  assert.match(source, /topBar:\s*\{[\s\S]{0,180}height:\s*48[\s\S]{0,100}paddingHorizontal:\s*18/);
+  assert.match(source, /Try again/);
+  assert.match(source, /Choose another photo/);
+});
+
+test('AnalysisLoadingScreen back action cancels and clears the active scan before returning', () => {
+  const source = readScreenSource('AnalysisLoadingScreen.tsx');
+  const backButton = readFileSync(path.join(srcDir, 'components', 'okyo', 'BackButton.tsx'), 'utf8');
+  const backHandler = source.match(/const handleGoBack = \(\) => \{([\s\S]*?)\n  \};/)?.[1] ?? '';
+  assert.match(backButton, /accessibilityLabel="Go back"/);
+  assert.match(backHandler, /didCancel\.current = true/);
+  assert.match(backHandler, /cancelScanSession\(sessionId, 'AnalysisLoadingScreen\.back'\)/);
+  assert.ok(backHandler.indexOf('cancelScanSession') < backHandler.indexOf('navigation.goBack()'));
+  assert.match(source, /if \(didCancel\.current \|\| !navigation\.isFocused\(\)\) return/);
 });
 
 test('AnalysisLoadingScreen terminal-status navigation only fires for a successful outcome', () => {
   const source = readScreenSource('AnalysisLoadingScreen.tsx');
   assert.match(source, /outcome !== 'success'/);
-  assert.match(source, /ResultSummaryScreen/);
+  assert.match(source, /getScanResultNavigationTarget\(/);
+});
+
+test('AnalysisLoadingScreen shows category-specific failure details and hides progress', () => {
+  const source = readScreenSource('AnalysisLoadingScreen.tsx');
+  assert.match(source, /!isFailure \? \([\s\S]*accessibilityRole="progressbar"/);
+  assert.match(source, /getInlineFailureCopy\(failureCategory, isDescriptionScan, mascotName\)/);
+  assert.match(source, /numberOfLines=\{2\} style=\{styles\.failureBody\}>\{failureCopy\.body\}/);
+  assert.match(source, /borderRadius: 28/);
+  assert.match(source, /overflow: 'hidden'/);
 });
 
 test('no user-facing component imports the deleted ScanScreen module', () => {

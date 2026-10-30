@@ -15,6 +15,7 @@ type Props = {
   style?: StyleProp<ViewStyle>;
   testID?: string;
   tone?: 'default' | 'pastelPink';
+  maxFontSizeMultiplier?: number;
 };
 
 const CTA_SHADOW_RESTING = homeRecipeCardShadow.shadowOpacity;
@@ -30,6 +31,7 @@ export function OnboardingCTA({
   style,
   testID,
   tone = 'default',
+  maxFontSizeMultiplier = 1.2,
 }: Props) {
   const reduceMotion = useReduceMotion();
   const lockedRef = useRef(false);
@@ -88,7 +90,7 @@ export function OnboardingCTA({
         style={[styles.button, tone === 'pastelPink' && styles.pastelPink, variant === 'secondary' && styles.secondary, variant === 'questionnaire' && styles.questionnaire, disabled && styles.disabled, variant === 'questionnaire' && disabled && styles.questionnaireDisabled]}
         testID={testID}
       >
-        <Text maxFontSizeMultiplier={1.2} style={[styles.label, tone === 'pastelPink' && styles.pastelPinkLabel, variant === 'secondary' && styles.secondaryLabel, variant === 'questionnaire' && styles.questionnaireLabel]}>{label}</Text>
+        <Text maxFontSizeMultiplier={maxFontSizeMultiplier} style={[styles.label, tone === 'pastelPink' && styles.pastelPinkLabel, variant === 'secondary' && styles.secondaryLabel, variant === 'questionnaire' && styles.questionnaireLabel]}>{label}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -110,6 +112,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 60,
     paddingHorizontal: 28,
+    paddingVertical: 12,
   },
   pastelPink: { backgroundColor: '#FFA8C2' },
   secondary: {
@@ -125,7 +128,7 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   disabled: { opacity: 0.45 },
-  label: { color: '#FFFFFF', fontFamily: fontFamilies.bold, fontSize: 17, fontWeight: '700' },
+  label: { color: '#FFFFFF', flexShrink: 1, fontFamily: fontFamilies.bold, fontSize: 17, fontWeight: '700', maxWidth: '100%', textAlign: 'center' },
   secondaryLabel: { color: '#FFFFFF' },
   questionnaireLabel: { color: '#FFFFFF' },
   pastelPinkLabel: { color: '#FFFFFF' },

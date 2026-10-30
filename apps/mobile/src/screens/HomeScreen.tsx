@@ -1,27 +1,33 @@
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useTour, useTourAnchor } from '../tour/TourContext';
+import { COACH_DOCK_TARGET_CLEARANCE } from '../tour/coachDockGeometry';
+
+import { HomeSkeleton } from '../components/Skeleton';
 import { RecommendationCard } from '../components/RecommendationCard';
 import { MetricCarousel } from '../components/home/MetricCarousel';
 import { RecentDishCard } from '../components/home/RecentDishCard';
 import { WeekStrip } from '../components/home/WeekStrip';
-import { ScanActionSheet } from '../components/okyo/ScanFab';
+import { useOpenScanActionSheet } from '../components/okyo/ScanActionSheetContext';
 import { SectionHeader } from '../components/okyo/SectionHeader';
 import { recommendedRecipes } from '../data/recommendedRecipes';
-import { useStartPickedScan } from '../hooks/useStartPickedScan';
 import type { RootStackParamList } from '../navigation/types';
 import { resolveCanonicalRecipe, resolveRecentRecipes, type CanonicalRecipe } from '../state/canonicalRecipes';
 import { getHomeActivityDates, getHomeMetricOrder, isFutureDateKey, selectHomeMetrics } from '../state/homeMetrics';
+import { getHomeIdeaIdsForLocalHour } from '../state/homeIdeas';
 import { readPersonalizedHomeProfile } from '../state/primaryGoalBridge';
+import { getHealthGoalSummary, type HealthGoalSummary } from '../onboarding-v3/state/healthBranch';
+import { healthBranchPersistence } from '../onboarding-v3/state/healthBranchPersistence';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { findFoodPreferenceConflicts, useFoodPreferences } from '../state/foodPreferences';
 import { resolveActiveCookingStep, type ActiveCookingSession } from '../state/activeCooking';
-import { colors, radius, shadows, spacing, typography } from '../theme/okyoTheme';
+import { colors, fontFamilies, radius, shadows, spacing, typography } from '../theme/okyoTheme';
 import { buildGuidedCookingSteps } from '../utils/guidedCookingSteps';
 import { classifyRecipeStepTiming, formatRecipeDuration, formatRecipeStepTimingLines, getRecipeTiming } from '../utils/recipeIntegrity';
 import { uiLog } from '../utils/uiDebug';
@@ -35,36 +41,9 @@ const scanButtonVideo = require('../../assets/backgrounds/button-background/scan
 /** Home surfaces two ideas; the rest live behind Explore. */
 const HOME_IDEA_COUNT = 2;
 
-// These have been visually reviewed for food-forward imagery without baked-in
-// text. Keep the Home row independent from dynamic scans and from cache-only
-// URLs so every hourly pairing stays appetizing and reliably visible.
-const HOME_IDEA_RECIPE_IDS = [
-  'rec-scrambled-eggs-toast',
-  'rec-berry-banana-smoothie',
-  'rec-breakfast-burrito',
-  'rec-crispy-tofu-power-bowl',
-  'rec-creamy-tomato-rigatoni',
-  'rec-greek-salad',
-  'rec-smash-cheeseburger',
-  'rec-sheet-pan-lemon-chicken',
-] as const;
-
-const HOME_IDEA_RECIPES = HOME_IDEA_RECIPE_IDS
-  .map((id) => recommendedRecipes.find((recipe) => recipe.id === id))
-  .filter((recipe): recipe is (typeof recommendedRecipes)[number] => Boolean(recipe));
-
-function getHourlyIdeas(hour: number, candidates = HOME_IDEA_RECIPES, limit = HOME_IDEA_COUNT) {
-  if (candidates.length === 0 || limit <= 0) {
-    return [];
-  }
-
-  const start = (Math.max(0, Math.floor(hour)) * limit) % candidates.length;
-  return Array.from({ length: Math.min(limit, candidates.length) }, (_, index) => candidates[(start + index) % candidates.length]);
-}
-
 export function HomeScreen() {
   const navigation = useNavigation<HomeNavigation>();
-  const { height, width } = useWindowDimensions();
+  const { fontScale, height, width } = useWindowDimensions();
   const scanButtonPlayer = useVideoPlayer(scanButtonVideo, (player) => {
     player.loop = true;
     player.muted = true;
@@ -78,46 +57,63 @@ export function HomeScreen() {
   const primaryGoal = useOkyoStore((state) => state.primaryGoal);
   const endCookingRecipe = useOkyoStore((state) => state.endCookingRecipe);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
+  const hasHydrated = useOkyoStore((state) => state.hasHydrated);
+  const personalizationComplete = useOkyoStore((state) => state.personalizationComplete);
   const openRecommendation = useOpenRecommendation();
   const { preferences: foodPreferences } = useFoodPreferences();
-  const startPickedScan = useStartPickedScan(navigation as unknown as { navigate: (screen: string, params?: unknown) => void });
+  const openSharedScanSheet = useOpenScanActionSheet();
   const compact = width < 380 || height < 700;
   const gutter = width > 430 ? 24 : 20;
   const cardWidth = width - 40;
+  // Two equal-width cards visible per screen, sized off the real available
+  // width (screen minus the same gutter used everywhere else) so the second
+  // card is never a stray sliver — it always matches the first exactly.
+  const ideasGap = 12;
+  const ideasCardWidth = (width - gutter * 2 - ideasGap) / 2;
   // Larger than the initial compact state, with an explicit cap so it remains
   // a supporting illustration rather than taking over the Home screen.
   const firstUseKikoWidth = Math.min(300, Math.round(width * 0.72));
-  const metricHeight = compact ? 162 : 176;
+  const metricHeight = (compact ? 162 : 176) + Math.round(Math.max(0, fontScale - 1) * 72);
   const recentHeight = compact ? 96 : 108;
   const [savedName, setSavedName] = useState<string | null>(null);
+  const [healthGoalSummary, setHealthGoalSummary] = useState<HealthGoalSummary | null>(null);
+  const [homeViewportLaidOut, setHomeViewportLaidOut] = useState(false);
+  const [homeContentLaidOut, setHomeContentLaidOut] = useState(false);
   const [homeStartDateKey, setHomeStartDateKey] = useState<string | null>(null);
   const [homeFirstSeenAt, setHomeFirstSeenAt] = useState<number | null>(null);
   const [selectedDateKey, setSelectedDateKey] = useState<string>(() => toDateKey(new Date()));
-  const [scanOptionsVisible, setScanOptionsVisible] = useState(false);
   const [ideaHour, setIdeaHour] = useState(() => new Date().getHours());
   const greeting = useMemo(() => getCompactGreeting(new Date().getHours()), []);
   // Home shows exactly two safe, bundled ideas. The pairing advances at each
   // local hour boundary instead of staying unchanged for an entire meal period.
-  const mealIdeas = useMemo(() => getHourlyIdeas(
-    ideaHour,
-    HOME_IDEA_RECIPES.filter((recipe) => !foodPreferences || findFoodPreferenceConflicts(recipe.ingredients.map((ingredient) => ingredient.name), foodPreferences).length === 0),
-  ), [foodPreferences, ideaHour]);
+  const mealIdeas = useMemo(() => getHomeIdeaIdsForLocalHour(ideaHour)
+    .map((id) => recommendedRecipes.find((recipe) => recipe.id === id))
+    .filter((recipe): recipe is (typeof recommendedRecipes)[number] => Boolean(recipe))
+    .filter((recipe) => !foodPreferences || findFoodPreferenceConflicts(recipe.ingredients.map((ingredient) => ingredient.name), foodPreferences).length === 0)
+    .slice(0, HOME_IDEA_COUNT), [foodPreferences, ideaHour]);
   const metrics = useMemo(() => selectHomeMetrics({ completedMeals, recipesById, selectedDayKey: selectedDateKey }), [completedMeals, recipesById, selectedDateKey]);
   const metricOrder = useMemo(() => getHomeMetricOrder(primaryGoal), [primaryGoal]);
-  const activityDates = useMemo(() => getHomeActivityDates(recipesById), [recipesById]);
+  const activityDates = useMemo(() => getHomeActivityDates(recipesById, completedMeals), [completedMeals, recipesById]);
   const futureSelectedDay = isFutureDateKey(selectedDateKey);
   const allRecentRecipes = useMemo(() => resolveRecentRecipes(recipesById, recentRecipeIds)
     .filter((recipe) => homeFirstSeenAt === null || new Date(recipe.createdAt).getTime() >= homeFirstSeenAt), [homeFirstSeenAt, recentRecipeIds, recipesById]);
   const activeCookingRecipe = useMemo(() => resolveCanonicalRecipe(recipesById, activeCookingSession?.recipeId), [activeCookingSession?.recipeId, recipesById]);
   const recentRecipes = allRecentRecipes.filter((recipe) => recipe.id !== activeCookingSession?.recipeId).slice(0, 3);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     let mounted = true;
     void readPersonalizedHomeProfile(AsyncStorage).then((profile) => {
       if (mounted) setSavedName(profile?.name ?? null);
     });
+    if (primaryGoal === 'eat_healthier') {
+      void healthBranchPersistence.read().then((draft) => {
+        if (mounted) setHealthGoalSummary(getHealthGoalSummary(draft));
+      });
+    } else {
+      setHealthGoalSummary(null);
+    }
     return () => { mounted = false; };
-  }, []);
+  }, [primaryGoal]));
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -177,17 +173,89 @@ export function HomeScreen() {
   // Opens the same three-action scan chooser as the global FAB.
   const openScanOptions = () => {
     uiLog('HomeScreen', 'first_use_cta_scan');
-    setScanOptionsVisible(true);
+    openSharedScanSheet();
   };
+
+  const calendarAnchorRef = useTourAnchor('home-calendar');
+  const metricsAnchorRef = useTourAnchor('home-savings-macros');
+  const recommendedSectionAnchorRef = useTourAnchor('home-recommended-section');
+  const firstUseScanAnchorRef = useTourAnchor('home-first-use-scan');
+  const scrollViewRef = useRef<ScrollView>(null);
+  const { active: tourActive, stepIndex: tourStepIndex, registerScrollRef, reportScrollOffset, requestRemeasure, reportHomeReady } = useTour();
+  const isFocused = useIsFocused();
+  useEffect(() => {
+    registerScrollRef('HomeScreen', scrollViewRef);
+  }, [registerScrollRef]);
+  useEffect(() => {
+    if (isFocused && hasHydrated && homeStartDateKey !== null && homeFirstSeenAt !== null && homeViewportLaidOut && homeContentLaidOut) {
+      reportHomeReady();
+    }
+  }, [hasHydrated, homeContentLaidOut, homeFirstSeenAt, homeStartDateKey, homeViewportLaidOut, isFocused, reportHomeReady]);
+  const onTourScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    reportScrollOffset('HomeScreen', event.nativeEvent.contentOffset.y);
+    requestRemeasure();
+  };
+  useEffect(() => {
+    if (!tourActive) return undefined;
+    const frame = requestAnimationFrame(requestRemeasure);
+    return () => cancelAnimationFrame(frame);
+  }, [requestRemeasure, selectedDateKey, tourActive]);
+
+  if (!hasHydrated || homeStartDateKey === null || homeFirstSeenAt === null) {
+    return <SafeAreaView style={styles.safeArea}><HomeSkeleton /></SafeAreaView>;
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={[styles.content, { paddingHorizontal: gutter, paddingBottom: spacing.scrollClearance + 84 }]} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={scrollViewRef}
+        contentContainerStyle={[styles.content, { paddingHorizontal: gutter, paddingBottom: spacing.scrollClearance + 84 + (tourActive ? COACH_DOCK_TARGET_CLEARANCE : 0) }]}
+        onContentSizeChange={(contentWidth, contentHeight) => { if (contentWidth > 0 && contentHeight > 0) setHomeContentLaidOut(true); }}
+        onLayout={(event) => { if (event.nativeEvent.layout.width > 0 && event.nativeEvent.layout.height > 0) setHomeViewportLaidOut(true); }}
+        onScroll={onTourScroll}
+        scrollEventThrottle={32}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.header}>
           <Text maxFontSizeMultiplier={1.2} numberOfLines={1} style={styles.greeting}>{savedName ? `${greeting}, ${savedName}` : greeting}</Text>
         </View>
 
-        <WeekStrip activityDates={activityDates} installDateKey={homeStartDateKey} onDayPress={setSelectedDateKey} selectedDateKey={selectedDateKey} />
+        {!personalizationComplete ? (
+          <Pressable
+            accessibilityLabel="Finish personalizing Okyo"
+            accessibilityRole="button"
+            onPress={() => {
+
+              navigation.navigate('MainTabs', { screen: 'PersonalizationScreen' });
+            }}
+            style={({ pressed }) => [styles.personalizationBanner, pressed && styles.pressed]}
+          >
+            <View style={styles.personalizationBannerText}>
+              <Text style={styles.personalizationBannerTitle}>Finish personalizing Okyo</Text>
+              <Text style={styles.personalizationBannerBody}>Answer a few more questions to make recommendations fit you better.</Text>
+            </View>
+            <Text style={styles.personalizationBannerCta}>Finish setup</Text>
+          </Pressable>
+        ) : null}
+
+        {primaryGoal === 'eat_healthier' && healthGoalSummary ? (
+          <View accessibilityLabel={`Your goal: ${healthGoalSummary.title}. ${healthGoalSummary.detail}`} style={styles.healthGoalCard}>
+            <Text style={styles.healthGoalEyebrow}>YOUR GOAL</Text>
+            <Text style={styles.healthGoalTitle}>{healthGoalSummary.title}</Text>
+            <Text style={styles.healthGoalDetail}>{healthGoalSummary.detail}</Text>
+          </View>
+        ) : null}
+
+        <View ref={calendarAnchorRef}>
+          <WeekStrip
+            activityDates={activityDates}
+            installDateKey={homeStartDateKey}
+            onDayPress={(nextDateKey) => {
+              setSelectedDateKey(nextDateKey);
+            }}
+            selectedDateKey={selectedDateKey}
+          />
+        </View>
         {homeStartDateKey && selectedDateKey < homeStartDateKey ? (
           <View accessibilityLabel="Your Okyo week starts here" style={styles.dayEmpty}>
             <Text style={styles.dayEmptyText}>Your Okyo week starts here.</Text>
@@ -195,7 +263,7 @@ export function HomeScreen() {
         ) : null}
 
         <View style={[styles.carouselBleed, { marginHorizontal: -gutter }]}>
-          <MetricCarousel cardHeight={metricHeight} cardWidth={cardWidth} futureDay={futureSelectedDay} metrics={metrics} order={metricOrder} />
+          <MetricCarousel activeCardRef={metricsAnchorRef} cardHeight={metricHeight} cardWidth={cardWidth} futureDay={futureSelectedDay} metrics={metrics} order={metricOrder} />
         </View>
 
         {activeCookingRecipe && activeCookingSession ? (
@@ -229,11 +297,12 @@ export function HomeScreen() {
             <Image
               accessibilityIgnoresInvertColors
               resizeMode="contain"
-              source={require('../../assets/kiko-static/approved/kiko-soup.png')}
+              source={require('../../assets/kiko-static/approved/kiko-soup-sticker.png')}
               style={[styles.firstUseKikos, { height: Math.round(firstUseKikoWidth / 3), width: firstUseKikoWidth }]}
             />
             <Text maxFontSizeMultiplier={1.3} style={styles.firstUseBody}>Scan your first dish to get started.</Text>
             <Pressable
+              ref={firstUseScanAnchorRef}
               accessibilityLabel="Scan a dish"
               accessibilityRole="button"
               onPress={openScanOptions}
@@ -248,23 +317,30 @@ export function HomeScreen() {
         ) : null}
 
         {mealIdeas.length > 0 ? (
-          <View style={styles.section}>
+          <View ref={recommendedSectionAnchorRef} onLayout={tourActive ? requestRemeasure : undefined} style={styles.section}>
             <SectionHeader actionLabel="Explore" onAction={openDiscover} title="Today’s ideas" />
-            <View style={styles.ideasGrid}>
-              <View style={styles.ideasRow}>
-                {mealIdeas.map((recipe) => <RecommendationCard key={recipe.id} compact recipe={recipe} onPress={() => openRecommendation(recipe)} />)}
-              </View>
-            </View>
+            <ScrollView
+              contentContainerStyle={[styles.ideasScrollContent, { alignItems: 'stretch', gap: ideasGap, paddingHorizontal: gutter }]}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={ideasCardWidth + ideasGap}
+              decelerationRate="fast"
+              style={[styles.ideasScroll, { marginHorizontal: -gutter }]}
+            >
+              {mealIdeas.map((recipe) => (
+                <View
+                  key={recipe.id}
+                  onLayout={tourActive ? requestRemeasure : undefined}
+                  style={{ width: ideasCardWidth }}
+                >
+                  <RecommendationCard compact recipe={recipe} onPress={() => openRecommendation(recipe)} />
+                  {tourActive && tourStepIndex === 3 ? <View pointerEvents="none" style={styles.recommendationTourHighlight} /> : null}
+                </View>
+              ))}
+            </ScrollView>
           </View>
         ) : null}
       </ScrollView>
-      <ScanActionSheet
-        onClose={() => setScanOptionsVisible(false)}
-        onDescribeMeal={() => navigation.navigate('DescribeMealScreen')}
-        onTakePhoto={() => void startPickedScan('camera')}
-        onUpload={() => void startPickedScan('photos')}
-        visible={scanOptionsVisible}
-      />
     </SafeAreaView>
   );
 }
@@ -327,7 +403,7 @@ const styles = StyleSheet.create({
   activeStep: { ...typography.caption, color: colors.body, marginTop: 5 },
   activeTiming: { ...typography.caption, color: colors.body, marginTop: 5 },
   activeTitle: { ...typography.section, marginTop: 4 },
-  carouselBleed: { marginTop: spacing.sm },
+  carouselBleed: { marginTop: spacing.md },
   content: { paddingTop: 2 },
   dayEmpty: { backgroundColor: colors.surfaceMuted, borderRadius: radius.panel, marginTop: 4, paddingHorizontal: 16, paddingVertical: 11 },
   dayEmptyText: { ...typography.caption, color: colors.body, textAlign: 'center' },
@@ -359,11 +435,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     ...shadows.card,
   },
-  firstUseButtonText: { ...typography.body, color: colors.surface, fontFamily: typography.button.fontFamily },
-  greeting: { ...typography.title, flex: 1, fontSize: 24, lineHeight: 30 },
-  header: { alignItems: 'center', flexDirection: 'row', height: 48, justifyContent: 'space-between' },
-  ideasGrid: { gap: 12, marginTop: 12 },
-  ideasRow: { flexDirection: 'row', gap: 12, minWidth: 0, width: '100%' },
+  firstUseButtonText: {
+    ...typography.body,
+    color: colors.surface,
+    fontFamily: typography.button.fontFamily,
+    textAlign: 'center',
+  },
+  greeting: { ...typography.title, flex: 1, fontSize: 26, lineHeight: 32 },
+  header: { alignItems: 'center', flexDirection: 'row', height: 56, justifyContent: 'space-between' },
+  personalizationBanner: {
+    alignItems: 'center', backgroundColor: colors.coralSoft, borderRadius: radius.card,
+    flexDirection: 'row', gap: 12, marginTop: 4, marginBottom: 8, padding: 16,
+  },
+  personalizationBannerText: { flex: 1, gap: 2 },
+  personalizationBannerTitle: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 15, fontWeight: '700' },
+  personalizationBannerBody: { color: colors.body, fontFamily: fontFamilies.medium, fontSize: 13, lineHeight: 18 },
+  personalizationBannerCta: { color: colors.coralDark, fontFamily: fontFamilies.bold, fontSize: 14, fontWeight: '700' },
+  healthGoalCard: { backgroundColor: colors.surface, borderColor: colors.coralSoft, borderRadius: radius.card, borderWidth: 1, gap: 4, marginBottom: 8, marginTop: 4, padding: 14 },
+  healthGoalEyebrow: { color: colors.coralDark, fontFamily: fontFamilies.bold, fontSize: 11, letterSpacing: 0.8 },
+  healthGoalTitle: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 15, lineHeight: 20 },
+  healthGoalDetail: { color: colors.body, fontFamily: fontFamilies.medium, fontSize: 13 },
+  // Bleeds past the screen's own gutter so the carousel's own
+  // paddingHorizontal (matched to that same gutter) is what actually
+  // controls the left/right inset — keeping it equal on both sides
+  // regardless of how many cards scroll past.
+  // No fixed height: the ScrollView sizes itself off its tallest child. The
+  // vertical padding below is what actually matters — it gives the card's
+  // shadow (painted outside the card's own layout box) room to render
+  // instead of getting clipped flush against the ScrollView's bottom edge.
+  ideasScroll: { marginTop: 12 },
+  ideasScrollContent: { flexDirection: 'row', paddingBottom: 14, paddingTop: 4 },
+  recommendationTourHighlight: {
+    borderColor: colors.coral,
+    borderRadius: radius.card,
+    borderWidth: 3,
+    bottom: 1,
+    left: 1,
+    position: 'absolute',
+    right: 1,
+    top: 1,
+  },
   pressed: { opacity: 0.82, transform: [{ scale: 0.98 }] },
   recentList: { gap: 8, marginTop: 10 },
   safeArea: { backgroundColor: colors.canvas, flex: 1 },

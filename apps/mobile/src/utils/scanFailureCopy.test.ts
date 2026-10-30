@@ -52,6 +52,8 @@ test('a plain ai_failed rejection with no other signal falls back to generic', (
     getScanFailureCategory({ isTimeout: false, rejectionType: 'ai_failed', status: 'failed', usable: false }),
     'generic',
   );
+  assert.equal(getInlineFailureCopy('generic', false).body, 'Okyo couldn’t finish this scan. Try again.');
+  assert.doesNotMatch(getInlineFailureCopy('generic', false).body, /clearer photo|another angle/i);
 });
 
 test('inline failure copy never leaks provider names, codes, or raw errors', () => {
@@ -74,4 +76,11 @@ test('description failure copy never uses photo-recognition language', () => {
     const copy = getInlineFailureCopy(category, true);
     assert.equal(photoWords.test(copy.title), false, `${category} description title used photo language`);
   }
+});
+
+test('scan failures use the saved fox name with an unnamed fallback', () => {
+  assert.equal(getInlineFailureCopy('generic', false, 'Luna').title, 'Luna couldn’t finish this scan');
+  assert.equal(getInlineFailureCopy('generic', true, 'Luna').title, 'Luna couldn’t finish this recipe');
+  assert.equal(getInlineFailureCopy('generic', false, null).title, 'Your fox couldn’t finish this scan');
+  assert.equal(getInlineFailureCopy('unclear_image', false, 'Luna').title, 'Luna couldn’t read this one');
 });

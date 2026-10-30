@@ -1,120 +1,335 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import assert from "node:assert/strict";
+import test from "node:test";
 import {
-  calculateProteinPreferenceGrams, initialMacrosDraft, MACROS_QUESTION_STEPS, MACROS_STEPS,
-  macrosReducer, normalizeMacrosDraft, routeForMacrosDraft,
-} from './macrosBranch';
+  initialMacrosDraft,
+  MACROS_STEPS,
+  macrosReducer,
+  normalizeMacrosDraft,
+  routeForMacrosDraft,
+  reuseOnboardingAge,
+  type MacrosDraft,
+} from "./macrosBranch";
 
-test('the eighteen ordered steps end at the completion handoff', () => {
-  assert.deepEqual([...MACROS_STEPS], [
-    'intro', 'focus', 'focusInsight', 'proteinWeight', 'proteinPreference', 'calorieCheck',
-    'calorieInsight', 'barrier', 'barrierResponse', 'mealToImprove', 'mealInsight', 'trackingStyle',
-    'reassurance', 'approach', 'whatOkyoDoes', 'commitment', 'reveal', 'complete',
+function coreDraft() {
+  return {
+    ...initialMacrosDraft,
+    macroFocus: "low_protein" as const,
+    macroBarrier: "time" as const,
+    macroOutcome: "more_protein" as const,
+    recipePriorities: ["quick_to_make" as const],
+  };
+}
+
+test("the active path is a compact food-first flow with two conditional target paths", () => {
+  assert.deepEqual(MACROS_STEPS, [
+    "intro",
+    "problem",
+    "barrier",
+    "diagnosis",
+    "mealPriority",
+    "targetMode",
+    "estimateDetails",
+    "knownTargets",
+    "reveal",
+    "complete",
   ]);
-  assert.deepEqual([...MACROS_QUESTION_STEPS], ['focus', 'proteinWeight', 'calorieCheck', 'barrier', 'mealToImprove', 'trackingStyle', 'commitment']);
-  assert.equal(initialMacrosDraft.currentStep, 'intro');
+  assert.equal(routeForMacrosDraft(initialMacrosDraft), "problem");
+  assert.equal(routeForMacrosDraft(coreDraft()), "targetMode");
 });
 
-test('an empty draft routes to focus and Next advances one step at a time', () => {
-  assert.equal(routeForMacrosDraft(initialMacrosDraft), 'focus');
-  let state = macrosReducer(initialMacrosDraft, { type: 'NEXT_PRESSED' });
-  assert.equal(state.currentStep, 'focus');
-  state = macrosReducer(state, { type: 'FOCUS_SELECTED', focus: 'more_protein' });
-  state = macrosReducer(state, { type: 'NEXT_PRESSED' });
-  assert.equal(state.currentStep, 'focusInsight');
-  state = macrosReducer(state, { type: 'NEXT_PRESSED' });
-  assert.equal(state.currentStep, 'proteinWeight');
+test("a goal answer creates the canonical goal and removes incompatible old routing", () => {
+  const state = macrosReducer(initialMacrosDraft, {
+    type: "PROBLEM_SELECTED",
+    problem: "low_protein",
+  });
+  assert.equal(state.macroOutcome, "more_protein");
+  assert.equal(state.goal?.displayTitle, "Get enough protein 5 days a week");
+  assert.equal(state.currentStep, "intro");
 });
 
-test('body weight protein preferences calculate consistently for pounds and kilograms', () => {
-  assert.equal(calculateProteinPreferenceGrams(150, 'lb', 1), 150);
-  assert.equal(calculateProteinPreferenceGrams(150, 'lb', 1.3), 195);
-  assert.equal(calculateProteinPreferenceGrams(150, 'lb', 1.6), 240);
-  assert.equal(calculateProteinPreferenceGrams(70, 'kg', 1.3), 201);
+test("recipe priorities are capped at two and can be deselected", () => {
+  let state = macrosReducer(coreDraft(), {
+    type: "RECIPE_PRIORITIES_TOGGLED",
+    priority: "tastes_good",
+  });
+  state = macrosReducer(state, {
+    type: "RECIPE_PRIORITIES_TOGGLED",
+    priority: "keeps_me_full",
+  });
+  state = macrosReducer(state, {
+    type: "RECIPE_PRIORITIES_TOGGLED",
+    priority: "simple_ingredients",
+  });
+  assert.deepEqual(state.recipePriorities, ["quick_to_make", "tastes_good"]);
+  state = macrosReducer(state, {
+    type: "RECIPE_PRIORITIES_TOGGLED",
+    priority: "tastes_good",
+  });
+  assert.deepEqual(state.recipePriorities, ["quick_to_make"]);
 });
 
-test('known and skipped body weight paths keep protein data honest', () => {
-  let known = macrosReducer({ ...initialMacrosDraft, macroFocus: 'more_protein', currentStep: 'proteinWeight' }, { type: 'BODY_WEIGHT_SAVED', weight: 150, unit: 'lb' });
-  known = macrosReducer(known, { type: 'NEXT_PRESSED' });
-  assert.equal(known.currentStep, 'proteinPreference');
-  known = macrosReducer(known, { type: 'PROTEIN_MULTIPLIER_SELECTED', multiplier: 1.3 });
-  assert.equal(known.proteinTargetGrams, 195);
-  const skipped = macrosReducer({ ...initialMacrosDraft, macroFocus: 'more_protein', currentStep: 'proteinWeight' }, { type: 'BODY_WEIGHT_SKIPPED' });
-  assert.equal(skipped.proteinTargetGrams, null);
-  assert.equal(skipped.proteinTargetStatus, 'not_sure');
-  assert.equal(macrosReducer(skipped, { type: 'NEXT_PRESSED' }).currentStep, 'calorieCheck');
-});
-
-test('weight validation rejects implausible values without fabricating a target', () => {
-  const state = macrosReducer(initialMacrosDraft, { type: 'BODY_WEIGHT_SAVED', weight: 10, unit: 'lb' });
-  assert.equal(state.bodyWeight, null);
-  assert.equal(state.proteinTargetGrams, null);
-});
-
-test('every question answer is represented in the draft immediately', () => {
-  let state = macrosReducer(initialMacrosDraft, { type: 'FOCUS_SELECTED', focus: 'fewer_calories' });
-  state = macrosReducer(state, { type: 'BODY_WEIGHT_SKIPPED' });
-  state = macrosReducer(state, { type: 'CALORIE_STATUS_SELECTED', status: 'sometimes' });
-  state = macrosReducer(state, { type: 'BARRIER_SELECTED', barrier: 'meal_prep_time' });
-  state = macrosReducer(state, { type: 'MEAL_TO_IMPROVE_SELECTED', meal: 'dinner' });
-  state = macrosReducer(state, { type: 'TRACKING_STYLE_SELECTED', style: 'flexible_ranges' });
-  state = macrosReducer(state, { type: 'COMMITMENT_SELECTED', commitment: 'most_days' });
-  assert.deepEqual(
-    [state.macroFocus, state.proteinTargetStatus, state.calorieTrackingStatus, state.macroBarrier, state.mealToImprove, state.trackingStyle, state.flexibleCommitment],
-    ['fewer_calories', 'not_sure', 'sometimes', 'meal_prep_time', 'dinner', 'flexible_ranges', 'most_days'],
+test("target setup skips numeric entry for flexible mode and uses the right conditional target screen", () => {
+  assert.equal(
+    macrosReducer(
+      {
+        ...coreDraft(),
+        currentStep: "targetMode",
+        targetMode: "keep_flexible",
+      },
+      { type: "NEXT_PRESSED" },
+    ).currentStep,
+    "reveal",
+  );
+  assert.equal(
+    macrosReducer(
+      {
+        ...coreDraft(),
+        currentStep: "targetMode",
+        targetMode: "calculate_estimate",
+      },
+      { type: "NEXT_PRESSED" },
+    ).currentStep,
+    "estimateDetails",
+  );
+  assert.equal(
+    macrosReducer(
+      {
+        ...coreDraft(),
+        currentStep: "targetMode",
+        targetMode: "known_targets",
+      },
+      { type: "NEXT_PRESSED" },
+    ).currentStep,
+    "knownTargets",
   );
 });
 
-test('resume routing lands on the earliest unanswered question', () => {
-  const base = { ...initialMacrosDraft, macroFocus: 'more_protein' as const, proteinTargetStatus: 'not_sure' as const };
-  assert.equal(routeForMacrosDraft(base), 'calorieCheck');
-  assert.equal(routeForMacrosDraft({ ...base, calorieTrackingStatus: 'no' }), 'barrier');
-  assert.equal(routeForMacrosDraft({ ...base, calorieTrackingStatus: 'no', macroBarrier: 'estimating_portions' }), 'mealToImprove');
-  assert.equal(routeForMacrosDraft({ ...base, calorieTrackingStatus: 'no', macroBarrier: 'estimating_portions', mealToImprove: 'lunch' }), 'trackingStyle');
-  assert.equal(routeForMacrosDraft({ ...base, calorieTrackingStatus: 'no', macroBarrier: 'estimating_portions', mealToImprove: 'lunch', trackingStyle: 'exact_numbers' }), 'commitment');
-  assert.equal(routeForMacrosDraft({ ...base, calorieTrackingStatus: 'no', macroBarrier: 'estimating_portions', mealToImprove: 'lunch', trackingStyle: 'exact_numbers', flexibleCommitment: 'ease_in' }), 'reveal');
+test("estimate and known-target paths both keep their selection through reveal and completion", () => {
+  let estimate = macrosReducer({ ...coreDraft(), currentStep: "targetMode" }, { type: "TARGET_MODE_SELECTED", mode: "calculate_estimate" });
+  estimate = macrosReducer(estimate, { type: "ESTIMATE_PROFILE_UPDATED", patch: { ageYears: 32, heightCm: 168, weightKg: 72, biologicalSex: "female", activityHoursPerWeek: 6 } });
+  estimate = macrosReducer(estimate, { type: "NEXT_PRESSED" });
+  assert.equal(estimate.currentStep, "estimateDetails");
+  estimate = macrosReducer(estimate, { type: "NEXT_PRESSED" });
+  assert.equal(estimate.currentStep, "reveal");
+  assert.equal(estimate.targetMode, "calculate_estimate");
+  assert.ok(estimate.calorieTarget);
+  estimate = macrosReducer(estimate, { type: "BRANCH_COMPLETED" });
+  assert.equal(estimate.currentStep, "complete");
+
+  let known: MacrosDraft = macrosReducer({ ...coreDraft(), currentStep: "targetMode" }, { type: "TARGET_MODE_SELECTED", mode: "known_targets" });
+  known = macrosReducer(known, { type: "NEXT_PRESSED" });
+  assert.equal(known.currentStep, "knownTargets");
+  known = macrosReducer(known, { type: "PROTEIN_TARGET_SAVED", grams: 145 });
+  known = macrosReducer(known, { type: "CALORIE_TARGET_SAVED", calories: 2300 });
+  known = macrosReducer(known, { type: "NEXT_PRESSED" });
+  assert.equal(known.currentStep, "reveal");
+  assert.equal(known.targetMode, "known_targets");
+  known = macrosReducer(known, { type: "BRANCH_COMPLETED" });
+  assert.equal(known.currentStep, "complete");
 });
 
-test('legacy step ids are remapped on hydrate', () => {
-  assert.equal(normalizeMacrosDraft({ version: 2, currentStep: 'bodyWeight', macroFocus: 'more_protein' }).currentStep, 'proteinWeight');
-  assert.equal(normalizeMacrosDraft({ version: 2, currentStep: 'calorieTracking', macroFocus: 'more_protein', proteinTargetStatus: 'not_sure' }).currentStep, 'calorieCheck');
-  assert.equal(normalizeMacrosDraft({ version: 1, currentStep: 'acknowledgment', macroFocus: 'more_protein' }).currentStep, 'proteinWeight');
-  assert.equal(normalizeMacrosDraft({ version: 1, currentStep: 'intro' }).currentStep, 'focus');
+test("known target values validate predictable whole-number increments", () => {
+  let state = macrosReducer(coreDraft(), {
+    type: "PROTEIN_TARGET_SAVED",
+    grams: 155,
+  });
+  state = macrosReducer(state, {
+    type: "CALORIE_TARGET_SAVED",
+    calories: 2325,
+  });
+  state = macrosReducer(state, { type: "CARB_TARGET_SAVED", grams: 250 });
+  state = macrosReducer(state, { type: "FAT_TARGET_SAVED", grams: 70 });
+  assert.deepEqual(
+    [
+      state.proteinTargetGrams,
+      state.calorieTarget,
+      state.carbTargetGrams,
+      state.fatTargetGrams,
+    ],
+    [155, 2325, 250, 70],
+  );
+  assert.equal(
+    macrosReducer(state, { type: "CALORIE_TARGET_SAVED", calories: 2310 })
+      .calorieTarget,
+    2325,
+  );
 });
 
-test('a persisted transient beat is restored as-is', () => {
-  const answered = {
-    version: 2 as const, macroFocus: 'more_protein' as const, proteinTargetStatus: 'not_sure' as const,
-    calorieTrackingStatus: 'no' as const, macroBarrier: 'staying_consistent' as const, mealToImprove: 'dinner' as const,
-    trackingStyle: 'exact_numbers' as const, flexibleCommitment: 'few_aligned_meals' as const,
-  };
-  for (const step of ['focusInsight', 'calorieInsight', 'barrierResponse', 'mealInsight', 'reassurance', 'approach', 'whatOkyoDoes', 'reveal'] as const) {
-    assert.equal(normalizeMacrosDraft({ ...answered, currentStep: step }).currentStep, step);
+test("estimate profile preserves ages 13 through 100 and marks under-18 users as minors", () => {
+  for (const age of [13, 17, 18, 100]) {
+    const normalized = normalizeMacrosDraft({
+      ...initialMacrosDraft,
+      estimateProfile: { ...initialMacrosDraft.estimateProfile, ageYears: age },
+    });
+    assert.equal(normalized.estimateProfile.ageYears, age);
+    assert.equal(normalized.estimateProfile.isMinor, age < 18);
   }
 });
 
-test('back navigation preserves valid answers', () => {
-  const known = { ...initialMacrosDraft, currentStep: 'proteinPreference' as const, macroFocus: 'more_protein' as const, bodyWeight: 150, proteinMultiplier: 1.3 as const, proteinTargetStatus: 'yes_know_it' as const, proteinTargetGrams: 195 };
-  assert.equal(macrosReducer(known, { type: 'BACK_PRESSED' }).currentStep, 'proteinWeight');
-  const skipped = { ...initialMacrosDraft, currentStep: 'calorieCheck' as const, macroFocus: 'more_protein' as const, proteinTargetStatus: 'not_sure' as const };
-  assert.equal(macrosReducer(skipped, { type: 'BACK_PRESSED' }).currentStep, 'proteinWeight');
+test("the earlier onboarding age is reused without resetting saved activity or manual targets", () => {
+  const draft = normalizeMacrosDraft({
+    ...initialMacrosDraft,
+    targetMode: 'calculate_estimate',
+    estimateProfile: {
+      ...initialMacrosDraft.estimateProfile,
+      ageYears: 30,
+      heightCm: 180,
+      weightKg: 80,
+      biologicalSex: 'male',
+      goal: 'maintain',
+      activityHoursPerWeek: 28,
+    },
+  });
+  const reused = reuseOnboardingAge(draft, 32);
+  assert.equal(reused.estimateProfile.ageYears, 32);
+  assert.equal(reused.estimateProfile.activityHoursPerWeek, 28);
+  assert.ok(reused.calorieTarget);
+  assert.equal(reuseOnboardingAge(reused, null).estimateProfile.ageYears, 32);
+  const manual = { ...draft, targetMode: 'known_targets' as const, calorieTarget: 2400 };
+  assert.equal(reuseOnboardingAge(manual, 32).calorieTarget, 2400);
 });
 
-test('completion is stable and Back returns to reveal', () => {
-  const complete = macrosReducer({ ...initialMacrosDraft, currentStep: 'reveal' }, { type: 'BRANCH_COMPLETED' });
-  assert.equal(complete.currentStep, 'complete');
-  assert.equal(complete.branchCompleted, true);
-  assert.equal(macrosReducer(complete, { type: 'BACK_PRESSED' }).currentStep, 'reveal');
-  assert.equal(normalizeMacrosDraft(complete).currentStep, 'complete');
+test("weekly activity survives normalization and changes a macro estimate without changing age", () => {
+  const base = {
+    ...coreDraft(),
+    targetMode: 'calculate_estimate' as const,
+    estimateProfile: {
+      ...initialMacrosDraft.estimateProfile,
+      ageYears: 32,
+      heightCm: 180,
+      weightKg: 80,
+      biologicalSex: 'male' as const,
+      goal: 'maintain' as const,
+      activityHoursPerWeek: 0,
+    },
+  };
+  const zero = macrosReducer(base, { type: 'ESTIMATE_PROFILE_UPDATED', patch: { activityHoursPerWeek: 0 } });
+  const middle = macrosReducer(zero, { type: 'ESTIMATE_PROFILE_UPDATED', patch: { activityHoursPerWeek: 28 } });
+  const max = macrosReducer(middle, { type: 'ESTIMATE_PROFILE_UPDATED', patch: { activityHoursPerWeek: 56 } });
+  assert.ok(zero.calorieTarget && middle.calorieTarget && max.calorieTarget);
+  assert.ok(zero.calorieTarget < middle.calorieTarget && middle.calorieTarget < max.calorieTarget);
+  assert.equal(max.estimateProfile.ageYears, 32);
+  assert.equal(normalizeMacrosDraft(max).estimateProfile.activityHoursPerWeek, 56);
 });
 
-test('retained legacy events still update the draft without breaking the flow', () => {
-  const state = macrosReducer(initialMacrosDraft, { type: 'FREQUENCY_SAVED', count: 6 });
-  assert.equal(state.weeklyCookingCount, 6);
-  assert.equal(macrosReducer(initialMacrosDraft, { type: 'FREQUENCY_SAVED', count: 30 }).weeklyCookingCount, null);
-  assert.equal(state.currentStep, 'intro');
+test("the estimate pace slider is bounded and keeps the calorie estimate tied to the selected direction", () => {
+  const profile = {
+    ...coreDraft(),
+    estimateProfile: {
+      ...initialMacrosDraft.estimateProfile,
+      ageYears: 28,
+      heightCm: 168,
+      weightKg: 54.4,
+      biologicalSex: "female" as const,
+      activityLevel: "lightly_active" as const,
+      goal: "maintain" as const,
+    },
+  };
+  const gaining = macrosReducer(profile, {
+    type: "WEEKLY_CHANGE_SELECTED",
+    pounds: 2,
+  });
+  assert.equal(gaining.weeklyChangePounds, 2);
+  assert.equal(gaining.estimateProfile.goal, "build_muscle");
+  assert.equal(gaining.estimateProfile.desiredRatePerWeek, "moderate");
+  assert.ok(gaining.calorieTarget);
+  const unchanged = macrosReducer(gaining, {
+    type: "WEEKLY_CHANGE_SELECTED",
+    pounds: 2.5,
+  });
+  assert.equal(unchanged.weeklyChangePounds, 2);
+  const losing = macrosReducer(gaining, {
+    type: "WEEKLY_CHANGE_SELECTED",
+    pounds: -0.5,
+  });
+  assert.equal(losing.estimateProfile.goal, "lose_fat");
+  assert.equal(losing.estimateProfile.desiredRatePerWeek, "slow");
+  assert.ok(losing.calorieTarget);
+  assert.ok(gaining.calorieTarget);
+  assert.ok(
+    losing.calorieTarget < gaining.calorieTarget,
+    "calories should move with the selected gain/loss direction",
+  );
+  const incomplete = macrosReducer(losing, {
+    type: "ESTIMATE_PROFILE_UPDATED",
+    patch: { ageYears: null },
+  });
+  assert.equal(incomplete.calorieTarget, null);
 });
 
-test('invalid hydrated forward steps recover to the earliest valid route', () => {
-  assert.equal(normalizeMacrosDraft({ version: 2, currentStep: 'complete', macroFocus: 'more_protein' }).currentStep, 'proteinWeight');
+test("estimate calorie targets recalculate when the user changes their goal", () => {
+  const profile = {
+    ...coreDraft(),
+    targetMode: "calculate_estimate" as const,
+    estimateProfile: {
+      ...initialMacrosDraft.estimateProfile,
+      ageYears: 28,
+      heightCm: 168,
+      weightKg: 68,
+      biologicalSex: "female" as const,
+      activityLevel: "lightly_active" as const,
+      goal: "maintain" as const,
+    },
+  };
+  const calculated = macrosReducer(profile, {
+    type: "ESTIMATE_PROFILE_UPDATED",
+    patch: {},
+  });
+  assert.ok(calculated.calorieTarget);
+  const baseline = calculated.calorieTarget;
+  const changed = macrosReducer(calculated, {
+    type: "CALORIE_TARGET_SAVED",
+    calories: 2400,
+  });
+  const adjusted = macrosReducer(changed, {
+    type: "WEEKLY_CHANGE_SELECTED",
+    pounds: 1,
+  });
+  assert.notEqual(adjusted.calorieTarget, baseline);
+  assert.notEqual(adjusted.calorieTarget, 2400);
+  assert.equal(adjusted.calorieTargetManuallyEdited, false);
+  const resized = macrosReducer(adjusted, {
+    type: "ESTIMATE_PROFILE_UPDATED",
+    patch: { weightKg: 80 },
+  });
+  assert.notEqual(resized.calorieTarget, adjusted.calorieTarget);
+});
+
+test("editing targets from the final plan routes back to the selected target controls", () => {
+  const calculated = {
+    ...coreDraft(),
+    targetMode: "calculate_estimate" as const,
+    currentStep: "complete" as const,
+    branchCompleted: true,
+  };
+  const known = { ...calculated, targetMode: "known_targets" as const };
+  assert.equal(
+    macrosReducer(calculated, { type: "EDIT_TARGETS_PRESSED" }).currentStep,
+    "estimateDetails",
+  );
+  assert.equal(
+    macrosReducer(known, { type: "EDIT_TARGETS_PRESSED" }).currentStep,
+    "knownTargets",
+  );
+});
+
+test("legacy drafts migrate into the compact model without dropping answers or completion", () => {
+  const migrated = normalizeMacrosDraft({
+    version: 3,
+    macroFocus: "more_protein",
+    macroBarrier: "meal_prep_time",
+    mealPriority: "quick_to_make",
+    proteinTargetGrams: 140,
+    calorieTarget: 2200,
+  });
+  assert.equal(migrated.version, 4);
+  assert.equal(migrated.macroFocus, "low_protein");
+  assert.equal(migrated.macroBarrier, "time");
+  assert.deepEqual(migrated.recipePriorities, ["quick_to_make"]);
+  assert.equal(migrated.targetMode, "known_targets");
+  const completed = normalizeMacrosDraft({
+    ...migrated,
+    branchCompleted: true,
+  });
+  assert.equal(completed.currentStep, "complete");
 });

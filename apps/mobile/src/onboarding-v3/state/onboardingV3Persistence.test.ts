@@ -9,6 +9,7 @@ import {
   PERSONALIZED_PROFILE_SCHEMA_VERSION,
   PERSONALIZED_PROFILE_STORAGE_KEY,
   PERSONALIZED_PROGRESS_STORAGE_KEY,
+  subscribeToMascotName,
   unwrapPersistedPersonalizedProfile,
 } from './onboardingV3Persistence';
 import { emptyPersonalizedProfile } from './personalizedOnboarding';
@@ -33,7 +34,7 @@ test('V3 persistence sanitizes values, survives reload, and resets only its owne
   await persistence.writeDietary({ restrictions: ['Dairy', 'Dairy'], dislikes: ['Olives'] });
   await persistence.writePersonalizedProfile({
     ...emptyPersonalizedProfile,
-    name: ' Megan ', primaryGoal: 'save_money', secondaryGoals: ['cook_more'],
+    name: ' Megan ', ageEligibility: '18_plus', primaryGoal: 'save_money', secondaryGoals: ['cook_more'],
     answers: { takeoutFrequency: '2–3 times a week', spendPerMeal: 25 },
     savings: { ...emptyPersonalizedProfile.savings, takeoutFrequency: '2–3 times a week', spendPerMeal: 25 },
     dietaryRestrictions: ['Vegetarian'], dietaryOther: '',
@@ -44,6 +45,7 @@ test('V3 persistence sanitizes values, survives reload, and resets only its owne
   assert.equal(await persistence.readAttribution(), 'friends_family');
   assert.deepEqual(await persistence.readDietary(), { allergies: [], restrictions: ['Dairy'], avoidances: [], dislikes: ['Olives'] });
   assert.equal((await persistence.readPersonalizedProfile()).name, 'Megan');
+  assert.equal((await persistence.readPersonalizedProfile()).ageEligibility, '18_plus');
   assert.deepEqual((await persistence.readPersonalizedProfile()).secondaryGoals, ['save_money', 'cook_more']);
   assert.equal(await persistence.readPersonalizedProgress(), 'branchDemo');
 
@@ -56,6 +58,26 @@ test('V3 persistence sanitizes values, survives reload, and resets only its owne
   assert.equal(storage.values.get('okyo:unrelated'), 'keep');
 });
 
+test('saved mascot-name changes notify mounted readers after writes and reset', async () => {
+  const storage = createMemoryStorage();
+  const persistence = createOnboardingV3Persistence(storage);
+  const seen: Array<string | null> = [];
+  const unsubscribe = subscribeToMascotName(() => {
+    void persistence.readChosenMascotName().then((value) => seen.push(value));
+  });
+
+  await persistence.writeMascotName(' Luna ');
+  await Promise.resolve();
+  assert.deepEqual(seen, ['Luna']);
+  await persistence.reset();
+  await Promise.resolve();
+  assert.deepEqual(seen, ['Luna', null]);
+  unsubscribe();
+  await persistence.writeMascotName('Milo');
+  await Promise.resolve();
+  assert.deepEqual(seen, ['Luna', null]);
+});
+
 test('V3 persistence fails safely on corrupt or unknown stored values', async () => {
   const storage = createMemoryStorage();
   const persistence = createOnboardingV3Persistence(storage);
@@ -66,6 +88,17 @@ test('V3 persistence fails safely on corrupt or unknown stored values', async ()
   assert.equal(await persistence.readAttribution(), null);
   assert.deepEqual(await persistence.readDietary(), { allergies: [], restrictions: [], avoidances: [], dislikes: [] });
   assert.equal(await persistence.readMascotName(), 'Kiko');
+});
+
+test('the optional chosen fox name distinguishes an absent name from the default mascot name', async () => {
+  const storage = createMemoryStorage();
+  const persistence = createOnboardingV3Persistence(storage);
+
+  assert.equal(await persistence.readChosenMascotName(), null);
+  await persistence.writeMascotName('  Saffron  ');
+  assert.equal(await persistence.readChosenMascotName(), 'Saffron');
+  storage.values.set(MASCOT_NAME_STORAGE_KEY, '   ');
+  assert.equal(await persistence.readChosenMascotName(), null);
 });
 
 test('writes wrap the profile in a schema-versioned envelope', async () => {

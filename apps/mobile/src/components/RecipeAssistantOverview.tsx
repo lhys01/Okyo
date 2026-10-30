@@ -4,7 +4,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { Recipe } from '../mocks';
 import { recipeShadows } from '../theme/recipeTheme';
 import { getRecipeTiming } from '../utils/recipeIntegrity';
+import { calculateRecipePrices } from '../utils/recipePricing';
 import { colors, fontFamilies } from './OkyoUI';
+import { FitText } from './FitText';
 
 const formatMinutes = (minutes: number) => minutes >= 60
   ? `${Math.floor(minutes / 60)}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`
@@ -32,8 +34,8 @@ export function RecipeQuickFacts({ recipe }: { recipe: Recipe }) {
     <View accessibilityLabel="Recipe quick facts" style={styles.factStrip}>
       {facts.map(([value, label], index) => (
         <View key={label} style={[styles.fact, index > 0 ? styles.factWithDivider : null]}>
-          <Text numberOfLines={1} style={styles.factValue}>{value}</Text>
-          <Text style={styles.factLabel}>{label}</Text>
+          <FitText minimumFontScale={0.62} style={styles.factValue}>{value}</FitText>
+          <FitText minimumFontScale={0.76} style={styles.factLabel}>{label}</FitText>
         </View>
       ))}
     </View>
@@ -51,34 +53,17 @@ export function RecipeCostSummary({
   homemadePrice?: number;
   servings?: number;
 }) {
-  const hasRecipeCost = isKnownPrice(recipe.estimatedHomemadeCost);
-  const scaledHomeCost = hasRecipeCost && recipe.servings > 0
-    ? (recipe.estimatedHomemadeCost / recipe.servings) * servings
-    : isKnownPrice(homemadePrice)
-      ? homemadePrice
-      : null;
-  // The persisted recipe estimate survives saving and reopening. The scan
-  // payload remains the compatibility fallback for recipes created earlier.
-  const baseRestaurantEstimate = isKnownPrice(recipe.restaurantPriceEstimate)
-    ? recipe.restaurantPriceEstimate
-    : isKnownPrice(restaurantPrice)
-    ? restaurantPrice
-    : hasRecipeCost && isKnownPrice(recipe.estimatedSavings)
-      ? recipe.estimatedHomemadeCost + recipe.estimatedSavings
-      : null;
-  const scaledRestaurantEstimate = baseRestaurantEstimate !== null && recipe.servings > 0
-    ? (baseRestaurantEstimate / recipe.servings) * servings
-    : baseRestaurantEstimate;
+  const { makeAtHome, eatingOut } = calculateRecipePrices({ recipe, restaurantPrice, homemadePrice, servings });
 
-  if (scaledHomeCost === null && scaledRestaurantEstimate === null) return null;
+  if (makeAtHome === null && eatingOut === null) return null;
 
   return (
     <View style={styles.costSection}>
       <Text style={styles.costEyebrow}>Pricing</Text>
       <View style={styles.costComparisonCard}>
-        <PriceColumn label="Make at home" value={scaledHomeCost === null ? '—' : `$${scaledHomeCost.toFixed(2)}`} />
+        <PriceColumn label="Make at home" value={makeAtHome === null ? '—' : `$${makeAtHome.toFixed(2)}`} />
         <View style={styles.costDivider} />
-        <PriceColumn label="Eating out" value={scaledRestaurantEstimate === null ? '—' : `~$${scaledRestaurantEstimate.toFixed(2)}`} />
+        <PriceColumn label="Eating out" value={eatingOut === null ? '—' : `~$${eatingOut.toFixed(2)}`} />
       </View>
     </View>
   );
@@ -87,14 +72,10 @@ export function RecipeCostSummary({
 function PriceColumn({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.costColumn}>
-      <Text numberOfLines={1} style={styles.costLabel}>{label}</Text>
-      <Text numberOfLines={1} style={styles.costValue}>{value}</Text>
+      <FitText minimumFontScale={0.78} style={styles.costLabel}>{label}</FitText>
+      <FitText minimumFontScale={0.68} style={styles.costValue}>{value}</FitText>
     </View>
   );
-}
-
-function isKnownPrice(value: number | undefined): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 export function RecipeSubstitutions({ substitutions }: { substitutions: string[] | undefined }) {
@@ -121,8 +102,11 @@ const styles = StyleSheet.create({
   factStrip: { backgroundColor: '#FFF9F7', borderColor: '#F0E4DC', borderRadius: 16, borderWidth: 1, flexDirection: 'row', marginTop: 12, paddingVertical: 10 },
   fact: { flex: 1, minWidth: 0, paddingHorizontal: 4 },
   factWithDivider: { borderLeftColor: '#F0E4DC', borderLeftWidth: 1 },
-  factValue: { color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 16, fontWeight: '800', textAlign: 'center' },
-  factLabel: { color: colors.muted, fontFamily: fontFamilies.bold, fontSize: 10.5, fontWeight: '700', marginTop: 4, textAlign: 'center' },
+  // Every fact owns one fixed-width quarter of the card. FitText keeps long
+  // values such as a verbose difficulty or duration on one line without
+  // changing the card's height or pushing into an adjacent fact.
+  factValue: { color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 16, fontWeight: '800', lineHeight: 20, textAlign: 'center' },
+  factLabel: { color: colors.muted, fontFamily: fontFamilies.bold, fontSize: 13, fontWeight: '700', lineHeight: 16, marginTop: 4, textAlign: 'center' },
   costSection: { marginTop: 16 },
   costEyebrow: { color: '#82776E', fontFamily: fontFamilies.bold, fontSize: 10.5, fontWeight: '700', letterSpacing: 0.7, marginBottom: 8, textTransform: 'uppercase' },
   costComparisonCard: { alignItems: 'stretch', backgroundColor: '#FFFDFC', borderRadius: 18, flexDirection: 'row', minWidth: 0, overflow: 'hidden', paddingVertical: 12, ...recipeShadows.card },

@@ -50,6 +50,7 @@ export function RestaurantPacksScreen() {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Food inspiration</Text>
+        <Text style={styles.description}>Sample dishes. Prices and savings are estimates, not current menu data.</Text>
         <View style={styles.categoryGrid}>
           {recommendationCategories
             .filter((category) => getRecommendationsByCategory(category).length > 0)
@@ -92,7 +93,7 @@ const styles = StyleSheet.create({
     color: '#2B2B30',
     fontFamily: fontFamilies.extraBold,
     fontSize: 34,
-    fontWeight: '900',
+    fontWeight: '800',
     lineHeight: 40,
   },
   description: {
@@ -119,7 +120,7 @@ const styles = StyleSheet.create({
     color: '#2B2B30',
     fontFamily: fontFamilies.extraBold,
     fontSize: 19,
-    fontWeight: '900',
+    fontWeight: '800',
     letterSpacing: -0.38,
     lineHeight: 23,
     maxWidth: '80%',

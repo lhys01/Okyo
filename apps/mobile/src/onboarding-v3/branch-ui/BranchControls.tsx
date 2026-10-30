@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type ViewStyle } from 'react-native';
-import { Check, Minus, Plus } from 'iconoir-react-native';
+import { Image } from 'expo-image';
+import { Minus, Plus } from 'iconoir-react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { colors, onboardingFontFamilies as fontFamilies, onboardingTitleFont } from '../../theme/okyoTheme';
@@ -14,10 +15,12 @@ export type BranchIcon = ComponentType<{ color?: string; height?: number; width?
 export type ChoiceOption<T extends string> = Readonly<{
   id: T;
   label: string;
+  badge?: string;
   /** Short supporting line so no two rows read alike. */
   detail?: string;
-  /** Icon rendered inside the tinted tile. Decorative; the label carries meaning. */
+  /** Decorative icon; the label carries meaning. */
   icon: BranchIcon;
+  imageSource?: number;
 }>;
 
 /** Compact screen heading. The visual does the explaining, so copy stays short. */
@@ -30,13 +33,17 @@ export function BranchHeading({ title, subtitle }: { title: string; subtitle?: s
   );
 }
 
-/** Illustrated single- or multi-select rows: glyph tile, label, optional detail. */
+/** The single compact option-row pattern shared by onboarding questions. */
 export function ChoiceRows<T extends string>({
   branch,
   options,
   selected,
   multi = false,
   compact = false,
+  iconSize = 32,
+  iconSlotSize = 42,
+  textGap = 12,
+  illustrated = false,
   onSelect,
 }: {
   branch: BranchId;
@@ -45,11 +52,20 @@ export function ChoiceRows<T extends string>({
   multi?: boolean;
   /** Opt-in dense rows for long in-app questionnaire lists. */
   compact?: boolean;
+  /** Optional branch-specific optical sizing for sticker artwork. */
+  iconSize?: number;
+  /** Fixed invisible slot keeps every label on one shared vertical axis. */
+  iconSlotSize?: number;
+  /** Space between the icon footprint and its label. */
+  textGap?: number;
+  illustrated?: boolean;
   onSelect: (id: T) => void;
 }) {
   const palette = branchPalettes[branch];
+  const dense = compact || options.length >= 4;
+  const veryDense = options.length >= 6;
   return (
-    <View style={[styles.rows, compact && styles.rowsCompact]}>
+    <View style={[styles.rows, dense && styles.rowsCompact, veryDense && styles.rowsVeryCompact]}>
       {options.map((option) => {
         const isSelected = selected.includes(option.id);
         return (
@@ -59,91 +75,18 @@ export function ChoiceRows<T extends string>({
             isSelected={isSelected}
             key={option.id}
             onPress={() => onSelect(option.id)}
-            style={[styles.row, compact && styles.rowCompact, isSelected && styles.rowSelected]}
+            style={[styles.row, dense && styles.rowCompact, veryDense && styles.rowVeryCompact, illustrated && !veryDense && styles.illustratedRow, isSelected && styles.rowSelected]}
           >
-            <View style={[styles.glyphTile, compact && styles.glyphTileCompact, { backgroundColor: isSelected ? colors.coralSoft : palette.accentSoft }]}>
-              <option.icon color={isSelected ? colors.coralDark : palette.accent} height={22} strokeWidth={2} width={22} />
+            <View style={[styles.rowIcon, { height: iconSlotSize, width: iconSlotSize }, option.imageSource ? styles.illustratedIconSlot : null]}>
+              {option.imageSource ? <Image contentFit="contain" source={option.imageSource} style={styles.illustratedIcon} /> : <option.icon color={isSelected ? colors.coralDark : palette.accent} height={iconSize} strokeWidth={2} width={iconSize} />}
             </View>
-            <View style={styles.rowText}>
-              <Text maxFontSizeMultiplier={1.3} style={[styles.rowLabel, isSelected && styles.rowLabelSelected]}>{option.label}</Text>
+            <View style={[styles.rowText, { marginLeft: textGap - 12 }]}>
+              <View style={styles.rowLabelLine}>
+                <Text maxFontSizeMultiplier={1.3} style={[styles.rowLabel, dense && styles.rowLabelCompact, isSelected && styles.rowLabelSelected]}>{option.label}</Text>
+                {option.badge ? <Text maxFontSizeMultiplier={1.2} style={styles.rowBadge}>{option.badge}</Text> : null}
+              </View>
               {option.detail ? <Text maxFontSizeMultiplier={1.3} style={styles.rowDetail}>{option.detail}</Text> : null}
             </View>
-            <View style={[styles.marker, isSelected && styles.markerSelected]}>
-              {isSelected ? <Check color={colors.surface} height={14} strokeWidth={3} width={14} /> : null}
-            </View>
-          </SelectablePressable>
-        );
-      })}
-    </View>
-  );
-}
-
-/** Two-column picture tiles for food categories and other visual choices. */
-export function ChoiceTiles<T extends string>({
-  branch,
-  options,
-  selected,
-  compact = false,
-  onSelect,
-}: {
-  branch: BranchId;
-  options: readonly ChoiceOption<T>[];
-  selected: readonly T[];
-  /** Opt-in denser tiles for multi-select questionnaire screens. */
-  compact?: boolean;
-  onSelect: (id: T) => void;
-}) {
-  const palette = branchPalettes[branch];
-  return (
-    <View style={styles.tiles}>
-      {options.map((option) => {
-        const isSelected = selected.includes(option.id);
-        return (
-          <SelectablePressable
-            accessibilityLabel={option.label}
-            accessibilityRole="checkbox"
-            isSelected={isSelected}
-            key={option.id}
-            onPress={() => onSelect(option.id)}
-            style={[styles.tile, compact && styles.tileCompact, { backgroundColor: isSelected ? colors.coralSoft : palette.accentSoft }, isSelected && styles.tileSelected]}
-          >
-            <option.icon color={isSelected ? colors.coralDark : palette.accent} height={30} strokeWidth={1.8} width={30} />
-            <Text maxFontSizeMultiplier={1.2} numberOfLines={2} style={[styles.tileLabel, isSelected && styles.rowLabelSelected]}>{option.label}</Text>
-          </SelectablePressable>
-        );
-      })}
-    </View>
-  );
-}
-
-/** Horizontal chip group for short, mutually exclusive answers. */
-export function ChipGroup<T extends string>({
-  branch,
-  options,
-  selected,
-  onSelect,
-}: {
-  branch: BranchId;
-  options: readonly ChoiceOption<T>[];
-  selected: readonly T[];
-  onSelect: (id: T) => void;
-}) {
-  const palette = branchPalettes[branch];
-  return (
-    <View style={styles.chips}>
-      {options.map((option) => {
-        const isSelected = selected.includes(option.id);
-        return (
-          <SelectablePressable
-            accessibilityLabel={option.label}
-            accessibilityRole="radio"
-            isSelected={isSelected}
-            key={option.id}
-            onPress={() => onSelect(option.id)}
-            style={[styles.chip, isSelected && styles.chipSelected]}
-          >
-            <option.icon color={isSelected ? colors.coralDark : palette.accent} height={18} strokeWidth={2} width={18} />
-            <Text maxFontSizeMultiplier={1.2} style={[styles.chipLabel, isSelected && styles.rowLabelSelected]}>{option.label}</Text>
           </SelectablePressable>
         );
       })}
@@ -293,7 +236,7 @@ function SelectablePressable({
     scale.value = withTiming(reduceMotion ? 1 : next, { duration: reduceMotion ? 0 : motionTokens.press.inMs });
   };
   return (
-    <Animated.View style={animatedStyle}>
+    <Animated.View style={[styles.rowWrapper, animatedStyle]}>
       <Pressable
         accessibilityLabel={accessibilityLabel}
         accessibilityRole={accessibilityRole}
@@ -310,44 +253,32 @@ function SelectablePressable({
 }
 
 const styles = StyleSheet.create({
-  heading: { gap: 8, marginBottom: 18 },
-  title: { ...onboardingTitleFont, color: branchSurfaces.ink, fontSize: 26, letterSpacing: -0.5, lineHeight: 32 },
+  heading: { gap: 7 },
+  title: { ...onboardingTitleFont, color: branchSurfaces.ink, fontSize: 24, letterSpacing: -0.5, lineHeight: 30 },
   subtitle: { color: branchSurfaces.body, fontFamily: fontFamilies.body, fontSize: 15, lineHeight: 21 },
 
-  rows: { gap: 10 },
+  rows: { flexGrow: 1, gap: 8, width: '100%' },
   rowsCompact: { gap: 7 },
+  rowsVeryCompact: { gap: 6 },
+  rowWrapper: { flexGrow: 1, width: '100%' },
   row: {
     alignItems: 'center', backgroundColor: branchSurfaces.card, borderColor: branchSurfaces.cardBorder,
-    borderRadius: branchSurfaces.tileRadius, borderWidth: 1, flexDirection: 'row', gap: 14, minHeight: 68, paddingHorizontal: 14, paddingVertical: 12, ...branchShadow,
+    borderRadius: branchSurfaces.tileRadius, borderWidth: 1, flexDirection: 'row', flexGrow: 1, gap: 12, minHeight: 70, paddingHorizontal: 18, paddingVertical: 11, width: '100%', ...branchShadow,
   },
   rowSelected: { backgroundColor: colors.coralSoft, borderColor: colors.coral, borderWidth: 2 },
-  rowCompact: { minHeight: 56, paddingVertical: 8 },
+  rowCompact: { minHeight: 62, paddingVertical: 8 },
+  rowVeryCompact: { minHeight: 54, paddingVertical: 5 },
+  illustratedRow: { minHeight: 96, paddingVertical: 14 },
   rowText: { flex: 1, gap: 2 },
-  rowLabel: { color: branchSurfaces.ink, fontFamily: fontFamilies.semibold, fontSize: 16, lineHeight: 21 },
+  rowLabelLine: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  rowLabel: { color: branchSurfaces.ink, fontFamily: fontFamilies.semibold, fontSize: 17, lineHeight: 23 },
+  rowLabelCompact: { fontSize: 16, lineHeight: 21 },
   rowLabelSelected: { color: colors.coralDark },
+  rowBadge: { backgroundColor: colors.coralSoft, borderRadius: 999, color: colors.coralDark, fontFamily: fontFamilies.bold, fontSize: 10, lineHeight: 15, paddingHorizontal: 7, paddingVertical: 1 },
   rowDetail: { color: branchSurfaces.muted, fontFamily: fontFamilies.body, fontSize: 13, lineHeight: 18 },
-  glyphTile: { alignItems: 'center', borderRadius: 14, height: 44, justifyContent: 'center', width: 44 },
-  glyphTileCompact: { borderRadius: 12, height: 38, width: 38 },
-  marker: { alignItems: 'center', borderColor: colors.border, borderRadius: 999, borderWidth: 2, height: 24, justifyContent: 'center', width: 24 },
-  markerSelected: { backgroundColor: colors.coral, borderColor: colors.coral },
-
-  tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  tile: {
-    alignItems: 'center', borderColor: 'transparent', borderRadius: branchSurfaces.tileRadius, borderWidth: 2,
-    flexGrow: 1, flexBasis: '46%', gap: 8, justifyContent: 'center', minHeight: 104, paddingHorizontal: 10, paddingVertical: 14, ...branchShadow,
-  },
-  tileSelected: { borderColor: colors.coral },
-  tileCompact: { gap: 6, minHeight: 88, paddingVertical: 10 },
-  tileLabel: { color: branchSurfaces.ink, fontFamily: fontFamilies.semibold, fontSize: 14, textAlign: 'center' },
-
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    alignItems: 'center', flexDirection: 'row', gap: 8,
-    backgroundColor: branchSurfaces.card, borderColor: branchSurfaces.cardBorder, borderRadius: 999, borderWidth: 1,
-    minHeight: 48, justifyContent: 'center', paddingHorizontal: 18, ...branchShadow,
-  },
-  chipSelected: { backgroundColor: colors.coralSoft, borderColor: colors.coral, borderWidth: 2 },
-  chipLabel: { color: branchSurfaces.ink, fontFamily: fontFamilies.semibold, fontSize: 15 },
+  rowIcon: { alignItems: 'center', justifyContent: 'center', width: 24 },
+  illustratedIconSlot: { width: 64 },
+  illustratedIcon: { height: 64, width: 64 },
 
   stepper: {
     alignItems: 'center', backgroundColor: branchSurfaces.card, borderColor: branchSurfaces.cardBorder,

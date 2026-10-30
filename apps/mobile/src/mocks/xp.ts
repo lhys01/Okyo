@@ -23,10 +23,5 @@ export const mockBadges: Badge[] = [
   { id: '100-saved-club', name: '$100 Saved Club', description: 'Reach $100 in estimated savings.', unlocked: false },
 ];
 
-export const mockLeaderboardEntries: LeaderboardEntry[] = [
-  { id: 'leader-biggest-saver-1', rank: 1, displayName: 'Maya', category: 'Biggest Saver This Week', value: '$92 saved', xp: 420 },
-  { id: 'leader-biggest-saver-2', rank: 2, displayName: 'Jordan', category: 'Best Match Score', value: '9.4/10 match', xp: 390 },
-  { id: 'leader-biggest-saver-3', rank: 3, displayName: 'You', category: 'Biggest Saver This Week', value: '$74 saved', xp: 350 },
-  { id: 'leader-most-dupes-4', rank: 4, displayName: 'Sam', category: 'Most Dupes Completed', value: '6 dupes', xp: 310 },
-  { id: 'leader-rising-cook-5', rank: 5, displayName: 'Avery', category: 'Rising Cook', value: '+120 XP', xp: 295 },
-];
+// No fabricated community accounts are seeded into Okyo.
+export const mockLeaderboardEntries: LeaderboardEntry[] = [];

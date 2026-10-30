@@ -74,10 +74,11 @@ test('OnboardingScanLoadingScreen supports Reduce Motion for the progress animat
   assert.match(componentSource, /progressAnim\.setValue\(nextState\.value\)/);
 });
 
-test('the rotating LOADING_STEPS headline renders inside a fixed-height wrapper so text changes cannot reflow the image', () => {
+test('the rotating LOADING_STEPS headline can grow for larger text without reflowing the preview image', () => {
   const source = readOnboardingUiSource();
   assert.match(source, /loadingHeadlineWrap/);
-  assert.match(source, /loadingHeadlineWrap:\s*\{[^}]*height:\s*68/s);
+  assert.match(source, /loadingHeadlineWrap:\s*\{[^}]*minHeight:\s*68/s);
+  assert.match(source, /<Animated\.Text numberOfLines=\{3\}/);
 });
 
 test('WelcomeScreen threads real scan-session state into OnboardingLoadingScreen instead of only the step-position progress prop', () => {

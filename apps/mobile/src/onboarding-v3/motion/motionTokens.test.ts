@@ -3,10 +3,10 @@ import test from 'node:test';
 
 import { motionEasings, motionTokens } from './motionTokens';
 
-test('motion tokens encode every timing and motion value from the V3 specification', () => {
+test('motion tokens encode the restored Stage 2 onboarding motion specification', () => {
   assert.deepEqual(motionTokens.splash, { opacityMs: 220, scaleMs: 300, wiggleLegMs: 600, wiggleDelayMs: 300 });
   assert.deepEqual(motionTokens.pagerDot, { durationMs: 180, reduceMotionMs: 100, inactiveWidth: 6, activeWidth: 18, inactiveOpacity: 0.3 });
-  assert.deepEqual(motionTokens.cta, { pressInMs: 90, pressOutMs: 140, pressedScale: 0.975, shadowResting: 0.18, shadowPressed: 0.1 });
+  assert.deepEqual(motionTokens.cta, { pressInMs: 120, pressOutMs: 220, pressedScale: 0.96, shadowResting: 0.3, shadowPressed: 0.16, releaseDelayMs: 35 });
   assert.equal(motionTokens.settle.pageMs, 250);
   assert.equal(motionTokens.settle.kikoMs, 280);
   assert.equal(motionTokens.stagger.delayStepMs, 50);

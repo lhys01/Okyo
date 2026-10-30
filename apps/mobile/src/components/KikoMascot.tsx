@@ -1,11 +1,8 @@
-import {
-  Image,
-  type ImageStyle,
-  type StyleProp,
-} from 'react-native';
+import { type ImageStyle, type StyleProp } from 'react-native';
 
 import { kikoAssets, type KikoAssetPose } from '../assets/kikoAssets';
 import { getTransparentKikoAsset } from '../assets/kikoTransparentAssets';
+import { ResilientImage } from './ResilientImage';
 
 export type KikoMascotPose = KikoAssetPose;
 
@@ -37,5 +34,5 @@ export function KikoMascot({
 
   const baseStyle = [{ height: size, width: size }, style];
 
-  return <Image resizeMode="contain" source={imageSource} style={baseStyle} />;
+  return <ResilientImage assetKind="mascot" componentName="KikoMascot" contentFit="contain" imageId={`kiko:${safePose}`} source={imageSource} style={baseStyle} />;
 }

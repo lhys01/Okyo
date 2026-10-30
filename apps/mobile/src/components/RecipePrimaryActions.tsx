@@ -1,45 +1,39 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 
 import { colors, fontFamilies } from './OkyoUI';
 import { recipeShadows } from '../theme/recipeTheme';
+import { actionIcons } from '../assets/actionIcons';
 
-export function RecipePrimaryActions({ onCook, onCustomize, onGroceries }: {
+export function RecipePrimaryActions({ onCook, onCustomize, onGroceries, showGroceries = true, showIcons = true }: {
   onCook: () => void;
   onCustomize: () => void;
-  onGroceries: () => void;
+  onGroceries?: () => void;
+  showGroceries?: boolean;
+  showIcons?: boolean;
 }) {
   return (
     <View style={styles.container}>
       <View style={styles.row}>
         <Action label="Cook" primary onPress={onCook} />
-        <Action label="Customize" tone="customize" onPress={onCustomize} />
-        <Action label="Groceries" tone="groceries" onPress={onGroceries} />
+        <Action icon={showIcons ? actionIcons.customize : undefined} label="Customize" tone="customize" onPress={onCustomize} />
+        {showGroceries && onGroceries ? <Action icon={showIcons ? actionIcons.grocery : undefined} label="Groceries" tone="groceries" onPress={onGroceries} /> : null}
       </View>
     </View>
   );
 }
 
-function Action({ label, onPress, primary = false, tone }: {
+function Action({ label, onPress, primary = false, tone, icon }: {
   label: string;
   onPress: () => void;
   primary?: boolean;
   tone?: 'customize' | 'groceries';
+  icon?: number;
 }) {
-  const actionStyle = primary
-    ? styles.primary
-    : tone === 'customize'
-      ? styles.customize
-      : tone === 'groceries'
-        ? styles.groceries
-        : styles.groceries;
+  const actionStyle = primary ? styles.primary : tone === 'groceries' ? styles.groceries : styles.customize;
   const labelStyle = primary
     ? styles.primaryLabel
-    : tone === 'customize'
-      ? styles.customizeLabel
-      : tone === 'groceries'
-        ? styles.groceriesLabel
-        : styles.groceriesLabel;
+    : tone === 'groceries' ? styles.groceriesLabel : styles.customizeLabel;
 
   return (
     <Pressable
@@ -52,7 +46,8 @@ function Action({ label, onPress, primary = false, tone }: {
       }}
       style={({ pressed }) => [styles.action, actionStyle, pressed ? styles.pressed : null]}
     >
-      <Text numberOfLines={1} style={[styles.label, labelStyle]}>{label}</Text>
+      {icon ? <Image accessibilityIgnoresInvertColors resizeMode="contain" source={icon} style={styles.icon} /> : null}
+      <Text style={[styles.label, labelStyle]}>{label}</Text>
     </Pressable>
   );
 }
@@ -60,11 +55,12 @@ function Action({ label, onPress, primary = false, tone }: {
 const styles = StyleSheet.create({
   container: { marginTop: 14 },
   row: { flexDirection: 'row', gap: 8 },
-  action: { alignItems: 'center', borderRadius: 17, flex: 1, justifyContent: 'center', minHeight: 54, minWidth: 0, paddingHorizontal: 5 },
+  action: { alignItems: 'center', borderRadius: 17, flex: 1, flexDirection: 'row', gap: 5, justifyContent: 'center', minHeight: 54, minWidth: 0, paddingHorizontal: 5, paddingVertical: 12 },
+  icon: { height: 19, width: 19 },
   primary: { backgroundColor: colors.coral, ...recipeShadows.card },
   customize: { backgroundColor: colors.coralSoft, ...recipeShadows.card },
   groceries: { backgroundColor: '#FFF9EA', ...recipeShadows.card },
-  label: { color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 14, fontWeight: '800' },
+  label: { color: colors.charcoal, flexShrink: 1, fontFamily: fontFamilies.extraBold, fontSize: 14, fontWeight: '800', textAlign: 'center' },
   primaryLabel: { color: '#fff' },
   customizeLabel: { color: colors.coralDark },
   groceriesLabel: { color: '#806128' },

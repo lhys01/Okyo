@@ -1,280 +1,889 @@
-// Hit my macros onboarding branch — state machine for the development-preview
-// redesign (gated by isHitMacrosStage2PreviewEnabled). Same friendly
-// food-coaching shape as the Eat Healthier redesign: an intro, seven questions,
-// a dynamic insight/response beat after most of them, a reassurance moment, a
-// personalized approach, a "what Okyo does" beat, a flexible-commitment
-// question, a personalized reveal, and a plan summary.
-//
-//   intro → focus(Q) → focusInsight → proteinWeight(Q) → [proteinPreference] →
-//   calorieCheck(Q) → calorieInsight → barrier(Q) → barrierResponse →
-//   mealToImprove(Q) → mealInsight → trackingStyle(Q) → reassurance → approach →
-//   whatOkyoDoes → commitment(Q) → reveal → complete
-//
-// Persistence stays version 2. Legacy step ids from the previous preview are
-// remapped on hydrate so a mid-flow dev draft is never dropped.
+import {
+  addLocalDays,
+  localDateKey,
+  normalizeOnboardingGoal,
+  type OnboardingGoal,
+} from "./onboardingGoal";
+import {
+  calculateNutritionTargets,
+  emptyNutritionProfile,
+  type NutritionProfile,
+} from "./nutritionTargets";
+
+/** Compact, food-first macros path. Legacy field names remain so persisted V1–V3 drafts migrate safely. */
 export const MACROS_STEPS = [
-  'intro',
-  'focus',
-  'focusInsight',
-  'proteinWeight',
-  'proteinPreference',
-  'calorieCheck',
-  'calorieInsight',
-  'barrier',
-  'barrierResponse',
-  'mealToImprove',
-  'mealInsight',
-  'trackingStyle',
-  'reassurance',
-  'approach',
-  'whatOkyoDoes',
-  'commitment',
-  'reveal',
-  'complete',
+  "intro",
+  "problem",
+  "barrier",
+  "diagnosis",
+  "mealPriority",
+  "targetMode",
+  "estimateDetails",
+  "knownTargets",
+  "reveal",
+  "complete",
 ] as const;
-export type MacrosStep = typeof MACROS_STEPS[number];
+export type MacrosStep = (typeof MACROS_STEPS)[number];
+export type LegacyMacrosStep =
+  | "proteinTarget"
+  | "calorieTarget"
+  | "goal"
+  | "goalDuration"
+  | "cookingFrequency"
+  | "mealToImprove"
+  | "outcome"
+  | "foodStyle"
+  | "pace"
+  | "approach";
+export const MACROS_PROGRESS_TOTAL = 7;
+export const MACROS_PROGRESS_QUESTION_STEPS = ['problem', 'barrier', 'diagnosis', 'mealPriority', 'targetMode', 'estimateDetails', 'knownTargets'] as const;
+export const MACROS_PROGRESS_QUESTION_INDEX: Record<
+  MacrosStep | LegacyMacrosStep,
+  number
+> = {
+  intro: 0,
+  problem: 1,
+  barrier: 2,
+  diagnosis: 3,
+  mealPriority: 4,
+  targetMode: 5,
+  estimateDetails: 6,
+  knownTargets: 6,
+  reveal: 7,
+  complete: 7,
+  proteinTarget: 6,
+  calorieTarget: 6,
+  goal: 6,
+  goalDuration: 6,
+  cookingFrequency: 3,
+  mealToImprove: 3,
+  outcome: 3,
+  foodStyle: 4,
+  pace: 4,
+  approach: 3,
+};
 
-/** The seven answered questions the progress bar counts. */
-export const MACROS_QUESTION_STEPS: readonly MacrosStep[] = ['focus', 'proteinWeight', 'calorieCheck', 'barrier', 'mealToImprove', 'trackingStyle', 'commitment'];
-
-export type MacroFocusId = 'more_protein' | 'fewer_calories' | 'more_balanced_macros' | 'better_workout_fuel' | 'maintain' | 'not_sure';
-export type ProteinTargetStatus = 'yes_know_it' | 'flexible_range' | 'no' | 'not_sure';
-export type ProteinMultiplier = 1 | 1.3 | 1.6;
-export type BodyWeightUnit = 'lb' | 'kg';
-export type CalorieTrackingStatus = 'yes_has_target' | 'sometimes' | 'no' | 'not_sure';
-export type MacroBarrierId = 'estimating_portions' | 'getting_enough_protein' | 'inaccurate_nutrition' | 'doesnt_taste_good' | 'meal_prep_time' | 'staying_consistent' | 'dont_know_targets';
-export type MacrosMealToImproveId = 'breakfast' | 'lunch' | 'dinner' | 'snacks' | 'it_varies';
-export type TrackingStyleId = 'exact_numbers' | 'flexible_ranges' | 'simple_suggestions' | 'just_show_info';
-export type MacroCommitmentId = 'few_aligned_meals' | 'most_days' | 'ease_in' | 'not_sure';
-export type ProteinTargetRange = { min: number; max: number };
+export type MacroFocusId =
+  | "low_protein"
+  | "calorie_inconsistency"
+  | "meals_miss_targets"
+  | "portion_confusion"
+  | "tracking_friction"
+  | "food_uncertainty";
+export type MacroBarrierId =
+  | "boring"
+  | "time"
+  | "hunger"
+  | "cost"
+  | "eating_out"
+  | "planning"
+  | "consistency";
+export type MacrosMealToImproveId =
+  "breakfast" | "lunch" | "dinner" | "snacks" | "it_varies";
+export type CookingFrequencyId =
+  | "almost_never"
+  | "one_to_two_week"
+  | "three_to_four_week"
+  | "five_to_six_week"
+  | "every_day";
+export type MacroOutcomeId =
+  | "more_protein"
+  | "closer_calories"
+  | "more_consistent"
+  | "better_portions"
+  | "meals_fit_targets"
+  | "stop_guessing";
+export type MacroMealPriorityId =
+  | "tastes_good"
+  | "keeps_me_full"
+  | "quick_to_make"
+  | "simple_ingredients"
+  | "fits_budget"
+  | "feels_familiar"
+  | "high_protein"
+  | "fits_calories";
+export type MacroRecipePriorityId = Exclude<
+  MacroMealPriorityId,
+  "high_protein" | "fits_calories"
+>;
+export type MacroFoodStyleId =
+  | "comfort_food"
+  | "fresh_colorful"
+  | "high_protein"
+  | "quick_simple"
+  | "international"
+  | "a_bit_of_everything";
+export type MacroPaceId =
+  | "very_consistent"
+  | "weekly_rhythm"
+  | "start_gradually"
+  | "one_meal_at_a_time";
+export type MacroTargetMode =
+  | "calculate_estimate"
+  | "known_targets"
+  | "keep_flexible"
+  | "protein_and_calories"
+  | "protein_only";
+export type MacroGoalId =
+  | "protein_five"
+  | "macro_five"
+  | "streak_seven"
+  | "meal_daily"
+  | "meals_fourteen"
+  | "meals_fit_five"
+  | "portions_five"
+  | "tracking_simple"
+  | "plan_three"
+  | "custom";
+export type MacroGoalDurationWeeks = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
 export type MacrosDraft = {
-  version: 2;
-  currentStep: MacrosStep;
+  version: 4;
+  currentStep: MacrosStep | LegacyMacrosStep;
   macroFocus: MacroFocusId | null;
-  bodyWeight: number | null;
-  bodyWeightUnit: BodyWeightUnit;
-  proteinMultiplier: ProteinMultiplier | null;
-  proteinTargetStatus: ProteinTargetStatus | null;
-  proteinTargetGrams: number | null;
-  proteinTargetRange: ProteinTargetRange | null;
-  calorieTrackingStatus: CalorieTrackingStatus | null;
-  calorieTarget: number | null;
   macroBarrier: MacroBarrierId | null;
   mealToImprove: MacrosMealToImproveId | null;
-  trackingStyle: TrackingStyleId | null;
-  flexibleCommitment: MacroCommitmentId | null;
-  // Retained — no live screen collects this any more.
-  weeklyCookingCount: number | null;
+  cookingFrequency: CookingFrequencyId | null;
+  macroOutcome: MacroOutcomeId | null;
+  mealPriority: MacroMealPriorityId | null;
+  recipePriorities: MacroRecipePriorityId[];
+  foodStyles: MacroFoodStyleId[];
+  flexibleCommitment: MacroPaceId | null;
+  targetMode: MacroTargetMode | null;
+  proteinTargetGrams: number | null;
+  calorieTarget: number | null;
+  calorieTargetManuallyEdited: boolean;
+  carbTargetGrams: number | null;
+  fatTargetGrams: number | null;
+  estimateProfile: NutritionProfile;
+  weeklyChangePounds: number;
+  macroGoal: MacroGoalId | null;
+  customMacroGoal: string;
+  goalDurationWeeks: MacroGoalDurationWeeks;
+  goal: OnboardingGoal | null;
   branchCompleted: boolean;
 };
-
 export const initialMacrosDraft: MacrosDraft = {
-  version: 2, currentStep: 'intro', macroFocus: null, bodyWeight: null, bodyWeightUnit: 'lb', proteinMultiplier: null,
-  proteinTargetStatus: null, proteinTargetGrams: null, proteinTargetRange: null, calorieTrackingStatus: null, calorieTarget: null,
-  macroBarrier: null, mealToImprove: null, trackingStyle: null, flexibleCommitment: null, weeklyCookingCount: null, branchCompleted: false,
+  version: 4,
+  currentStep: "intro",
+  macroFocus: null,
+  macroBarrier: null,
+  mealToImprove: null,
+  cookingFrequency: null,
+  mealPriority: null,
+  macroOutcome: null,
+  recipePriorities: [],
+  foodStyles: [],
+  flexibleCommitment: null,
+  targetMode: null,
+  proteinTargetGrams: null,
+  calorieTarget: null,
+  calorieTargetManuallyEdited: false,
+  carbTargetGrams: null,
+  fatTargetGrams: null,
+  estimateProfile: { ...emptyNutritionProfile },
+  weeklyChangePounds: 0,
+  macroGoal: null,
+  customMacroGoal: "",
+  goalDurationWeeks: 4,
+  goal: null,
+  branchCompleted: false,
 };
 
-const focuses: MacroFocusId[] = ['more_protein', 'fewer_calories', 'more_balanced_macros', 'better_workout_fuel', 'maintain', 'not_sure'];
-const proteinStatuses: ProteinTargetStatus[] = ['yes_know_it', 'flexible_range', 'no', 'not_sure'];
-const multipliers: ProteinMultiplier[] = [1, 1.3, 1.6];
-const calorieStatuses: CalorieTrackingStatus[] = ['yes_has_target', 'sometimes', 'no', 'not_sure'];
-const barriers: MacroBarrierId[] = ['estimating_portions', 'getting_enough_protein', 'inaccurate_nutrition', 'doesnt_taste_good', 'meal_prep_time', 'staying_consistent', 'dont_know_targets'];
-const mealsToImprove: MacrosMealToImproveId[] = ['breakfast', 'lunch', 'dinner', 'snacks', 'it_varies'];
-const trackingStyles: TrackingStyleId[] = ['exact_numbers', 'flexible_ranges', 'simple_suggestions', 'just_show_info'];
-const commitments: MacroCommitmentId[] = ['few_aligned_meals', 'most_days', 'ease_in', 'not_sure'];
+const oneOf =
+  <T extends string>(list: readonly T[]) =>
+  (value: unknown): value is T =>
+    typeof value === "string" && list.includes(value as T);
+const isFocus = oneOf<MacroFocusId>([
+  "low_protein",
+  "calorie_inconsistency",
+  "meals_miss_targets",
+  "portion_confusion",
+  "tracking_friction",
+  "food_uncertainty",
+]);
+const isBarrier = oneOf<MacroBarrierId>([
+  "boring",
+  "time",
+  "hunger",
+  "cost",
+  "eating_out",
+  "planning",
+  "consistency",
+]);
+const isMeal = oneOf<MacrosMealToImproveId>([
+  "breakfast",
+  "lunch",
+  "dinner",
+  "snacks",
+  "it_varies",
+]);
+const isCooking = oneOf<CookingFrequencyId>([
+  "almost_never",
+  "one_to_two_week",
+  "three_to_four_week",
+  "five_to_six_week",
+  "every_day",
+]);
+const isOutcome = oneOf<MacroOutcomeId>([
+  "more_protein",
+  "closer_calories",
+  "more_consistent",
+  "better_portions",
+  "meals_fit_targets",
+  "stop_guessing",
+]);
+const isPriority = oneOf<MacroMealPriorityId>([
+  "tastes_good",
+  "keeps_me_full",
+  "quick_to_make",
+  "simple_ingredients",
+  "fits_budget",
+  "feels_familiar",
+  "high_protein",
+  "fits_calories",
+]);
+const isRecipePriority = oneOf<MacroRecipePriorityId>([
+  "tastes_good",
+  "keeps_me_full",
+  "quick_to_make",
+  "simple_ingredients",
+  "fits_budget",
+  "feels_familiar",
+]);
+const isFoodStyle = oneOf<MacroFoodStyleId>([
+  "comfort_food",
+  "fresh_colorful",
+  "high_protein",
+  "quick_simple",
+  "international",
+  "a_bit_of_everything",
+]);
+const isPace = oneOf<MacroPaceId>([
+  "very_consistent",
+  "weekly_rhythm",
+  "start_gradually",
+  "one_meal_at_a_time",
+]);
+const isTargetMode = oneOf<MacroTargetMode>([
+  "calculate_estimate",
+  "known_targets",
+  "keep_flexible",
+  "protein_and_calories",
+  "protein_only",
+]);
+const isGoal = oneOf<MacroGoalId>([
+  "protein_five",
+  "macro_five",
+  "streak_seven",
+  "meal_daily",
+  "meals_fourteen",
+  "meals_fit_five",
+  "portions_five",
+  "tracking_simple",
+  "plan_three",
+  "custom",
+]);
+const validProtein = (value: unknown): value is number =>
+  typeof value === "number" &&
+  Number.isInteger(value) &&
+  value >= 40 &&
+  value <= 350 &&
+  value % 5 === 0;
+const validCalories = (value: unknown): value is number =>
+  typeof value === "number" &&
+  Number.isInteger(value) &&
+  value >= 1200 &&
+  value <= 4200 &&
+  value % 25 === 0;
+const validMacro = (value: unknown): value is number =>
+  typeof value === "number" &&
+  Number.isInteger(value) &&
+  value >= 0 &&
+  value <= 500 &&
+  value % 5 === 0;
+const validWeeklyChange = (value: unknown): value is number =>
+  typeof value === "number" &&
+  Number.isFinite(value) &&
+  value >= -2 &&
+  value <= 2 &&
+  Math.round(value * 2) === value * 2;
+const isDuration = (value: unknown): value is MacroGoalDurationWeeks =>
+  typeof value === "number" &&
+  Number.isInteger(value) &&
+  value >= 1 &&
+  value <= 10;
+const LEGACY_FOCUS: Record<string, MacroFocusId> = {
+  more_protein: "low_protein",
+  fewer_calories: "calorie_inconsistency",
+  more_balanced_macros: "meals_miss_targets",
+  better_workout_fuel: "meals_miss_targets",
+  maintain: "portion_confusion",
+  not_sure: "food_uncertainty",
+};
+const LEGACY_BARRIER: Record<string, MacroBarrierId> = {
+  estimating_portions: "planning",
+  getting_enough_protein: "hunger",
+  inaccurate_nutrition: "planning",
+  doesnt_taste_good: "planning",
+  meal_prep_time: "time",
+  staying_consistent: "consistency",
+  dont_know_targets: "planning",
+};
 
-const isInt = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value);
-const isGrams = (value: unknown): value is number => isInt(value) && value >= 20 && value <= 400;
-const isWeight = (value: unknown, unit: BodyWeightUnit): value is number => typeof value === 'number' && Number.isFinite(value) && (unit === 'lb' ? value >= 50 && value <= 700 : value >= 23 && value <= 318);
-
-/** A user-selected preference expressed in grams per pound of body weight. */
-export function calculateProteinPreferenceGrams(weight: number, unit: BodyWeightUnit, multiplier: ProteinMultiplier): number {
-  const pounds = unit === 'kg' ? weight * 2.2046226218 : weight;
-  return Math.round(pounds * multiplier);
+export const macroGoalDefinitions: Readonly<
+  Record<
+    Exclude<MacroGoalId, "custom">,
+    { title: string; targetValue: number; targetUnit: string }
+  >
+> = {
+  protein_five: {
+    title: "Get enough protein 5 days a week",
+    targetValue: 5,
+    targetUnit: "protein_days_per_week",
+  },
+  macro_five: {
+    title: "Stay closer to my calories 5 days a week",
+    targetValue: 5,
+    targetUnit: "days_per_week",
+  },
+  streak_seven: {
+    title: "Build a 7-day consistency streak",
+    targetValue: 7,
+    targetUnit: "day_streak",
+  },
+  meal_daily: {
+    title: "Make one macro-friendly meal a day",
+    targetValue: 1,
+    targetUnit: "meal_per_day",
+  },
+  meals_fourteen: {
+    title: "Complete 14 macro-friendly meals",
+    targetValue: 14,
+    targetUnit: "meals",
+  },
+  meals_fit_five: {
+    title: "Make meals fit your targets 5 days a week",
+    targetValue: 5,
+    targetUnit: "days_per_week",
+  },
+  portions_five: {
+    title: "Build better portions 5 days a week",
+    targetValue: 5,
+    targetUnit: "days_per_week",
+  },
+  tracking_simple: {
+    title: "Make macro tracking easier 5 days a week",
+    targetValue: 5,
+    targetUnit: "days_per_week",
+  },
+  plan_three: {
+    title: "Plan 3 macro-friendly meals each week",
+    targetValue: 3,
+    targetUnit: "meals_per_week",
+  },
+};
+function makeGoal(
+  id: MacroGoalId,
+  custom: string,
+  weeks: MacroGoalDurationWeeks,
+  startDate = localDateKey(),
+): OnboardingGoal | null {
+  if (id === "custom" && !custom.trim()) return null;
+  const definition =
+    id === "custom"
+      ? {
+          title: custom.trim().slice(0, 80),
+          targetValue: 1,
+          targetUnit: "custom",
+        }
+      : macroGoalDefinitions[id];
+  const durationDays = weeks * 7;
+  return {
+    goalBranch: "hit_macros",
+    goalType: "macro_adherence",
+    targetValue: definition.targetValue,
+    targetUnit: definition.targetUnit,
+    startDate,
+    targetDate: addLocalDays(startDate, durationDays),
+    durationDays,
+    ...(definition.targetUnit.includes("week")
+      ? { weeklyTarget: definition.targetValue }
+      : {}),
+    displayTitle: definition.title,
+  };
 }
-
-function nextStep(state: MacrosDraft): MacrosStep {
-  switch (state.currentStep) {
-    case 'intro': return 'focus';
-    case 'focus': return 'focusInsight';
-    case 'focusInsight': return 'proteinWeight';
-    case 'proteinWeight': return state.bodyWeight === null ? 'calorieCheck' : 'proteinPreference';
-    case 'proteinPreference': return 'calorieCheck';
-    case 'calorieCheck': return 'calorieInsight';
-    case 'calorieInsight': return 'barrier';
-    case 'barrier': return 'barrierResponse';
-    case 'barrierResponse': return 'mealToImprove';
-    case 'mealToImprove': return 'mealInsight';
-    case 'mealInsight': return 'trackingStyle';
-    case 'trackingStyle': return 'reassurance';
-    case 'reassurance': return 'approach';
-    case 'approach': return 'whatOkyoDoes';
-    case 'whatOkyoDoes': return 'commitment';
-    case 'commitment': return 'reveal';
-    case 'reveal': return 'reveal';
-    case 'complete': return 'complete';
-  }
+function defaultGoal(focus: MacroFocusId | null): MacroGoalId {
+  if (focus === "low_protein") return "protein_five";
+  if (focus === "calorie_inconsistency") return "macro_five";
+  if (focus === "portion_confusion") return "portions_five";
+  if (focus === "tracking_friction") return "tracking_simple";
+  if (focus === "food_uncertainty") return "plan_three";
+  return "meals_fit_five";
 }
-
-function previousStep(state: MacrosDraft): MacrosStep {
-  switch (state.currentStep) {
-    case 'intro': return 'intro';
-    case 'focus': return 'intro';
-    case 'focusInsight': return 'focus';
-    case 'proteinWeight': return 'focusInsight';
-    case 'proteinPreference': return 'proteinWeight';
-    case 'calorieCheck': return state.bodyWeight === null ? 'proteinWeight' : 'proteinPreference';
-    case 'calorieInsight': return 'calorieCheck';
-    case 'barrier': return 'calorieInsight';
-    case 'barrierResponse': return 'barrier';
-    case 'mealToImprove': return 'barrierResponse';
-    case 'mealInsight': return 'mealToImprove';
-    case 'trackingStyle': return 'mealInsight';
-    case 'reassurance': return 'trackingStyle';
-    case 'approach': return 'reassurance';
-    case 'whatOkyoDoes': return 'approach';
-    case 'commitment': return 'whatOkyoDoes';
-    case 'reveal': return 'commitment';
-    case 'complete': return 'reveal';
-  }
+function normalizeTargetMode(value: unknown): MacroTargetMode | null {
+  if (!isTargetMode(value)) return null;
+  return value === "protein_and_calories" || value === "protein_only"
+    ? "known_targets"
+    : value;
+}
+function normalizedEstimateProfile(value: unknown): NutritionProfile {
+  const raw =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : {};
+  const number = (key: string, min: number, max: number) =>
+    typeof raw[key] === "number" &&
+    Number.isFinite(raw[key]) &&
+    raw[key]! >= min &&
+    raw[key]! <= max
+      ? (raw[key] as number)
+      : null;
+  return {
+    ...emptyNutritionProfile,
+    ageYears: number("ageYears", 13, 100),
+    heightCm: number("heightCm", 120, 230),
+    weightKg: number("weightKg", 35, 300),
+    biologicalSex:
+      raw.biologicalSex === "female" ||
+      raw.biologicalSex === "male" ||
+      raw.biologicalSex === "non_binary" ||
+      raw.biologicalSex === "prefer_not_to_say"
+        ? raw.biologicalSex
+        : null,
+    activityLevel:
+      raw.activityLevel === "mostly_sitting" ||
+      raw.activityLevel === "lightly_active" ||
+      raw.activityLevel === "active" ||
+      raw.activityLevel === "very_active"
+        ? raw.activityLevel
+        : null,
+    goal:
+      raw.goal === "lose_fat" ||
+      raw.goal === "maintain" ||
+      raw.goal === "build_muscle" ||
+      raw.goal === "improve_performance" ||
+      raw.goal === "hit_protein"
+        ? raw.goal
+        : null,
+    desiredRatePerWeek:
+      raw.desiredRatePerWeek === "slow" || raw.desiredRatePerWeek === "moderate"
+        ? raw.desiredRatePerWeek
+        : null,
+    trainingDaysPerWeek: number("trainingDaysPerWeek", 0, 7),
+    activityHoursPerWeek: number("activityHoursPerWeek", 0, 56),
+    proteinPreference: null,
+    manualProteinTargetGrams: null,
+    isMinor: raw.isMinor === true || number("ageYears", 13, 17) !== null,
+  };
+}
+function weeklyChangeFromProfile(profile: NutritionProfile): number {
+  if (profile.goal === "lose_fat")
+    return profile.desiredRatePerWeek === "moderate" ? -1 : -0.5;
+  if (profile.goal === "build_muscle")
+    return profile.desiredRatePerWeek === "moderate" ? 1 : 0.5;
+  return 0;
 }
 
 export function routeForMacrosDraft(draft: MacrosDraft): MacrosStep {
-  if (draft.branchCompleted) return draft.currentStep === 'reveal' ? 'reveal' : 'complete';
-  if (draft.macroFocus === null) return 'focus';
-  if (draft.bodyWeight === null && draft.proteinTargetStatus === null) return 'proteinWeight';
-  if (draft.bodyWeight !== null && draft.proteinMultiplier === null && draft.proteinTargetStatus === null) return 'proteinPreference';
-  if (draft.proteinTargetStatus === null) return draft.bodyWeight === null ? 'proteinWeight' : 'proteinPreference';
-  if (draft.calorieTrackingStatus === null) return 'calorieCheck';
-  if (draft.macroBarrier === null) return 'barrier';
-  if (draft.mealToImprove === null) return 'mealToImprove';
-  if (draft.trackingStyle === null) return 'trackingStyle';
-  if (draft.flexibleCommitment === null) return 'commitment';
-  return 'reveal';
-}
-
-const LEGACY_STEPS: Record<string, MacrosStep> = {
-  bodyWeight: 'proteinWeight',
-  calorieTracking: 'calorieCheck',
-  frequency: 'commitment',
-  acknowledgment: 'focus',
-  proteinTarget: 'proteinWeight',
-};
-
-function normalStep(rawStep: unknown, legacy: boolean, draft: MacrosDraft): MacrosStep {
-  if (typeof rawStep === 'string') {
-    if (legacy && (rawStep === 'intro' || rawStep === 'acknowledgment')) {
-      return draft.macroFocus ? (draft.proteinTargetStatus ? 'calorieCheck' : 'proteinWeight') : 'focus';
-    }
-    if (LEGACY_STEPS[rawStep]) return LEGACY_STEPS[rawStep];
-    if (MACROS_STEPS.includes(rawStep as MacrosStep)) return rawStep as MacrosStep;
-  }
-  return routeForMacrosDraft(draft);
-}
-
-function isReachableStep(draft: MacrosDraft, step: MacrosStep): boolean {
-  const hasFocus = draft.macroFocus !== null;
-  const hasProtein = draft.proteinTargetStatus !== null;
-  const hasCalorie = draft.calorieTrackingStatus !== null;
-  const hasBarrier = draft.macroBarrier !== null;
-  const hasMeal = draft.mealToImprove !== null;
-  const hasTracking = draft.trackingStyle !== null;
-  const hasCommitment = draft.flexibleCommitment !== null;
-  switch (step) {
-    case 'intro': return !hasFocus && !hasProtein && !hasCalorie && !hasBarrier && !hasMeal && !hasTracking && !hasCommitment;
-    case 'focus': return true;
-    case 'focusInsight': return hasFocus;
-    case 'proteinWeight': return hasFocus;
-    case 'proteinPreference': return hasFocus && draft.bodyWeight !== null;
-    case 'calorieCheck': return hasFocus && hasProtein;
-    case 'calorieInsight': return hasCalorie;
-    case 'barrier': return hasCalorie;
-    case 'barrierResponse': return hasBarrier;
-    case 'mealToImprove': return hasBarrier;
-    case 'mealInsight': return hasMeal;
-    case 'trackingStyle': return hasMeal;
-    case 'reassurance': return hasTracking;
-    case 'approach': return hasTracking;
-    case 'whatOkyoDoes': return hasTracking;
-    case 'commitment': return hasTracking;
-    case 'reveal': return hasCommitment;
-    case 'complete': return draft.branchCompleted;
-  }
+  if (draft.branchCompleted) return "complete";
+  if (!draft.macroFocus) return "problem";
+  if (!draft.macroBarrier) return "barrier";
+  if (!draft.macroOutcome) return "diagnosis";
+  if (draft.recipePriorities.length < 1) return "mealPriority";
+  if (!draft.targetMode) return "targetMode";
+  if (
+    draft.targetMode === "calculate_estimate" &&
+    (!draft.proteinTargetGrams || !draft.calorieTarget)
+  )
+    return "estimateDetails";
+  return "reveal";
 }
 
 export function normalizeMacrosDraft(value: unknown): MacrosDraft {
-  if (!value || typeof value !== 'object') return { ...initialMacrosDraft };
+  if (!value || typeof value !== "object") return { ...initialMacrosDraft };
   const raw = value as Record<string, unknown>;
-  const legacy = raw.version === 1;
-  if (raw.version !== 2 && !legacy) return { ...initialMacrosDraft };
-  const focus = focuses.includes(raw.macroFocus as MacroFocusId) ? raw.macroFocus as MacroFocusId : null;
-  const unit: BodyWeightUnit = raw.bodyWeightUnit === 'kg' ? 'kg' : 'lb';
-  const weight = isWeight(raw.bodyWeight, unit) ? raw.bodyWeight : null;
-  const multiplier = multipliers.includes(raw.proteinMultiplier as ProteinMultiplier) ? raw.proteinMultiplier as ProteinMultiplier : null;
-  const proteinStatus = proteinStatuses.includes(raw.proteinTargetStatus as ProteinTargetStatus) ? raw.proteinTargetStatus as ProteinTargetStatus : null;
-  const grams = proteinStatus === 'yes_know_it' && isGrams(raw.proteinTargetGrams) ? raw.proteinTargetGrams : null;
-  const rawRange = raw.proteinTargetRange as Partial<ProteinTargetRange> | null | undefined;
-  const range = proteinStatus === 'flexible_range' && rawRange && isGrams(rawRange.min) && isGrams(rawRange.max) && rawRange.min <= rawRange.max ? { min: rawRange.min, max: rawRange.max } : null;
-  const calorieStatus = calorieStatuses.includes(raw.calorieTrackingStatus as CalorieTrackingStatus) ? raw.calorieTrackingStatus as CalorieTrackingStatus : null;
-  const calorieTarget = calorieStatus === 'yes_has_target' && isInt(raw.calorieTarget) && raw.calorieTarget >= 800 && raw.calorieTarget <= 6000 ? raw.calorieTarget : null;
-  const barrier = barriers.includes(raw.macroBarrier as MacroBarrierId) ? raw.macroBarrier as MacroBarrierId : null;
-  const meal = mealsToImprove.includes(raw.mealToImprove as MacrosMealToImproveId) ? raw.mealToImprove as MacrosMealToImproveId : null;
-  const trackingStyle = trackingStyles.includes(raw.trackingStyle as TrackingStyleId) ? raw.trackingStyle as TrackingStyleId : null;
-  const commitment = commitments.includes(raw.flexibleCommitment as MacroCommitmentId) ? raw.flexibleCommitment as MacroCommitmentId : null;
-  const count = isInt(raw.weeklyCookingCount) && raw.weeklyCookingCount >= 0 && raw.weeklyCookingCount <= 21 ? raw.weeklyCookingCount : null;
+  const legacy = raw.version !== 4;
+  const macroFocus = isFocus(raw.macroFocus)
+    ? raw.macroFocus
+    : typeof raw.macroFocus === "string"
+      ? (LEGACY_FOCUS[raw.macroFocus] ?? null)
+      : null;
+  const macroBarrier = isBarrier(raw.macroBarrier)
+    ? raw.macroBarrier
+    : typeof raw.macroBarrier === "string"
+      ? (LEGACY_BARRIER[raw.macroBarrier] ?? null)
+      : null;
+  const oldPriority =
+    isPriority(raw.mealPriority) && isRecipePriority(raw.mealPriority)
+      ? raw.mealPriority
+      : null;
+  const rawPriorities = Array.isArray(raw.recipePriorities)
+    ? raw.recipePriorities.filter(isRecipePriority)
+    : oldPriority
+      ? [oldPriority]
+      : [];
+  const recipePriorities = [
+    ...new Set(rawPriorities),
+  ] as MacroRecipePriorityId[];
+  const proteinTargetGrams = validProtein(raw.proteinTargetGrams)
+    ? raw.proteinTargetGrams
+    : null;
+  const calorieTarget = validCalories(raw.calorieTarget)
+    ? raw.calorieTarget
+    : null;
+  const targetMode =
+    normalizeTargetMode(raw.targetMode) ??
+    (legacy ? (proteinTargetGrams ? "known_targets" : "keep_flexible") : null);
+  const goalDurationWeeks = isDuration(raw.goalDurationWeeks)
+    ? raw.goalDurationWeeks
+    : 4;
+  const macroGoal = isGoal(raw.macroGoal)
+    ? raw.macroGoal
+    : macroFocus
+      ? defaultGoal(macroFocus)
+      : null;
+  const goal =
+    normalizeOnboardingGoal(raw.goal) ??
+    (macroGoal
+      ? makeGoal(
+          macroGoal,
+          typeof raw.customMacroGoal === "string" ? raw.customMacroGoal : "",
+          goalDurationWeeks,
+        )
+      : null);
+  const estimateProfile = normalizedEstimateProfile(raw.estimateProfile);
+  const weeklyChangePounds = validWeeklyChange(raw.weeklyChangePounds)
+    ? raw.weeklyChangePounds
+    : weeklyChangeFromProfile(estimateProfile);
   const draft: MacrosDraft = {
-    version: 2, currentStep: 'intro', macroFocus: focus, bodyWeight: weight, bodyWeightUnit: unit, proteinMultiplier: multiplier,
-    proteinTargetStatus: proteinStatus, proteinTargetGrams: grams, proteinTargetRange: range, calorieTrackingStatus: calorieStatus, calorieTarget,
-    macroBarrier: barrier, mealToImprove: meal, trackingStyle, flexibleCommitment: commitment, weeklyCookingCount: count, branchCompleted: raw.branchCompleted === true,
+    ...initialMacrosDraft,
+    currentStep: "intro",
+    macroFocus,
+    macroBarrier,
+    mealToImprove: isMeal(raw.mealToImprove) ? raw.mealToImprove : null,
+    cookingFrequency: isCooking(raw.cookingFrequency)
+      ? raw.cookingFrequency
+      : null,
+    macroOutcome: isOutcome(raw.macroOutcome)
+      ? raw.macroOutcome
+      : macroFocus === "low_protein"
+        ? "more_protein"
+        : macroFocus === "calorie_inconsistency"
+          ? "closer_calories"
+          : macroFocus === "portion_confusion"
+            ? "better_portions"
+            : macroFocus
+              ? "meals_fit_targets"
+              : null,
+    mealPriority: oldPriority,
+    recipePriorities,
+    foodStyles: Array.isArray(raw.foodStyles)
+      ? raw.foodStyles.filter(isFoodStyle)
+      : [],
+    flexibleCommitment: isPace(raw.flexibleCommitment)
+      ? raw.flexibleCommitment
+      : null,
+    targetMode,
+    proteinTargetGrams,
+    calorieTarget,
+    calorieTargetManuallyEdited: raw.calorieTargetManuallyEdited === true,
+    carbTargetGrams: validMacro(raw.carbTargetGrams)
+      ? raw.carbTargetGrams
+      : null,
+    fatTargetGrams: validMacro(raw.fatTargetGrams) ? raw.fatTargetGrams : null,
+    estimateProfile,
+    weeklyChangePounds,
+    macroGoal,
+    customMacroGoal:
+      typeof raw.customMacroGoal === "string"
+        ? raw.customMacroGoal.slice(0, 80)
+        : "",
+    goalDurationWeeks,
+    goal,
+    branchCompleted: raw.branchCompleted === true,
   };
-  const requestedStep = normalStep(raw.currentStep, legacy, draft);
-  const currentStep = draft.branchCompleted
-    ? routeForMacrosDraft({ ...draft, currentStep: requestedStep })
-    : isReachableStep(draft, requestedStep) ? requestedStep : routeForMacrosDraft(draft);
-  return { ...draft, currentStep };
+  const requested =
+    !legacy &&
+    typeof raw.currentStep === "string" &&
+    MACROS_STEPS.includes(raw.currentStep as MacrosStep)
+      ? (raw.currentStep as MacrosStep)
+      : routeForMacrosDraft(draft);
+  const route = routeForMacrosDraft(draft);
+  draft.currentStep = draft.branchCompleted
+    ? "complete"
+    : MACROS_STEPS.indexOf(requested) <= MACROS_STEPS.indexOf(route)
+      ? requested
+      : route;
+  return draft;
+}
+
+/** Reuse the age collected by the canonical onboarding screen, without asking again. */
+export function reuseOnboardingAge(draft: MacrosDraft, ageYears: number | null): MacrosDraft {
+  if (ageYears === null || draft.estimateProfile.ageYears === ageYears) return draft;
+  const estimateProfile = { ...draft.estimateProfile, ageYears, isMinor: ageYears < 18 };
+  const targets = calculateNutritionTargets(estimateProfile);
+  return {
+    ...draft,
+    estimateProfile,
+    ...(draft.targetMode === 'calculate_estimate' ? {
+      calorieTarget: targets?.calories ?? null,
+      proteinTargetGrams: targets?.proteinGrams ?? null,
+      carbTargetGrams: targets?.carbsGrams ?? null,
+      fatTargetGrams: targets?.fatGrams ?? null,
+      calorieTargetManuallyEdited: false,
+    } : {}),
+  };
 }
 
 export type MacrosEvent =
-  | { type: 'FOCUS_SELECTED'; focus: MacroFocusId }
-  | { type: 'BODY_WEIGHT_SAVED'; weight: number; unit: BodyWeightUnit }
-  | { type: 'BODY_WEIGHT_CLEARED' }
-  | { type: 'BODY_WEIGHT_UNIT_SELECTED'; unit: BodyWeightUnit }
-  | { type: 'BODY_WEIGHT_SKIPPED' }
-  | { type: 'PROTEIN_MULTIPLIER_SELECTED'; multiplier: ProteinMultiplier }
-  | { type: 'PROTEIN_STATUS_SELECTED'; status: ProteinTargetStatus }
-  | { type: 'PROTEIN_GRAMS_SAVED'; grams: number }
-  | { type: 'PROTEIN_RANGE_SAVED'; min: number; max: number }
-  | { type: 'CALORIE_STATUS_SELECTED'; status: CalorieTrackingStatus }
-  | { type: 'CALORIE_TARGET_SAVED'; calories: number; isAdultConfirmed: boolean }
-  | { type: 'BARRIER_SELECTED'; barrier: MacroBarrierId }
-  | { type: 'MEAL_TO_IMPROVE_SELECTED'; meal: MacrosMealToImproveId }
-  | { type: 'TRACKING_STYLE_SELECTED'; style: TrackingStyleId }
-  | { type: 'COMMITMENT_SELECTED'; commitment: MacroCommitmentId }
-  | { type: 'FREQUENCY_SAVED'; count: number }
-  | { type: 'NEXT_PRESSED' } | { type: 'BACK_PRESSED' } | { type: 'BRANCH_COMPLETED' } | { type: 'HYDRATED'; draft: unknown };
-
-export function macrosReducer(state: MacrosDraft, event: MacrosEvent): MacrosDraft {
-  if (event.type === 'HYDRATED') return normalizeMacrosDraft(event.draft);
-  const next: MacrosDraft = { ...state };
-  if (event.type === 'FOCUS_SELECTED' && focuses.includes(event.focus)) next.macroFocus = event.focus;
-  if (event.type === 'BODY_WEIGHT_UNIT_SELECTED' && event.unit !== next.bodyWeightUnit) { next.bodyWeightUnit = event.unit; next.bodyWeight = null; next.proteinMultiplier = null; next.proteinTargetStatus = null; next.proteinTargetGrams = null; }
-  if (event.type === 'BODY_WEIGHT_SAVED' && isWeight(event.weight, event.unit)) { next.bodyWeight = event.weight; next.bodyWeightUnit = event.unit; next.proteinMultiplier = null; next.proteinTargetStatus = null; next.proteinTargetGrams = null; next.proteinTargetRange = null; }
-  if (event.type === 'BODY_WEIGHT_CLEARED') { next.bodyWeight = null; next.proteinMultiplier = null; next.proteinTargetStatus = null; next.proteinTargetGrams = null; next.proteinTargetRange = null; }
-  if (event.type === 'BODY_WEIGHT_SKIPPED') { next.bodyWeight = null; next.proteinMultiplier = null; next.proteinTargetStatus = 'not_sure'; next.proteinTargetGrams = null; next.proteinTargetRange = null; }
-  if (event.type === 'PROTEIN_MULTIPLIER_SELECTED' && next.bodyWeight !== null && multipliers.includes(event.multiplier)) { next.proteinMultiplier = event.multiplier; next.proteinTargetStatus = 'yes_know_it'; next.proteinTargetGrams = calculateProteinPreferenceGrams(next.bodyWeight, next.bodyWeightUnit, event.multiplier); next.proteinTargetRange = null; }
-  if (event.type === 'PROTEIN_STATUS_SELECTED' && proteinStatuses.includes(event.status)) { next.proteinTargetStatus = event.status; next.proteinTargetGrams = null; next.proteinTargetRange = null; next.proteinMultiplier = null; }
-  if (event.type === 'PROTEIN_GRAMS_SAVED' && next.proteinTargetStatus === 'yes_know_it' && isGrams(event.grams)) next.proteinTargetGrams = event.grams;
-  if (event.type === 'PROTEIN_RANGE_SAVED' && next.proteinTargetStatus === 'flexible_range' && isGrams(event.min) && isGrams(event.max) && event.min <= event.max) next.proteinTargetRange = { min: event.min, max: event.max };
-  if (event.type === 'CALORIE_STATUS_SELECTED' && calorieStatuses.includes(event.status)) { next.calorieTrackingStatus = event.status; next.calorieTarget = null; }
-  if (event.type === 'CALORIE_TARGET_SAVED' && next.calorieTrackingStatus === 'yes_has_target' && event.isAdultConfirmed && isInt(event.calories) && event.calories >= 800 && event.calories <= 6000) next.calorieTarget = event.calories;
-  if (event.type === 'BARRIER_SELECTED' && barriers.includes(event.barrier)) next.macroBarrier = event.barrier;
-  if (event.type === 'MEAL_TO_IMPROVE_SELECTED' && mealsToImprove.includes(event.meal)) next.mealToImprove = event.meal;
-  if (event.type === 'TRACKING_STYLE_SELECTED' && trackingStyles.includes(event.style)) next.trackingStyle = event.style;
-  if (event.type === 'COMMITMENT_SELECTED' && commitments.includes(event.commitment)) next.flexibleCommitment = event.commitment;
-  if (event.type === 'FREQUENCY_SAVED' && isInt(event.count) && event.count >= 0 && event.count <= 21) next.weeklyCookingCount = event.count;
-  if (event.type === 'BRANCH_COMPLETED') return { ...next, branchCompleted: true, currentStep: 'complete' };
-  if (event.type === 'NEXT_PRESSED') next.currentStep = nextStep(next);
-  if (event.type === 'BACK_PRESSED') next.currentStep = previousStep(next);
+  | { type: "PROBLEM_SELECTED"; problem: MacroFocusId }
+  | { type: "BARRIER_SELECTED"; barrier: MacroBarrierId }
+  | { type: "MEAL_TO_IMPROVE_SELECTED"; meal: MacrosMealToImproveId }
+  | { type: "COOKING_FREQUENCY_SELECTED"; frequency: CookingFrequencyId }
+  | { type: "OUTCOME_SELECTED"; outcome: MacroOutcomeId }
+  | { type: "MEAL_PRIORITY_SELECTED"; priority: MacroMealPriorityId }
+  | { type: "RECIPE_PRIORITIES_TOGGLED"; priority: MacroRecipePriorityId }
+  | { type: "FOOD_STYLE_TOGGLED"; foodStyle: MacroFoodStyleId }
+  | { type: "PACE_SELECTED"; pace: MacroPaceId }
+  | { type: "TARGET_MODE_SELECTED"; mode: MacroTargetMode }
+  | { type: "ESTIMATE_PROFILE_UPDATED"; patch: Partial<NutritionProfile> }
+  | { type: "WEEKLY_CHANGE_SELECTED"; pounds: number }
+  | { type: "EDIT_TARGETS_PRESSED" }
+  | { type: "PROTEIN_TARGET_SAVED"; grams: number }
+  | { type: "CALORIE_TARGET_SAVED"; calories: number }
+  | { type: "CARB_TARGET_SAVED"; grams: number }
+  | { type: "FAT_TARGET_SAVED"; grams: number }
+  | { type: "MACRO_GOAL_SELECTED"; goal: MacroGoalId }
+  | { type: "MACRO_CUSTOM_GOAL_CHANGED"; value: string }
+  | { type: "GOAL_DURATION_SELECTED"; weeks: MacroGoalDurationWeeks }
+  | { type: "NEXT_PRESSED"; skipSteps?: readonly MacrosStep[] }
+  | { type: "BACK_PRESSED"; skipSteps?: readonly MacrosStep[] }
+  | { type: "BRANCH_COMPLETED" }
+  | { type: "HYDRATED"; draft: unknown };
+function activeStep(state: MacrosDraft): MacrosStep {
+  return MACROS_STEPS.includes(state.currentStep as MacrosStep)
+    ? (state.currentStep as MacrosStep)
+    : routeForMacrosDraft(state);
+}
+function nextStep(state: MacrosDraft): MacrosStep {
+  const current = activeStep(state);
+  if (current === "targetMode")
+    return state.targetMode === "calculate_estimate"
+      ? "estimateDetails"
+      : state.targetMode === "known_targets"
+        ? "knownTargets"
+        : "reveal";
+  if (current === "estimateDetails" || current === "knownTargets")
+    return "reveal";
+  if (current === "reveal" || current === "complete") return current;
+  return MACROS_STEPS[
+    Math.min(MACROS_STEPS.indexOf(current) + 1, MACROS_STEPS.length - 1)
+  ];
+}
+function previousStep(state: MacrosDraft): MacrosStep {
+  const current = activeStep(state);
+  if (current === "estimateDetails" || current === "knownTargets")
+    return "targetMode";
+  if (current === "reveal")
+    return state.targetMode === "calculate_estimate"
+      ? "estimateDetails"
+      : state.targetMode === "known_targets"
+        ? "knownTargets"
+        : "targetMode";
+  if (current === "complete") return "reveal";
+  return MACROS_STEPS[Math.max(MACROS_STEPS.indexOf(current) - 1, 0)];
+}
+export function macrosReducer(
+  state: MacrosDraft,
+  event: MacrosEvent,
+): MacrosDraft {
+  if (event.type === "HYDRATED") return normalizeMacrosDraft(event.draft);
+  const next: MacrosDraft = {
+    ...state,
+    recipePriorities: [...state.recipePriorities],
+    foodStyles: [...state.foodStyles],
+  };
+  if (event.type === "PROBLEM_SELECTED" && isFocus(event.problem)) {
+    next.macroFocus = event.problem;
+    next.macroOutcome =
+      event.problem === "low_protein"
+        ? "more_protein"
+        : event.problem === "calorie_inconsistency"
+          ? "closer_calories"
+          : event.problem === "portion_confusion"
+            ? "better_portions"
+            : "meals_fit_targets";
+    next.macroGoal = defaultGoal(event.problem);
+    next.goal = makeGoal(
+      next.macroGoal,
+      next.customMacroGoal,
+      next.goalDurationWeeks,
+    );
+  }
+  if (event.type === "BARRIER_SELECTED" && isBarrier(event.barrier))
+    next.macroBarrier = event.barrier;
+  if (event.type === "MEAL_TO_IMPROVE_SELECTED" && isMeal(event.meal))
+    next.mealToImprove = event.meal;
+  if (event.type === "COOKING_FREQUENCY_SELECTED" && isCooking(event.frequency))
+    next.cookingFrequency = event.frequency;
+  if (event.type === "OUTCOME_SELECTED" && isOutcome(event.outcome))
+    next.macroOutcome = event.outcome;
+  if (event.type === "MEAL_PRIORITY_SELECTED" && isPriority(event.priority))
+    next.mealPriority = event.priority;
+  if (
+    event.type === "RECIPE_PRIORITIES_TOGGLED" &&
+    isRecipePriority(event.priority)
+  )
+    next.recipePriorities = next.recipePriorities.includes(event.priority)
+      ? next.recipePriorities.filter((id) => id !== event.priority)
+      : next.recipePriorities.length < 2
+        ? [...next.recipePriorities, event.priority]
+        : next.recipePriorities;
+  if (event.type === "FOOD_STYLE_TOGGLED" && isFoodStyle(event.foodStyle))
+    next.foodStyles = next.foodStyles.includes(event.foodStyle)
+      ? next.foodStyles.filter((id) => id !== event.foodStyle)
+      : [...next.foodStyles, event.foodStyle];
+  if (event.type === "PACE_SELECTED" && isPace(event.pace))
+    next.flexibleCommitment = event.pace;
+  if (event.type === "TARGET_MODE_SELECTED" && isTargetMode(event.mode)) {
+    next.targetMode =
+      event.mode === "protein_and_calories" || event.mode === "protein_only"
+        ? "known_targets"
+        : event.mode;
+    if (
+      next.targetMode === "keep_flexible" ||
+      next.targetMode === "calculate_estimate"
+    ) {
+      next.proteinTargetGrams = null;
+      next.calorieTarget = null;
+      next.calorieTargetManuallyEdited = false;
+      next.carbTargetGrams = null;
+      next.fatTargetGrams = null;
+    }
+    if (next.targetMode === "calculate_estimate") {
+      next.estimateProfile = {
+        ...next.estimateProfile,
+        goal: next.estimateProfile.goal ?? "maintain",
+        activityHoursPerWeek: next.estimateProfile.activityHoursPerWeek ?? 0,
+      };
+    }
+  }
+  if (event.type === "ESTIMATE_PROFILE_UPDATED") {
+    next.estimateProfile = {
+      ...next.estimateProfile,
+      ...event.patch,
+      isMinor:
+        event.patch.ageYears !== undefined
+          ? event.patch.ageYears !== null && event.patch.ageYears < 18
+          : next.estimateProfile.isMinor,
+    };
+    const targets = calculateNutritionTargets(next.estimateProfile);
+    if (targets) {
+      next.proteinTargetGrams = targets.proteinGrams;
+      next.calorieTarget = targets.calories;
+      next.calorieTargetManuallyEdited = false;
+      next.carbTargetGrams = targets.carbsGrams;
+      next.fatTargetGrams = targets.fatGrams;
+    } else {
+      next.proteinTargetGrams = null;
+      next.calorieTarget = null;
+      next.calorieTargetManuallyEdited = false;
+      next.carbTargetGrams = null;
+      next.fatTargetGrams = null;
+    }
+  }
+  if (
+    event.type === "WEEKLY_CHANGE_SELECTED" &&
+    validWeeklyChange(event.pounds)
+  ) {
+    const absoluteChange = Math.abs(event.pounds);
+    next.weeklyChangePounds = event.pounds;
+    next.estimateProfile = {
+      ...next.estimateProfile,
+      goal:
+        event.pounds < 0
+          ? "lose_fat"
+          : event.pounds > 0
+            ? "build_muscle"
+            : "maintain",
+      desiredRatePerWeek:
+        absoluteChange === 0 ? null : absoluteChange >= 1 ? "moderate" : "slow",
+    };
+    const targets = calculateNutritionTargets(next.estimateProfile);
+    if (targets) {
+      next.proteinTargetGrams = targets.proteinGrams;
+      next.calorieTarget = targets.calories;
+      next.calorieTargetManuallyEdited = false;
+      next.carbTargetGrams = targets.carbsGrams;
+      next.fatTargetGrams = targets.fatGrams;
+    } else {
+      next.proteinTargetGrams = null;
+      next.calorieTarget = null;
+      next.calorieTargetManuallyEdited = false;
+      next.carbTargetGrams = null;
+      next.fatTargetGrams = null;
+    }
+  }
+  if (event.type === "EDIT_TARGETS_PRESSED") {
+    next.branchCompleted = false;
+    next.currentStep =
+      next.targetMode === "calculate_estimate"
+        ? "estimateDetails"
+        : next.targetMode === "known_targets"
+          ? "knownTargets"
+          : "targetMode";
+  }
+  if (event.type === "PROTEIN_TARGET_SAVED" && validProtein(event.grams))
+    next.proteinTargetGrams = event.grams;
+  if (event.type === "CALORIE_TARGET_SAVED" && validCalories(event.calories)) {
+    next.calorieTarget = event.calories;
+    next.calorieTargetManuallyEdited = next.targetMode === "calculate_estimate";
+  }
+  if (event.type === "CARB_TARGET_SAVED" && validMacro(event.grams))
+    next.carbTargetGrams = event.grams;
+  if (event.type === "FAT_TARGET_SAVED" && validMacro(event.grams))
+    next.fatTargetGrams = event.grams;
+  if (event.type === "MACRO_GOAL_SELECTED" && isGoal(event.goal)) {
+    next.macroGoal = event.goal;
+    next.goal = makeGoal(
+      event.goal,
+      next.customMacroGoal,
+      next.goalDurationWeeks,
+    );
+  }
+  if (event.type === "MACRO_CUSTOM_GOAL_CHANGED") {
+    next.customMacroGoal = event.value.slice(0, 80);
+    next.macroGoal = "custom";
+    next.goal = makeGoal(
+      "custom",
+      next.customMacroGoal,
+      next.goalDurationWeeks,
+    );
+  }
+  if (event.type === "GOAL_DURATION_SELECTED" && isDuration(event.weeks)) {
+    next.goalDurationWeeks = event.weeks;
+    if (next.macroGoal)
+      next.goal = makeGoal(
+        next.macroGoal,
+        next.customMacroGoal,
+        event.weeks,
+        next.goal?.startDate,
+      );
+  }
+  if (event.type === "BRANCH_COMPLETED")
+    return { ...next, branchCompleted: true, currentStep: "complete" };
+  if (event.type === "NEXT_PRESSED") {
+    next.currentStep = nextStep(next);
+    while (event.skipSteps?.includes(next.currentStep) && next.currentStep !== "reveal" && next.currentStep !== "complete") {
+      next.currentStep = nextStep({ ...next, currentStep: next.currentStep });
+    }
+  }
+  if (event.type === "BACK_PRESSED") {
+    next.currentStep = previousStep(next);
+    while (event.skipSteps?.includes(next.currentStep) && next.currentStep !== "intro") {
+      next.currentStep = previousStep({ ...next, currentStep: next.currentStep });
+    }
+  }
   return next;
 }

@@ -319,7 +319,7 @@ export type ScenarioOption<T extends string> = Readonly<{ id: T; label: string; 
 /**
  * Square scenario tiles for the "what makes this hardest" question: a
  * tinted glyph square plus label/detail per row. Visually distinct from the
- * circular-glyph ChoiceRows and the two-column ChoiceTiles already used
+ * compact ChoiceRows already used
  * elsewhere in this branch, so the obstacle screen reads as its own beat.
  */
 export function BarrierScenarioRows<T extends string>({

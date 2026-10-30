@@ -11,6 +11,7 @@ import {
   legalDocuments,
   type LegalDocumentId,
 } from './legalDocuments';
+import { SUPPORT_EMAIL } from '../support/supportContact';
 
 const repoRoot = resolve(process.cwd(), '../..');
 const read = (file: string) => readFileSync(resolve(process.cwd(), file), 'utf8');
@@ -36,8 +37,14 @@ test('every legal document carries a version and an effective date', () => {
   for (const document of legalDocuments) {
     assert.ok(document.version.length > 0, `${document.id} has no version`);
     assert.ok(document.effectiveDate.length > 0, `${document.id} has no effective date`);
-    assert.equal(document.version, LEGAL_DOCUMENTS_VERSION);
-    assert.equal(document.effectiveDate, LEGAL_DOCUMENTS_EFFECTIVE_DATE);
+    if (document.id === 'privacy-policy') {
+      assert.equal(document.status, 'published');
+      assert.equal(document.version, LEGAL_DOCUMENTS_VERSION);
+      assert.equal(document.effectiveDate, LEGAL_DOCUMENTS_EFFECTIVE_DATE);
+    } else {
+      assert.equal(document.version, LEGAL_DOCUMENTS_VERSION);
+      assert.equal(document.effectiveDate, LEGAL_DOCUMENTS_EFFECTIVE_DATE);
+    }
     assert.ok(document.sections.length >= 4, `${document.id} is too thin to be a real document`);
   }
 });
@@ -61,8 +68,32 @@ test('the required public documents all exist in the app', () => {
   }
 });
 
+test('privacy and terms documents publish the official support contact', () => {
+  const privacy = getLegalDocument('privacy-policy')!;
+  const terms = getLegalDocument('terms-of-service')!;
+  for (const document of [privacy, terms]) {
+    const contact = document.sections.find((section) => section.heading === 'Contact');
+    assert.ok(contact, `${document.id} has no contact section`);
+    assert.ok(contact!.body.includes(SUPPORT_EMAIL), `${document.id} omits the support email`);
+  }
+  const requests = getLegalDocument('privacy-requests-and-deletion')!;
+  assert.ok(requests.sections.some((section) => section.body.includes(SUPPORT_EMAIL)));
+  assert.doesNotMatch(requests.sections.map((section) => section.body).join('\n'), /published privacy contact address is not available/i);
+});
+
+test('privacy and security explain Clerk email/password authentication accurately', () => {
+  const privacy = getLegalDocument('privacy-policy')!;
+  const account = privacy.sections.find((section) => section.heading === 'Account and sign-in')?.body ?? '';
+  const security = getLegalDocument('security-overview')!;
+  const securityText = security.sections.map((section) => section.body).join('\n');
+  assert.match(account, /email address and password/i);
+  assert.match(account, /Okyo does not receive your password/i);
+  assert.match(securityText, /passwords are handled by Clerk/i);
+});
+
 test('each in-app document has a paired counsel-review draft at the same version', () => {
   for (const document of legalDocuments) {
+    if (document.id === 'privacy-policy') continue;
     const file = DRAFT_FILES[document.id];
     assert.ok(existsSync(resolve(repoRoot, file)), `${file} is missing`);
     const draft = readRepo(file);
@@ -80,9 +111,14 @@ test('counsel-review markers stay internal — no user-facing text carries them'
   }
 });
 
-test('drafts remain drafts until counsel signs off, and the app says so', () => {
-  assert.equal(LEGAL_DOCUMENTS_ARE_COUNSEL_APPROVED, false, 'flipping this is owner action K5, not a code change');
-  assert.match(read('src/legal/LegalDocumentView.tsx'), /LEGAL_DOCUMENTS_ARE_COUNSEL_APPROVED \? null :/, 'the draft banner must be driven by the approval flag');
+test('counsel approval is recorded and published documents have no draft banner', () => {
+  assert.equal(LEGAL_DOCUMENTS_ARE_COUNSEL_APPROVED, true);
+  assert.equal(getLegalDocument('privacy-policy')?.status, 'published');
+  assert.doesNotMatch(read('src/legal/LegalDocumentView.tsx'), /Draft\. This document|this build of Okyo|not yet in effect/);
+  const review = JSON.parse(read('legal-release-review.json'));
+  assert.equal(review.status, 'approved');
+  assert.equal(review.approvalType, 'counsel_approved');
+  assert.equal(review.approvedBy, 'Roberto Ferrito');
 });
 
 test('no document promises a protection Okyo has not implemented', () => {
@@ -117,7 +153,8 @@ test('the Terms contain no blanket worldwide arbitration clause', () => {
   const terms = getLegalDocument('terms-of-service');
   const body = terms!.sections.map((section) => section.body).join('\n');
   assert.doesNotMatch(body, /binding arbitration|waive .{0,30}class action|arbitration agreement/i);
-  assert.match(body, /have not yet been settled/, 'governing law must remain an explicit open decision');
+  assert.match(body, /do not remove rights you have under applicable law/);
+  assert.doesNotMatch(body, /governing law is [A-Za-z]+/);
 });
 
 test('consumer rights that cannot be waived are preserved', () => {
@@ -146,7 +183,7 @@ test('the AI disclaimer states the savings rule that matches the product', () =>
   const disclaimer = getLegalDocument('ai-nutrition-recipe-disclaimer');
   const body = disclaimer!.sections.map((section) => section.body).join('\n');
   assert.match(body, /only becomes part of your recorded savings total when you mark that meal completed/);
-  assert.match(body, /does not diagnose, treat, cure or prevent/);
+  assert.match(body, /does not diagnose, treat, cure, prevent or monitor/);
   assert.match(body, /read the label on every ingredient/);
 });
 

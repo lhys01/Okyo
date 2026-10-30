@@ -1,9 +1,7 @@
-import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { analyticsEvents, track } from '../analytics/track';
 import { createMockScan } from '../api/client';
 import type { AiDebugMetadata, CreateScanResult, ScanImageMetadata, ScanSource } from '../api/types';
 import {
@@ -18,6 +16,7 @@ import {
   onboardingColors,
 } from '../components/onboarding/OnboardingUI';
 import { KikoMascot } from '../components/KikoMascot';
+import { requestPermissionWithNotice } from '../privacy/requestPermissionWithNotice';
 import {
   getSafeRecipeMode,
   type Recipe,
@@ -30,6 +29,7 @@ import {
 } from '../state/useOkyoStore';
 import { colors, fontFamilies, shadows } from '../theme/okyoTheme';
 import { hasFoodEvidence, isUsableScan, shouldRejectScan } from '../utils/scanDecision';
+import { getImageMetadata as prepareScanImageMetadata } from '../utils/imagePrep';
 import { checkImageFileExists } from '../utils/imageValidation';
 import {
   getMissingOnboardingImageError,
@@ -37,7 +37,6 @@ import {
   getOnboardingResponseImage,
   getOnboardingResultFallbackScreen,
   getOnboardingScanStartDecision,
-  getOnboardingUploadUri,
   isCurrentOnboardingScanSession,
   shouldKeepOnboardingScanLoading,
 } from '../utils/onboardingScanGuards';
@@ -56,9 +55,6 @@ type OnboardingScreenKey =
   | 'loading'
   | 'firstResult'
   | 'paywall';
-
-const maxImageDataUrlBytes = 12_000_000;
-const maxProcessedImageWidth = 1400;
 
 const progressSteps: OnboardingScreenKey[] = [
   'hero',
@@ -142,7 +138,7 @@ export function WelcomeScreen() {
       source: 'WelcomeScreen.enter_onboarding_flow',
     });
     uiLog('WelcomeScreen', 'enter_onboarding_flow');
-    track(analyticsEvents.ONBOARDING_START, { screen: 'WelcomeScreen' });
+
   }, [clearLatestScan]);
 
   useEffect(() => {
@@ -251,12 +247,13 @@ export function WelcomeScreen() {
     setScanError(null);
     imageTraceLog('WelcomeScreen', { stage: 'lock_acquired', source: 'camera' });
     try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          'Camera permission needed',
-          'Okyo needs camera permission to take a food photo. You can allow camera access in Settings or upload from Photos.',
-        );
+      const permission = await requestPermissionWithNotice(
+        'camera',
+        ImagePicker.getCameraPermissionsAsync,
+        ImagePicker.requestCameraPermissionsAsync,
+      );
+      if (permission !== 'granted') {
+        if (permission === 'denied') Alert.alert('Camera permission needed', 'You can allow camera access in Settings or upload from Photos.');
         return;
       }
 
@@ -273,15 +270,11 @@ export function WelcomeScreen() {
       }
 
       imageTraceLog('WelcomeScreen', { stage: 'picker_asset_received', source: 'camera', asset: getAssetLogSummary(result.assets[0]) });
-      await startOnboardingScan('camera', await getImageMetadata(result.assets[0], 'camera'));
+      await startOnboardingScan('camera', await getPreparedOnboardingImage(result.assets[0], 'camera'));
     } catch (error) {
       const friendlyMessage = getOnboardingImageErrorMessage(error, 'Camera unavailable.');
       imageTraceLog('WelcomeScreen', { stage: 'caught_error', source: 'camera', error: serializeError(error) });
-      track(analyticsEvents.RESULT_ERROR, {
-        errorMessage: friendlyMessage,
-        screen: 'WelcomeScreen',
-        source: 'camera',
-      });
+
       if (isOnboardingImageUnavailableError(error)) {
         transitionScreen('scan', 'camera_error');
         setScanError(friendlyMessage);
@@ -316,15 +309,11 @@ export function WelcomeScreen() {
       }
 
       imageTraceLog('WelcomeScreen', { stage: 'picker_asset_received', source: 'photos', asset: getAssetLogSummary(result.assets[0]) });
-      await startOnboardingScan('photos', await getImageMetadata(result.assets[0], 'photos'));
+      await startOnboardingScan('photos', await getPreparedOnboardingImage(result.assets[0], 'photos'));
     } catch (error) {
       const friendlyMessage = getOnboardingImageErrorMessage(error, 'Image picker failed.');
       imageTraceLog('WelcomeScreen', { stage: 'caught_error', source: 'photos', error: serializeError(error) });
-      track(analyticsEvents.RESULT_ERROR, {
-        errorMessage: friendlyMessage,
-        screen: 'WelcomeScreen',
-        source: 'photos',
-      });
+
       if (isOnboardingImageUnavailableError(error)) {
         transitionScreen('scan', 'photos_error');
         setScanError(friendlyMessage);
@@ -369,7 +358,7 @@ export function WelcomeScreen() {
     const previewImage = getPreviewImageMetadata(preparedImage);
     setIsScanSubmitting(true);
     setScanError(null);
-    track(analyticsEvents.SCAN_STARTED, { screen: 'WelcomeScreen', source });
+
     beginLatestScanSession({
       scanSessionId,
       latestScanStatus: 'pending',
@@ -554,7 +543,7 @@ export function WelcomeScreen() {
   // onboarding, persist that completion, and continue as a non-premium user.
   // Never grants premium, never charges, never claims a trial started.
   const continueWithoutPurchase = () => {
-    track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'WelcomeScreen', premium: false });
+
     setPremium(false);
     completeOnboarding();
   };
@@ -916,135 +905,19 @@ function getAiDebugMetadata(result: CreateScanResult): AiDebugMetadata | null {
   };
 }
 
-async function getImageMetadata(asset: ImagePicker.ImagePickerAsset, source: ScanSource): Promise<ScanImageMetadata> {
-  imageTraceLog('WelcomeScreen', { stage: 'original_uri', source, uri: asset.uri });
-  const originalExists = await checkImageFileExists(asset.uri);
-  imageTraceLog('WelcomeScreen', { stage: 'original_file_existence_result', source, uri: asset.uri, exists: originalExists });
-  imageTraceLog('WelcomeScreen', { stage: 'image_processing_started', source, uri: asset.uri });
-  const processed = await getProcessedImage(asset);
-  const processedUri = getOnboardingUploadUri(processed.uri, asset.uri);
-  const processedExists = await checkImageFileExists(processedUri);
-  imageTraceLog('WelcomeScreen', { stage: 'processed_uri', source, uri: processedUri, exists: processedExists, conversionError: processed.conversionError });
-  if (!processed.uri || processed.conversionError === 'image_processing_failed') {
+async function getPreparedOnboardingImage(asset: ImagePicker.ImagePickerAsset, source: ScanSource): Promise<ScanImageMetadata> {
+  imageTraceLog('WelcomeScreen', { stage: 'image_processing_started', source });
+  const image = await prepareScanImageMetadata(asset, source);
+  if (!image.uri || !image.dataUrl || image.conversionError) {
     throw new OnboardingImageUnavailableError();
   }
-  const dataUrl = getImageDataUrl(processed.base64, processed.mimeType);
-  const dataUrlSizeBytes = dataUrl ? dataUrl.length : undefined;
-  const shouldSendDataUrl = Boolean(dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes);
-
-  return {
-    fileName: getProcessedFileName(asset.fileName),
-    height: processed.height ?? asset.height,
-    mimeType: processed.mimeType,
-    placeholder: false,
-    sizeBytes: asset.fileSize ?? undefined,
-    dataUrl: shouldSendDataUrl ? dataUrl : undefined,
-    dataUrlSizeBytes,
+  imageTraceLog('WelcomeScreen', {
+    stage: 'image_processing_finished',
     source,
-    uri: processedUri,
-    width: processed.width ?? asset.width,
-    conversionError: shouldSendDataUrl
-      ? undefined
-      : dataUrl
-        ? 'image_payload_too_large'
-        : processed.conversionError ?? 'image_base64_missing',
-  };
-}
-
-async function getProcessedImage(asset: ImagePicker.ImagePickerAsset) {
-  const attempts = [
-    { compress: 0.78, maxWidth: maxProcessedImageWidth },
-    { compress: 0.64, maxWidth: 1200 },
-    { compress: 0.52, maxWidth: 1000 },
-    { compress: 0.42, maxWidth: 850 },
-    { compress: 0.34, maxWidth: 720 },
-    { compress: 0.28, maxWidth: 600 },
-  ];
-  let latestResult: {
-    base64?: string;
-    height?: number;
-    mimeType: string;
-    uri?: string;
-    width?: number;
-    conversionError?: string;
-  } | null = null;
-
-  for (const attempt of attempts) {
-    try {
-      const actions: ImageManipulator.Action[] = asset.width > attempt.maxWidth
-        ? [{ resize: { width: attempt.maxWidth } }]
-        : [];
-      const result = await ImageManipulator.manipulateAsync(asset.uri, actions, {
-        base64: true,
-        compress: attempt.compress,
-        format: ImageManipulator.SaveFormat.JPEG,
-      });
-      const dataUrl = getImageDataUrl(result.base64, 'image/jpeg');
-      const dataUrlSizeBytes = dataUrl ? dataUrl.length : undefined;
-
-      latestResult = {
-        base64: result.base64 ?? undefined,
-        height: result.height,
-        mimeType: 'image/jpeg',
-        uri: result.uri,
-        width: result.width,
-        conversionError: dataUrl ? undefined : 'image_base64_missing',
-      };
-
-      if (dataUrl && dataUrlSizeBytes !== undefined && dataUrlSizeBytes <= maxImageDataUrlBytes) {
-        return latestResult;
-      }
-    } catch (error) {
-      imageTraceLog('WelcomeScreen', { stage: 'image_processing_attempt_failed', error: serializeError(error), maxWidth: attempt.maxWidth, compress: attempt.compress });
-      latestResult = {
-        height: asset.height,
-        mimeType: asset.mimeType ?? getMimeTypeFromFileName(asset.fileName) ?? 'image/jpeg',
-        uri: asset.uri,
-        width: asset.width,
-        conversionError: 'image_processing_failed',
-      };
-    }
-  }
-
-  return latestResult ?? {
-    height: asset.height,
-    mimeType: asset.mimeType ?? getMimeTypeFromFileName(asset.fileName) ?? 'image/jpeg',
-    uri: asset.uri,
-    width: asset.width,
-    conversionError: 'image_processing_failed',
-  };
-}
-
-function getProcessedFileName(fileName: string | null | undefined) {
-  if (!fileName) {
-    return 'okyo-scan-upload.jpg';
-  }
-
-  return fileName.replace(/\.[a-z0-9]+$/i, '.jpg') || 'okyo-scan-upload.jpg';
-}
-
-function getImageDataUrl(base64: string | null | undefined, mimeType: string) {
-  const cleanBase64 = typeof base64 === 'string' ? base64.trim() : '';
-  if (!cleanBase64) {
-    return undefined;
-  }
-
-  return `data:${mimeType};base64,${cleanBase64}`;
-}
-
-function getMimeTypeFromFileName(fileName: string | null | undefined) {
-  const normalized = fileName?.toLowerCase();
-  if (!normalized) {
-    return undefined;
-  }
-  if (normalized.endsWith('.png')) {
-    return 'image/png';
-  }
-  if (normalized.endsWith('.webp')) {
-    return 'image/webp';
-  }
-
-  return 'image/jpeg';
+    height: image.height,
+    width: image.width,
+  });
+  return image;
 }
 
 function getPreviewImageMetadata(image: ScanImageMetadata | undefined): ScanImageMetadata | null {

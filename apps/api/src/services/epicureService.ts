@@ -18,12 +18,16 @@
  */
 
 import type { RecipeMode } from '../types.js';
+import { isApprovedOpenRouterModel } from '../config/modelAllowlist.js';
 import {
   getOpenRouterConfig,
   isEpicureEnabled,
   type OpenRouterConfig,
 } from '../config/openRouter.js';
 import { logEpicureUsage } from './epicureAnalytics.js';
+import { getRequestAbortSignal, getRequestRemainingMs } from '../observability/requestContext.js';
+import { runWithAiExecutionGuard } from './aiExecutionGuard.js';
+import { reserveGlobalAiProviderCall } from '../middleware/costControls.js';
 
 const openRouterEndpoint = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -84,7 +88,7 @@ export async function getEpicureSuggestions(
     return normalizeEpicureSuggestions(raw);
   } catch (error) {
     console.warn('[epicure] EPICURE_FAILURE — suggestion request failed, continuing without enrichment', {
-      reason: error instanceof Error ? error.message : String(error),
+      errorType: error instanceof Error ? error.name : 'UnknownError',
     });
     return EMPTY_SUGGESTIONS;
   }
@@ -277,6 +281,19 @@ async function requestEpicureModel(
   ingredients: string[],
   config: OpenRouterConfig,
 ): Promise<unknown> {
+  return runWithAiExecutionGuard({
+    stage: 'epicure',
+    operation: () => requestEpicureModelUnsafe(ingredients, config),
+  });
+}
+
+async function requestEpicureModelUnsafe(
+  ingredients: string[],
+  config: OpenRouterConfig,
+): Promise<unknown> {
+  if (!isApprovedOpenRouterModel(config.model)) {
+    throw new Error('Epicure model is not approved.');
+  }
   if (!config.apiKey) {
     throw new Error('OPENROUTER_API_KEY is missing.');
   }
@@ -289,10 +306,17 @@ async function requestEpicureModel(
   });
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+  const requestSignal = getRequestAbortSignal();
+  const remainingRequestMs = getRequestRemainingMs();
+  const timeoutMs = Math.max(1, Math.min(config.timeoutMs, remainingRequestMs ?? config.timeoutMs));
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = requestSignal
+    ? AbortSignal.any([controller.signal, requestSignal])
+    : controller.signal;
   const startedAt = Date.now(); // [scan_timing] epicure pre-call latency
 
   try {
+    await reserveGlobalAiProviderCall();
     const response = await fetch(openRouterEndpoint, {
       method: 'POST',
       headers: {
@@ -315,7 +339,7 @@ async function requestEpicureModel(
           { role: 'user', content: buildEpicurePrompt(ingredients) },
         ],
       }),
-      signal: controller.signal,
+      signal,
     });
 
     console.log('[epicure] EPICURE_RESPONSE_STATUS', {
@@ -325,13 +349,14 @@ async function requestEpicureModel(
     });
 
     if (!response.ok) {
-      const errorBody = await response.text().catch(() => '(unreadable)');
+      // Consume the response without logging provider-controlled text. Providers
+      // can echo prompts, food descriptions, or other request data in error bodies.
+      await response.text().catch(() => undefined);
       console.error('[epicure] EPICURE_HTTP_ERROR', {
         model: config.model,
         status: response.status,
-        body: errorBody.slice(0, 300),
       });
-      throw new Error(`Epicure HTTP ${response.status}: ${errorBody.slice(0, 120)}`);
+      throw new Error(`Epicure HTTP ${response.status}`);
     }
 
     const json = (await response.json()) as unknown;

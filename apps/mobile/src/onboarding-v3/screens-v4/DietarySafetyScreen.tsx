@@ -14,10 +14,13 @@ import {
 import { OnboardingBackButton } from '../components/OnboardingBackButton';
 import { ONBOARDING_BACK_ROW_HEIGHT, ONBOARDING_BACK_ROW_TOP_GAP, ONBOARDING_HORIZONTAL_PADDING } from '../components/onboardingLayout';
 import { OnboardingCTA } from '../components/OnboardingCTA';
-import type { OnboardingV4StageLabel } from '../state/onboardingV4Route';
+type DietarySafetyMode = 'full' | 'allergies';
 
 type Props = {
-  stageLabel: OnboardingV4StageLabel | null;
+  stageLabel: string | null;
+  mode?: DietarySafetyMode;
+  title?: string;
+  saveLabel?: string;
   answers: DietarySafetyAnswers;
   onToggleAllergy: (value: string) => void;
   onToggleRestriction: (value: string) => void;
@@ -39,7 +42,11 @@ const SAFETY_COPY = 'Okyo can flag and adapt recipes, but AI and ingredient labe
  * mutually exclusive with all groups by construction (dietaryContracts.ts's
  * setters), not left to this component to keep consistent.
  */
-export function DietarySafetyScreen({ stageLabel, answers, onToggleAllergy, onToggleRestriction, onDislikesChange, onToggleNoneOfThese, onBack, onSave, isSaving, errorMessage }: Props) {
+export function DietarySafetyScreen({ stageLabel, mode = 'full', title = 'Anything every recipe should avoid?', saveLabel = 'Save my preferences', answers, onToggleAllergy, onToggleRestriction, onDislikesChange, onToggleNoneOfThese, onBack, onSave, isSaving, errorMessage }: Props) {
+  // The branch variant starts with an explicit “None of these” answer. Its
+  // empty allergy list is intentional, so it must not be treated as an
+  // unanswered full dietary-preferences draft.
+  const canSave = mode === 'allergies' || isDietarySafetyAnswered(answers);
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <View style={styles.header}>
@@ -47,40 +54,43 @@ export function DietarySafetyScreen({ stageLabel, answers, onToggleAllergy, onTo
         {stageLabel ? <Text accessibilityRole="text" style={styles.stageLabel}>{stageLabel}</Text> : null}
       </View>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>Anything every recipe should avoid?</Text>
+        <Text style={styles.title}>{title}</Text>
 
         <Pressable
           accessibilityLabel="None of these"
-          accessibilityRole="checkbox"
-          accessibilityState={{ checked: answers.noneOfThese }}
+          accessibilityHint="Selects no listed allergies"
+          accessibilityRole="button"
+          accessibilityState={{ selected: answers.noneOfThese, disabled: isSaving }}
+          disabled={isSaving}
           onPress={onToggleNoneOfThese}
-          style={[styles.noneRow, answers.noneOfThese && styles.noneRowSelected]}
+          style={({ pressed }) => [styles.noneRow, answers.noneOfThese && styles.noneRowSelected, pressed && styles.pressed]}
           testID="dietary-none-of-these"
         >
           <Text style={[styles.noneRowText, answers.noneOfThese && styles.noneRowTextSelected]}>None of these</Text>
           {answers.noneOfThese ? <Check color="#FFFFFF" height={18} strokeWidth={3} width={18} /> : null}
         </Pressable>
 
-        <ChipGroup label="Allergies" onToggle={onToggleAllergy} options={DIETARY_ALLERGY_OPTIONS} selected={answers.allergies} />
-        <ChipGroup label="Restrictions" onToggle={onToggleRestriction} options={DIETARY_RESTRICTION_OPTIONS} selected={answers.restrictions} />
-        <DislikesEditor onChange={onDislikesChange} values={answers.dislikes} />
+        <ChipGroup disabled={isSaving} label="Allergies" onToggle={onToggleAllergy} options={DIETARY_ALLERGY_OPTIONS} selected={answers.allergies} />
+        {mode === 'full' ? <ChipGroup disabled={isSaving} label="Restrictions" onToggle={onToggleRestriction} options={DIETARY_RESTRICTION_OPTIONS} selected={answers.restrictions} /> : null}
+        {mode === 'full' ? <DislikesEditor disabled={isSaving} onChange={onDislikesChange} values={answers.dislikes} /> : null}
 
         <Text style={styles.safetyCopy}>{SAFETY_COPY}</Text>
         {errorMessage ? <Text accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.errorText}>{errorMessage}</Text> : null}
       </ScrollView>
       <View style={styles.footer}>
-        <OnboardingCTA disabled={!isDietarySafetyAnswered(answers) || isSaving} label={isSaving ? 'Saving…' : 'Save my preferences'} onPress={onSave} testID="dietary-safety-save" />
+        <OnboardingCTA disabled={!canSave || isSaving} label={isSaving ? 'Saving…' : saveLabel} onPress={onSave} testID="dietary-safety-save" />
       </View>
     </SafeAreaView>
   );
 }
 
-function ChipGroup({ label, options, selected, onToggle }: { label: string; options: readonly string[]; selected: readonly string[]; onToggle: (value: string) => void }) {
+function ChipGroup({ disabled, label, options, selected, onToggle }: { disabled: boolean; label: string; options: readonly string[]; selected: readonly string[]; onToggle: (value: string) => void }) {
   const [addingOther, setAddingOther] = useState(false);
   const [otherText, setOtherText] = useState('');
   const customSelected = selected.filter((value) => !options.includes(value));
 
   const submitOther = () => {
+    if (disabled) return;
     const trimmed = otherText.trim();
     if (trimmed) onToggle(trimmed);
     setOtherText('');
@@ -96,11 +106,13 @@ function ChipGroup({ label, options, selected, onToggle }: { label: string; opti
           return (
             <Pressable
               accessibilityLabel={option}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: isSelected }}
+              accessibilityHint="Toggles this allergy"
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected, disabled }}
+              disabled={disabled}
               key={option}
               onPress={() => onToggle(option)}
-              style={[styles.chip, isSelected && styles.chipSelected]}
+              style={({ pressed }) => [styles.chip, isSelected && styles.chipSelected, pressed && styles.pressed]}
               testID={`dietary-chip-${label.toLowerCase()}-${option}`}
             >
               <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>{option}</Text>
@@ -110,22 +122,25 @@ function ChipGroup({ label, options, selected, onToggle }: { label: string; opti
         {customSelected.map((value) => (
           <Pressable
             accessibilityLabel={`${value} (custom, tap to remove)`}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: true }}
+            accessibilityHint="Removes this custom allergy"
+            accessibilityRole="button"
+            accessibilityState={{ selected: true, disabled }}
+            disabled={disabled}
             key={value}
             onPress={() => onToggle(value)}
-            style={[styles.chip, styles.chipSelected]}
+            style={({ pressed }) => [styles.chip, styles.chipSelected, pressed && styles.pressed]}
           >
             <Text style={[styles.chipText, styles.chipTextSelected]}>{value}</Text>
           </Pressable>
         ))}
-        <Pressable accessibilityLabel={`Add other ${label.toLowerCase()}`} accessibilityRole="button" onPress={() => setAddingOther(true)} style={styles.chip}>
+        <Pressable disabled={disabled} accessibilityState={{ disabled }} accessibilityLabel={`Add other ${label.toLowerCase()}`} accessibilityRole="button" onPress={() => setAddingOther(true)} style={styles.chip}>
           <Text style={styles.chipText}>Other</Text>
         </Pressable>
       </View>
       {addingOther ? (
         <TextInput
           accessibilityLabel={`Custom ${label.toLowerCase()} entry`}
+          editable={!disabled}
           autoFocus
           maxLength={DIETARY_CUSTOM_ENTRY_MAX_LENGTH}
           onChangeText={setOtherText}
@@ -141,9 +156,10 @@ function ChipGroup({ label, options, selected, onToggle }: { label: string; opti
   );
 }
 
-function DislikesEditor({ values, onChange }: { values: readonly string[]; onChange: (values: string[]) => void }) {
+function DislikesEditor({ disabled, values, onChange }: { disabled: boolean; values: readonly string[]; onChange: (values: string[]) => void }) {
   const [text, setText] = useState('');
   const submit = () => {
+    if (disabled) return;
     const trimmed = text.trim();
     if (trimmed) onChange([...values, trimmed]);
     setText('');
@@ -155,6 +171,8 @@ function DislikesEditor({ values, onChange }: { values: readonly string[]; onCha
         {values.map((value) => (
           <Pressable
             accessibilityLabel={`${value} (tap to remove)`}
+            accessibilityState={{ disabled }}
+            disabled={disabled}
             accessibilityRole="button"
             key={value}
             onPress={() => onChange(values.filter((item) => item !== value))}
@@ -167,6 +185,7 @@ function DislikesEditor({ values, onChange }: { values: readonly string[]; onCha
       <View style={styles.dislikeRow}>
         <TextInput
           accessibilityLabel="Add a food dislike"
+          editable={!disabled}
           maxLength={DIETARY_CUSTOM_ENTRY_MAX_LENGTH}
           onChangeText={setText}
           onSubmitEditing={submit}
@@ -176,7 +195,7 @@ function DislikesEditor({ values, onChange }: { values: readonly string[]; onCha
           style={styles.dislikeInput}
           value={text}
         />
-        <Pressable accessibilityLabel="Add dislike" accessibilityRole="button" onPress={submit} style={styles.addButton}>
+        <Pressable disabled={disabled} accessibilityState={{ disabled }} accessibilityLabel="Add dislike" accessibilityRole="button" onPress={submit} style={styles.addButton}>
           <Text style={styles.addButtonText}>Add</Text>
         </Pressable>
       </View>
@@ -192,6 +211,7 @@ const styles = StyleSheet.create({
   title: { color: colors.charcoal, fontFamily: fontFamilies.personalizedDisplay, fontSize: 30, letterSpacing: -0.5, lineHeight: 36 },
   noneRow: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 16, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', marginTop: 18, minHeight: 52, paddingHorizontal: 16 },
   noneRowSelected: { backgroundColor: colors.charcoal, borderColor: colors.charcoal },
+  pressed: { opacity: 0.78 },
   noneRowText: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 15 },
   noneRowTextSelected: { color: '#FFFFFF' },
   group: { marginTop: 24 },

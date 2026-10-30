@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +26,10 @@ import { KikoOnboardingArtwork } from '../components/KikoOnboardingArtwork';
 import { OnboardingBackButton } from '../components/OnboardingBackButton';
 import { ONBOARDING_BACK_ROW_HEIGHT, ONBOARDING_BACK_ROW_TOP_GAP, ONBOARDING_HORIZONTAL_PADDING } from '../components/onboardingLayout';
 import { OnboardingCTA } from '../components/OnboardingCTA';
+import { MacrosFoodFirstScreen } from './MacrosFoodFirstScreen';
+import { AgeEligibilityScreen } from './AgeEligibilityScreen';
+import { usesFoodFirstMacros } from '../state/macrosFoodFirst';
+import { getOnboardingGoalCardLayout } from '../../utils/responsiveLayout';
 import type { OnboardingV3State } from '../controller/onboardingV3Machine';
 import {
   PRIMARY_GOALS,
@@ -40,6 +45,7 @@ import {
   type PrimaryGoal,
   type SecondaryGoal,
 } from '../state/personalizedOnboarding';
+import { planReadyCopy, savingsFutureCopy, savingsInsightCopy, savingsRevealCopy } from '../state/personalizedCopy';
 
 type Props = {
   state: OnboardingV3State;
@@ -48,8 +54,12 @@ type Props = {
   onContinue: () => void;
   onDietary: (preferences: FoodPreferences) => void;
   onGoal: (goal: PrimaryGoal) => void;
+  onSkipGoalPersonalization: () => void;
   onHoldComplete: () => void;
   onName: (name: string) => void;
+  onSkipName: () => void;
+  onAgeEligibility: (value: import('../state/personalizedOnboarding').AgeEligibility) => void;
+  onAgeValue: (value: number) => void;
   onSecondaryGoals: (goals: SecondaryGoal[]) => void;
 };
 
@@ -67,8 +77,10 @@ const food = {
 
 export function PersonalizedOnboardingScreen(props: Props) {
   const { state } = props;
-  if (state.step === 'name') return <NameStep initialName={state.profile.name} onBack={props.onBack} onSubmit={props.onName} />;
-  if (state.step === 'primaryGoal') return <PrimaryGoalStep selected={state.profile.primaryGoal} onBack={props.onBack} onSelect={props.onGoal} />;
+  if (usesFoodFirstMacros(state.profile) && ['branchIntro', 'question1', 'question2', 'branchDemo'].includes(state.step)) return <MacrosFoodFirstScreen step={state.step} profile={state.profile} onAnswer={props.onAnswer} onBack={props.onBack} onContinue={props.onContinue} />;
+  if (state.step === 'name') return <NameStep initialName={state.profile.name} onBack={props.onBack} onSkip={props.onSkipName} onSubmit={props.onName} />;
+  if (state.step === 'ageEligibility') return <AgeEligibilityScreen age={state.profile.age ?? null} onBack={props.onBack} onContinue={props.onContinue} onSelect={props.onAgeEligibility} onAgeChange={props.onAgeValue} selected={state.profile.ageEligibility} />;
+  if (state.step === 'primaryGoal') return <PrimaryGoalStep selected={state.profile.primaryGoal} onBack={props.onBack} onSelect={props.onGoal} onSkipPersonalization={props.onSkipGoalPersonalization} />;
   if (state.step === 'branchIntro') return <BranchIntro goal={requireGoal(state)} onBack={props.onBack} onContinue={props.onContinue} />;
   if (questionSteps.includes(state.step as (typeof questionSteps)[number])) return <QuestionStep {...props} step={state.step as (typeof questionSteps)[number]} />;
   if (state.step === 'holdReveal') {
@@ -83,7 +95,7 @@ export function PersonalizedOnboardingScreen(props: Props) {
   return null;
 }
 
-function NameStep({ initialName, onBack, onSubmit }: { initialName: string; onBack: () => void; onSubmit: (name: string) => void }) {
+function NameStep({ initialName, onBack, onSkip, onSubmit }: { initialName: string; onBack: () => void; onSkip: () => void; onSubmit: (name: string) => void }) {
   const [name, setName] = useState(initialName);
   const trimmed = name.trim();
   return (
@@ -95,19 +107,27 @@ function NameStep({ initialName, onBack, onSubmit }: { initialName: string; onBa
           <TextInput accessibilityLabel="Your name" autoCapitalize="words" autoCorrect={false} maxLength={40} onChangeText={setName} onSubmitEditing={() => trimmed && onSubmit(trimmed)} placeholder="Your name" placeholderTextColor={colors.muted} returnKeyType="done" style={styles.nameInput} value={name} />
           <Text style={styles.microcopy}>No account or email needed.</Text>
         </View>
-        <Footer><OnboardingCTA disabled={!trimmed} label="Continue" onPress={() => onSubmit(trimmed)} variant="questionnaire" /></Footer>
+        <Footer>
+          <OnboardingCTA disabled={!trimmed} label="Continue" onPress={() => onSubmit(trimmed)} variant="questionnaire" />
+          <Pressable accessibilityLabel="Skip name" accessibilityRole="button" onPress={onSkip} style={styles.skipName}><Text style={styles.skipNameText}>Skip name</Text></Pressable>
+        </Footer>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-function PrimaryGoalStep({ selected, onBack, onSelect }: { selected: PrimaryGoal | null; onBack: () => void; onSelect: (goal: PrimaryGoal) => void }) {
+function PrimaryGoalStep({ selected, onBack, onSelect, onSkipPersonalization }: { selected: PrimaryGoal | null; onBack: () => void; onSelect: (goal: PrimaryGoal) => void; onSkipPersonalization: () => void }) {
+  const { height } = useWindowDimensions();
+  const cardLayout = getOnboardingGoalCardLayout(height);
   return (
     <SimpleShell onBack={onBack} scroll>
-      <Text style={styles.displayTitle}>What would you like Okyo to make easier?</Text>
-      <View style={styles.goalList}>
-        {PRIMARY_GOALS.map((goal) => <GoalCard key={goal} goal={goal} selected={selected === goal} onPress={() => onSelect(goal)} />)}
+      <Text style={styles.goalHeadline}>What would you like Okyo to make easier?</Text>
+      <View style={[styles.goalList, { gap: cardLayout.gap }]}>
+        {PRIMARY_GOALS.map((goal) => <GoalCard key={goal} goal={goal} layout={cardLayout} selected={selected === goal} onPress={() => onSelect(goal)} />)}
       </View>
+      <Pressable accessibilityLabel="I don’t want personalization" accessibilityHint="Skip personalization and continue to sign-in" accessibilityRole="button" onPress={onSkipPersonalization} style={({ pressed }) => [styles.skipGoal, pressed && styles.pressed]} testID="skip-goal-personalization">
+        <Text style={styles.skipGoalText}>I don’t want personalization</Text>
+      </Pressable>
     </SimpleShell>
   );
 }
@@ -207,11 +227,11 @@ function StoryStep({ state, step, onBack, onContinue }: { state: OnboardingV3Sta
 function SavingsStory({ state, step }: { state: OnboardingV3State; step: Exclude<Parameters<typeof StoryStep>[0]['step'], 'nutritionTargets'> }) {
   if (step === 'branchReveal') {
     const annual = annualTakeoutSpend(state.profile);
-    return <><AssignedKiko goal="save_money" step={step} /><Text style={styles.heroTitle}>That’s roughly what takeout adds up to in a year.</Text><View style={[styles.moneyResult, styles.moneyResultTall]}><Text style={styles.moneyCaption}>ESTIMATED YEARLY SPEND</Text><Text style={styles.moneyValue}>${annual.toLocaleString()}</Text><Text style={styles.disclosure}>Based on your takeout frequency and typical meal price.</Text></View></>;
+    return <><AssignedKiko goal="save_money" step={step} /><Text style={styles.heroTitle}>{savingsRevealCopy(state.profile.name)}</Text><View style={[styles.moneyResult, styles.moneyResultTall]}><Text style={styles.moneyCaption}>ESTIMATED YEARLY SPEND</Text><Text style={styles.moneyValue}>${annual.toLocaleString()}</Text><Text style={styles.disclosure}>Based on your takeout frequency and typical meal price.</Text></View></>;
   }
-  if (step === 'branchInsight') return <><AssignedKiko goal="save_money" step="branchDemo" /><Text style={styles.heroTitle}>{savingsEncouragement(state.profile.savings.orderingFriction, state.profile.savings.realisticCookingFrequency)}</Text><Text style={styles.storyBody}>Your plan will prioritize recipes that fit your real routine.</Text></>;
+  if (step === 'branchInsight') return <><AssignedKiko goal="save_money" step="branchDemo" /><Text style={styles.heroTitle}>{savingsInsightCopy(state.profile.name, savingsEncouragement(state.profile.savings.orderingFriction, state.profile.savings.realisticCookingFrequency))}</Text><Text style={styles.storyBody}>Your plan will prioritize recipes that fit your real routine.</Text></>;
   if (step === 'branchDemo') { const orderCost = state.profile.savings.spendPerMeal ?? 0; const homeCost = estimatedHomeMealCost(state.profile); return <><AssignedKiko goal="save_money" step={step} /><Text style={styles.heroTitle}>What if ${orderCost} became about ${Math.round(homeCost)}?</Text><FoodHero source={food.savings} /><ComparisonStrip left={`$${orderCost} order`} right={`~$${Math.round(homeCost)} at home`} /><Text style={styles.disclosure}>Cautious homemade ingredient estimate.</Text></>; }
-  return <><Text style={styles.heroTitle}>One home meal a week can change the picture.</Text><SavingsGraph amount={conservativeAnnualProjection(state.profile)} /></>;
+  return <><Text style={styles.heroTitle}>{savingsFutureCopy(state.profile.name)}</Text><SavingsGraph amount={conservativeAnnualProjection(state.profile)} /></>;
 }
 
 function HealthStory({ step }: { step: Exclude<Parameters<typeof StoryStep>[0]['step'], 'nutritionTargets'> }) {
@@ -252,7 +272,7 @@ function PlanReadyStep({ state, onBack, onContinue }: { state: OnboardingV3State
   const goal = requireGoal(state);
   const assignment = getKikoOnboardingAssignment('shared', 'personalized-plan-ready');
   const details = goal === 'save_money' ? [`Takeout: ${state.profile.savings.takeoutFrequency ?? '—'}`, `Hands-on cooking: ${state.profile.savings.handsOnTimeMinutes ?? '—'} min`, `Cooking for: ${state.profile.savings.householdSize ?? '—'}`] : goal === 'eat_healthier' ? [`Focus: ${state.profile.health.healthGoals.join(', ') || 'Balanced meals'}`, `Hardest meals: ${state.profile.health.difficultMeals.join(', ') || '—'}`, `Nutrition: ${state.profile.health.trackingPreference ?? 'As you like'}`] : [`${state.profile.nutritionTargets?.calories ?? '—'} cal/day`, `${state.profile.nutritionTargets?.proteinGrams ?? '—'}g protein`, `Training: ${state.profile.nutritionProfile.trainingDaysPerWeek ?? '—'} days/week`];
-  return <BranchShell background={goal === 'save_money' ? '#EAF8E8' : undefined} footer={<OnboardingCTA label="Continue" onPress={onContinue} />} goal={goal} onBack={onBack} scroll>{assignment?.assetId && assignment.size !== 'none' ? <KikoOnboardingArtwork assetId={assignment.assetId} sizeRole={assignment.size} style={styles.planKiko} /> : null}<Text style={styles.heroTitle}>Your Okyo plan{state.profile.name ? `, ${state.profile.name}` : ''}</Text><View style={styles.planDetails}>{details.map((detail) => <Text key={detail} style={styles.planDetail}>{detail}</Text>)}</View><View style={styles.benefitCard}>{personalizedGoalContent[goal].planBenefits.map((benefit) => <View key={benefit} style={styles.benefitRow}><Check color={colors.green} height={19} strokeWidth={3} width={19} /><Text style={styles.benefitText}>{benefit}</Text></View>)}</View></BranchShell>;
+  return <BranchShell background={goal === 'save_money' ? '#EAF8E8' : undefined} footer={<OnboardingCTA label="Continue" onPress={onContinue} />} goal={goal} onBack={onBack} scroll>{assignment?.assetId && assignment.size !== 'none' ? <KikoOnboardingArtwork assetId={assignment.assetId} sizeRole={assignment.size} style={styles.planKiko} /> : null}<Text style={styles.heroTitle}>{planReadyCopy(state.profile.name)}</Text><View style={styles.planDetails}>{details.map((detail) => <Text key={detail} style={styles.planDetail}>{detail}</Text>)}</View><View style={styles.benefitCard}>{personalizedGoalContent[goal].planBenefits.map((benefit) => <View key={benefit} style={styles.benefitRow}><Check color={colors.green} height={19} strokeWidth={3} width={19} /><Text style={styles.benefitText}>{benefit}</Text></View>)}</View></BranchShell>;
 }
 
 function SavingsIntroVisual() { return <View style={styles.coinStage}><View style={styles.coinBack}><Text style={styles.coinText}>$</Text></View><View style={styles.receipt}><Text style={styles.receiptSmall}>THIS WEEK</Text><Text style={styles.receiptValue}>$94</Text><View style={styles.receiptLine} /><View style={styles.receiptLine} /><View style={[styles.receiptLine, { width: '52%' }]} /></View></View>; }
@@ -272,7 +292,7 @@ function AssignedKiko({ goal, step }: { goal: PrimaryGoal; step: 'branchReveal' 
   if (!moment) return null;
   const assignment = getKikoOnboardingAssignment(goalToRegistryBranch(goal), moment);
   if (!assignment?.assetId || assignment.size === 'none') return null;
-  return <KikoOnboardingArtwork assetId={assignment.assetId} sizeRole={assignment.size} style={styles.storyKiko} />;
+  return <KikoOnboardingArtwork assetId={assignment.assetId} moment={assignment.moment} sizeRole={assignment.size} style={styles.storyKiko} />;
 }
 
 function savingsEncouragement(friction: string[], frequency: string | null): string { if (friction.includes("I'm missing ingredients")) return 'We’ll start with more of what you already have.'; if (friction.includes("I don't have much time")) return 'We’ll prioritize meals that fit your available time.'; if (friction.includes("I don't know what to make")) return 'We’ll make choosing a cheaper meal feel easier.'; return frequency ? `We’ll make ${frequency.toLowerCase()} feel realistic.` : 'We’ll make the cheaper choice easier.'; }
@@ -280,12 +300,12 @@ function BranchShell({ children, footer, goal, onBack, scroll = false, backgroun
 function SimpleShell({ children, footer, onBack, scroll = false, background = colors.background }: { children: ReactNode; footer?: ReactNode; onBack: () => void; scroll?: boolean; background?: string }) { const content = scroll ? <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>{children}</ScrollView> : <View style={styles.centerContent}>{children}</View>; return <SafeAreaView edges={['top', 'bottom']} style={[styles.safeArea, { backgroundColor: background }]}><Header onBack={onBack} />{content}{footer ? <Footer>{footer}</Footer> : null}</SafeAreaView>; }
 function Header({ onBack }: { onBack: () => void }) { return <View style={styles.header}><OnboardingBackButton onPress={onBack} /></View>; }
 function Footer({ children }: { children: ReactNode }) { return <View style={styles.footer}>{children}</View>; }
-function GoalCard({ goal, selected, onPress }: { goal: PrimaryGoal; selected: boolean; onPress: () => void }) {
+function GoalCard({ goal, selected, onPress, layout }: { goal: PrimaryGoal; selected: boolean; onPress: () => void; layout: ReturnType<typeof getOnboardingGoalCardLayout> }) {
   const artwork = goal === 'save_money'
     ? require('../../../assets/onboarding-v3/stickers/fox-holding-carrot.png')
     : goal === 'eat_healthier'
       ? require('../../../assets/onboarding-v3/stickers/fox-drinking-water.png')
-      : require('../../../assets/onboarding-v3/stickers/fox-questioning.png');
+      : require('../../../assets/onboarding-v3/stickers/fox-dumbbell-curl.png');
   const advancing = useRef(false);
   const [isPressed, setIsPressed] = useState(false);
   const chooseGoal = () => {
@@ -295,7 +315,7 @@ function GoalCard({ goal, selected, onPress }: { goal: PrimaryGoal; selected: bo
     setTimeout(onPress, 280);
   };
   const active = selected || isPressed;
-  return <Pressable accessibilityLabel={primaryGoalLabels[goal]} accessibilityRole="button" onPress={chooseGoal} style={[styles.goalCard, active && styles.goalCardSelected, onboardingShadow]}><View style={styles.goalIcon}><Image accessibilityIgnoresInvertColors source={artwork} resizeMode="contain" style={styles.goalArtwork} /></View><Text style={[styles.goalText, active && styles.goalTextSelected]}>{primaryGoalLabels[goal]}</Text><Text style={[styles.goalArrow, active && styles.goalTextSelected]}>→</Text></Pressable>;
+  return <Pressable accessibilityLabel={primaryGoalLabels[goal]} accessibilityRole="button" onPress={chooseGoal} style={[styles.goalCard, { minHeight: layout.minHeight, paddingVertical: layout.paddingVertical }, active && styles.goalCardSelected, onboardingShadow]}><View style={styles.goalIcon}><Image accessibilityIgnoresInvertColors source={artwork} resizeMode="contain" style={styles.goalArtwork} /></View><Text style={[styles.goalText, active && styles.goalTextSelected]}>{primaryGoalLabels[goal]}</Text><Text style={[styles.goalArrow, active && styles.goalTextSelected]}>→</Text></Pressable>;
 }
 function OptionCard({ label, selected, onPress, badge, tone }: { label: string; selected: boolean; onPress: () => void; badge?: string; tone?: PrimaryGoal }) { return <Pressable accessibilityLabel={badge ? `${label}, ${badge}` : label} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={onPress} style={({ pressed }) => [styles.option, selected && styles.optionSelected, tone === 'hit_macros' && styles.optionMacro, onboardingShadow, pressed && styles.pressed]}><Text style={[styles.optionText, selected && styles.optionTextSelected]}>{label}</Text>{badge ? <Text style={styles.badge}>{badge}</Text> : null}{selected ? <Check color="#FFFFFF" height={21} strokeWidth={3} width={21} /> : null}</Pressable>; }
 function OptionChip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) { return <Pressable accessibilityLabel={label} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={onPress} style={[styles.chip, selected && styles.chipSelected, onboardingShadow]}><Text style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</Text></Pressable>; }
@@ -305,9 +325,9 @@ function sectionForQuestion(goal: PrimaryGoal, index: number) { if (goal === 'hi
 function goalToRegistryBranch(goal: PrimaryGoal): KikoOnboardingBranch { return goal === 'save_money' ? 'saveMoney' : goal === 'eat_healthier' ? 'eatHealthier' : 'hitMacros'; }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1 }, flex: { flex: 1 }, header: { alignItems: 'flex-start', minHeight: ONBOARDING_BACK_ROW_HEIGHT, paddingHorizontal: ONBOARDING_HORIZONTAL_PADDING, paddingTop: ONBOARDING_BACK_ROW_TOP_GAP }, centerContent: { flex: 1, justifyContent: 'center', paddingBottom: 22, paddingHorizontal: 24 }, scrollContent: { paddingBottom: 32, paddingHorizontal: 24, paddingTop: 12 }, footer: { paddingBottom: 8, paddingHorizontal: 0, paddingTop: 10 },
-  displayTitle: { ...onboardingTitleFont, color: colors.charcoal, fontSize: 36, letterSpacing: -0.6, lineHeight: 42 }, heroTitle: { ...onboardingTitleFont, color: colors.charcoal, fontSize: 34, letterSpacing: -0.7, lineHeight: 39, marginBottom: 18, textAlign: 'center' }, macroHero: { color: '#20212A' }, questionTitle: { ...onboardingTitleFont, color: colors.charcoal, fontSize: 34, letterSpacing: -0.4, lineHeight: 40 }, microcopy: { color: colors.muted, fontFamily: fontFamilies.medium, fontSize: 12, marginTop: 10, textAlign: 'center' }, storyBody: { color: colors.body, fontFamily: fontFamilies.medium, fontSize: 17, lineHeight: 24, marginBottom: 24, textAlign: 'center' },
-  nameInput: { backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 24, borderWidth: 1, color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 28, lineHeight: 34, marginTop: 30, minHeight: 76, paddingHorizontal: 20, paddingVertical: 0, textAlignVertical: 'center' }, goalList: { gap: 14, marginTop: 20 }, goalCard: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 26, borderWidth: 1, flexDirection: 'row', minHeight: 176, paddingHorizontal: 22, paddingVertical: 20 }, goalCardSelected: { backgroundColor: '#FFA8C2', borderColor: '#FFA8C2' }, goalIcon: { alignItems: 'center', height: 82, justifyContent: 'center', width: 82 }, goalArtwork: { height: 82, width: 82 }, goalText: { color: colors.charcoal, flex: 1, fontFamily: fontFamilies.bold, fontSize: 22, marginLeft: 16 }, goalTextSelected: { color: '#FFFFFF' }, goalArrow: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 25 },
+  safeArea: { flex: 1 }, flex: { flex: 1 }, header: { alignItems: 'flex-start', minHeight: ONBOARDING_BACK_ROW_HEIGHT, paddingHorizontal: ONBOARDING_HORIZONTAL_PADDING, paddingTop: ONBOARDING_BACK_ROW_TOP_GAP }, centerContent: { flex: 1, justifyContent: 'center', paddingBottom: 22, paddingHorizontal: 24 }, scrollContent: { paddingBottom: 32, paddingHorizontal: 24, paddingTop: 12 }, footer: { paddingBottom: 8, paddingHorizontal: 0, paddingTop: 10 }, skipName: { alignItems: 'center', paddingVertical: 14 }, skipNameText: { color: colors.muted, fontFamily: fontFamilies.semibold, fontSize: 14 },
+  displayTitle: { ...onboardingTitleFont, color: colors.charcoal, fontSize: 36, letterSpacing: -0.6, lineHeight: 42 }, goalHeadline: { ...onboardingTitleFont, color: colors.charcoal, fontSize: 28, letterSpacing: -0.4, lineHeight: 34 }, heroTitle: { ...onboardingTitleFont, color: colors.charcoal, fontSize: 34, letterSpacing: -0.7, lineHeight: 39, marginBottom: 18, textAlign: 'center' }, macroHero: { color: '#20212A' }, questionTitle: { ...onboardingTitleFont, color: colors.charcoal, fontSize: 34, letterSpacing: -0.4, lineHeight: 40 }, microcopy: { color: colors.muted, fontFamily: fontFamilies.medium, fontSize: 12, marginTop: 10, textAlign: 'center' }, storyBody: { color: colors.body, fontFamily: fontFamilies.medium, fontSize: 17, lineHeight: 24, marginBottom: 24, textAlign: 'center' },
+  nameInput: { backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 24, borderWidth: 1, color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 28, lineHeight: 34, marginTop: 30, minHeight: 76, paddingHorizontal: 20, paddingVertical: 0, textAlignVertical: 'center' }, goalList: { gap: 14, marginTop: 20 }, skipGoal: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 18, borderWidth: 1, justifyContent: 'center', marginTop: 16, minHeight: 58, paddingHorizontal: 16, paddingVertical: 12 }, skipGoalText: { color: colors.charcoal, fontFamily: fontFamilies.semibold, fontSize: 15, lineHeight: 22, textAlign: 'center' }, goalCard: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 26, borderWidth: 1, flexDirection: 'row', minHeight: 176, paddingHorizontal: 22, paddingVertical: 20 }, goalCardSelected: { backgroundColor: '#FFA8C2', borderColor: '#FFA8C2' }, goalIcon: { alignItems: 'center', height: 82, justifyContent: 'center', width: 82 }, goalArtwork: { height: 82, width: 82 }, goalText: { color: colors.charcoal, flex: 1, fontFamily: fontFamilies.bold, fontSize: 22, marginLeft: 16, minWidth: 0 }, goalTextSelected: { color: '#FFFFFF' }, goalArrow: { color: colors.charcoal, fontFamily: fontFamilies.bold, fontSize: 25, marginLeft: 8 },
   introContent: { alignItems: 'center', flex: 1, justifyContent: 'space-around' }, introLine: { color: colors.body, fontFamily: fontFamilies.bold, fontSize: 17, textAlign: 'center' }, coinStage: { alignItems: 'center', height: 300, justifyContent: 'center', width: '100%' }, coinBack: { alignItems: 'center', backgroundColor: '#67C978', borderRadius: 110, height: 220, justifyContent: 'center', left: 10, position: 'absolute', transform: [{ rotate: '-10deg' }], width: 220 }, coinText: { color: '#DFF7DC', fontFamily: fontFamilies.personalizedDisplay, fontSize: 150 }, receipt: { backgroundColor: '#FFFFFF', borderRadius: 20, elevation: 5, padding: 22, position: 'absolute', right: 12, shadowColor: '#193E20', shadowOffset: { height: 10, width: 0 }, shadowOpacity: 0.16, shadowRadius: 18, transform: [{ rotate: '7deg' }], width: 160 }, receiptSmall: { color: colors.muted, fontFamily: fontFamilies.bold, fontSize: 10 }, receiptValue: { color: colors.charcoal, fontFamily: fontFamilies.personalizedDisplay, fontSize: 48 }, receiptLine: { backgroundColor: '#D9DED8', height: 5, marginTop: 9, width: '100%' },
   optionList: { gap: 12, marginTop: 24 }, option: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.84)', borderColor: 'rgba(34,34,38,0.06)', borderRadius: 20, borderWidth: 1, flexDirection: 'row', minHeight: 68, paddingHorizontal: 18, paddingVertical: 14 }, optionMacro: { borderRadius: 14 }, optionSelected: { backgroundColor: '#FFA8C2', borderColor: '#FFA8C2' }, optionText: { color: colors.charcoal, flex: 1, fontFamily: fontFamilies.semibold, fontSize: 15, lineHeight: 20 }, optionTextSelected: { color: '#FFFFFF' }, pressed: { opacity: 0.76 }, badge: { backgroundColor: '#DDF1E0', borderRadius: 99, color: colors.green, fontFamily: fontFamilies.bold, fontSize: 11, marginRight: 8, overflow: 'hidden', paddingHorizontal: 9, paddingVertical: 5 },
   numberStage: { alignItems: 'center', flex: 1, justifyContent: 'center', minHeight: 440 }, giantNumber: { color: colors.charcoal, fontFamily: fontFamilies.personalizedDisplay, fontSize: 100, letterSpacing: -2, lineHeight: 106 }, numberActions: { alignItems: 'center', flexDirection: 'row', gap: 14, marginTop: 28 }, roundButton: { alignItems: 'center', backgroundColor: '#FFA8C2', borderRadius: 30, height: 56, justifyContent: 'center', width: 56 }, roundButtonPressed: { opacity: 0.72 }, unitToggle: { alignItems: 'center', flexDirection: 'row', gap: 12, marginTop: 12, padding: 8 }, unitChoice: { color: colors.muted, fontFamily: fontFamilies.bold, fontSize: 14 }, unitChoiceActive: { color: '#FFA8C2' }, unitDivider: { color: colors.muted, fontFamily: fontFamilies.bold, fontSize: 18 }, roundButtonText: { color: '#FFFFFF', fontFamily: fontFamilies.bold, fontSize: 29, lineHeight: 32 }, sliderTrack: { backgroundColor: 'rgba(34,34,38,0.12)', borderRadius: 99, height: 12, overflow: 'hidden', width: 180 }, sliderFill: { backgroundColor: colors.charcoal, borderRadius: 99, height: 12 }, targetPanel: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 28, marginTop: 28, minHeight: 320, padding: 28 }, targetLabel: { color: colors.muted, fontFamily: fontFamilies.bold, fontSize: 13 },

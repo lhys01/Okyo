@@ -1,0 +1,81 @@
+---
+import Base from '../layouts/Base.astro';
+import { APPLE_SUBSCRIPTIONS_URL, SUPPORT_EMAIL, SUPPORT_MAILTO } from '../config/site';
+import '../styles/prose.css';
+
+// Steps mirror apps/mobile/src/screens/PrivacyDataScreen.tsx and SettingsScreen.tsx.
+// Re-check labels against the final release build before launch.
+---
+
+<Base
+  title="Delete your account or data"
+  description="How to delete your Okyo account or the Okyo data stored on your device."
+>
+  <div class="container page">
+    <div class="prose">
+      <h1>Delete your Okyo account or data</h1>
+      <p class="page-intro">
+        You can delete the Okyo data stored on your device, and delete a signed-in account, from
+        inside the app.
+      </p>
+
+      <section class="panel">
+        <h2>Delete your account (email and password, Google, or Apple when enabled)</h2>
+        <ol>
+          <li>Open Okyo and go to the <strong>Settings</strong> tab.</li>
+          <li>Under <strong>Privacy &amp; account</strong>, open <strong>Privacy &amp; data</strong>.</li>
+          <li>Tap <strong>Delete account</strong>, then <strong>Continue</strong>.</li>
+          <li>Confirm again by tapping <strong>Delete account</strong>.</li>
+        </ol>
+        <p>If your session has expired, Okyo asks you to sign in again first.</p>
+        <p>
+          This requests deletion of your Okyo account and associated purchase-management customer record,
+          then removes local app data after the request succeeds. It cannot be undone. Provider
+          backups and records kept for legal obligations can remain under their retention rules.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Delete your data (no account needed)</h2>
+        <ol>
+          <li>Open Okyo and go to the <strong>Settings</strong> tab.</li>
+          <li>Open <strong>Privacy &amp; data</strong>.</li>
+          <li>Tap <strong>Delete all my data</strong> and confirm.</li>
+        </ol>
+        <p>
+          This removes locally stored recipes, scan and cooking history, grocery state, preferences,
+          progress, and stored scan images. It cannot be undone. Uninstalling Okyo also removes the
+          data stored by the app on that device.
+        </p>
+      </section>
+
+      <section>
+        <h2>What deletion does not do</h2>
+        <ul>
+          <li>
+            It does not cancel an App Store subscription. Cancel it with Apple:{' '}
+            <a href={APPLE_SUBSCRIPTIONS_URL}>manage subscriptions</a>.
+          </li>
+          <li>
+            <strong>Delete all my data</strong> only removes data on this device. It does not delete
+            an account.
+          </li>
+          <li>
+            It cannot remove purchase records that Apple or RevenueCat keep, or copies an AI service
+            provider keeps, under their own retention rules.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Can't open the app?</h2>
+        <p>
+          Email <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a> and ask for your Okyo account to be
+          deleted. Say whether you signed in with email and password, Google, or Apple when Apple
+          sign-in is enabled for the release.
+        </p>
+        <p>We may need to verify your identity using account and service records before completing a request.</p>
+      </section>
+    </div>
+  </div>
+</Base>

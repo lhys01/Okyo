@@ -1,10 +1,17 @@
 export const NUTRITION_CALCULATION_VERSION = 1 as const;
 
-export type BiologicalSexForEstimate = 'female' | 'male' | 'prefer_not_to_say';
-export type ActivityLevel = 'mostly_sitting' | 'lightly_active' | 'active' | 'very_active';
-export type MacroGoal = 'lose_fat' | 'maintain' | 'build_muscle' | 'improve_performance' | 'hit_protein';
-export type GoalRate = 'slow' | 'moderate' | null;
-export type ProteinPreference = 'estimate' | 'manual';
+export type BiologicalSexForEstimate =
+  "female" | "male" | "non_binary" | "prefer_not_to_say";
+export type ActivityLevel =
+  "mostly_sitting" | "lightly_active" | "active" | "very_active";
+export type MacroGoal =
+  | "lose_fat"
+  | "maintain"
+  | "build_muscle"
+  | "improve_performance"
+  | "hit_protein";
+export type GoalRate = "slow" | "moderate" | null;
+export type ProteinPreference = "estimate" | "manual";
 
 export type NutritionProfile = {
   ageYears: number | null;
@@ -12,6 +19,8 @@ export type NutritionProfile = {
   heightCm: number | null;
   weightKg: number | null;
   activityLevel: ActivityLevel | null;
+  /** Optional weekly activity input used by the compact macros estimate. */
+  activityHoursPerWeek?: number | null;
   trainingDaysPerWeek: number | null;
   goal: MacroGoal | null;
   desiredRatePerWeek: GoalRate;
@@ -36,7 +45,7 @@ export type NutritionTargets = {
   proteinGrams: number;
   carbsGrams: number;
   fatGrams: number;
-  source: 'estimated' | 'manual_protein' | 'manual';
+  source: "estimated" | "manual_protein" | "manual";
   calculationVersion: typeof NUTRITION_CALCULATION_VERSION;
   calculatedAt: string;
 };
@@ -47,6 +56,7 @@ export const emptyNutritionProfile: NutritionProfile = Object.freeze({
   heightCm: null,
   weightKg: null,
   activityLevel: null,
+  activityHoursPerWeek: null,
   trainingDaysPerWeek: null,
   goal: null,
   desiredRatePerWeek: null,
@@ -60,23 +70,33 @@ const activityMultipliers: Record<ActivityLevel, number> = {
   active: 1.55,
   very_active: 1.725,
 };
+const validActivityHours = (hours: number | null | undefined): hours is number =>
+  typeof hours === "number" && Number.isInteger(hours) && hours >= 0 && hours <= 56;
 
 function rounded(value: number, increment = 5): number {
   return Math.round(value / increment) * increment;
 }
 
-function validProfile(profile: NutritionProfile): profile is NutritionProfile & {
+function validProfile(
+  profile: NutritionProfile,
+): profile is NutritionProfile & {
   ageYears: number;
   heightCm: number;
   weightKg: number;
-  activityLevel: ActivityLevel;
   goal: MacroGoal;
 } {
   return Boolean(
-    profile.ageYears && profile.ageYears >= 13 && profile.ageYears <= 100
-    && profile.heightCm && profile.heightCm >= 120 && profile.heightCm <= 230
-    && profile.weightKg && profile.weightKg >= 35 && profile.weightKg <= 300
-    && profile.activityLevel && profile.goal,
+    profile.ageYears &&
+    profile.ageYears >= 13 &&
+    profile.ageYears <= 100 &&
+    profile.heightCm &&
+    profile.heightCm >= 120 &&
+    profile.heightCm <= 230 &&
+    profile.weightKg &&
+    profile.weightKg >= 35 &&
+    profile.weightKg <= 300 &&
+    (validActivityHours(profile.activityHoursPerWeek) || profile.activityLevel) &&
+    profile.goal,
   );
 }
 
@@ -98,40 +118,76 @@ function validProfile(profile: NutritionProfile): profile is NutritionProfile & 
  * bypassed by a caller simply leaving the flag unset. `validProfile` above
  * already guarantees `ageYears` is a finite number here.
  */
-export function calculateNutritionTargets(profile: NutritionProfile, calculatedAt = new Date().toISOString()): NutritionTargets | null {
+export function calculateNutritionTargets(
+  profile: NutritionProfile,
+  calculatedAt = new Date().toISOString(),
+): NutritionTargets | null {
   if (!validProfile(profile)) return null;
 
   const isMinor = profile.isMinor === true || profile.ageYears < 18;
 
-  const sexAdjustment = profile.biologicalSex === 'male' ? 5 : profile.biologicalSex === 'female' ? -161 : -78;
-  const bmr = (10 * profile.weightKg) + (6.25 * profile.heightCm) - (5 * profile.ageYears) + sexAdjustment;
-  const tdee = bmr * activityMultipliers[profile.activityLevel];
-  const goalAdjustment = isMinor ? 0 : profile.goal === 'lose_fat'
-    ? profile.desiredRatePerWeek === 'moderate' ? -400 : -250
-    : profile.goal === 'build_muscle'
-      ? profile.desiredRatePerWeek === 'moderate' ? 250 : 150
-      : 0;
-  const calorieFloor = profile.biologicalSex === 'male' ? 1500 : 1200;
-  const calories = rounded(Math.max(calorieFloor, Math.min(4200, tdee + goalAdjustment)), 25);
-  const proteinPerKg = profile.goal === 'lose_fat' ? 1.8 : profile.goal === 'maintain' ? 1.6 : 1.8;
-  const estimatedProtein = rounded(Math.max(45, Math.min(profile.weightKg * 2.2, profile.weightKg * proteinPerKg)));
-  const manualProtein = profile.proteinPreference === 'manual'
-    && profile.manualProteinTargetGrams !== null
-    && profile.manualProteinTargetGrams >= 40
-    && profile.manualProteinTargetGrams <= 350
-    ? profile.manualProteinTargetGrams
-    : null;
+  const sexAdjustment =
+    profile.biologicalSex === "male"
+      ? 5
+      : profile.biologicalSex === "female"
+        ? -161
+        : -78;
+  const bmr =
+    10 * profile.weightKg +
+    6.25 * profile.heightCm -
+    5 * profile.ageYears +
+    sexAdjustment;
+  const activityMultiplier = validActivityHours(profile.activityHoursPerWeek)
+    ? 1.2 + (profile.activityHoursPerWeek / 56) * (1.725 - 1.2)
+    : activityMultipliers[profile.activityLevel!];
+  const tdee = bmr * activityMultiplier;
+  const goalAdjustment = isMinor
+    ? 0
+    : profile.goal === "lose_fat"
+      ? profile.desiredRatePerWeek === "moderate"
+        ? -400
+        : -250
+      : profile.goal === "build_muscle"
+        ? profile.desiredRatePerWeek === "moderate"
+          ? 250
+          : 150
+        : 0;
+  const calorieFloor = profile.biologicalSex === "male" ? 1500 : 1200;
+  const calories = rounded(
+    Math.max(calorieFloor, Math.min(4200, tdee + goalAdjustment)),
+    25,
+  );
+  const proteinPerKg =
+    profile.goal === "lose_fat" ? 1.8 : profile.goal === "maintain" ? 1.6 : 1.8;
+  const estimatedProtein = rounded(
+    Math.max(
+      45,
+      Math.min(profile.weightKg * 2.2, profile.weightKg * proteinPerKg),
+    ),
+  );
+  const manualProtein =
+    profile.proteinPreference === "manual" &&
+    profile.manualProteinTargetGrams !== null &&
+    profile.manualProteinTargetGrams >= 40 &&
+    profile.manualProteinTargetGrams <= 350
+      ? profile.manualProteinTargetGrams
+      : null;
   const hasValidManualProtein = manualProtein !== null;
-  const proteinGrams = manualProtein !== null ? rounded(manualProtein) : estimatedProtein;
-  const fatGrams = rounded(Math.max(profile.weightKg * 0.6, (calories * 0.25) / 9));
-  const carbsGrams = rounded(Math.max(0, (calories - proteinGrams * 4 - fatGrams * 9) / 4));
+  const proteinGrams =
+    manualProtein !== null ? rounded(manualProtein) : estimatedProtein;
+  const fatGrams = rounded(
+    Math.max(profile.weightKg * 0.6, (calories * 0.25) / 9),
+  );
+  const carbsGrams = rounded(
+    Math.max(0, (calories - proteinGrams * 4 - fatGrams * 9) / 4),
+  );
 
   return {
     calories,
     proteinGrams,
     carbsGrams,
     fatGrams,
-    source: hasValidManualProtein ? 'manual_protein' : 'estimated',
+    source: hasValidManualProtein ? "manual_protein" : "estimated",
     calculationVersion: NUTRITION_CALCULATION_VERSION,
     calculatedAt,
   };

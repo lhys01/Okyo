@@ -10,19 +10,23 @@ import {
   resolveRevenueCatConfiguration,
   type RevenueCatPlatform,
 } from './revenueCatConfig';
+import { areSubscriptionsEnabled } from './subscriptionAvailability';
+import { getAnonymousId } from '../analytics/identity';
 
 // RevenueCat is the single source of truth for entitlement state. Public SDK
 // keys are selected by build type: an explicit Test Store key in development,
 // and a platform-specific key in release builds. Missing production config
 // always fails closed and can never fall back to the Test Store.
-const configuration = resolveRevenueCatConfiguration({
-  androidKey: process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY,
-  entitlementId: process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID,
-  iosKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY,
-  isDevelopment: typeof __DEV__ !== 'undefined' && __DEV__,
-  platform: (Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : 'other') as RevenueCatPlatform,
-  testStoreKey: process.env.EXPO_PUBLIC_REVENUECAT_TEST_KEY,
-});
+const configuration = areSubscriptionsEnabled()
+  ? resolveRevenueCatConfiguration({
+      androidKey: process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY,
+      entitlementId: process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID,
+      iosKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY,
+      isDevelopment: typeof __DEV__ !== 'undefined' && __DEV__,
+      platform: (Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : 'other') as RevenueCatPlatform,
+      testStoreKey: process.env.EXPO_PUBLIC_REVENUECAT_TEST_KEY,
+    })
+  : { apiKey: null, entitlementId: null, keySource: null, reason: 'Subscriptions are disabled for this build.' };
 
 export type EntitlementState =
   | { status: 'loading' }
@@ -132,6 +136,17 @@ export async function initializeRevenueCat(): Promise<void> {
       }
 
       Purchases.configure({ apiKey: configuration.apiKey as string });
+
+      // Align the RevenueCat appUserID with the analytics anonymous_id so
+      // subscription data correlates to the same Okyo person in PostHog.
+      // Best-effort: a failure here never blocks entitlement handling.
+      try {
+        const anonymousId = await getAnonymousId();
+        await Purchases.logIn(anonymousId);
+      } catch {
+        // keep RevenueCat's own anonymous id if linking fails
+      }
+
       logDevelopmentDiagnostic('okyo_revenuecat_initialized', {
         entitlementIdConfigured: Boolean(configuration.entitlementId),
         initialized: true,
@@ -181,6 +196,43 @@ export function useEntitlement(): EntitlementState {
   }, []);
 
   return state;
+}
+
+/**
+ * Move RevenueCat from its anonymous install identity to the authenticated
+ * Clerk user. This preserves StoreKit's purchase history across devices while
+ * making the server-side deletion flow target the same app-user ID.
+ */
+export async function syncRevenueCatIdentity(userId: string): Promise<void> {
+  if (!userId || !configuration.apiKey) return;
+  await initializeRevenueCat();
+  if (latestState.status !== 'ready') return;
+  try {
+    const result = await Purchases.logIn(userId);
+    const nextState = toReadyState(result.customerInfo, latestState.offering);
+    setState(nextState);
+  } catch {
+    // Purchase state remains available under the existing identity. Auth must
+    // never fail merely because RevenueCat is temporarily unavailable.
+  }
+}
+
+/** Clears the local RevenueCat identity after sign-out or account deletion. */
+export async function resetRevenueCatIdentity(options: { strict?: boolean } = {}): Promise<void> {
+  if (!configuration.apiKey) return;
+  await initializeRevenueCat();
+  if (latestState.status !== 'ready') {
+    if (options.strict) throw new Error('RevenueCat local identity cleanup unavailable.');
+    return;
+  }
+  try {
+    const customerInfo = await Purchases.logOut();
+    setState(toReadyState(customerInfo, latestState.offering));
+  } catch {
+    if (options.strict) throw new Error('RevenueCat local identity cleanup failed.');
+    // The user has still signed out of Okyo; never retain them in the UI over
+    // a best-effort entitlement-network failure.
+  }
 }
 
 export async function purchasePackage(packageToPurchase: PurchasesPackage): Promise<RevenueCatPurchaseResult> {
@@ -256,4 +308,3 @@ function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return 'RevenueCat request failed.';
 }
-

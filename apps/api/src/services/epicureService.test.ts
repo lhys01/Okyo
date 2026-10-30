@@ -112,6 +112,30 @@ test('enrichRecipeContext uses the provider when Epicure is explicitly enabled',
   }
 });
 
+test('Epicure never calls OpenRouter with an unapproved configured model', async () => {
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    return new Response('{}', { status: 200 });
+  };
+
+  try {
+    const result = await getEpicureSuggestions(
+      ['pasta', 'tomato'],
+      makeConfig({ model: 'attacker/unapproved-model' }),
+    );
+    assert.equal(providerCalls, 0);
+    assert.deepEqual(result, {
+      complementaryIngredients: [],
+      healthySubstitutions: {},
+      budgetSubstitutions: {},
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // ── Requirement 11: missing API key handled gracefully ────────────────────────
 
 test('getEpicureSuggestions returns empty suggestions when the API key is missing', async () => {
@@ -124,6 +148,26 @@ test('getEpicureSuggestions returns empty suggestions when the API key is missin
     healthySubstitutions: {},
     budgetSubstitutions: {},
   });
+});
+
+test('provider error response text is never copied into production logs', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  const logged: string[] = [];
+  globalThis.fetch = async () => new Response('private meal description echoed by provider', { status: 502 });
+  console.error = (...args: unknown[]) => { logged.push(JSON.stringify(args)); };
+  console.warn = (...args: unknown[]) => { logged.push(JSON.stringify(args)); };
+
+  try {
+    await getEpicureSuggestions(['pasta'], makeConfig());
+    assert.equal(logged.some((line) => line.includes('private meal description echoed by provider')), false);
+    assert.ok(logged.some((line) => line.includes('502')));
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+    console.warn = originalWarn;
+  }
 });
 
 test('enrichRecipeContext returns null when there are no ingredients to enrich', async () => {

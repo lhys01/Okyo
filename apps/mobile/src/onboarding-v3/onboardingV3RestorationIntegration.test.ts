@@ -46,8 +46,8 @@ test('a brand-new install (no assignment, no V3 or V4 state) resolves to V3 whil
 
 test('OnboardingV3.tsx seeds a fresh install straight to v3 and never calls the async resolver while the switch is off', () => {
   const host = read('src/onboarding-v3/OnboardingV3.tsx');
-  assert.match(host, /useState<OnboardingV4Assignment \| null>\(ONBOARDING_V4_ENABLED \? null : 'v3'\)/);
-  assert.match(host, /if \(!ONBOARDING_V4_ENABLED\) return;/);
+  assert.match(host, /useState<OnboardingV4Assignment \| null>\(canonicalOnboardingConfig\.v4Enabled \? null : 'v3'\)/);
+  assert.match(host, /if \(!canonicalOnboardingConfig\.v4Enabled\) return;/);
 });
 
 test('a stored v4 assignment is still overridden while the switch is off', () => {
@@ -69,10 +69,10 @@ test('only one onboarding engine mounts: OnboardingV3.tsx is a single top-level 
   const returnsInEntryFunction = host
     .slice(host.indexOf('export function OnboardingV3'), host.indexOf('function LegacyOnboardingV3'))
     .match(/return\s*\(?\s*</g) ?? [];
-  // Exactly 3 JSX returns in the entry component: the loading placeholder,
+  // Four JSX returns: two loading gates (assignment and question variant),
   // <OnboardingV4 .../>, and <LegacyOnboardingV3 .../> — never both engines
   // in the same return.
-  assert.equal(returnsInEntryFunction.length, 3);
+  assert.equal(returnsInEntryFunction.length, 4);
 });
 
 test('V4 remains fully wired and importable — the rollback hid it, it did not delete it', () => {

@@ -2,6 +2,19 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { PurchasesPackage } from 'react-native-purchases';
 
 import { analyticsEvents, track } from '../../analytics/track';
+import { onboardingQuestionExperiment } from '../state/onboardingQuestionExperiment';
+import { onboardingAnalyticsStage } from '../../analytics/sanitize';
+import { authPromptPersistence } from '../../auth/authPromptPersistence';
+import { commitCanonicalOnboardingCompletion as commitCanonicalCompletionTransaction } from '../../onboarding/canonical/completion';
+import { tourPersistence } from '../../tour/tourPersistence';
+import { createCanonicalDietaryHandoff } from '../../onboarding/canonical/dietary';
+import { createCanonicalLifecycleCoordinator } from '../../onboarding/canonical/lifecycleCoordinator';
+import { runCanonicalHydrationEffect } from '../../onboarding/canonical/hydrationEffectRunner';
+import {
+  canRunCanonicalProfilePersistence,
+  runCanonicalProfilePersistenceEffect,
+} from '../../onboarding/canonical/profilePersistenceEffectRunner';
+import { canonicalOnboardingPersistence } from '../../onboarding/canonical/persistence';
 import {
   ApiClientError,
 } from '../../api/client';
@@ -25,7 +38,7 @@ import { copyToDocuments } from '../../utils/scanImageStorage';
 import type { AttributionSource } from '../state/attribution';
 import { buildGoalContext } from '../state/goalContext';
 import { onboardingV3Persistence } from '../state/onboardingV3Persistence';
-import type { PersonalizedAnswer, PersonalizedOnboardingProfile, PrimaryGoal, SecondaryGoal } from '../state/personalizedOnboarding';
+import type { AgeEligibility, PersonalizedAnswer, PersonalizedOnboardingProfile, PrimaryGoal, SecondaryGoal } from '../state/personalizedOnboarding';
 import { onboardingV3Log } from '../utils/onboardingV3Log';
 import { runOnboardingAnalysis, runOnboardingRecipeGeneration } from './onboardingV3Requests';
 import {
@@ -36,15 +49,24 @@ import {
   type OnboardingV3Error,
   type OnboardingV3Event,
   type OnboardingV3State,
+  type OnboardingV3Step,
 } from './onboardingV3Machine';
 
 type OnboardingRecipeResult = Omit<CreateScanResult, 'source'> & { source?: ScanSource };
 type AnalysisRejectionError = { kind: 'ingredients_only' | 'not_food' | 'unclear'; message: string };
 
+const canonicalLifecycleCoordinator = createCanonicalLifecycleCoordinator({
+  readSnapshot: () => canonicalOnboardingPersistence.readSnapshot(),
+  readMascotName: () => onboardingV3Persistence.readMascotName(),
+  readAttribution: () => onboardingV3Persistence.readAttribution(),
+  readDietaryPreferences: () => foodPreferencesPersistence.read(),
+  writeSnapshot: (snapshot) => canonicalOnboardingPersistence.writeSnapshot(snapshot),
+});
+
 export function useOnboardingV3Controller() {
   const [state, rawDispatch] = useReducer(onboardingV3Reducer, initialOnboardingV3State);
   const [isPurchaseBusy, setIsPurchaseBusy] = useState(false);
-  const [showcaseInitialPage, setShowcaseInitialPage] = useState(0);
+  const showcaseInitialPage = 0;
   const stateRef = useRef(state);
   const hydratedRef = useRef(false);
   const pendingSplashRef = useRef<{ elapsedMs: number; fontsLoaded: boolean } | null>(null);
@@ -55,10 +77,22 @@ export function useOnboardingV3Controller() {
   const recipeRequestIdRef = useRef<string | null>(null);
   const didCompleteRef = useRef(false);
   const branchPreviewCompletionBusyRef = useRef(false);
+  const skipGoalPersonalizationBusyRef = useRef(false);
+  const profilePersistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
   const purchaseBusyRef = useRef(false);
-  const completionPathRef = useRef<'purchase' | 'restore' | 'dev_bypass' | 'branch_preview' | null>(null);
+  const completionPathRef = useRef<'purchase' | 'restore' | 'free' | 'dev_bypass' | 'branch_preview' | 'personalization_declined' | null>(null);
 
   stateRef.current = state;
+
+  useEffect(() => {
+    if (state.step === 'splash') track(analyticsEvents.ONBOARDING_START, { flow: 'onboarding_v3' });
+    else if (state.step === 'complete') {
+      void onboardingQuestionExperiment.getAssignment().then((variant) => {
+        track(analyticsEvents.ONBOARDING_COMPLETE, { flow: 'onboarding_v3', experiment_name: 'branch_questions_v1', experiment_variant: variant });
+      });
+    }
+    else track(analyticsEvents.ONBOARDING_SCREEN_VIEWED, { flow: 'onboarding_v3', step: onboardingAnalyticsStage(state.step) });
+  }, [state.step]);
 
   const dispatch = useCallback((event: OnboardingV3Event) => {
     const current = stateRef.current;
@@ -77,46 +111,62 @@ export function useOnboardingV3Controller() {
     // completed, do not dispatch HYDRATE into a later machine step.
     if (hydratedRef.current) return undefined;
     let mounted = true;
-    Promise.all([
-      onboardingV3Persistence.readPersonalizedProfile(),
-      onboardingV3Persistence.readPersonalizedProgress(),
-      onboardingV3Persistence.readMascotName(),
-      onboardingV3Persistence.readAttribution(),
-      foodPreferencesPersistence.read(),
-    ])
-      .then(([profile, resumeStep, mascotName, attribution, dietaryPreferences]) => {
-        if (!mounted) return;
-        dispatch({ type: 'HYDRATE', profile: { ...profile, dietaryPreferences }, resumeStep, mascotName, attribution });
-      })
-      .catch((error: unknown) => {
+    void runCanonicalHydrationEffect({
+      hydrate: () => canonicalLifecycleCoordinator.hydrate(),
+      isMounted: () => mounted,
+      dispatchHydration: (hydration) => {
+        dispatch({
+          type: 'HYDRATE',
+          ...hydration,
+        });
+      },
+      logHydrationError: (error) => {
         onboardingV3Log('hydration_failed', { error: String(error) });
-      })
-      .finally(() => {
-        if (!mounted) return;
+      },
+      markHydrated: () => {
         hydratedRef.current = true;
+      },
+      takeDeferredSplashCompletion: () => {
         const pending = pendingSplashRef.current;
         if (pending) {
           pendingSplashRef.current = null;
-          dispatch({ type: 'SPLASH_FINISHED', ...pending });
         }
-      });
+        return pending;
+      },
+      dispatchDeferredSplashCompletion: (pending) => {
+        dispatch({ type: 'SPLASH_FINISHED', ...pending });
+      },
+    });
     return () => { mounted = false; };
   }, [dispatch]);
 
   const commitCanonicalOnboardingCompletion = useCallback(async (onPersisted?: () => void) => {
-    await onboardingPersistence.writeCompleted();
-    onPersisted?.();
-    useOkyoStore.getState().completeOnboarding();
+    await commitCanonicalCompletionTransaction({
+      prepareTour: () => tourPersistence.resetStatus(),
+      writeCompletion: () => onboardingPersistence.writeCompleted(),
+      activateApp: () => {
+        onPersisted?.();
+        useOkyoStore.getState().completeOnboarding();
+      },
+    });
     onboardingV3Log('completed', { path: completionPathRef.current ?? 'purchase' });
-    track(analyticsEvents.ONBOARDING_COMPLETE, { screen: 'OnboardingV3' });
+
   }, []);
 
   useEffect(() => {
-    if (!hydratedRef.current || state.step === 'splash' || state.step === 'complete') return;
-    void Promise.all([
-      onboardingV3Persistence.writePersonalizedProfile(state.profile),
-      onboardingV3Persistence.writePersonalizedProgress(getPersistedPersonalizedStep(state.step)),
-    ]).catch((error: unknown) => onboardingV3Log('personalized_persist_failed', { error: String(error) }));
+    if (!canRunCanonicalProfilePersistence({ hydrated: hydratedRef.current, currentRoute: state.step })) return;
+    // Route changes can happen before the previous AsyncStorage write
+    // resolves. Serializing writes means an older route cannot finish last
+    // and overwrite a newer signature/account resume point.
+    const persist = () => runCanonicalProfilePersistenceEffect({
+      persistProfileSnapshot: () => canonicalLifecycleCoordinator.persistProfileSnapshot({
+        profile: state.profile,
+        currentRoute: state.step,
+        resolveResumeRoute: (route) => getPersistedPersonalizedStep(route as OnboardingV3Step),
+      }),
+      logPersistenceError: (error) => onboardingV3Log('personalized_persist_failed', { error: String(error) }),
+    });
+    profilePersistenceQueueRef.current = profilePersistenceQueueRef.current.then(persist, persist);
   }, [state.profile, state.step]);
 
   useEffect(() => () => requestControllerRef.current?.abort(), []);
@@ -161,6 +211,11 @@ export function useOnboardingV3Controller() {
     void onboardingV3Persistence.writeMascotName(raw).catch((error: unknown) => {
       onboardingV3Log('mascot_name_persist_failed', { error: String(error) });
     });
+
+  }, [dispatch]);
+
+  const skipMascotName = useCallback(() => {
+    dispatch({ type: 'MASCOT_NAME_SKIPPED' });
   }, [dispatch]);
 
   const submitName = useCallback((raw: string) => {
@@ -168,14 +223,40 @@ export function useOnboardingV3Controller() {
     onboardingV3Log('user_named', { length: raw.trim().length });
   }, [dispatch]);
 
+  const skipName = useCallback(() => {
+    dispatch({ type: 'NAME_SKIPPED' });
+    onboardingV3Log('user_name_skipped');
+  }, [dispatch]);
+
+  const selectAgeEligibility = useCallback((value: AgeEligibility) => {
+    dispatch({ type: 'AGE_ELIGIBILITY_SELECTED', value });
+  }, [dispatch]);
+  const selectAgeValue = useCallback((value: number) => {
+    dispatch({ type: 'AGE_VALUE_CHANGED', value });
+  }, [dispatch]);
+
   const selectPrimaryGoal = useCallback((goal: PrimaryGoal) => dispatch({ type: 'PRIMARY_GOAL_SELECTED', goal }), [dispatch]);
+  const skipGoalPersonalization = useCallback(async () => {
+    if (stateRef.current.step !== 'primaryGoal' || didCompleteRef.current || skipGoalPersonalizationBusyRef.current) return;
+    skipGoalPersonalizationBusyRef.current = true;
+    try {
+      await authPromptPersistence.reset();
+      completionPathRef.current = 'personalization_declined';
+      useOkyoStore.getState().setPersonalizationComplete(true);
+      onboardingV3Log('personalization_declined', { stage: 'sign_in_handoff' });
+      dispatch({ type: 'PERSONALIZATION_DECLINED' });
+    } finally {
+      skipGoalPersonalizationBusyRef.current = false;
+    }
+  }, [dispatch]);
   const setPersonalizedAnswer = useCallback((key: string, value: PersonalizedAnswer) => dispatch({ type: 'ANSWER_SET', key, value }), [dispatch]);
   const continuePersonalized = useCallback(() => dispatch({ type: 'CONTINUE' }), [dispatch]);
   const completeHoldReveal = useCallback(() => dispatch({ type: 'HOLD_COMPLETED' }), [dispatch]);
   const submitSecondaryGoals = useCallback((goals: SecondaryGoal[]) => dispatch({ type: 'SECONDARY_GOALS_SET', goals }), [dispatch]);
   const submitDietaryPreferences = useCallback((preferences: FoodPreferences) => {
-    dispatch({ type: 'DIETARY_SET', preferences });
-    void foodPreferencesPersistence.write(preferences).catch((error: unknown) => {
+    const handoff = createCanonicalDietaryHandoff(preferences);
+    dispatch({ type: 'DIETARY_SET', preferences: handoff.preferences });
+    void foodPreferencesPersistence.write(handoff.preferences).catch((error: unknown) => {
       onboardingV3Log('dietary_persist_failed', { error: String(error) });
     });
   }, [dispatch]);
@@ -213,8 +294,8 @@ export function useOnboardingV3Controller() {
       source,
       reason: 'OnboardingV3.analysis_started',
     });
-    track(analyticsEvents.SCAN_STARTED, { screen: 'OnboardingV3', source });
-    if (image) track(analyticsEvents.PHOTO_UPLOADED, { screen: 'OnboardingV3', source });
+
+    if (image) {}
     return scanSessionId;
   }, []);
 
@@ -242,7 +323,7 @@ export function useOnboardingV3Controller() {
         ms: Date.now() - startedAt,
         scanState: result.scanState,
       });
-      track(analyticsEvents.DISH_DETECTED, { dishName: result.dishName, screen: 'OnboardingV3' });
+
     } catch (error) {
       if (controller.signal.aborted || requestControllerRef.current !== controller) return;
       const rejection = getAnalysisRejection(error);
@@ -347,7 +428,7 @@ export function useOnboardingV3Controller() {
         recipeId,
         usedFallbackPath: Boolean(result.source),
       });
-      track(analyticsEvents.RECIPE_GENERATED, { dishName: result.scan?.dishName, screen: 'OnboardingV3' });
+
     } catch (error) {
       if (controller.signal.aborted || requestControllerRef.current !== controller) return;
       onboardingV3Log('recipe_failed', { ms: Date.now() - startedAt, reason: getSafeErrorReason(error) });
@@ -476,34 +557,55 @@ export function useOnboardingV3Controller() {
     dispatch({ type: 'DEV_BYPASS_COMPLETED' });
   }, [dispatch]);
 
-  // Stage-two branch previews have already collected their answers. Their final
-  // Done action uses the same controller completion lifecycle as the rest of V3
-  // without granting a subscription or re-entering the paywall flow.
-  const completeBranchPreview = useCallback(async () => {
+  const continueWithoutSubscription = useCallback(() => {
+    completionPathRef.current = 'free';
+    dispatch({ type: 'PAYMENTS_UNAVAILABLE_CONTINUE' });
+  }, [dispatch]);
+
+  const beginBranchPlan = useCallback(() => dispatch({ type: 'BRANCH_PLAN_READY' }), [dispatch]);
+  const setBranchAllergies = useCallback((allergies: string[]) => {
+    dispatch({ type: 'BRANCH_ALLERGIES_SET', allergies });
+  }, [dispatch]);
+  const completeBranchDietary = useCallback(() => {
+    const preferences = stateRef.current.profile.dietaryPreferences;
+    dispatch({ type: 'BRANCH_DIETARY_COMPLETED' });
+    void foodPreferencesPersistence.write(preferences).catch((error: unknown) => {
+      onboardingV3Log('dietary_persist_failed', { error: String(error) });
+    });
+  }, [dispatch]);
+  const continueBranchSignature = useCallback(() => {
+    onboardingV3Log('branch_signature_continue', { stage: 'account_handoff' });
+    dispatch({ type: 'BRANCH_SIGNATURE_COMPLETED' });
+  }, [dispatch]);
+  const editMacroPlanTargets = useCallback(() => dispatch({ type: 'MACRO_PLAN_EDIT_REQUESTED' }), [dispatch]);
+  const completeBranchAccount = useCallback(async () => {
     if (branchPreviewCompletionBusyRef.current) return;
     branchPreviewCompletionBusyRef.current = true;
     completionPathRef.current = 'branch_preview';
+    onboardingV3Log('branch_account_continue', { stage: 'completion_started' });
     try {
       await commitCanonicalOnboardingCompletion(() => {
-        // Move the controller through its canonical terminal state only after
-        // durable persistence succeeds. The app shell then switches to MainTabs.
         didCompleteRef.current = true;
-        dispatch({ type: 'BRANCH_PREVIEW_COMPLETED' });
+        dispatch({ type: 'BRANCH_ACCOUNT_COMPLETED' });
       });
-    } catch (error) {
-      didCompleteRef.current = false;
-      completionPathRef.current = null;
-      onboardingV3Log('completion_persist_failed', { error: String(error) });
-      throw error;
-    } finally {
-      branchPreviewCompletionBusyRef.current = false;
-    }
+    } finally { branchPreviewCompletionBusyRef.current = false; }
   }, [commitCanonicalOnboardingCompletion, dispatch]);
 
   const back = useCallback(() => {
-    if (stateRef.current.step === 'nameFox') setShowcaseInitialPage(6);
     if (stateRef.current.step === 'recipe') requestControllerRef.current?.abort();
     dispatch({ type: 'BACK' });
+  }, [dispatch]);
+
+  const continuePersonalization = useCallback(() => {
+    dispatch({ type: 'PERSONALIZATION_CONTINUE' });
+    useOkyoStore.getState().setPersonalizationComplete(true);
+
+  }, [dispatch]);
+
+  const skipPersonalization = useCallback(() => {
+    dispatch({ type: 'PERSONALIZATION_SKIP' });
+    useOkyoStore.getState().setPersonalizationComplete(false);
+
   }, [dispatch]);
 
   return {
@@ -515,11 +617,18 @@ export function useOnboardingV3Controller() {
     selectAttribution,
     skipAttribution,
     submitMascotName,
+    skipMascotName,
     submitName,
+    skipName,
+    selectAgeEligibility,
+    selectAgeValue,
     selectPrimaryGoal,
+    skipGoalPersonalization,
     setPersonalizedAnswer,
     continuePersonalized,
     completeHoldReveal,
+    continuePersonalization,
+    skipPersonalization,
     submitSecondaryGoals,
     submitDietaryPreferences,
     selectPhoto,
@@ -537,7 +646,13 @@ export function useOnboardingV3Controller() {
     restore,
     acceptExistingEntitlement,
     devCompleteOnboarding,
-    completeBranchPreview,
+    continueWithoutSubscription,
+    beginBranchPlan,
+    setBranchAllergies,
+    completeBranchDietary,
+    continueBranchSignature,
+    editMacroPlanTargets,
+    completeBranchAccount,
     dismissPurchaseError: () => dispatch({ type: 'PURCHASE_CANCELLED' }),
     back,
     permissionDenied: (message?: string) => dispatch({ type: 'PERMISSION_DENIED', message }),

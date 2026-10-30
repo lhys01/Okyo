@@ -27,13 +27,19 @@ function analyticsPath(): string {
 }
 
 function isEnabled(): boolean {
+  // Container-local JSONL is useful for local quality work but is neither
+  // durable nor shared across horizontal instances. Do not create unbounded
+  // production disk I/O unless an operator deliberately configured a durable
+  // mounted sink and opted in.
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.RECIPE_QUALITY_ANALYTICS === 'true';
+  }
   return process.env.RECIPE_QUALITY_ANALYTICS !== 'off';
 }
 
 export type RecipeQualityEvent = {
   timestamp: string;
   model: string;
-  dish: string;
   category: string;
   score: number;             // final coaching score 0–100 (post-repair if applied)
   initialScore: number;      // pre-repair coaching score
@@ -170,13 +176,11 @@ export async function summarizeRecipeQuality(path?: string): Promise<RecipeQuali
 
 export type PlatterCoverageEvent = {
   timestamp: string;
-  dish: string;
   model: string;
   broadDishCategory: string;
   detectedComponentCount: number;
   generatedComponentCount: number;
   missingComponentCount: number;
-  missingComponentNames: string[];    // actionable: shows WHICH components were missed
   coveragePercent: number;            // pre-repair
   finalCoveragePercent: number;       // post-repair (same as coveragePercent when repair didn't run)
   repairTriggered: boolean;

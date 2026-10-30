@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1179" height="2556" viewBox="0 0 1179 2556">
+  <rect width="1179" height="2556" fill="#FFFCF8"/>
+  <image href="/screenshots/apple/iphone/en/04-customize-it.png" x="0" y="104" width="1179" height="2452" preserveAspectRatio="xMidYMid slice"/>
+  <rect x="423" y="58" width="333" height="86" rx="43" fill="#050505"/>
+  <text x="86" y="120" fill="#26252B" font-family="Arial, sans-serif" font-size="40" font-weight="700">9:41</text>
+  <g fill="#26252B">
+    <rect x="1010" y="85" width="52" height="30" rx="7" fill="none" stroke="#26252B" stroke-width="5"/>
+    <rect x="1065" y="94" width="7" height="13" rx="3"/><rect x="1001" y="92" width="51" height="16" rx="3"/>
+    <circle cx="952" cy="101" r="7"/><circle cx="930" cy="101" r="7"/><circle cx="908" cy="101" r="7"/>
+    <path d="M844 112c19-21 50-21 69 0l-10 10c-13-14-35-14-48 0zm11 12c13-14 33-14 46 0l-10 10c-7-7-19-7-26 0zm13 13c5-5 13-5 18 0l-9 10z"/>
+  </g>
+</svg>

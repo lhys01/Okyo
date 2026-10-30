@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FormScreenSkeleton } from '../components/Skeleton';
 import type { MainTabParamList } from '../navigation/types';
 import { saveAuthoritativeDietaryPreferences } from '../state/dietaryPreferencesAuthority';
 import { EMPTY_FOOD_PREFERENCES, foodPreferencesPersistence, type FoodPreferences } from '../state/foodPreferences';
@@ -63,7 +64,7 @@ export function DietaryPreferencesScreen() {
     dislikes: DISLIKES.filter((item) => item.toLowerCase().includes(query)),
   }), [query]);
 
-  if (!preferences) return <View accessibilityLabel="Loading dietary preferences" accessibilityRole="progressbar" style={styles.loading}><ActivityIndicator color={colors.coral} /></View>;
+  if (!preferences) return <SafeAreaView style={styles.safeArea}><FormScreenSkeleton cards={5} /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safeArea}>

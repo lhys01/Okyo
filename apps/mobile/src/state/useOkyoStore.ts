@@ -6,7 +6,6 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import { analyticsEvents, track } from '../analytics/track';
 import type { AiDebugMetadata, ScanImageMetadata, ScanRejectionType, ScanSource, ScanStatus } from '../api/types';
 import {
-  mockLeaderboardEntries,
   type LeaderboardEntry,
   type Recipe,
   type RecipeMode,
@@ -38,6 +37,7 @@ import {
   type RecipePresentationMode,
 } from './canonicalRecipes';
 import { onboardingPersistence } from './onboardingPersistence';
+import { resetOnboardingSession } from './onboardingResetSession';
 import { readPrimaryGoalFromProfile } from './primaryGoalBridge';
 import type { PrimaryGoal } from '../onboarding-v3/state/personalizedOnboarding';
 import { normalizeNutritionEstimate } from '../utils/nutrition';
@@ -125,6 +125,11 @@ type LatestScanClear = {
 
 type OkyoState = {
   hasCompletedOnboarding: boolean;
+  /** In-memory route override used only after confirmed account deletion. */
+  freshOnboardingRequired: boolean;
+  // True once there is nothing left to finish. Defaults true so existing
+  // installs (from before this flag existed) never see a stray reminder.
+  personalizationComplete: boolean;
   hasHydrated: boolean;
   hasSeenOnboarding: boolean;
   onboardingGoal: OnboardingGoal | null;
@@ -165,8 +170,9 @@ type OkyoState = {
   leaderboardEntries: LeaderboardEntry[];
   completeOnboarding: () => void;
   setOnboardingCompletionFromStorage: (completed: boolean) => void;
+  setPersonalizationComplete: (complete: boolean) => void;
   setHasHydrated: (hydrated: boolean) => void;
-  resetOnboarding: () => void;
+  resetOnboarding: () => Promise<void>;
   setGoal: (goal: OnboardingGoal) => void;
   refreshPrimaryGoal: () => Promise<void>;
   setWeeklyGoal: (goal: OnboardingWeeklyGoal) => void;
@@ -230,6 +236,8 @@ export const useOkyoStore = create<OkyoState>()(
   persist(
     (set, get) => ({
       hasCompletedOnboarding: false,
+      freshOnboardingRequired: false,
+      personalizationComplete: true,
       hasHydrated: false,
       hasSeenOnboarding: false,
       onboardingGoal: null,
@@ -264,27 +272,33 @@ export const useOkyoStore = create<OkyoState>()(
       unlockedBadges: [],
       recentBadgeUnlock: null,
       awardedXpEvents: [],
-      leaderboardEntries: mockLeaderboardEntries,
+      leaderboardEntries: [],
       completeOnboarding: () => {
-        set({ hasCompletedOnboarding: true, hasSeenOnboarding: true });
+        set({ hasCompletedOnboarding: true, hasSeenOnboarding: true, freshOnboardingRequired: false });
         void readPrimaryGoalFromProfile(AsyncStorage).then((primaryGoal) => set({ primaryGoal }));
       },
       setOnboardingCompletionFromStorage: (completed) => set({ hasCompletedOnboarding: completed }),
+      setPersonalizationComplete: (complete) => set({ personalizationComplete: complete }),
       setHasHydrated: (hydrated) => set({ hasHydrated: hydrated }),
-      resetOnboarding: () => {
-        set({
-          hasCompletedOnboarding: false,
-          hasSeenOnboarding: false,
-          weeklyGoal: null,
-          mealRoutinePreference: null,
-          notificationChoice: null,
-          firstOnboardingScanCompleted: false,
-          firstOnboardingResultSeen: false,
-          paywallShown: false,
-          ...getClearedLatestScanState(),
-        });
-        onboardingPersistence.resetCompleted().catch((error: unknown) => {
-          logDev('okyo_onboarding_completion_reset_failed', { error: String(error) });
+      resetOnboarding: async () => {
+        await resetOnboardingSession({
+          resetMemory: () => set({
+            hasCompletedOnboarding: false,
+            freshOnboardingRequired: true,
+            personalizationComplete: true,
+            hasSeenOnboarding: false,
+            weeklyGoal: null,
+            mealRoutinePreference: null,
+            notificationChoice: null,
+            firstOnboardingScanCompleted: false,
+            firstOnboardingResultSeen: false,
+            paywallShown: false,
+            ...getClearedLatestScanState(),
+          }),
+          resetCompletionFlag: () => onboardingPersistence.resetCompleted(),
+          logCompletionFlagResetError: (error) => {
+            logDev('okyo_onboarding_completion_reset_failed', { error: String(error) });
+          },
         });
       },
       setGoal: (goal) => set({ onboardingGoal: goal }),
@@ -632,7 +646,7 @@ export const useOkyoStore = create<OkyoState>()(
         })),
       addXP: (points) =>
         set((state) => {
-          track(analyticsEvents.XP_EVENT_RECORDED, { xpAmount: points });
+
 
           return {
             xp: state.xp + points,
@@ -644,7 +658,7 @@ export const useOkyoStore = create<OkyoState>()(
             return state;
           }
 
-          track(analyticsEvents.XP_EVENT_RECORDED, { eventId, xpAmount: points });
+
 
           const newEvents = [...state.awardedXpEvents, eventId];
           return {
@@ -658,7 +672,7 @@ export const useOkyoStore = create<OkyoState>()(
             return state;
           }
 
-          track(analyticsEvents.BADGE_UNLOCKED, { badgeName: badgeId });
+
 
           return {
             recentBadgeUnlock: badgeId,
@@ -677,6 +691,17 @@ export const useOkyoStore = create<OkyoState>()(
           });
 
           return {
+            hasCompletedOnboarding: false,
+            personalizationComplete: true,
+            hasSeenOnboarding: false,
+            onboardingGoal: null,
+            primaryGoal: null,
+            weeklyGoal: null,
+            mealRoutinePreference: null,
+            notificationChoice: null,
+            firstOnboardingScanCompleted: false,
+            firstOnboardingResultSeen: false,
+            paywallShown: false,
             ...getEmptyCanonicalRecipeCollections(),
             activeCookingSession: null,
             completedMeals: [],
@@ -694,8 +719,8 @@ export const useOkyoStore = create<OkyoState>()(
           };
         });
         const dir = `${FileSystem.documentDirectory}okyo-scan-images/`;
-        FileSystem.deleteAsync(dir, { idempotent: true }).catch((error: unknown) => {
-          logDev('okyo_scan_images_dir_delete_failed', { dir, error: String(error) });
+        FileSystem.deleteAsync(dir, { idempotent: true }).catch(() => {
+          logDev('okyo_scan_images_dir_delete_failed', { failed: true });
         });
       },
     }),
@@ -1054,11 +1079,14 @@ function getMigratedRecipeOrigin(
 }
 
 function createLatestScanSession(scanSession: LatestScanSessionWrite): LatestScanSession {
-  const realScanImageUri = getRealScanImageUri(scanSession.selectedScanImage);
+  const realScanImageUri = scanSession.source === 'description'
+    ? null
+    : getRealScanImageUri(scanSession.selectedScanImage);
   const latestScanRecipe = attachScanImageUri(scanSession.latestScanRecipe, realScanImageUri);
 
   return {
     ...scanSession,
+    selectedScanImage: scanSession.source === 'description' ? null : scanSession.selectedScanImage,
     latestScanRecipe,
     updatedAt: new Date().toISOString(),
   };
@@ -1192,10 +1220,10 @@ function deleteUnusedScanImage(uri: string, recipesById: Record<string, Canonica
     (recipe) => recipe.imageUri === uri || recipe.originalImage?.uri === uri,
   );
   if (isReferenced) {
-    logDev('okyo_scan_image_cleanup_skipped', { uri, reason: 'referenced_by_canonical_recipe' });
+    logDev('okyo_scan_image_cleanup_skipped', { referencedByCanonicalRecipe: true });
     return;
   }
-  FileSystem.deleteAsync(uri, { idempotent: true }).catch((error: unknown) => {
-    logDev('okyo_scan_image_cleanup_failed', { uri, error: String(error) });
+  FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {
+    logDev('okyo_scan_image_cleanup_failed', { failed: true });
   });
 }

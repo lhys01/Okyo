@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { Recipe } from '../../mocks';
 import { colors, onboardingFontFamilies as fontFamilies } from '../../theme/okyoTheme';
-import { buildGuidedCookingSteps } from '../../utils/guidedCookingSteps';
+import { buildGuidedCookingSteps, getGuidedIngredientChipLabel } from '../../utils/guidedCookingSteps';
 import { getConciseGuidedInstruction } from '../../utils/guidedInstruction';
 
 export function OnboardingCookingScreen({ recipe, initialIndex = 0, onBack, onExit, onProgress, onComplete }: {
@@ -45,7 +45,7 @@ export function OnboardingCookingScreen({ recipe, initialIndex = 0, onBack, onEx
           <View style={styles.metaPill}><Clock color={colors.coralDark} height={18} width={18} /><Text style={styles.metaText}>About {step.estimatedMinutes} min</Text></View>
         ) : null}
         {step.ingredientsUsed.length ? (
-          <InfoCard title="Use now" body={step.ingredientsUsed.map((item) => `${item.quantity} ${item.name}`.trim()).join(' · ')} />
+          <InfoCard title="Use now" body={step.ingredientsUsed.map(getGuidedIngredientChipLabel).join(' · ')} />
         ) : null}
         {step.toolsUsed.length ? <InfoCard title="Tools" body={step.toolsUsed.join(' · ')} /> : null}
         {step.doneWhen ? <InfoCard title="You’re done when" body={step.doneWhen} accent /> : null}

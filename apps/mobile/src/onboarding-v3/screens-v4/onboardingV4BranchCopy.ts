@@ -27,14 +27,14 @@ import type { FuturePrimaryGoal, PrimaryGoal } from '../state/personalizedOnboar
  */
 
 export const BRANCH_Q1_TITLE: Record<FuturePrimaryGoal, string> = {
-  save_money: 'How often do you order takeout or eat out in a typical week?',
+  save_money: 'What makes cooking worth it for you?',
   eat_healthier: 'What does healthier mean for you?',
-  hit_macros: 'What are you optimizing for?',
+  hit_macros: 'Which numbers matter most?',
   not_sure: 'What sounds most useful?',
 };
 
 export const BRANCH_Q2_TITLE: Record<FuturePrimaryGoal, string> = {
-  save_money: 'About how much does one order cost?',
+  save_money: 'What does eating out usually cost?',
   eat_healthier: 'What gets in the way most?',
   hit_macros: 'Do you already know your daily targets?',
   not_sure: 'What would help most on your first recipe?',
@@ -51,10 +51,25 @@ export const SAVINGS_SPEND_MAX = 50;
 export const SAVINGS_SPEND_STEP = 5;
 export const SAVINGS_SPEND_DEFAULT = 20;
 
-export { TAKEOUT_FREQUENCY_BUCKETS as SAVINGS_Q1_OPTIONS };
-export { HEALTHIER_DEFINITIONS as HEALTH_Q1_OPTIONS };
-export { HEALTH_BARRIERS as HEALTH_Q2_OPTIONS };
-export { MACRO_FOCUSES as MACRO_Q1_OPTIONS };
+export { SAVINGS_COOKING_PRIORITIES as SAVINGS_Q1_OPTIONS } from '../state/branchContracts';
+export const HEALTH_Q1_OPTIONS = [
+  { label: 'More balanced meals', value: 'More balanced' },
+  { label: 'More plants', value: 'More vegetables' },
+  { label: 'Better portions', value: 'Better portions' },
+  { label: 'Less takeout', value: 'Less takeout' },
+] as const;
+export const HEALTH_Q2_OPTIONS = [
+  { label: 'Not enough time', value: 'Time' },
+  { label: 'Healthy meals get boring', value: 'Boring recipes' },
+  { label: 'Ingredients add up', value: 'Ingredients add up' },
+  { label: 'I never know what to make', value: 'Choosing meals' },
+] as const;
+export const MACRO_Q1_OPTIONS = [
+  { label: 'More protein', value: 'Protein' },
+  { label: 'Calories', value: 'Calories' },
+  { label: 'Balanced macros', value: 'Balanced macros' },
+  { label: 'Just show me the information', value: 'Something else' },
+] as const;
 export { UNIVERSAL_NEEDS as NOT_SURE_Q1_OPTIONS };
 
 export const MACRO_Q2_OPTIONS: readonly { label: string; value: MacroTargetPath }[] = [
@@ -118,6 +133,8 @@ export type HealthInsightContent = {
 };
 
 const HEALTH_BARRIER_NOTES: Record<HealthBranchAnswers['healthBarrier'] & string, string> = {
+  'Ingredients add up': "We'll keep ingredient choices practical, with estimated cost in view.",
+  'Choosing meals': "Start with a dish you like. We'll help with the ingredients and steps.",
   Time: "We'll prioritize recipes that fit the time you actually have.",
   Cravings: "We'll work with what you're craving, not against it.",
   'Boring recipes': "We'll keep things varied so it doesn't get repetitive.",

@@ -3,21 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.10.0 <23",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "preflight:release": "node scripts/validate-release-configuration.mjs",
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
+    "@clerk/backend": "^2.33.7",
+    "@sentry/node": "^11.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "pg": "^8.23.0",
-    "zod": "^3.23.8"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.2",

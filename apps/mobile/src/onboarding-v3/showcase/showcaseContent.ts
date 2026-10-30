@@ -5,13 +5,13 @@ export const showcaseContent = Object.freeze({
     inputMethods: ['Take photo', 'Upload photo', 'Describe a dish'],
   },
   scan: {
-    title: 'Get the ingredients and full recipe',
-    body: 'Okyo finds practical ingredients and builds clear cookbook-style steps.',
+    title: 'Scan any dish. Get the recipe.',
+    body: 'Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.',
     recipeParts: ['Practical ingredients', 'Cookbook-style steps', 'Tools included'],
   },
   customize: {
-    title: 'Make every recipe yours',
-    body: 'Change ingredients, macros, or steps in seconds.',
+    title: 'Make every recipe work for you.',
+    body: 'Add protein, lower calories, swap ingredients, or tailor any dish to how you like to eat.',
     actions: ['More protein', 'Fewer calories', 'Swap ingredient', 'Simpler steps', 'Cook step-by-step'],
   },
   savings: {
@@ -21,8 +21,12 @@ export const showcaseContent = Object.freeze({
     exampleLabel: 'Illustrative example',
   },
   value: {
-    title: 'Know what goes into every bite',
-    fact: 'Cooking at home gives you more control over what goes into your food.',
+    title: "See what's in every bite.",
+    fact: 'See calories, protein, and what it costs to make the dish at home.',
+  },
+  recipeDetails: {
+    title: 'Everything you need to cook it.',
+    fact: 'Get nutrition, cooking time, cost, and step-by-step directions in one place.',
   },
   meetKiko: {
     title: 'This fox is now your virtual pet',

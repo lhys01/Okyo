@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { getSafeNumber, getSafeText, isRecipeMode } from '../mocks';
 import type { Recipe, RecipeMode, RestaurantPack } from '../mocks';
-import { colors, fontFamilies, radius, shadows, spacing, typography } from '../theme/okyoTheme';
+import { colors, fontFamilies, iconSizes, radius, shadows, spacing, typography } from '../theme/okyoTheme';
+import { FitText } from './FitText';
 
-export { colors, fontFamilies, spacing, typography };
+export { colors, fontFamilies, iconSizes, spacing, typography };
 
 type ScreenContainerProps = {
   children: ReactNode;
@@ -14,7 +16,8 @@ type ScreenContainerProps = {
 };
 
 export function ScreenContainer({ children, scroll = true, centered = false }: ScreenContainerProps) {
-  const contentStyle = [styles.screenContent, centered ? styles.centeredContent : null];
+  const { bottom } = useSafeAreaInsets();
+  const contentStyle = [styles.screenContent, { paddingBottom: 132 + bottom }, centered ? styles.centeredContent : null];
 
   if (!scroll) {
     return <View style={contentStyle}>{children}</View>;
@@ -91,7 +94,7 @@ export function StatCard({ label, value, tone = 'default' }: StatCardProps) {
   return (
     <View style={[styles.statCard, tone === 'savings' ? styles.statCardSavings : null]}>
       <Text style={styles.statLabel}>{label}</Text>
-      <Text style={[styles.statValue, tone === 'savings' ? styles.statValueSavings : null]}>{value}</Text>
+      <FitText minimumFontScale={0.68} style={[styles.statValue, tone === 'savings' ? styles.statValueSavings : null]}>{value}</FitText>
     </View>
   );
 }
@@ -192,7 +195,7 @@ export function RecipeCard({ recipe, onPress, onRemove }: RecipeCardProps) {
         <View style={styles.cardMetaRow}>
           <View>
             <Text style={styles.statLabel}>Homemade estimate</Text>
-            <Text style={styles.savingsText}>{formatCurrency(estimatedHomemadeCost)}</Text>
+            <FitText minimumFontScale={0.68} style={styles.savingsText}>{formatCurrency(estimatedHomemadeCost)}</FitText>
           </View>
           <View style={styles.cardMetaRight}>
             <Text style={styles.statLabel}>Difficulty</Text>
@@ -236,10 +239,10 @@ export function PackCard({ pack, label, description, averageSavings, topDish, on
         </View>
         <View style={styles.cardMetaRight}>
           <Text style={styles.statLabel}>Avg. savings</Text>
-          <Text style={styles.savingsText}>{formatCurrency(averageSavings)}</Text>
+          <FitText minimumFontScale={0.68} style={styles.savingsText}>{formatCurrency(averageSavings)}</FitText>
         </View>
       </View>
-      <Text style={styles.topDish}>Top dish: {topDish ?? 'Coming soon'}</Text>
+      <Text style={styles.topDish}>Top dish: {topDish ?? 'No completed meals yet'}</Text>
     </Pressable>
   );
 }

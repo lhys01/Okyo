@@ -4,6 +4,10 @@ import test from 'node:test';
 import type { AiConfig } from '../config/aiConfig.js';
 import type { Recipe } from '../types.js';
 import type { FoodImageAnalysis } from './aiService.js';
+
+// This suite asserts exact recipe-provider budgets. Epicure is independently
+// tested and must not inherit a developer's local feature flag or key.
+process.env.EPICURE_ENABLED = 'false';
 import {
   getMandatoryCorrectionRequirementsForPlan,
   getNutritionRequirementTargets,
@@ -314,26 +318,26 @@ function collectZodArrayPaths(schema: unknown, path = ''): string[] {
   const node = unwrapZod(schema);
   const def = (node as { _def?: Record<string, unknown> })._def;
   if (!def) return [];
-  const typeName = def.typeName;
+  const typeName = def.type;
 
-  if (typeName === 'ZodArray') {
-    const child = def.type;
+  if (typeName === 'array') {
+    const child = def.element;
     return [
       path,
       ...collectZodArrayPaths(child, path),
     ].filter(Boolean);
   }
 
-  if (typeName === 'ZodObject') {
+  if (typeName === 'object') {
     const rawShape = def.shape;
     const shape = typeof rawShape === 'function' ? rawShape() as Record<string, unknown> : rawShape as Record<string, unknown>;
     return Object.entries(shape).flatMap(([key, child]) => collectZodArrayPaths(child, path ? `${path}.${key}` : key));
   }
 
-  if (typeName === 'ZodUnion') {
+  if (typeName === 'union') {
     const options = Array.isArray(def.options) ? def.options : [];
-    const optionTypes = options.map((option) => (unwrapZod(option) as { _def?: { typeName?: unknown } })._def?.typeName);
-    if (optionTypes.includes('ZodString') && optionTypes.includes('ZodArray')) {
+    const optionTypes = options.map((option) => (unwrapZod(option) as { _def?: { type?: unknown } })._def?.type);
+    if (optionTypes.includes('string') && optionTypes.includes('array')) {
       return [];
     }
     return [...new Set(options.flatMap((option) => collectZodArrayPaths(option, path)))];

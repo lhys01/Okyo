@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Okyo waitlist export</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 64px auto; padding: 24px; max-width: 560px; font: 17px/1.6 system-ui; color: #2b2b30; background: #fffdfe; }
+  label, input, button { display: block; width: 100%; }
+  input, button { padding: 14px; margin: 8px 0 18px; font: inherit; border: 1px solid #b9a6af; border-radius: 14px; }
+  button { cursor: pointer; background: #fff0f4; color: #2b2b30; font-weight: 700; }
+  :focus-visible { outline: 3px solid #2b2b30; outline-offset: 3px; }
+</style>
+<h1>Your Okyo waitlist</h1>
+<p>Download first names and emails as a CSV for your launch email.</p>
+<form id="export">
+  <label for="key">Export key</label>
+  <input id="key" type="password" autocomplete="off" required>
+  <p>Find WAITLIST_ADMIN_TOKEN in this service’s Railway Variables. The key is never saved in this browser.</p>
+  <button>Download CSV</button>
+</form>
+<p id="status" role="status" aria-live="polite"></p>
+<script src="/admin.js" defer></script>
+</html>

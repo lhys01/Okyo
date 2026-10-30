@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://okyoapp.com/sitemap.xml

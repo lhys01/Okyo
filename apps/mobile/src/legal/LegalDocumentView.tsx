@@ -1,7 +1,9 @@
-import { PixelRatio, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Fragment } from 'react';
+import { Alert, Linking, PixelRatio, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { colors, fontFamilies, radius, spacing } from '../theme/okyoTheme';
-import { LEGAL_DOCUMENTS_ARE_COUNSEL_APPROVED, type LegalDocument } from './legalDocuments';
+import { type LegalDocument } from './legalDocuments';
+import { openSupportEmail, SUPPORT_EMAIL } from '../support/supportContact';
 
 /**
  * Renders one legal document as plain, scrollable, selectable text.
@@ -24,6 +26,11 @@ import { LEGAL_DOCUMENTS_ARE_COUNSEL_APPROVED, type LegalDocument } from './lega
 export function LegalDocumentView({ document }: { document: LegalDocument }) {
   const fontScale = PixelRatio.getFontScale();
   const scaledLine = (base: number) => ({ lineHeight: base * fontScale });
+  const emailSupport = () => {
+    void openSupportEmail((url) => Linking.openURL(url)).catch(() => {
+      Alert.alert('Email Okyo support', `Please email ${SUPPORT_EMAIL}.`);
+    });
+  };
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator>
@@ -32,19 +39,22 @@ export function LegalDocumentView({ document }: { document: LegalDocument }) {
         Version {document.version} · {document.effectiveDate}
       </Text>
 
-      {LEGAL_DOCUMENTS_ARE_COUNSEL_APPROVED ? null : (
-        <View accessibilityRole="alert" style={styles.reviewBanner}>
-          <Text style={[styles.reviewText, scaledLine(19)]}>
-            Draft. This document has not been reviewed by a lawyer and is not yet in
-            effect. It describes how this build of Okyo actually behaves.
-          </Text>
-        </View>
-      )}
 
       {document.sections.map((section) => (
         <View key={section.heading} style={styles.section}>
           <Text accessibilityRole="header" style={[styles.heading, scaledLine(23)]}>{section.heading}</Text>
-          <Text selectable style={[styles.body, scaledLine(23)]}>{section.body}</Text>
+          <Text selectable style={[styles.body, scaledLine(23)]}>
+            {section.body.split(SUPPORT_EMAIL).map((part, index, parts) => (
+              <Fragment key={`${section.heading}-${index}`}>
+                {part}
+                {index < parts.length - 1 ? (
+                  <Text accessibilityLabel="Email Okyo support." accessibilityRole="link" onPress={emailSupport} style={styles.supportEmail}>
+                    {SUPPORT_EMAIL}
+                  </Text>
+                ) : null}
+              </Fragment>
+            ))}
+          </Text>
         </View>
       ))}
     </ScrollView>
@@ -55,16 +65,8 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 160, paddingHorizontal: spacing.gutter },
   title: { color: colors.ink, fontFamily: fontFamilies.extraBold, fontSize: 28, marginTop: 6 },
   meta: { color: colors.muted, fontFamily: fontFamilies.body, fontSize: 13, marginTop: 6 },
-  reviewBanner: {
-    backgroundColor: colors.canvasSunk,
-    borderColor: colors.border,
-    borderRadius: radius.panel,
-    borderWidth: 1,
-    marginTop: 16,
-    padding: 14,
-  },
-  reviewText: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 13 },
   section: { marginTop: 26 },
   heading: { color: colors.ink, fontFamily: fontFamilies.bold, fontSize: 17 },
   body: { color: colors.body, fontFamily: fontFamilies.body, fontSize: 15, marginTop: 8 },
+  supportEmail: { color: colors.health, textDecorationLine: 'underline' },
 });

@@ -17,10 +17,10 @@ import { OnboardingCTA } from '../components/OnboardingCTA';
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const GRAPH_LENGTH = 820;
 
-export function NameFoxValueScreen({ page, onBack, onNext }: { page: 0 | 1; onBack: () => void; onNext: () => void }) {
+export function NameFoxValueScreen({ mascotName, page, onBack, onNext }: { mascotName: string; page: 0 | 1; onBack: () => void; onNext: () => void }) {
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-      {page === 0 ? <SavingsExplainer onBack={onBack} onNext={onNext} /> : <ApproachExplainer onBack={onBack} onNext={onNext} />}
+      {page === 0 ? <SavingsExplainer onBack={onBack} onNext={onNext} /> : <ApproachExplainer mascotName={mascotName} onBack={onBack} onNext={onNext} />}
     </SafeAreaView>
   );
 }
@@ -62,7 +62,7 @@ function SavingsExplainer({ onBack, onNext }: { onBack: () => void; onNext: () =
             <Text accessibilityLabel="Horizontal axis: Time" style={[styles.axisLabel, compactLayout && styles.axisLabelCompact]}>Time</Text>
             <Image accessibilityIgnoresInvertColors accessible={false} contentFit="contain" source={onboardingV3Assets.saveMoneyGraphSparkle} style={styles.graphSparkle} />
           </View>
-          <Image accessibilityIgnoresInvertColors accessible={false} contentFit="contain" source={onboardingV3Assets.saveMoneyIntro} style={[styles.graphChef, compactLayout && styles.graphChefCompact]} />
+          <Image accessibilityIgnoresInvertColors accessible={false} contentFit="contain" source={onboardingV3Assets.saveMoneyRevealReaction} style={[styles.graphChef, compactLayout && styles.graphChefCompact]} />
         </View>
         <PopInsight delay={120}>
           <View style={[styles.insightCard, homeRecipeCardShadow]}>
@@ -77,7 +77,7 @@ function SavingsExplainer({ onBack, onNext }: { onBack: () => void; onNext: () =
   );
 }
 
-function ApproachExplainer({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+function ApproachExplainer({ mascotName, onBack, onNext }: { mascotName: string; onBack: () => void; onNext: () => void }) {
   const { height, width } = useWindowDimensions();
   const compactLayout = height < 740 || width < 380;
 
@@ -92,7 +92,7 @@ function ApproachExplainer({ onBack, onNext }: { onBack: () => void; onNext: () 
         <Text maxFontSizeMultiplier={1.2} style={[styles.approachSupport, compactLayout && styles.approachSupportCompact]}>Scan a dish, get the details, and make it yours.</Text>
         <PopInsight delay={0}>
           <View style={styles.approachFeatureShadow}>
-            <View accessibilityLabel="Okyo approach: scan a dish, get its recipe and details, then customize it with Kiko" accessibilityRole="image" style={[styles.approachFeature, compactLayout && styles.approachFeatureCompact]} testID="okyo-approach-feature">
+            <View accessibilityLabel={`Okyo approach: scan a dish, get its recipe and details, then customize it with ${mascotName}`} accessibilityRole="image" style={[styles.approachFeature, compactLayout && styles.approachFeatureCompact]} testID="okyo-approach-feature">
               <View style={[styles.approachHeroStage, compactLayout && styles.approachHeroStageCompact]}>
                 <Image accessibilityIgnoresInvertColors accessible={false} contentFit="contain" source={onboardingV3Assets.approachHeroSticker} style={styles.approachHeroSticker} />
               </View>
@@ -107,14 +107,14 @@ function ApproachExplainer({ onBack, onNext }: { onBack: () => void; onNext: () 
                 </View>
                 <View style={styles.approachStep}>
                   <View style={styles.approachStepNumber}><Text style={styles.approachStepNumberText}>3</Text></View>
-                  <Text maxFontSizeMultiplier={1.2} style={styles.approachStepText}>Customize it with Kiko</Text>
+                  <Text maxFontSizeMultiplier={1.2} style={styles.approachStepText}>Customize it with {mascotName}</Text>
                 </View>
               </View>
             </View>
           </View>
         </PopInsight>
       </View>
-      <OnboardingCTA accessibilityLabel="Continue to name" label="Let’s go" onPress={onNext} tone="pastelPink" />
+      <OnboardingCTA accessibilityLabel="Continue to age selection" label="Let’s go" onPress={onNext} tone="pastelPink" />
     </View>
   );
 }

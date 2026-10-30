@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Okyo Onboarding - Font Comparison</title>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Inter:wght@400;600;700&family=DM+Sans:wght@400;600;700&family=Manrope:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;600;700&family=Outfit:wght@400;600;700&family=Urbanist:wght@400;600;700&family=Lexend:wght@400;600;700&family=Nunito+Sans:wght@400;600;700&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #f5f5f5;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            max-width: 100%;
+        }
+
+        .mockup-container {
+            position: relative;
+            margin: 0 auto;
+            width: 375px;
+            height: 812px;
+            background: white;
+            border-radius: 50px;
+            border: 12px solid #000;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .status-bar {
+            height: 44px;
+            background: white;
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #333;
+        }
+
+        .screen-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 16px 24px;
+            overflow-y: auto;
+        }
+
+        .back-button {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: 1px solid #e0e0e0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 12px;
+            font-size: 20px;
+        }
+
+        .progress-dots {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            margin-bottom: 24px;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ccc;
+        }
+
+        .dot.active {
+            width: 32px;
+            height: 8px;
+            border-radius: 4px;
+            background: #333;
+        }
+
+        .headline {
+            font-size: 32px;
+            line-height: 38px;
+            letter-spacing: -0.8px;
+            margin-bottom: 20px;
+            color: #1a1a1a;
+        }
+
+        .body-text {
+            font-size: 14px;
+            line-height: 20px;
+            font-weight: 500;
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        .button {
+            background: #FFA8C2;
+            border: none;
+            border-radius: 999px;
+            padding: 16px 28px;
+            font-size: 17px;
+            font-weight: 600;
+            color: white;
+            cursor: pointer;
+            margin-top: auto;
+            margin-bottom: 16px;
+        }
+
+        .font-label {
+            text-align: center;
+            margin-top: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
+        .font-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Font-specific styles */
+        .font-sora { font-family: 'Sora', sans-serif; }
+        .font-inter { font-family: 'Inter', sans-serif; }
+        .font-dm-sans { font-family: 'DM Sans', sans-serif; }
+        .font-manrope { font-family: 'Manrope', sans-serif; }
+        .font-jakarta { font-family: 'Plus Jakarta Sans', sans-serif; }
+        .font-outfit { font-family: 'Outfit', sans-serif; }
+        .font-urbanist { font-family: 'Urbanist', sans-serif; }
+        .font-lexend { font-family: 'Lexend', sans-serif; }
+        .font-nunito { font-family: 'Nunito Sans', sans-serif; }
+        .font-space { font-family: 'Space Grotesk', sans-serif; }
+
+        .headline-bold { font-weight: 700; }
+        .body-regular { font-weight: 400; }
+        .button-semibold { font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="comparison-grid">
+        <!-- Sora -->
+        <div class="font-wrapper">
+            <div class="mockup-container">
+                <div class="status-bar">9:19</div>
+                <div class="screen-content font-sora">
+                    <div class="back-button">‹</div>
+                    <div class="progress-dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot active"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <h1 class="headline headline-bold">Scan any dish. Get the recipe.</h1>
+                    <p class="body-text body-regular">Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.</p>
+                    <button class="button button-semibold">Next</button>
+                </div>
+            </div>
+            <div class="font-label">Sora</div>
+        </div>
+
+        <!-- Inter -->
+        <div class="font-wrapper">
+            <div class="mockup-container">
+                <div class="status-bar">9:19</div>
+                <div class="screen-content font-inter">
+                    <div class="back-button">‹</div>
+                    <div class="progress-dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot active"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <h1 class="headline headline-bold">Scan any dish. Get the recipe.</h1>
+                    <p class="body-text body-regular">Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.</p>
+                    <button class="button button-semibold">Next</button>
+                </div>
+            </div>
+            <div class="font-label">Inter</div>
+        </div>
+
+        <!-- DM Sans -->
+        <div class="font-wrapper">
+            <div class="mockup-container">
+                <div class="status-bar">9:19</div>
+                <div class="screen-content font-dm-sans">
+                    <div class="back-button">‹</div>
+                    <div class="progress-dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot active"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <h1 class="headline headline-bold">Scan any dish. Get the recipe.</h1>
+                    <p class="body-text body-regular">Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.</p>
+                    <button class="button button-semibold">Next</button>
+                </div>
+            </div>
+            <div class="font-label">DM Sans</div>
+        </div>
+
+        <!-- Manrope -->
+        <div class="font-wrapper">
+            <div class="mockup-container">
+                <div class="status-bar">9:19</div>
+                <div class="screen-content font-manrope">
+                    <div class="back-button">‹</div>
+                    <div class="progress-dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot active"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <h1 class="headline headline-bold">Scan any dish. Get the recipe.</h1>
+                    <p class="body-text body-regular">Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.</p>
+                    <button class="button button-semibold">Next</button>
+                </div>
+            </div>
+            <div class="font-label">Manrope</div>
+        </div>
+
+        <!-- Plus Jakarta Sans -->
+        <div class="font-wrapper">
+            <div class="mockup-container">
+                <div class="status-bar">9:19</div>
+                <div class="screen-content font-jakarta">
+                    <div class="back-button">‹</div>
+                    <div class="progress-dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot active"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <h1 class="headline headline-bold">Scan any dish. Get the recipe.</h1>
+                    <p class="body-text body-regular">Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.</p>
+                    <button class="button button-semibold">Next</button>
+                </div>
+            </div>
+            <div class="font-label">Plus Jakarta Sans</div>
+        </div>
+
+        <!-- Outfit -->
+        <div class="font-wrapper">
+            <div class="mockup-container">
+                <div class="status-bar">9:19</div>
+                <div class="screen-content font-outfit">
+                    <div class="back-button">‹</div>
+                    <div class="progress-dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot active"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <h1 class="headline headline-bold">Scan any dish. Get the recipe.</h1>
+                    <p class="body-text body-regular">Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.</p>
+                    <button class="button button-semibold">Next</button>
+                </div>
+            </div>
+            <div class="font-label">Outfit</div>
+        </div>
+
+        <!-- Urbanist -->
+        <div class="font-wrapper">
+            <div class="mockup-container">
+                <div class="status-bar">9:19</div>
+                <div class="screen-content font-urbanist">
+                    <div class="back-button">‹</div>
+                    <div class="progress-dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot active"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <h1 class="headline headline-bold">Scan any dish. Get the recipe.</h1>
+                    <p class="body-text body-regular">Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.</p>
+                    <button class="button button-semibold">Next</button>
+                </div>
+            </div>
+            <div class="font-label">Urbanist</div>
+        </div>
+
+        <!-- Lexend -->
+        <div class="font-wrapper">
+            <div class="mockup-container">
+                <div class="status-bar">9:19</div>
+                <div class="screen-content font-lexend">
+                    <div class="back-button">‹</div>
+                    <div class="progress-dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot active"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <h1 class="headline headline-bold">Scan any dish. Get the recipe.</h1>
+                    <p class="body-text body-regular">Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.</p>
+                    <button class="button button-semibold">Next</button>
+                </div>
+            </div>
+            <div class="font-label">Lexend</div>
+        </div>
+
+        <!-- Nunito Sans -->
+        <div class="font-wrapper">
+            <div class="mockup-container">
+                <div class="status-bar">9:19</div>
+                <div class="screen-content font-nunito">
+                    <div class="back-button">‹</div>
+                    <div class="progress-dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot active"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <h1 class="headline headline-bold">Scan any dish. Get the recipe.</h1>
+                    <p class="body-text body-regular">Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.</p>
+                    <button class="button button-semibold">Next</button>
+                </div>
+            </div>
+            <div class="font-label">Nunito Sans</div>
+        </div>
+
+        <!-- Space Grotesk -->
+        <div class="font-wrapper">
+            <div class="mockup-container">
+                <div class="status-bar">9:19</div>
+                <div class="screen-content font-space">
+                    <div class="back-button">‹</div>
+                    <div class="progress-dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot active"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <h1 class="headline headline-bold">Scan any dish. Get the recipe.</h1>
+                    <p class="body-text body-regular">Take a photo and Okyo identifies the ingredients, then gives you a recipe you can make at home.</p>
+                    <button class="button button-semibold">Next</button>
+                </div>
+            </div>
+            <div class="font-label">Space Grotesk</div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,26 +1,29 @@
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { Check, NavArrowLeft } from 'iconoir-react-native';
-import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Alert, Animated, Easing, Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Check } from 'iconoir-react-native';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { AccessibilityInfo, ActivityIndicator, Alert, Animated, Easing, Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { analyticsEvents, track } from '../analytics/track';
 import { colors, fontFamilies, PrimaryButton } from '../components/OkyoUI';
+import { BackButton } from '../components/okyo/BackButton';
 import type { RootStackParamList } from '../navigation/types';
 import { useOkyoStore } from '../state/useOkyoStore';
+import { useChosenMascotName } from '../state/useMascotName';
 import { getRealScanImageUri } from '../utils/recipeImages';
-import { getLastPreparedImage, startScan } from '../utils/scanController';
-import { getAnalysisScreenOutcome, getFreshDescribeMealResetState, getHomeResetState } from '../utils/scanControllerUtils';
+import { getScanActivitySnapshot, subscribeToScanActivity } from '../utils/scanActivity';
+import { createPickedImagePreview } from '../utils/scanImageReference';
+import { cancelScanSession, getLastPreparedImage, getRetryScanIdempotencyKey, startScan } from '../utils/scanController';
+import { getAnalysisScreenOutcome, getScanResultNavigationTarget } from '../utils/scanControllerUtils';
 import { isUsableScan } from '../utils/scanDecision';
 import { getInlineFailureCopy, getScanFailureCategory } from '../utils/scanFailureCopy';
 import { preparePickedImage } from '../utils/scanImageProcessing';
 import { getPendingAnalysisPresentation } from '../utils/scanProgress';
-import { uiLog } from '../utils/uiDebug';
+import { getAnalysisScreenLayout } from '../utils/analysisScreenLayout';
+import { scanTraceLog, uiLog } from '../utils/uiDebug';
 
 type AnalysisNavigation = NativeStackNavigationProp<RootStackParamList, 'AnalysisLoadingScreen'>;
 type AnalysisRoute = RouteProp<RootStackParamList, 'AnalysisLoadingScreen'>;
@@ -36,6 +39,7 @@ const ANALYSIS_STAGES = [
 ] as const;
 
 export function AnalysisLoadingScreen() {
+  const mascotName = useChosenMascotName();
   const navigation = useNavigation<AnalysisNavigation>();
   const route = useRoute<AnalysisRoute>();
   const insets = useSafeAreaInsets();
@@ -49,16 +53,20 @@ export function AnalysisLoadingScreen() {
   const selectedMode = useOkyoStore((state) => state.selectedMode);
   const scanSource = useOkyoStore((state) => state.latestScanSession?.source ?? 'camera');
   const activeScanSessionId = scanSessionId ?? route.params?.scanSessionId ?? 'no-active-session';
-  const clearLatestScan = useOkyoStore((state) => state.clearLatestScan);
   const selectedScanImage = useOkyoStore((state) => state.selectedScanImage);
   const scanImageUri = getRealScanImageUri(selectedScanImage);
+  const scanActivity = useSyncExternalStore(subscribeToScanActivity, getScanActivitySnapshot, getScanActivitySnapshot);
   const [analysisElapsed, setAnalysisElapsed] = useState(0);
   const [finishState, setFinishState] = useState<{ durationMs: number; startElapsedMs: number; startProgress: number } | null>(null);
   const [timedOut, setTimedOut] = useState(false);
   const isDescriptionScan = scanSource === 'description';
   const statusSequenceKey = `${activeScanSessionId}:${scanSource}`;
+  const isPreparingImage = !isDescriptionScan && scanActivity?.scanSessionId === activeScanSessionId && scanActivity.phase === 'preparing';
+  const layout = getAnalysisScreenLayout(windowHeight, insets.top, insets.bottom);
   const [reduceMotion, setReduceMotion] = useState(false);
+  const [previewLoad, setPreviewLoad] = useState<{ scanSessionId: string; uri: string; state: 'loaded' | 'failed' } | null>(null);
   const didNavigate = useRef(false);
+  const didCancel = useRef(false);
   const didTrackCompletion = useRef(false);
   const scanLineProgress = useRef(new Animated.Value(0)).current;
   const progressValue = useRef(new Animated.Value(0)).current;
@@ -70,18 +78,9 @@ export function AnalysisLoadingScreen() {
   });
   const uploadInFlight = useRef(false);
 
-  // The photo must never move or remount for the life of a scan session — only
-  // the scan-line overlay animates. We freeze the first URI seen for a given
-  // session and keep rendering that frozen value even if the store's
-  // selectedScanImage reference changes shape mid-flight (e.g. preview ->
-  // response image echo) while this screen is still showing that session.
-  const frozenScanImageRef = useRef<{ scanSessionId: string; uri: string } | null>(null);
-  if (scanImageUri && frozenScanImageRef.current?.scanSessionId !== activeScanSessionId) {
-    frozenScanImageRef.current = { scanSessionId: activeScanSessionId, uri: scanImageUri };
-  }
-  const stableScanImageUri = frozenScanImageRef.current?.scanSessionId === activeScanSessionId
-    ? frozenScanImageRef.current.uri
-    : scanImageUri;
+  // Use the current session's selected image URI. It intentionally changes
+  // once when the picker cache URI is replaced by its durable Documents copy.
+  const stableScanImageUri = scanImageUri;
 
   const usable = latestScanStatus && latestScanStatus !== 'pending'
     ? isUsableScan({
@@ -108,7 +107,18 @@ export function AnalysisLoadingScreen() {
         usable,
       })
     : null;
-  const failureCopy = failureCategory ? getInlineFailureCopy(failureCategory, isDescriptionScan) : null;
+  const failureCopy = failureCategory ? getInlineFailureCopy(failureCategory, isDescriptionScan, mascotName) : null;
+
+  useEffect(() => {
+    scanTraceLog('analysis_outcome', {
+      requestId: activeScanSessionId,
+      status: outcome,
+      hasScan: Boolean(latestScanResult),
+      hasRecipe: Boolean(latestScanRecipe),
+      routeSessionMatches: !route.params?.scanSessionId || route.params.scanSessionId === scanSessionId,
+      stage: 'navigation',
+    });
+  }, [activeScanSessionId, latestScanRecipe, latestScanResult, outcome, route.params?.scanSessionId, scanSessionId]);
 
   useEffect(() => {
     setAnalysisElapsed(0);
@@ -116,7 +126,7 @@ export function AnalysisLoadingScreen() {
     const startedAt = Date.now();
     const timer = setInterval(() => setAnalysisElapsed(Date.now() - startedAt), 100);
     return () => clearInterval(timer);
-  }, [activeScanSessionId]);
+  }, [activeScanSessionId, isPreparingImage]);
 
   useEffect(() => {
     let mounted = true;
@@ -198,44 +208,28 @@ export function AnalysisLoadingScreen() {
 
     didTrackCompletion.current = true;
     if (outcome === 'success' && latestScanResult) {
-      track(analyticsEvents.DISH_DETECTED, {
-        dishName: latestScanResult.dishName,
-        screen: 'AnalysisLoadingScreen',
-      });
-      if (latestScanRecipe) {
-        track(analyticsEvents.RECIPE_GENERATED, {
-          dishName: latestScanResult.dishName,
-          mode: latestScanRecipe.mode,
-          savings: latestScanRecipe.estimatedSavings,
-          screen: 'AnalysisLoadingScreen',
-        });
-      }
+
       return;
     }
 
-    track(analyticsEvents.RESULT_ERROR, {
-      errorMessage: timedOut ? 'Scan timed out.' : latestScanFailure?.rejectionReason ?? 'Scan did not return a safe result.',
-      screen: 'AnalysisLoadingScreen',
-    });
+
   }, [latestScanFailure?.rejectionReason, latestScanRecipe, latestScanResult, outcome, timedOut]);
 
   useEffect(() => {
     const routeScanSessionId = route.params?.scanSessionId;
     const isCurrentRouteSession = !routeScanSessionId || routeScanSessionId === scanSessionId;
-    if (didNavigate.current || outcome !== 'success' || !finishState || !isCurrentRouteSession) {
+    if (didNavigate.current || didCancel.current || outcome !== 'success' || !finishState || !isCurrentRouteSession) {
       return;
     }
 
     const finish = setTimeout(() => {
+      if (didCancel.current || !navigation.isFocused()) return;
       didNavigate.current = true;
       uiLog('AnalysisLoadingScreen', 'navigate_result', { status: latestScanStatus });
-      navigation.navigate('MainTabs', {
-        screen: 'ResultSummaryScreen',
-        params: {
-          recipeId: latestScanRecipe?.id,
-          scanSessionId: route.params?.scanSessionId ?? scanSessionId ?? undefined,
-        },
-      });
+      navigation.navigate('MainTabs', getScanResultNavigationTarget(
+        latestScanRecipe?.id,
+        route.params?.scanSessionId ?? scanSessionId ?? undefined,
+      ));
     }, finishState.durationMs + 220);
 
     return () => clearTimeout(finish);
@@ -255,21 +249,31 @@ export function AnalysisLoadingScreen() {
 
   const resetForRetry = () => {
     didNavigate.current = false;
+    didCancel.current = false;
     didTrackCompletion.current = false;
     setTimedOut(false);
   };
 
-  const goHome = (reason: string) => {
-    didNavigate.current = true;
-    clearLatestScan({ reason, source: 'AnalysisLoadingScreen.goHome' });
-    navigation.reset(getHomeResetState());
+  const handleGoBack = () => {
+    didCancel.current = true;
+    const sessionId = route.params?.scanSessionId ?? scanSessionId;
+    if (sessionId) {
+      cancelScanSession(sessionId, 'AnalysisLoadingScreen.back');
+    }
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('MainTabs', { screen: 'HomeScreen' });
+    }
   };
 
   const handleTryAgain = () => {
+    const idempotencyKey = scanSessionId ? getRetryScanIdempotencyKey(scanSessionId) : undefined;
     if (isDescriptionScan) {
       resetForRetry();
       void startScan({
         mealDescription: mealDescription ?? '',
+        idempotencyKey,
         mode: selectedMode,
         navigateToAnalysis: (newSessionId) => navigation.setParams({ scanSessionId: newSessionId }),
         reason: 'AnalysisLoadingScreen.tryAgainDescription',
@@ -287,6 +291,7 @@ export function AnalysisLoadingScreen() {
     resetForRetry();
     void startScan({
       image: fullImage,
+      idempotencyKey,
       mode: selectedMode,
       navigateToAnalysis: (newSessionId) => navigation.setParams({ scanSessionId: newSessionId }),
       reason: 'AnalysisLoadingScreen.tryAgain',
@@ -312,10 +317,12 @@ export function AnalysisLoadingScreen() {
         return;
       }
 
-      const image = await preparePickedImage(result.assets[0], 'photos');
+      const asset = result.assets[0];
+      const image = createPickedImagePreview(asset, 'photos');
       resetForRetry();
       void startScan({
         image,
+        prepareImage: () => preparePickedImage(asset, 'photos'),
         mode: selectedMode,
         navigateToAnalysis: (newSessionId) => navigation.setParams({ scanSessionId: newSessionId }),
         reason: 'AnalysisLoadingScreen.chooseAnotherPhoto',
@@ -328,16 +335,13 @@ export function AnalysisLoadingScreen() {
     }
   };
 
-  const handleEditDescription = () => {
-    didNavigate.current = true;
-    clearLatestScan({ reason: 'user_editing_description_after_failure', source: 'AnalysisLoadingScreen.editDescription' });
-    navigation.reset(getFreshDescribeMealResetState(mealDescription ?? undefined));
-  };
-
   const isFailure = outcome === 'inline_failure' && failureCopy;
   const stageIndex = outcome === 'success' ? 4 : pendingPresentation.stageIndex;
   const isFinishingComplete = outcome === 'success' && finishProgress >= 1;
-  const heroImageHeight = Math.min(380, Math.max(326, windowHeight * 0.41));
+  const heroImageHeight = layout.imageHeight;
+  const iconSize = layout.iconSize;
+  const previewLoaded = previewLoad?.scanSessionId === activeScanSessionId && previewLoad.uri === stableScanImageUri && previewLoad.state === 'loaded';
+  const previewFailed = previewLoad?.scanSessionId === activeScanSessionId && previewLoad.uri === stableScanImageUri && previewLoad.state === 'failed';
 
   useEffect(() => {
     if (reduceMotion || isFailure || isFinishingComplete) {
@@ -357,26 +361,43 @@ export function AnalysisLoadingScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <View style={styles.topBar}>
+        <BackButton onPress={handleGoBack} />
+      </View>
       <ScrollView
         contentContainerStyle={[styles.screenContent, { paddingBottom: 40 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
+        style={styles.scroll}
       >
         <View style={[styles.hero, isDescriptionScan ? styles.descriptionHero : null]}>
           {!isDescriptionScan && stableScanImageUri ? (
             <View style={[styles.scanImageWrap, { height: heroImageHeight }]}>
-              <Image resizeMode="cover" source={{ uri: stableScanImageUri }} style={styles.scanImage} />
-              <Pressable
-                accessibilityLabel="Back to Home"
-                accessibilityRole="button"
-                onPress={() => goHome('user_aborted_scan_from_loading')}
-                style={({ pressed }) => [styles.backPill, pressed ? styles.pressed : null]}
-              >
-                <View pointerEvents="none" style={styles.backPillBackdrop}>
-                  <BlurView intensity={42} style={StyleSheet.absoluteFill} tint="light" />
+              <Image
+                accessibilityLabel="Selected dish photo"
+                key={`${activeScanSessionId}:${stableScanImageUri}`}
+                onError={() => setPreviewLoad({ scanSessionId: activeScanSessionId, uri: stableScanImageUri, state: 'failed' })}
+                onLoad={() => setPreviewLoad({ scanSessionId: activeScanSessionId, uri: stableScanImageUri, state: 'loaded' })}
+                resizeMode="cover"
+                source={{ uri: stableScanImageUri }}
+                style={styles.scanImage}
+              />
+              {!previewLoaded && !previewFailed ? (
+                <View pointerEvents="none" style={styles.imageLoadingOverlay}>
+                  <ActivityIndicator color={colors.coral} />
+                  <Text style={styles.imageLoadingText}>Loading your photo…</Text>
                 </View>
-                <NavArrowLeft color={colors.charcoal} height={21} strokeWidth={2.4} width={21} />
-                <Text style={styles.backPillText}>Home</Text>
-              </Pressable>
+              ) : null}
+              {previewFailed && isPreparingImage ? (
+                <View pointerEvents="none" style={styles.imageLoadingOverlay}>
+                  <ActivityIndicator color={colors.coral} />
+                  <Text style={styles.imageLoadingText}>Getting your photo ready…</Text>
+                </View>
+              ) : null}
+              {previewFailed && !isPreparingImage ? (
+                <View pointerEvents="none" style={styles.imageLoadingOverlay}>
+                  <Text style={styles.imageLoadingText}>Photo preview unavailable</Text>
+                </View>
+              ) : null}
               {!isFailure ? (
                 <Animated.View
                   pointerEvents="none"
@@ -387,24 +408,21 @@ export function AnalysisLoadingScreen() {
                 />
               ) : null}
             </View>
+          ) : !isDescriptionScan && isPreparingImage ? (
+            <View style={[styles.scanImageWrap, styles.preparingImage, { height: heroImageHeight }]}>
+              <ActivityIndicator color={colors.coral} size="large" />
+              <Text style={styles.imageLoadingText}>Getting your photo ready…</Text>
+            </View>
           ) : (
-            <Pressable
-              accessibilityLabel="Back to Home"
-              accessibilityRole="button"
-              onPress={() => goHome('user_aborted_scan_from_loading')}
-              style={({ pressed }) => [styles.descriptionBackPill, pressed ? styles.pressed : null]}
-            >
-              <NavArrowLeft color={colors.charcoal} height={21} strokeWidth={2.4} width={21} />
-              <Text style={styles.backPillText}>Home</Text>
-            </Pressable>
+            <View />
           )}
-          <View style={styles.appIconFrame}>
-            <Image accessibilityIgnoresInvertColors resizeMode="contain" source={okyoAppIcon} style={styles.appIcon} />
+          <View style={[styles.appIconFrame, { height: iconSize, width: iconSize, borderRadius: layout.compact ? 22 : 28, marginTop: layout.compact ? 12 : 18, marginBottom: layout.compact ? 10 : 14 }]}>
+            <Image accessibilityIgnoresInvertColors resizeMode="contain" source={okyoAppIcon} style={{ height: iconSize, width: iconSize }} />
           </View>
           {isFailure ? (
             <>
               <Text style={styles.title}>{failureCopy.title}</Text>
-              <Text style={styles.failureBody}>{failureCopy.body}</Text>
+              <Text adjustsFontSizeToFit minimumFontScale={0.82} numberOfLines={2} style={styles.failureBody}>{failureCopy.body}</Text>
             </>
           ) : (
             <>
@@ -412,29 +430,31 @@ export function AnalysisLoadingScreen() {
                 Okyo is scanning your food
               </Text>
               <Text numberOfLines={2} style={styles.statusText}>
-                {ANALYSIS_STAGES[stageIndex]}
+                {isPreparingImage ? 'Getting your photo ready' : ANALYSIS_STAGES[stageIndex]}
               </Text>
             </>
           )}
         </View>
 
-        <View
-          accessibilityLabel={isDescriptionScan ? 'Building your recipe' : 'Scanning your food'}
-          accessibilityRole="progressbar"
-          accessibilityValue={{ max: 100, min: 0, now: Math.round(presentationProgress * 100) }}
-          style={styles.progressTrack}
-        >
-          <Animated.View
-            style={[
-              styles.progressFill,
-              {
-                width: progressValue.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
-              },
-            ]}
+        {!isFailure ? (
+          <View
+            accessibilityLabel={isDescriptionScan ? 'Building your recipe' : 'Scanning your food'}
+            accessibilityRole="progressbar"
+            accessibilityValue={{ max: 100, min: 0, now: Math.round(presentationProgress * 100) }}
+            style={styles.progressTrack}
           >
-            <VideoView contentFit="cover" nativeControls={false} player={progressVideoPlayer} style={StyleSheet.absoluteFill} surfaceType="textureView" />
-          </Animated.View>
-        </View>
+            <Animated.View
+              style={[
+                styles.progressFill,
+                {
+                  width: progressValue.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+                },
+              ]}
+            >
+              <VideoView contentFit="cover" nativeControls={false} player={progressVideoPlayer} style={StyleSheet.absoluteFill} surfaceType="textureView" />
+            </Animated.View>
+          </View>
+        ) : null}
 
         {!isFailure ? (
           <View style={styles.stageSection}>
@@ -449,7 +469,7 @@ export function AnalysisLoadingScreen() {
                       {current ? <Animated.View style={[styles.stageMarkerActiveDot, { opacity: stagePulseValue }]} /> : null}
                     </View>
                     <Text style={[styles.stageLabel, complete ? styles.stageLabelComplete : null, current ? styles.stageLabelCurrent : null]}>
-                      {stage}
+                      {isPreparingImage && index === 0 ? 'Getting your photo ready' : stage}
                     </Text>
                   </View>
                 );
@@ -461,12 +481,7 @@ export function AnalysisLoadingScreen() {
         {isFailure ? (
           <View style={styles.failureActions}>
             <PrimaryButton onPress={handleTryAgain}>Try again</PrimaryButton>
-            {isDescriptionScan ? (
-              <SecondaryAction label="Edit description" onPress={handleEditDescription} />
-            ) : (
-              <SecondaryAction label="Choose another photo" onPress={() => void handleChooseAnotherPhoto()} />
-            )}
-            <SecondaryAction label="Back to Home" onPress={() => goHome('user_left_scan_after_failure')} />
+            <SecondaryAction label="Choose another photo" onPress={() => void handleChooseAnotherPhoto()} />
           </View>
         ) : null}
       </ScrollView>
@@ -495,48 +510,14 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: 18,
   },
-  backPill: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.58)',
-    borderColor: 'rgba(255, 255, 255, 0.72)',
-    borderRadius: 999,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 6,
-    left: 14,
-    minHeight: 42,
-    overflow: 'hidden',
-    paddingHorizontal: 12,
-    position: 'absolute',
-    top: 14,
-    zIndex: 3,
+  topBar: {
+    alignItems: 'flex-start',
+    height: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 18,
   },
-  backPillBackdrop: {
-    borderRadius: 21,
-    bottom: 0,
-    left: 0,
-    overflow: 'hidden',
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
-  backPillText: {
-    color: colors.body,
-    fontFamily: fontFamilies.bold,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  descriptionBackPill: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 999,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 6,
-    minHeight: 42,
-    paddingHorizontal: 12,
+  scroll: {
+    flex: 1,
   },
   hero: {
     alignItems: 'center',
@@ -555,6 +536,28 @@ const styles = StyleSheet.create({
     position: 'relative',
     width: '100%',
   },
+  preparingImage: {
+    alignItems: 'center',
+    gap: 12,
+    justifyContent: 'center',
+  },
+  imageLoadingOverlay: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 250, 245, 0.82)',
+    bottom: 0,
+    gap: 8,
+    justifyContent: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  imageLoadingText: {
+    color: colors.body,
+    fontFamily: fontFamilies.semibold,
+    fontSize: 14,
+    textAlign: 'center',
+  },
   appIconFrame: {
     alignItems: 'center',
     height: 120,
@@ -562,6 +565,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     marginTop: 20,
     overflow: 'hidden',
+    borderRadius: 28,
     width: 120,
   },
   appIcon: {
@@ -587,7 +591,7 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 29,
-    fontWeight: '900',
+    fontWeight: '800',
     letterSpacing: -0.45,
     lineHeight: 35,
     maxWidth: 340,
@@ -662,8 +666,8 @@ const styles = StyleSheet.create({
   failureBody: {
     color: colors.body,
     fontFamily: fontFamilies.body,
-    fontSize: 16,
-    lineHeight: 23,
+    fontSize: 15,
+    lineHeight: 20,
     marginTop: 10,
     maxWidth: 320,
     textAlign: 'center',

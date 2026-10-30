@@ -189,3 +189,10 @@ test('canonical normalization rejects invalid servings and nutrition and reconci
   }));
   assert.equal(normalized?.nutritionEstimate?.calories, 460);
 });
+
+test('canonical storage keeps an otherwise valid API recipe when its optional nutrition estimate is absent', () => {
+  const recipe = makeRecipe({ nutritionEstimate: undefined });
+  const normalized = normalizeRecipeForCanonicalStorage(recipe);
+  assert.ok(normalized);
+  assert.equal(normalized.nutritionEstimate, undefined);
+});

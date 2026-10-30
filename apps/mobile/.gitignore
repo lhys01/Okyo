@@ -36,6 +36,6 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-# generated native folders
-/ios
+# Keep the iOS project in Git so Xcode Cloud can open the workspace.
+# CocoaPods, build output, user settings, and local signing files remain ignored.
 /android

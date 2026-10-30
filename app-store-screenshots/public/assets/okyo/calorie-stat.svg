@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="300" viewBox="0 0 960 300">
+  <defs><filter id="s" x="-10%" y="-25%" width="120%" height="155%"><feDropShadow dx="0" dy="16" stdDeviation="17" flood-color="#2B2B30" flood-opacity=".16"/></filter></defs>
+  <rect x="18" y="18" width="924" height="264" rx="48" fill="#FFFFFF" filter="url(#s)"/>
+  <circle cx="155" cy="150" r="74" fill="#FFF0F4"/>
+  <path d="M159 91c24 20 42 48 37 81-4 28-27 49-56 49-31 0-56-24-56-56 0-40 35-76 64-102 0 18 4 26 11 28z" fill="#FF8BAE"/>
+  <text x="270" y="122" fill="#89858F" font-family="Arial, sans-serif" font-size="30" font-weight="700" letter-spacing="2">AI ESTIMATE</text>
+  <text x="270" y="222" fill="#2B2B30" font-family="Arial, sans-serif" font-size="92" font-weight="800">≈ 520 kcal</text>
+</svg>

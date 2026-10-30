@@ -129,6 +129,7 @@ export function getCorrectionHttpStatus(error: unknown): 400 | 409 | 422 | 502 |
   if (error instanceof OpenRouterProviderError) {
     const { reason, httpStatus } = error.failure;
     if (
+      reason === 'openrouter_disabled' ||
       reason === 'openrouter_missing_key' ||
       reason === 'openrouter_timeout' ||
       reason === 'openrouter_network_error' ||
@@ -176,70 +177,36 @@ export function logCorrectionRequest(
   finalHttpStatus: number,
   error?: unknown,
 ) {
-  const unexpectedError = finalHttpStatus === 500 && error instanceof Error
-    ? {
-        name: error.name,
-        message: error.message
-          .replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g, '[redacted image data]')
-          .slice(0, 240),
-      }
-    : undefined;
   const payload = {
-    correctionRequestId: diagnostics.correctionRequestId,
-    sourceRecipeId: diagnostics.sourceRecipeId,
-    generatedRevisionId: diagnostics.generatedRevisionId,
-    parentRevisionId: diagnostics.parentRevisionId,
+    // Keep operational telemetry useful without persisting recipe identifiers,
+    // nutrition targets, allergy/preferences, parsed requests, or provider text.
     intentType: diagnostics.intentType,
-    normalizedTargetConcept: diagnostics.normalizedTargetConcept,
     fuzzyNormalizedConcept: diagnostics.fuzzyNormalizedConcept,
-    parsedRequirements: diagnostics.parsedRequirements,
-    originalNutrition: diagnostics.originalNutrition,
-    nutritionTargets: diagnostics.nutritionTargets,
-    providerAttempts: diagnostics.metrics?.attempts ?? [],
+    providerCallCount: diagnostics.metrics?.providerCallCount ?? 0,
+    providerStages: diagnostics.metrics?.stages ?? [],
+    providerAttempts: (diagnostics.metrics?.attempts ?? []).map((attempt) => ({
+      attempt: attempt.attempt,
+      stage: attempt.stage,
+      finishReason: attempt.finishReason,
+      schemaParseResult: attempt.schemaParseResult,
+      failureReason: attempt.failureReason,
+    })),
     firstValidationIssueCodes: diagnostics.firstValidationIssueCodes,
-    blockingValidationIssues: diagnostics.firstAttempt?.blockingValidationIssues ?? [],
-    firstAttempt: diagnostics.firstAttempt,
     focusedRepairRan: diagnostics.focusedRepairRan,
     repairValidationIssueCodes: diagnostics.repairValidationIssueCodes,
-    repairBlockingValidationIssues: diagnostics.repairBlockingValidationIssues ?? [],
     fallbackRan: diagnostics.fallbackRan ?? false,
     fallbackValidationIssueCodes: diagnostics.fallbackValidationIssueCodes ?? [],
-    fallbackBlockingValidationIssues: diagnostics.fallbackBlockingValidationIssues ?? [],
-    canonicalRecipeId: diagnostics.canonicalRecipeId,
-    requestedSourceRevisionId: diagnostics.requestedSourceRevisionId,
-    latestStoredRevisionId: diagnostics.latestStoredRevisionId,
-    scanSessionId: diagnostics.scanSessionId,
     correctionKind: diagnostics.correctionKind,
-    repairAttempt: diagnostics.repairAttempt,
-    fallbackAttempt: diagnostics.fallbackAttempt,
     repairCandidateEffectivelyIdentical: diagnostics.repairCandidateEffectivelyIdentical,
     editRetryRan: diagnostics.editRetryRan ?? false,
     editRetryReasonCodes: diagnostics.editRetryReasonCodes ?? [],
     finalValidationIssueCodes: diagnostics.finalValidationIssueCodes ?? [],
     finalHttpStatus,
     errorCategory: diagnostics.failureCategory ?? (error ? getCorrectionErrorCategory(error) : undefined),
-    unexpectedError,
-    validationIssues: error instanceof CorrectionValidationError
-      ? error.validationIssues
-      : undefined,
     totalDurationMs: Date.now() - diagnostics.startedAt,
   };
-  // Emit one sanitized JSON record so nested patch diagnostics remain fully
-  // inspectable in Railway logs instead of being rendered as [Object].
+  // Emit bounded operational fields only; request content never reaches logs.
   console.log('[recipe_correction_request]', JSON.stringify(payload));
-  if (finalHttpStatus === 422) {
-    console.log('[recipe_correction_failure]', JSON.stringify({
-      requirements: diagnostics.parsedRequirements,
-      blockingIssues: diagnostics.firstAttempt?.blockingValidationIssues ?? [],
-      repairRan: diagnostics.focusedRepairRan,
-      finalBlockingIssues: diagnostics.fallbackRan
-        ? diagnostics.fallbackBlockingValidationIssues ?? diagnostics.repairBlockingValidationIssues ?? diagnostics.firstAttempt?.blockingValidationIssues ?? []
-        : diagnostics.repairBlockingValidationIssues ?? diagnostics.firstAttempt?.blockingValidationIssues ?? [],
-      fallbackRan: diagnostics.fallbackRan ?? false,
-      editRetryRan: diagnostics.editRetryRan ?? false,
-      finalValidationIssueCodes: diagnostics.finalValidationIssueCodes ?? [],
-    }));
-  }
 }
 
 function getCorrectionIssueCode(issue: string): string {

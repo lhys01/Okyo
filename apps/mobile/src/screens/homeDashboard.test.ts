@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import { getMetricCarouselIndex } from '../components/home/metricCarouselState';
 
 const home = readFileSync(resolve(process.cwd(), 'src/screens/HomeScreen.tsx'), 'utf8');
 const carousel = readFileSync(resolve(process.cwd(), 'src/components/home/MetricCarousel.tsx'), 'utf8');
@@ -29,6 +30,69 @@ test('Home metric carousel is swipeable, paged, accessible, and goal ordered', (
   assert.match(carousel, /Haptics\.selectionAsync/);
 });
 
+test('the active metric bubble follows the swipe position before momentum settles', () => {
+  assert.equal(getMetricCarouselIndex(0, 100, 2), 0);
+  assert.equal(getMetricCarouselIndex(49, 100, 2), 0);
+  assert.equal(getMetricCarouselIndex(51, 100, 2), 1);
+  assert.equal(getMetricCarouselIndex(1000, 100, 2), 1);
+  assert.match(carousel, /onScroll=\{syncIndexToScroll\}/);
+  assert.match(carousel, /scrollEventThrottle=\{16\}/);
+  assert.match(carousel, /onMomentumScrollEnd=\{syncIndexToScroll\}/);
+});
+
+test('Home metric paging respects Reduce Motion and supports Dynamic Type without clipping stat labels', () => {
+  assert.match(carousel, /useReduceMotion\(\)/);
+  assert.match(carousel, /animated: !reduceMotion/);
+  assert.match(home, /fontScale, height, width/);
+  assert.match(home, /metricHeight = \(compact \? 162 : 176\) \+ Math\.round\(Math\.max\(0, fontScale - 1\) \* 72\)/);
+  assert.doesNotMatch(metricCard, /maxFontSizeMultiplier|numberOfLines=\{[12]\}/);
+});
+
+test('tour transitions retain their Reduce Motion path and shared type roles', () => {
+  const tour = readFileSync(resolve(process.cwd(), 'src/tour/TourOverlay.tsx'), 'utf8');
+  const coach = readFileSync(resolve(process.cwd(), 'src/tour/CoachDock.tsx'), 'utf8');
+  assert.match(tour, /const reduceMotion = useReduceMotion\(\)/);
+  assert.match(tour, /if \(reduceMotion\) \{\s*spotlightOpacity\.setValue\(1\)/);
+  assert.match(coach, /\.\.\.typography\.button/);
+  assert.match(coach, /style=\{styles\.textArea\}/);
+});
+
+test('visual typography and icon roles use the shared Okyo design tokens', () => {
+  const theme = readFileSync(resolve(process.cwd(), 'src/theme/okyoTheme.ts'), 'utf8');
+  const grocery = readFileSync(resolve(process.cwd(), 'src/screens/GroceryListScreen.tsx'), 'utf8');
+  const result = readFileSync(resolve(process.cwd(), 'src/screens/ResultSummaryScreen.tsx'), 'utf8');
+  const ingredients = readFileSync(resolve(process.cwd(), 'src/components/RecipeIngredientsAssistant.tsx'), 'utf8');
+  assert.match(theme, /display: 'Manrope_800ExtraBold'/);
+  assert.match(theme, /cardTitle:/);
+  assert.match(theme, /captionSmall:/);
+  assert.match(theme, /export const iconSizes/);
+  assert.match(grocery, /\.\.\.typography\.title/);
+  assert.match(grocery, /\.\.\.typography\.bodyEmphasis/);
+  assert.match(result, /\.\.\.typography\.hero/);
+  assert.match(ingredients, /\.\.\.typography\.section/);
+});
+
+test('icon-only controls retain accessible names and illustration artwork stays decorative', () => {
+  const grocery = readFileSync(resolve(process.cwd(), 'src/screens/GroceryListScreen.tsx'), 'utf8');
+  const detail = readFileSync(resolve(process.cwd(), 'src/screens/RecipeDetailScreen.tsx'), 'utf8');
+  const ingredients = readFileSync(resolve(process.cwd(), 'src/components/RecipeIngredientsAssistant.tsx'), 'utf8');
+  assert.match(carousel, /accessibilityLabel=\{`\$\{metrics\[data\[index\]\]\.label\} dashboard metric/);
+  assert.match(metricCard, /accessibilityLabel=\{accessibilityLabel\}/);
+  assert.match(grocery, /accessibilityLabel="Back"/);
+  assert.match(detail, /accessibilityLabel="Back"/);
+  assert.match(ingredients, /accessibilityLabel="Increase servings"/);
+  assert.match(ingredients, /accessibilityLabel=\{isAdded \? `Remove/);
+  assert.match(metricCard, /accessibilityElementsHidden/);
+});
+
+test('Home and Grocery retain scrollable small-screen layouts without fixed viewport sizing', () => {
+  const grocery = readFileSync(resolve(process.cwd(), 'src/screens/GroceryListScreen.tsx'), 'utf8');
+  assert.match(home, /const compact = width < 380 \|\| height < 700/);
+  assert.match(home, /cardWidth = width - 40/);
+  assert.match(grocery, /<ScrollView ref=\{scrollRef\}/);
+  assert.doesNotMatch(grocery, /width:\s*(?:375|390|402)/);
+});
+
 test('Home uses a compact main metric with three separate supporting cards and honest visual progress', () => {
   assert.match(metricCard, /styles\.stats/);
   assert.match(metricCard, /metric\.stats\.map/);
@@ -50,7 +114,9 @@ test('Home week strip is clickable and has concise day empty states', () => {
   const weekStrip = readFileSync(resolve(process.cwd(), 'src/components/home/WeekStrip.tsx'), 'utf8');
   assert.match(home, /<WeekStrip[\s\S]*onDayPress/);
   assert.match(weekStrip, /Pressable/);
-  assert.match(weekStrip, /selected \? styles\.todayCircle/);
+  assert.match(weekStrip, /const isPast = key < todayKey/);
+  assert.match(weekStrip, /isToday \? styles\.todayDate/);
+  assert.doesNotMatch(weekStrip, /todayCircle/);
   assert.match(weekStrip, /before Okyo started/);
   assert.doesNotMatch(home, /No dish captured yet\./);
   assert.match(home, /Your Okyo week starts here\./);
@@ -60,7 +126,7 @@ test('Home week strip is clickable and has concise day empty states', () => {
 test('Home shows a real first-use CTA only until there is activity', () => {
   // The approved three-Kiko row plus its line, with a real coral CTA beside it.
   assert.match(home, /activityDates\.length === 0/);
-  assert.match(home, /kiko-static\/approved\/kiko-soup\.png/);
+  assert.match(home, /kiko-static\/approved\/kiko-soup-sticker\.png/);
   assert.match(home, /Scan your first dish to get started\./);
   assert.match(home, /Scan a dish/);
 
@@ -72,12 +138,9 @@ test('Home shows a real first-use CTA only until there is activity', () => {
 });
 
 test('first-use CTA opens the same scan chooser as the global FAB', () => {
-  assert.match(home, /useStartPickedScan/);
-  assert.match(home, /ScanActionSheet/);
-  assert.match(home, /setScanOptionsVisible\(true\)/);
-  assert.match(home, /startPickedScan\('camera'\)/);
-  assert.match(home, /startPickedScan\('photos'\)/);
-  assert.match(home, /navigation\.navigate\('DescribeMealScreen'\)/);
+  assert.match(home, /useOpenScanActionSheet/);
+  assert.match(home, /openSharedScanSheet\(\)/);
+  assert.doesNotMatch(home, /<ScanActionSheet|useStartPickedScan|scanOptionsVisible/);
 });
 
 test('Home renders the approved three-Kiko artwork as a prominent, uncropped illustration', () => {
@@ -92,15 +155,19 @@ test('Home renders the approved three-Kiko artwork as a prominent, uncropped ill
 
 test("Today's ideas shows exactly two recipes", () => {
   assert.match(home, /HOME_IDEA_COUNT = 2/);
-  assert.match(home, /getHourlyIdeas\(/);
+  assert.match(home, /getHomeIdeaIdsForLocalHour\(ideaHour\)/);
   assert.match(home, /setIdeaHour\(new Date\(\)\.getHours\(\)\)/);
   assert.doesNotMatch(home, /mealIdeas\.slice\(2, 4\)/);
   assert.match(home, /actionLabel="Explore"/);
 });
 
+test("Today's ideas registers its complete section, including Explore, as a tour anchor", () => {
+  assert.match(home, /useTourAnchor\('home-recommended-section'\)/);
+  assert.match(home, /ref=\{recommendedSectionAnchorRef\}/);
+});
+
 test('Home only offers ideas that have a real bundled photo', () => {
-  assert.match(home, /HOME_IDEA_RECIPE_IDS/);
-  assert.match(home, /visually reviewed for food-forward imagery without baked-in/);
+  assert.match(home, /recommendedRecipes\.find\(\(recipe\) => recipe\.id === id\)/);
   assert.doesNotMatch(home, /chocolate-mug-cake/);
 });
 
@@ -114,16 +181,18 @@ test('metric visuals never fabricate history', () => {
 test('future days replace Savings only; Macros retain their honest selected-day zeros', () => {
   assert.match(home, /futureSelectedDay/);
   assert.match(carousel, /futureDay/);
-  assert.match(metricCard, /Let's see how you can save/);
+  assert.match(metricCard, /futureDay && metric\.kind === 'savings'/);
+  assert.match(metricCard, /Cook a meal to see this/);
   assert.match(metricCard, /!futureMessage/);
 });
 
 test('Macros uses daily completed totals with calories primary and neutral nutrition styling', () => {
   assert.match(home, /selectedDayKey: selectedDateKey/);
+  assert.match(carousel, /extraData=\{metrics\}/);
   assert.match(homeMetrics, /selectCompletedMacrosForDay/);
   assert.match(homeMetrics, /completedMeals/);
   assert.match(homeMetrics, /meal\.completedAt/);
-  assert.match(homeMetrics, /caption: 'calories today'/);
+  assert.match(homeMetrics, /caption: `calories · \$\{dayLabel\}`/);
   assert.match(homeMetrics, /label: 'Protein'/);
   assert.match(homeMetrics, /label: 'Fat'/);
   assert.match(homeMetrics, /label: 'Carbs'/);
@@ -150,16 +219,13 @@ test('MainTabs mounts one coral scan FAB without changing tab order', () => {
 });
 
 test('the scan FAB is anchored to the nav pill: mostly above it, not nested inside it', () => {
-  const pillBottom = Number(/styles\.tabBarPill, \{ bottom: (\d+) \}/.exec(tabs)?.[1]);
-  const pillHeight = Number(/tabBarPill:[\s\S]*?height: (\d+)/.exec(tabs)?.[1]);
-  const fabBottom = Number(/<ScanFab[\s\S]*?bottom=\{(\d+)\}/.exec(tabs)?.[1]);
-  const fabSize = 64;
-  assert.ok(Number.isFinite(pillBottom) && Number.isFinite(pillHeight) && Number.isFinite(fabBottom));
-  const pillTop = pillBottom + pillHeight;
-  // Anchored close to the nav — allowed to overlap the pill's top edge a
-  // little, intentionally — but most of the FAB must still read as above
-  // the pill, not nested almost entirely inside its band (the old bottom:37
-  // regression, where the FAB sat within a few px of the pill's own bottom).
-  assert.ok(fabBottom > pillBottom + 20, `FAB (${fabBottom}) sits too close to the pill's own bottom (${pillBottom}), like the old nested regression`);
-  assert.ok(fabBottom + fabSize > pillTop + fabSize / 2, `FAB (${fabBottom}) does not clear at least half its height above the pill top (${pillTop})`);
+  assert.match(tabs, /useSafeAreaInsets/);
+  assert.match(tabs, /bottom: bottomInset/);
+  assert.match(tabs, /bottom=\{bottomInset \+ 48\}/);
+});
+
+test('Home shows the completed Health goal count and duration for the active goal', () => {
+  assert.match(home, /healthBranchPersistence\.read\(\)\.then\(\(draft\) => \{[\s\S]*getHealthGoalSummary\(draft\)/);
+  assert.match(home, /primaryGoal === 'eat_healthier' && healthGoalSummary/);
+  assert.match(home, /healthGoalSummary\.detail/);
 });

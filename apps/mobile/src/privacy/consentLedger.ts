@@ -7,9 +7,9 @@ import { PERMISSION_NOTICE_VERSION, type PermissionNoticeKind } from './permissi
  *
  * Records only choices Okyo actually asks the user to make. As of this build
  * that is the three device permissions in `permissionNotices.ts` and nothing
- * else — Okyo ships no analytics SDK, no advertising SDK, no tracking, and no
- * ATT prompt (see `analytics/track.ts`, where `shouldLogAnalytics` is `false`
- * and no event is ever transmitted). No blanket "I agree" consent screen is
+ * else. Okyo has no advertising SDK, tracking, or ATT prompt. Its optional
+ * allowlisted analytics transport is enabled only when an analytics key is
+ * configured; this permission ledger does not record analytics consent. No blanket "I agree" consent screen is
  * implemented, because there is no optional processing that would need one.
  * If an analytics or advertising SDK is ever added, its purpose belongs here
  * as a separate entry with its own notice version — never folded into these.

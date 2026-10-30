@@ -9,7 +9,6 @@ import { ChallengeCompleteScreen } from '../screens/ChallengeCompleteScreen';
 import { DupeChallengeScreen } from '../screens/DupeChallengeScreen';
 import { DescribeMealScreen } from '../screens/DescribeMealScreen';
 import { GoalScreen } from '../screens/GoalScreen';
-import { PaywallScreen } from '../screens/PaywallScreen';
 import { RestaurantPackDetailScreen } from '../screens/RestaurantPackDetailScreen';
 import { ResultSummaryScreen } from '../screens/ResultSummaryScreen';
 import { KitchenLetterScreen } from '../screens/KitchenLetterScreen';
@@ -18,7 +17,8 @@ import { RecommendationCategoryScreen } from '../screens/RecommendationCategoryS
 import { SavingsDashboardScreen } from '../screens/SavingsDashboardScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { ShareCardPreviewScreen } from '../screens/ShareCardPreviewScreen';
-import { OnboardingV3 } from '../onboarding-v3/OnboardingV3';
+import { CanonicalOnboarding } from '../onboarding';
+import { AuthGate } from '../auth/AuthGate';
 import { onboardingPersistence } from '../state/onboardingPersistence';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { uiLog } from '../utils/uiDebug';
@@ -30,12 +30,13 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function AppNavigator({ appStartedAt, fontsLoaded }: { appStartedAt: number; fontsLoaded: boolean }) {
   const hasCompletedOnboarding = useOkyoStore((state) => state.hasCompletedOnboarding);
+  const freshOnboardingRequired = useOkyoStore((state) => state.freshOnboardingRequired);
   const setOnboardingCompletionFromStorage = useOkyoStore((state) => state.setOnboardingCompletionFromStorage);
   const [persistedOnboardingCompleted, setPersistedOnboardingCompleted] = useState<boolean | null>(null);
   const didTrackAppOpen = useRef(false);
   const startupStatus = useMemo(
-    () => getOnboardingStartupStatus(persistedOnboardingCompleted),
-    [persistedOnboardingCompleted],
+    () => getOnboardingStartupStatus(persistedOnboardingCompleted, freshOnboardingRequired),
+    [freshOnboardingRequired, persistedOnboardingCompleted],
   );
   const startupRoute = getStartupRoute(startupStatus);
 
@@ -103,13 +104,14 @@ export function AppNavigator({ appStartedAt, fontsLoaded }: { appStartedAt: numb
         }}
       >
         <Stack.Screen name="WelcomeScreen">
-          {() => <OnboardingV3 appStartedAt={appStartedAt} fontsLoaded={fontsLoaded} />}
+          {() => <AuthGate onboardingCompleted={false} requireSession={!__DEV__}><CanonicalOnboarding appStartedAt={appStartedAt} fontsLoaded={fontsLoaded} /></AuthGate>}
         </Stack.Screen>
       </Stack.Navigator>
     );
   }
 
   return (
+    <AuthGate onboardingCompleted requireSession={!__DEV__}>
     <Stack.Navigator
       key="main"
       initialRouteName="MainTabs"
@@ -154,7 +156,6 @@ export function AppNavigator({ appStartedAt, fontsLoaded }: { appStartedAt: numb
         component={RestaurantPackDetailScreen}
         options={{ title: 'Pack Detail' }}
       />
-      <Stack.Screen name="PaywallScreen" component={PaywallScreen} options={{ title: 'Okyo Plus' }} />
       <Stack.Screen
         name="SavingsDashboardScreen"
         component={SavingsDashboardScreen}
@@ -174,6 +175,7 @@ export function AppNavigator({ appStartedAt, fontsLoaded }: { appStartedAt: numb
       />
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false, title: 'Okyo' }} />
     </Stack.Navigator>
+    </AuthGate>
   );
 }
 

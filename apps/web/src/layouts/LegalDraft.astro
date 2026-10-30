@@ -1,0 +1,28 @@
+---
+import Base from './Base.astro';
+import DraftBanner from '../components/DraftBanner.astro';
+import '../styles/prose.css';
+
+interface Props {
+  title: string;
+  description: string;
+  version: string;
+  knownGaps: string[];
+}
+
+// D5: legal text is unapproved. Draft pages are always noindex and always show
+// the draft banner. Swap to an approved layout only after counsel sign-off.
+const { title, description, version, knownGaps } = Astro.props;
+---
+
+<Base title={`${title} (draft)`} description={description} noindex>
+  <div class="container page">
+    <h1>{title}</h1>
+    <DraftBanner version={version} knownGaps={knownGaps} />
+    <article class="content-panel">
+      <div class="prose">
+        <slot />
+      </div>
+    </article>
+  </div>
+</Base>

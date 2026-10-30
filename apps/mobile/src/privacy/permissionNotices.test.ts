@@ -107,19 +107,28 @@ test('nothing requests a permission at app launch', () => {
 test('native usage strings match the in-app notices', () => {
   const appConfig = JSON.parse(read('app.json')) as {
     expo: {
-      ios: { infoPlist: Record<string, string> };
-      android: { permissions: string[] };
+      android: { blockedPermissions: string[] };
       plugins: unknown[];
     };
   };
 
-  const camera = appConfig.expo.ios.infoPlist.NSCameraUsageDescription;
-  const photos = appConfig.expo.ios.infoPlist.NSPhotoLibraryUsageDescription;
+  const plist = read('ios/Okyo/Info.plist');
+  const camera = plist.match(/<key>NSCameraUsageDescription<\/key>\s*<string>([^<]+)<\/string>/)?.[1];
+  const photos = plist.match(/<key>NSPhotoLibraryUsageDescription<\/key>\s*<string>([^<]+)<\/string>/)?.[1];
   assert.ok(camera && photos, 'both iOS usage strings must be declared');
   for (const usageString of [camera, photos]) {
     assert.match(usageString, /AI provider/, 'the OS string must disclose the AI transfer, matching the in-app notice');
   }
 
   // An unused declared permission is a store and privacy-review liability.
-  assert.deepEqual(appConfig.expo.android.permissions, [], 'Okyo declares no Android permission it does not use');
+  const blocked = appConfig.expo.android.blockedPermissions;
+  assert.ok(Array.isArray(blocked), 'release config must explicitly remove unused permissions merged by dependencies');
+  for (const permission of ['android.permission.READ_EXTERNAL_STORAGE', 'android.permission.WRITE_EXTERNAL_STORAGE', 'android.permission.RECORD_AUDIO', 'android.permission.SYSTEM_ALERT_WINDOW']) {
+    assert.ok(blocked.includes(permission), `release config must block ${permission}`);
+  }
+  const imagePicker = appConfig.expo.plugins.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-image-picker');
+  assert.ok(Array.isArray(imagePicker), 'Expo image-picker plugin must stay configured');
+  const pluginConfig = imagePicker[1] as Record<string, string>;
+  assert.equal(pluginConfig.cameraPermission, camera);
+  assert.equal(pluginConfig.photosPermission, photos);
 });

@@ -1,7 +1,8 @@
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { Image } from 'expo-image';
 import { Spark } from 'iconoir-react-native';
 import { useEffect } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -10,6 +11,7 @@ import { OnboardingBackButton } from '../components/OnboardingBackButton';
 import { ONBOARDING_BACK_ROW_HEIGHT, ONBOARDING_BACK_ROW_TOP_GAP, ONBOARDING_HORIZONTAL_PADDING } from '../components/onboardingLayout';
 import { motionTokens } from '../motion/motionTokens';
 import { useReduceMotion } from '../motion/useReduceMotion';
+import { getScanLoadingVisualHeight } from '../../utils/responsiveLayout';
 
 const scanLoadingVideo = require('../../../assets/scan/scan-loading-gradient.mp4');
 
@@ -18,6 +20,8 @@ export function AnalyzingScreen({ mascotName, photoUri, onCancel }: {
   photoUri: string | null;
   onCancel: () => void;
 }) {
+  const { height: windowHeight } = useWindowDimensions();
+  const visualHeight = getScanLoadingVisualHeight(windowHeight);
   const reduceMotion = useReduceMotion();
   const loadingPlayer = useVideoPlayer(scanLoadingVideo, (videoPlayer) => {
     videoPlayer.loop = true;
@@ -48,10 +52,13 @@ export function AnalyzingScreen({ mascotName, photoUri, onCancel }: {
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <View style={styles.header}><OnboardingBackButton onPress={onCancel} /></View>
-      <View style={styles.content}>
-        <View style={styles.visual}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={[styles.visual, { height: visualHeight }]}>
           {photoUri ? (
-            <VideoView accessibilityLabel="Dish scan loading" contentFit="cover" nativeControls={false} player={loadingPlayer} style={StyleSheet.absoluteFill} surfaceType="textureView" />
+            <>
+              <VideoView accessible={false} contentFit="cover" nativeControls={false} player={loadingPlayer} style={StyleSheet.absoluteFill} surfaceType="textureView" />
+              <Image accessibilityLabel="Dish being scanned" contentFit="contain" source={{ uri: photoUri }} style={StyleSheet.absoluteFill} />
+            </>
           ) : (
             <View accessibilityLabel="Analyzing dish description" accessibilityRole="image" style={styles.descriptionVisual}><Spark color={colors.coralDark} height={54} width={54} /></View>
           )}
@@ -63,7 +70,7 @@ export function AnalyzingScreen({ mascotName, photoUri, onCancel }: {
           <Animated.Text style={[styles.stage, secondStyle]}>Reading the ingredients…</Animated.Text>
         </View>
         <Text style={styles.note}>Recipe estimates are AI-generated and can be edited after your scan.</Text>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -71,8 +78,8 @@ export function AnalyzingScreen({ mascotName, photoUri, onCancel }: {
 const styles = StyleSheet.create({
   safeArea: { backgroundColor: colors.background, flex: 1 },
   header: { minHeight: ONBOARDING_BACK_ROW_HEIGHT, paddingHorizontal: ONBOARDING_HORIZONTAL_PADDING, paddingTop: ONBOARDING_BACK_ROW_TOP_GAP },
-  content: { alignItems: 'center', flex: 1, justifyContent: 'center', paddingBottom: 80, paddingHorizontal: 30 },
-  visual: { alignItems: 'center', backgroundColor: colors.card, borderRadius: 36, height: 280, justifyContent: 'center', overflow: 'hidden', width: '100%' },
+  content: { alignItems: 'center', flexGrow: 1, justifyContent: 'center', paddingBottom: 24, paddingHorizontal: 30, paddingTop: 12 },
+  visual: { alignItems: 'center', backgroundColor: colors.card, borderRadius: 36, justifyContent: 'center', overflow: 'hidden', width: '100%' },
   descriptionVisual: { alignItems: 'center', backgroundColor: colors.coralSoft, borderRadius: 48, height: 128, justifyContent: 'center', width: 128 },
   spinner: { borderColor: 'rgba(255,255,255,0.7)', borderRadius: 52, borderRightColor: colors.coral, borderTopColor: colors.coral, borderWidth: 5, height: 104, position: 'absolute', width: 104 },
   title: { color: colors.charcoal, fontFamily: fontFamilies.extraBold, fontSize: 27, letterSpacing: -0.5, marginTop: 28, textAlign: 'center' },

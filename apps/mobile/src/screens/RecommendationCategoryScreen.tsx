@@ -2,7 +2,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { NavArrowLeft } from 'iconoir-react-native';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RecommendationCard } from '../components/RecommendationCard';
@@ -28,6 +28,10 @@ export function RecommendationCategoryScreen() {
   const navigation = useNavigation<CategoryNavigation>();
   const route = useRoute<CategoryRoute>();
   const openRecommendation = useOpenRecommendation();
+  const { width } = useWindowDimensions();
+  // Two equal columns: screen minus content padding (20 each side) minus the
+  // grid's columnGap (14), split in half.
+  const columnWidth = (width - 40 - 14) / 2;
   const showAll = route.params?.showAll === true;
   const category: RecommendationCategory = isCategory(route.params?.category)
     ? route.params.category
@@ -60,7 +64,9 @@ export function RecommendationCategoryScreen() {
         <Text style={styles.title}>{showAll ? 'All dishes' : category}</Text>
         <View style={styles.grid}>
           {recipes.map((recipe) => (
-            <RecommendationCard key={recipe.id} recipe={recipe} onPress={() => openRecommendation(recipe)} />
+            <View key={recipe.id} style={{ width: columnWidth }}>
+              <RecommendationCard recipe={recipe} onPress={() => openRecommendation(recipe)} />
+            </View>
           ))}
         </View>
       </ScrollView>

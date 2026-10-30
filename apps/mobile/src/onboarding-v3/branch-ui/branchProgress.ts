@@ -1,3 +1,5 @@
+import { resolveCanonicalProgressSnapshot } from '../../onboarding/canonical/progress';
+
 /**
  * One continuous progress fill for the development-preview goal branches.
  *
@@ -17,9 +19,5 @@ export function getBranchProgress(
   order: readonly string[],
   currentStep: string,
 ): { answered: number; total: number } {
-  const sequence = order.filter((step) => step !== 'intro');
-  const total = Math.max(sequence.length - 1, 1);
-  const index = sequence.indexOf(currentStep);
-  if (index < 0) return { answered: 0, total };
-  return { answered: Math.min(index, total), total };
+  return resolveCanonicalProgressSnapshot({ routeOrder: order, currentRoute: currentStep, hiddenRoutes: ['intro'] });
 }

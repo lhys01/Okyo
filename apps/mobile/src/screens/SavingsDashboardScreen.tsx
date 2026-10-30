@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FoodImage } from '../components/FoodImage';
 import { KikoMascot } from '../components/KikoMascot';
+import { FitText } from '../components/FitText';
 import { colors } from '../components/OkyoUI';
 import {
   getSafeRecipeMode,
@@ -212,10 +213,10 @@ export function SavingsDashboardScreen() {
             <SavingsThumb imageStatus={biggestWin.imageStatus} title={biggestWin.title} uri={biggestWin.imageUri} />
             <View style={styles.biggestCopy}>
               <Text style={styles.biggestTitle}>{cleanDisplayText(biggestWin.title)}</Text>
-              <Text style={styles.biggestSavings}>Saved about {formatCurrency(biggestWin.savings)}</Text>
-              <Text style={styles.biggestMeta}>
+              <FitText minimumFontScale={0.72} style={styles.biggestSavings}>Saved about {formatCurrency(biggestWin.savings)}</FitText>
+              <FitText minimumFontScale={0.65} style={styles.biggestMeta}>
                 Restaurant {formatCurrency(biggestWin.restaurantCost)}{' -> '}Home {formatCurrency(biggestWin.homeCost)}
-              </Text>
+              </FitText>
             </View>
           </View>
         </View>

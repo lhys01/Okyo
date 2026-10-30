@@ -111,15 +111,25 @@ test('the ledger is cleared by "delete my data" — no record survives the user 
   assert.match(deletion, /CONSENT_LEDGER_STORAGE_KEY/);
 });
 
-test('Okyo ships no optional tracking, so no blanket consent screen exists', () => {
-  // A consent control for processing that does not happen would be theatre.
+test('optional PostHog analytics is key-gated and uses explicit sanitized events', () => {
   const analytics = read('src/analytics/track.ts');
-  assert.match(analytics, /const shouldLogAnalytics = false;/, 'analytics must remain non-transmitting');
+  assert.match(analytics, /clientTrack\(eventName, properties\)/);
+
+  const config = read('src/analytics/analyticsEnv.ts');
+  assert.match(config, /EXPO_PUBLIC_POSTHOG_KEY/);
+  assert.match(config, /analyticsAllowed\(analyticsConfig\)/);
+
+  const transport = read('src/analytics/posthogTransport.ts');
+  assert.match(transport, /options\.enabled \?\? isAnalyticsConfigured\(\)/);
+  assert.match(transport, /if \(!enabled\) return false/);
+  assert.match(transport, /sanitizeAnalyticsEvent\(input\.event/);
+  assert.match(transport, /autocapture/i);
+  assert.doesNotMatch(transport, /sessionReplay|autocapture\s*:/i);
 
   const packageJson = read('package.json');
   const forbiddenSdks = [
-    'firebase', 'amplitude', 'mixpanel', 'segment', '@sentry', 'bugsnag',
-    'posthog', 'appsflyer', 'adjust', 'branch-sdk', 'facebook-sdk',
+    'firebase', 'amplitude', 'mixpanel', 'segment', 'bugsnag',
+    'appsflyer', 'adjust', 'branch-sdk', 'facebook-sdk',
     'react-native-google-mobile-ads', 'expo-tracking-transparency',
   ];
   for (const sdk of forbiddenSdks) {

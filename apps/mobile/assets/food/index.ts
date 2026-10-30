@@ -103,3 +103,20 @@ export function getFoodLibraryImageAsset(recipeId: string | null | undefined): n
   // never fall through to a deleted user URI or a network-only image.
   return recipeId.startsWith('rec-') ? foodAssets.bowl : undefined;
 }
+
+/**
+ * A deterministic bundled fallback for recipe records that do not have an
+ * image yet. It is intentionally category-led so an unavailable salad does
+ * not become a random dessert or burger.
+ */
+export function getFoodLibraryFallbackAsset(category?: string | null, title?: string | null): number {
+  const descriptor = `${category ?? ''} ${title ?? ''}`.toLowerCase();
+
+  if (/breakfast|brunch|egg|oat|toast|smoothie/.test(descriptor)) return foodAssets.breakfast;
+  if (/salad|vegetable|vegetarian|greens?/.test(descriptor)) return foodAssets.salad;
+  if (/pasta|noodle|rigatoni|spaghetti|ramen/.test(descriptor)) return foodAssets.pasta;
+  if (/handheld|wrap|sandwich|burger|taco/.test(descriptor)) return foodAssets.burger;
+  if (/dessert|treat|cake|cookie|sweet/.test(descriptor)) return foodAssets.dessert;
+
+  return foodAssets.bowl;
+}

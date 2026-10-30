@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="340" viewBox="0 0 900 340">
+  <defs><filter id="s" x="-10%" y="-20%" width="120%" height="150%"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#2B2B30" flood-opacity=".16"/></filter></defs>
+  <rect x="18" y="18" width="864" height="304" rx="52" fill="#FFFFFF" filter="url(#s)"/>
+  <text x="84" y="122" fill="#89858F" font-family="Arial, sans-serif" font-size="30" font-weight="700" letter-spacing="2">TODAY</text>
+  <text x="82" y="224" fill="#2B2B30" font-family="Arial, sans-serif" font-size="100" font-weight="800">575</text>
+  <text x="342" y="217" fill="#89858F" font-family="Arial, sans-serif" font-size="42" font-weight="700">/ 2,000 kcal</text>
+  <text x="84" y="272" fill="#57545E" font-family="Arial, sans-serif" font-size="32">Daily food overview</text>
+  <circle cx="732" cy="170" r="96" fill="none" stroke="#F1EEE9" stroke-width="22"/>
+  <circle cx="732" cy="170" r="96" fill="none" stroke="#FF8BAE" stroke-width="22" stroke-linecap="round" stroke-dasharray="210 600" transform="rotate(-90 732 170)"/>
+  <path d="M720 128c20 17 36 38 32 66-3 23-22 41-46 41-26 0-46-20-46-46 0-33 30-63 52-84 0 15 3 22 8 23z" fill="#FF8BAE"/>
+</svg>

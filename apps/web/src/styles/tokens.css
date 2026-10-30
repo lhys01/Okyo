@@ -1,0 +1,66 @@
+/*
+ * Okyo design tokens for the web.
+ * Source of truth: apps/mobile/src/theme/okyoTheme.ts (Design System V2).
+ * Copied, not imported, so the website never depends on React Native code.
+ * Web-only values are marked.
+ */
+:root {
+  color-scheme: light;
+
+  /* Colors (shared with the app) */
+  --canvas: #fffdfe;
+  --canvas-sunk: #f4e5cf;
+  --surface: #ffffff;
+  --surface-muted: #fffcf8;
+  --ink: #2b2b30;
+  --body: #57545e;
+  --muted: #89858f; /* 3.6:1 on canvas: decoration or 24px+ text only */
+  --border: #eee4d6;
+  --danger: #c94a5e;
+  --coral: #ff8bae; /* accent/background only: never white text on coral */
+  --coral-dark: #e86f91;
+  --coral-soft: #fff0f4;
+  --sunny: #ffd64a;
+  --savings: #2f8f5b;
+  --savings-soft: #e8f6ee;
+  --macros: #6b5bd2;
+  --macros-soft: #f0edfc;
+
+  /* Type (web-only fluid scale built on the app's roles; min at 320px, max at ~1440px) */
+  --font: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --text-display: clamp(2.5rem, 2.5vw + 1.75rem, 4.25rem); /* 40px → 68px */
+  --text-title: clamp(1.875rem, 1.4vw + 1.5rem, 2.75rem); /* 30px → 44px */
+  --text-section: clamp(1.25rem, 0.4vw + 1.15rem, 1.5rem); /* 20px → 24px */
+  --text-lead: clamp(1.1875rem, 0.4vw + 1.1rem, 1.375rem); /* 19px → 22px */
+  --text-body: 1.0625rem; /* 17px; 18px from 768px */
+  --text-body-wide: 1.125rem;
+  --text-small: 0.9375rem; /* 15px: smallest running text */
+  --text-label: 0.8125rem; /* 13px uppercase labels only */
+
+  /* Spacing (shared) */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-xxl: 32px;
+  --space-section: 40px;
+  --space-64: 64px; /* web-only */
+  --space-96: 96px; /* web-only */
+
+  /* Radii (shared) */
+  --radius-hero: 32px;
+  --radius-card: 24px;
+  --radius-panel: 20px;
+  --radius-pill: 999px;
+  --radius-panel-lg: clamp(24px, 1.5vw + 18px, 40px); /* web-only: large panels */
+
+  /* Shadows (shared, translated from RN shadow props) */
+  --shadow-card: 0 6px 13px rgb(43 43 48 / 0.14);
+  --shadow-float: 0 12px 24px rgb(43 43 48 / 0.12);
+
+  /* Layout (web-only) */
+  --content-max: 1120px;
+  --prose-max: 68ch;
+  --gutter: 20px;
+}

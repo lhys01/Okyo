@@ -23,9 +23,9 @@ test('showcase pages contain the approved product copy and none of the rejected 
   }
   assert.doesNotMatch(source, /\bkcal\b/i);
   for (const required of [
-    'Scan any dish. Recreate it at home.', 'Get the ingredients and full recipe', 'More than just a recipe',
-    'Make every recipe yours', 'How did you hear about Okyo?', 'Spend less on the dishes you love',
-    'Know what goes into every bite', 'This fox is now your virtual pet',
+    'Scan any dish. Recreate it at home.', 'Scan any dish. Get the recipe.', 'Everything you need to cook it.',
+    'Make every recipe work for you.', 'How did you hear about Okyo?', 'Spend less on the dishes you love',
+    'See what\'s in every bite.', 'This fox is now your virtual pet',
     'Take photo', 'Upload photo', 'Describe a dish', 'Practical ingredients', 'Cookbook-style steps',
     'More protein', 'Fewer calories', 'Swap ingredient', 'Simpler steps', 'Cook step-by-step',
     'Illustrative example', '$84 saved this month with Okyo',

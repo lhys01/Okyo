@@ -39,7 +39,6 @@ export type RootStackParamList = {
   DupeChallengeScreen: { mode?: RecipeMode; recipeId?: string } | undefined;
   ChallengeCompleteScreen: { challengeId?: string } | undefined;
   RestaurantPackDetailScreen: { packId?: string } | undefined;
-  PaywallScreen: undefined;
   SavingsDashboardScreen: undefined;
   RankingsScreen: undefined;
   SettingsScreen: undefined;
@@ -55,7 +54,9 @@ export type MainTabParamList = {
   LibraryScreen: undefined;
   ProfileScreen: undefined;
   SettingsScreen: undefined;
+  IdeaBoardScreen: undefined;
   DietaryPreferencesScreen: undefined;
+  PersonalizationScreen: undefined;
   NutritionTargetsScreen: undefined;
   NotificationPreferencesScreen: undefined;
   StatsProgressScreen: undefined;
@@ -70,6 +71,6 @@ export type MainTabParamList = {
     transformationMode?: RecipeMode;
     autoSubmitCustomizeInstruction?: boolean;
   } | undefined;
-  RecipeStepsScreen: { completion?: boolean; recipeId?: string; mode?: RecipeMode } | undefined;
+  RecipeStepsScreen: { completion?: boolean; recipeId?: string; mode?: RecipeMode; returnTo?: 'RecipeDetailScreen' | 'ResultSummaryScreen' } | undefined;
   GroceryListScreen: { recipeId?: string; mode?: RecipeMode } | undefined;
 };

@@ -95,6 +95,11 @@ export function resolveRevenueCatConfiguration(
     };
   }
 
+  const expectedPrefix = input.platform === 'ios' ? 'appl_' : 'goog_';
+  if (!productionKey.startsWith(expectedPrefix)) {
+    return { apiKey: null, entitlementId, keySource: null, reason: 'The RevenueCat SDK key does not match this app platform.' };
+  }
+
   return {
     apiKey: productionKey,
     entitlementId,

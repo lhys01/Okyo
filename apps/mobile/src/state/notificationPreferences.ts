@@ -15,7 +15,7 @@ export type NotificationPreferences = {
 
 export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = Object.freeze({
   allowNotifications: true,
-  cookingTimers: true,
+  cookingTimers: false,
   savedRecipeReminders: false,
   groceryReminders: false,
   weeklySavings: false,

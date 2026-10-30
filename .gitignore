@@ -69,6 +69,17 @@ web_modules/
 .env
 .env.*
 !.env.example
+# Signing credentials and private service-account files must stay outside Git.
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+credentials.json
+service-account*.json
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

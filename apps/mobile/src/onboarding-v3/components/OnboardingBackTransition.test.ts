@@ -9,17 +9,16 @@ const ctaSource = readFileSync(resolve(componentsDir, 'OnboardingCTA.tsx'), 'utf
 const backButtonSource = readFileSync(resolve(componentsDir, 'OnboardingBackButton.tsx'), 'utf8');
 const hostSource = readFileSync(resolve(process.cwd(), 'src/onboarding-v3/OnboardingV3.tsx'), 'utf8');
 
-test('the shared onboarding host uses a rightward exit and leftward back entry', () => {
+test('the shared onboarding host uses a leftward back entry without a stale exit layer', () => {
   assert.match(transitionSource, /SlideInLeft\.duration\(BACK_TRANSITION_MS\)/);
-  assert.match(transitionSource, /SlideOutRight\.duration\(BACK_TRANSITION_MS\)/);
+  assert.doesNotMatch(transitionSource, /SlideOutRight/);
   assert.match(transitionSource, /const BACK_TRANSITION_MS = 300/);
   assert.match(transitionSource, /key=\{step\}/);
   assert.match(hostSource, /<OnboardingScreenTransition step=\{state\.step\}>/);
 });
 
 test('Reduce Motion switches the shared back transition to a minimal fade', () => {
-  assert.match(transitionSource, /entering=\{reduceMotion\s*\n\s*\? FadeIn\.duration\(MINIMAL_FADE_MS\)/);
-  assert.match(transitionSource, /exiting=\{reduceMotion\s*\n\s*\? FadeOut\.duration\(MINIMAL_FADE_MS\)/);
+  assert.match(transitionSource, /entering=\{!launchFinished \? undefined : reduceMotion\s*\n\s*\? FadeIn\.duration\(MINIMAL_FADE_MS\)/);
   assert.match(transitionSource, /const MINIMAL_FADE_MS = 100/);
 });
 
@@ -44,12 +43,17 @@ test('the shared Back control keeps the screen surface, warm border, and canonic
 
 test('forward transitions slide left while all V3 branches stay behind the shared host', () => {
   assert.match(transitionSource, /SlideInRight\.duration\(FORWARD_TRANSITION_MS\)/);
-  assert.match(transitionSource, /SlideOutLeft\.duration\(FORWARD_TRANSITION_MS\)/);
+  assert.doesNotMatch(transitionSource, /SlideOutLeft/);
   assert.match(transitionSource, /const FORWARD_TRANSITION_MS = 300/);
   assert.match(transitionSource, /stepOrder = defaultStepOrder/);
   for (const branch of ['SaveMoneyBranchScreen', 'HealthBranchScreen', 'MacrosBranchScreen']) {
     assert.match(hostSource, new RegExp(branch));
   }
+});
+
+test('transition shells do not leave a stale animated layer in the touch path', () => {
+  assert.match(transitionSource, /pointerEvents="box-none"/);
+  assert.doesNotMatch(transitionSource, /exiting=/);
 });
 
 test('forward CTA ignores rapid duplicate presses during the transition handoff', () => {

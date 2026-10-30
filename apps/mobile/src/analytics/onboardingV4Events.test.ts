@@ -72,15 +72,11 @@ test('typed properties accept only the allow-listed fields', () => {
     isMinor: false,
   });
   assert.deepEqual(sanitized, {
-    screen: 'promise',
-    step: 'promise',
-    branch: 'save_money',
+    screen: 'welcome',
     source: 'onboarding',
-    actionType: 'tap',
-    permissionResult: 'granted',
-    errorKind: 'network',
-    durationMs: 42,
-    isMinor: false,
+    result: 'success',
+    reason: 'network',
+    duration_ms: 42,
   });
 });
 
@@ -102,7 +98,7 @@ test('sensitive properties are stripped, not forwarded, even when injected via a
 
   const sanitized = sanitizeOnboardingV4EventProperties(sensitivePayload);
 
-  assert.deepEqual(sanitized, { screen: 'dietarySafety' });
+  assert.deepEqual(sanitized, { screen: 'onboarding' });
   for (const sensitiveKey of ['name', 'userName', 'email', 'allergies', 'dietaryNotes', 'ageYears', 'heightCm', 'weightKg', 'biologicalSex', 'photoUri', 'mealDescription']) {
     assert.equal(Object.prototype.hasOwnProperty.call(sanitized, sensitiveKey), false, `sensitive key leaked through: ${sensitiveKey}`);
   }

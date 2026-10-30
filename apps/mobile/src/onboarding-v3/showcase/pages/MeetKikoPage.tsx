@@ -52,7 +52,7 @@ export function MeetKikoPage(props: ShowcasePageProps) {
   return (
     <ShowcasePageShell {...props}>
       <ShowcasePageFrame artworkContent={
-        <Animated.View accessibilityLabel="Kiko, the Okyo fox" accessibilityRole="image" style={[styles.hero, heroStyle]}>
+        <Animated.View accessibilityLabel="Your fox, the Okyo mascot" accessibilityRole="image" style={[styles.hero, heroStyle]}>
             <Image accessible={false} contentFit="contain" source={onboardingV3Assets.welcomeArtwork} style={StyleSheet.absoluteFill} />
         </Animated.View>
       } body="" title={showcaseContent.meetKiko.title} />

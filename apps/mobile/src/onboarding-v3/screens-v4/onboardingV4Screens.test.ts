@@ -79,9 +79,20 @@ test('Promise and PrimaryGoal remain isolated from later branch, scan, paywall, 
   assert.doesNotMatch(onboardingV4Source, /branchIntro|BranchIntro/);
 });
 
-test('PrimaryGoalScreen renders one GoalCard per FUTURE_PRIMARY_GOALS entry (all four goals, not_sure reachable here and only here)', () => {
+test('PrimaryGoalScreen renders one selectable row per FUTURE_PRIMARY_GOALS entry', () => {
   assert.match(goalSource, /FUTURE_PRIMARY_GOALS\.map/);
   assert.doesNotMatch(goalSource, /(?<!FUTURE_)PRIMARY_GOALS\.map/, 'must iterate FUTURE_PRIMARY_GOALS, not the 3-goal PRIMARY_GOALS');
+});
+
+test('goal selection previews an accessible radio state before one explicit Continue action', () => {
+  assert.match(goalSource, /accessibilityRole="radiogroup"/);
+  assert.match(goalSource, /accessibilityRole="radio"/);
+  assert.match(goalSource, /accessibilityState=\{\{ checked: selected \}\}/);
+  assert.match(goalSource, /if \(choice\) onSelect\(choice\)/);
+  assert.match(goalSource, /disabled=\{!choice\}/);
+  assert.match(goalSource, /Haptics\.selectionAsync\(\)/);
+  assert.match(goalSource, /Skip personalization\. Try my first recipe\./);
+  assert.doesNotMatch(goalSource, /minHeight: 176|<Image|goalCardSelected/);
 });
 
 test('PromiseScreen wires its restore link through the host to the shared RevenueCat restore service', () => {
@@ -130,15 +141,17 @@ test('none of the Step 05 screens collect a name, secondary goal, mascot name, o
   }
 });
 
-test('PersonalInsightScreen uses tap-to-reveal (Pressable + onPress), not a hold gesture, as the default', () => {
+test('PersonalInsightScreen shows its payoff on arrival without an extra reveal gesture', () => {
   assert.doesNotMatch(personalInsightSource, /HoldToReveal|onPressIn.*duration|Vibration/i);
-  assert.match(personalInsightSource, /accessibilityLabel="Reveal your insight"/);
+  assert.doesNotMatch(personalInsightSource, /Tap to see your plan|disabled=\{!revealed\}/);
+  assert.match(personalInsightSource, /accessibilityLabel="Try it on a dish"/);
+  assert.match(personalInsightSource, /onRevealed\?\.\(\)/);
   assert.match(personalInsightSource, /accessibilityRole="button"/);
 });
 
 test('PersonalInsightScreen respects Reduce Motion (reads useReduceMotion and branches styling on it)', () => {
   assert.match(personalInsightSource, /useReduceMotion/);
-  assert.match(personalInsightSource, /reduceMotion &&/);
+  assert.match(personalInsightSource, /reduceMotion \? undefined : FadeInUp/);
 });
 
 test('BranchQuestionScreen respects Reduce Motion and gives immediate selected-state feedback without an auto-advance timer', () => {
@@ -213,7 +226,8 @@ test('OnboardingV4 routes dietarySafety with the "Your preferences" stage label 
   assert.match(onboardingV4Source, /DIETARY_RESTRICTION_TOGGLED/);
   assert.match(onboardingV4Source, /DIETARY_DISLIKES_CHANGED/);
   assert.match(onboardingV4Source, /DIETARY_NONE_OF_THESE_TOGGLED/);
-  assert.match(onboardingV4Source, /DIETARY_SAVED/);
+  assert.match(onboardingV4Source, /SETUP_COMMITTED/);
+  assert.match(onboardingV4Source, /commitSetup\(submittedDraft\)/);
   assert.match(onboardingV4Source, /onboardingV4DietarySavedEvent/);
 });
 
@@ -292,10 +306,10 @@ test('onboardingV4PlanCopy never fabricates default numbers (no hardcoded 150g/2
 test('FirstScanEntryScreen never requests camera permission outside handleTakePhoto, and never requests broad photo-library access', () => {
   const stripped = scanEntrySource.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
   assert.doesNotMatch(stripped, /requestMediaLibraryPermissionsAsync\(/);
-  const permissionCalls = (stripped.match(/requestCameraPermissionsAsync\(/g) ?? []).length;
-  assert.equal(permissionCalls, 1, 'camera permission must be requested exactly once, from inside the tap handler');
+  const permissionCalls = (stripped.match(/requestPermissionWithNotice\(\s*'camera'/g) ?? []).length;
+  assert.equal(permissionCalls, 1, 'camera permission must be gated exactly once, from inside the tap handler');
   const handleTakePhotoBody = stripped.slice(stripped.indexOf('handleTakePhoto ='), stripped.indexOf('handleUploadPhoto ='));
-  assert.match(handleTakePhotoBody, /requestCameraPermissionsAsync/);
+  assert.match(handleTakePhotoBody, /requestPermissionWithNotice\(\s*'camera'/);
 });
 
 test('FirstScanEntryScreen never calls the analysis API and never shows a paywall', () => {
@@ -324,14 +338,17 @@ test('cancelling the system picker (result.canceled) returns to scanEntry with n
   assert.match(libraryBlock, /if \(result\.canceled \|\| !asset\) return;/);
 });
 
-test('OnboardingV4.tsx wires plan/scanEntry with once-only analytics guards and never mutates Home savings/macro totals', () => {
-  assert.match(onboardingV4Source, /hasEmittedPlanViewedRef/);
+test('OnboardingV4 merges setup without a recap event and never mutates Home savings/macro totals', () => {
+  assert.doesNotMatch(onboardingV4Source, /hasEmittedPlanViewedRef|<PersonalPlanScreen/);
   assert.match(onboardingV4Source, /hasEmittedScanInputSelectedRef/);
   assert.match(onboardingV4Source, /commitOnboardingV4PlanToCanonicalProfile/);
   assert.doesNotMatch(onboardingV4Source, /homeSavings|streak|completedMeal|macroTotal/i);
 });
 
 test('plan and scanEntry never show a paywall, call RevenueCat, or request notification permission', () => {
-  const planThroughScanEntry = onboardingV4Source.slice(onboardingV4Source.indexOf("if (state.step === 'plan')"), onboardingV4Source.indexOf("if (state.step === 'photoConfirm'"));
+  const start = onboardingV4Source.indexOf("if (state.step === 'dietarySafety' || state.step === 'plan')");
+  const end = onboardingV4Source.indexOf("if (state.step === 'photoConfirm'");
+  assert.ok(start >= 0 && end > start, 'inspect the actual combined setup and input implementation');
+  const planThroughScanEntry = onboardingV4Source.slice(start, end);
   assert.doesNotMatch(planThroughScanEntry, /RevenueCat|Purchases\.|purchasePackage|restorePurchases|V4Paywall|requestNotificationPermission/i);
 });

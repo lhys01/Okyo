@@ -47,6 +47,57 @@ test('deletion does not throw when a store has no reset/clear method', async () 
   await assert.doesNotReject(clearAllPersonalOkyoData(() => {}, { profileStore: {}, dietaryMirror: {}, storage }));
 });
 
+test('local deletion also cancels the scheduled grocery reminder', async () => {
+  const storage = createMemoryStorage();
+  let reminderCancelled = false;
+  await clearAllPersonalOkyoData(() => {}, {
+    profileStore: {},
+    dietaryMirror: {},
+    storage,
+    clearReminder: async () => { reminderCancelled = true; },
+  });
+  assert.equal(reminderCancelled, true);
+});
+
+test('local deletion continues independent cleanup and reports a partial failure', async () => {
+  const storage = createMemoryStorage();
+  storage.values.set('okyo-local-state', 'private');
+  let profileReset = false;
+  let reminderCancelled = false;
+
+  await assert.rejects(
+    clearAllPersonalOkyoData(
+      () => { throw new Error('store unavailable'); },
+      {
+        profileStore: { reset: async () => { profileReset = true; } },
+        dietaryMirror: { clear: async () => { throw new Error('mirror unavailable'); } },
+        clearReminder: async () => { reminderCancelled = true; },
+        storage,
+      },
+    ),
+  );
+
+  assert.equal(profileReset, true, 'profile cleanup still runs after another layer fails');
+  assert.equal(reminderCancelled, true, 'reminder cleanup still runs after another layer fails');
+  assert.equal(storage.values.has('okyo-local-state'), false, 'persisted keys are removed even when a layer fails');
+});
+
+test('known personal keys are still removed when storage key enumeration fails', async () => {
+  const storage = createMemoryStorage();
+  storage.values.set('okyo-local-state', 'private');
+  await assert.rejects(clearAllPersonalOkyoData(() => {}, {
+    profileStore: {}, dietaryMirror: {},
+    storage: { ...storage, getAllKeys: async () => { throw new Error('enumeration unavailable'); } },
+  }));
+  assert.equal(storage.values.has('okyo-local-state'), false);
+});
+
+test('repeated local deletion is idempotent when storage is already empty', async () => {
+  const storage = createMemoryStorage();
+  await clearAllPersonalOkyoData(() => {}, { profileStore: {}, dietaryMirror: {}, storage });
+  await assert.doesNotReject(clearAllPersonalOkyoData(() => {}, { profileStore: {}, dietaryMirror: {}, storage }));
+});
+
 // --- Bundled imagery is unaffected by deletion (import-graph proof) --------
 
 const thisDir = dirname(fileURLToPath(import.meta.url));

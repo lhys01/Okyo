@@ -43,7 +43,12 @@ test('correction errors reserve 500 for unexpected programming failures', () => 
   assert.equal(getCorrectionHttpStatus(new Error('unexpected')), 500);
 });
 
-test('structured correction logging emits one diagnosable summary without prompts or raw user text', () => {
+test('server validation copy stays neutral because the fox name is stored on the device', () => {
+  const error = new CorrectionRequestValidationError(['empty']);
+  assert.equal(error.message, 'Tell us what you would like to change.');
+});
+
+test('structured correction logging emits operational metrics without recipe or nutrition details', () => {
   const originalLog = console.log;
   const calls: unknown[][] = [];
   console.log = (...args: unknown[]) => {
@@ -163,12 +168,16 @@ test('structured correction logging emits one diagnosable summary without prompt
     assert.equal(calls.length, 1);
     assert.equal(calls[0][0], '[recipe_correction_request]');
     const payload = JSON.parse(String(calls[0][1])) as Record<string, unknown>;
-    assert.equal(payload.correctionRequestId, 'request-1');
-    assert.equal(payload.generatedRevisionId, 'revision-2');
+    assert.equal(payload.providerCallCount, 2);
+    assert.deepEqual(payload.providerStages, ['recipe', 'recipe_retry']);
     assert.equal(payload.finalHttpStatus, 201);
-    assert.deepEqual(payload.originalNutrition, diagnostics.originalNutrition);
-    assert.deepEqual(payload.nutritionTargets, diagnostics.nutritionTargets);
-    assert.deepEqual(payload.firstAttempt, diagnostics.firstAttempt);
+    assert.equal('originalNutrition' in payload, false);
+    assert.equal('nutritionTargets' in payload, false);
+    assert.equal('firstAttempt' in payload, false);
+    assert.equal('parsedRequirements' in payload, false);
+    assert.equal('sourceRecipeId' in payload, false);
+    assert.equal('scanSessionId' in payload, false);
+    assert.doesNotMatch(String(calls[0][1]), /more protein|1\.5 cup|source-1|revision-2/);
     assert.equal('prompt' in payload, false);
     assert.equal('correctionNote' in payload, false);
   } finally {

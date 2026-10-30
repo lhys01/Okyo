@@ -1,4 +1,5 @@
 import type { ScanRejectionType, ScanStatus } from '../api/types';
+import { getFoxSubjectName } from '../state/foxDisplayName';
 
 export type ScanFailureCategory =
   | 'unclear_image'
@@ -49,7 +50,7 @@ const photoBodyByCategory: Record<ScanFailureCategory, string> = {
   unreliable_result: 'Okyo couldn’t build a reliable recipe from this photo.',
   network_timeout: 'Okyo lost the connection. Try once more.',
   malformed_response: 'Okyo couldn’t finish this recipe. Try another photo.',
-  generic: 'Try another angle or choose a clearer photo.',
+  generic: 'Okyo couldn’t finish this scan. Try again.',
 };
 
 const descriptionBodyByCategory: Record<ScanFailureCategory, string> = {
@@ -58,12 +59,16 @@ const descriptionBodyByCategory: Record<ScanFailureCategory, string> = {
   unreliable_result: 'Okyo couldn’t build a reliable recipe from that description.',
   network_timeout: 'Okyo lost the connection. Try once more.',
   malformed_response: 'Okyo couldn’t finish this recipe. Try describing it another way.',
-  generic: 'Try describing the meal a different way.',
+  generic: 'Okyo couldn’t finish this recipe. Try again.',
 };
 
-export function getInlineFailureCopy(category: ScanFailureCategory, isDescriptionScan: boolean, mascotName = 'Kiko'): ScanFailureCopy {
+export function getInlineFailureCopy(category: ScanFailureCategory, isDescriptionScan: boolean, mascotName?: string | null): ScanFailureCopy {
+  const subject = getFoxSubjectName(mascotName);
+  const photoRecognitionFailure = category === 'unclear_image' || category === 'not_food';
   return {
-    title: isDescriptionScan ? `${mascotName} couldn’t build that one` : `${mascotName} couldn’t read this one`,
+    title: photoRecognitionFailure
+      ? isDescriptionScan ? `${subject} couldn’t build that one` : `${subject} couldn’t read this one`
+      : isDescriptionScan ? `${subject} couldn’t finish this recipe` : `${subject} couldn’t finish this scan`,
     body: isDescriptionScan ? descriptionBodyByCategory[category] : photoBodyByCategory[category],
   };
 }

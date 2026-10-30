@@ -2,7 +2,6 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { analyticsEvents, track } from '../analytics/track';
 import { colors, sharedStyles } from '../components/OkyoUI';
 import { ScreenScaffold } from '../components/ScreenScaffold';
 import type { RootStackParamList } from '../navigation/types';
@@ -24,7 +23,7 @@ export function GoalScreen() {
 
   const selectGoal = (goal: OnboardingGoal) => {
     setGoal(goal);
-    track(analyticsEvents.ONBOARDING_GOAL_SELECTED, { screen: 'GoalScreen', goal });
+
     navigation.navigate('MainTabs', { screen: 'HomeScreen' });
   };
 

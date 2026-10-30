@@ -94,3 +94,11 @@ test('entitlement identifier is explicit and never guessed by configuration', ()
   assert.equal(isRevenueCatTestStoreKey(configured.apiKey), true);
 });
 
+
+test('release runtime refuses another platform SDK key before configuring purchases', () => {
+  for (const [platform, key] of [['ios', 'goog_android_key'], ['android', 'appl_ios_key']] as const) {
+    const configuration = resolveRevenueCatConfiguration({ platform, isDevelopment: false, iosKey: key, androidKey: key });
+    assert.equal(configuration.apiKey, null);
+    assert.match(configuration.reason ?? '', /does not match/);
+  }
+});

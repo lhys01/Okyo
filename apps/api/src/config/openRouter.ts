@@ -1,3 +1,6 @@
+
+import { selectApprovedOpenRouterModel } from './modelAllowlist.js';
+
 /**
  * OpenRouter configuration for the Epicure ingredient-intelligence layer.
  *
@@ -28,7 +31,7 @@ export type OpenRouterConfig = {
 export function getOpenRouterConfig(): OpenRouterConfig {
   return {
     apiKey: getOptionalSecret(process.env.OPENROUTER_API_KEY),
-    model: process.env.OPENROUTER_MODEL?.trim() || DEFAULT_OPENROUTER_MODEL,
+    model: selectApprovedOpenRouterModel(process.env.OPENROUTER_MODEL, DEFAULT_OPENROUTER_MODEL),
     epicureEnabled: process.env.EPICURE_ENABLED === 'true',
     timeoutMs: getPositiveInteger(process.env.EPICURE_TIMEOUT_MS, DEFAULT_EPICURE_TIMEOUT_MS),
   };

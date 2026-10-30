@@ -1,0 +1,104 @@
+.page {
+  padding-block: var(--space-section) 0;
+}
+
+.page-intro {
+  max-width: var(--prose-max);
+  margin-bottom: var(--space-xl);
+  font-size: var(--text-lead);
+  line-height: 1.55;
+}
+
+/* Long-form text: comfortable size, line height and measure (~68 characters). */
+.prose {
+  max-width: var(--prose-max);
+  line-height: 1.7;
+}
+
+/* Long-form headings are a step smaller than marketing headings. */
+.prose h2 {
+  margin-top: var(--space-section);
+  font-size: clamp(1.5rem, 0.8vw + 1.3rem, 1.875rem);
+}
+
+.prose h3 {
+  margin-top: var(--space-xl);
+  font-size: clamp(1.1875rem, 0.4vw + 1.1rem, 1.375rem);
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 1.4rem;
+  margin: 0 0 var(--space-lg);
+}
+
+.prose li {
+  margin-bottom: var(--space-sm);
+  padding-left: 0.2rem;
+}
+
+.prose blockquote {
+  margin: 0 0 var(--space-lg);
+  padding: var(--space-md) var(--space-lg);
+  border-left: 4px solid var(--border);
+  border-radius: 0 var(--radius-panel) var(--radius-panel) 0;
+  background: var(--surface-muted);
+}
+
+/* Rounded content panel for legal and help text. */
+.content-panel {
+  max-width: calc(var(--prose-max) + 2 * var(--space-section));
+  padding: var(--space-xl) var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel-lg);
+}
+
+.content-panel > .prose > :first-child {
+  margin-top: 0;
+}
+
+@media (min-width: 768px) {
+  .content-panel {
+    padding: var(--space-section);
+  }
+}
+
+.panel {
+  max-width: var(--prose-max);
+  margin-bottom: var(--space-xl);
+  padding: var(--space-xl);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.panel > :first-child {
+  margin-top: 0;
+}
+
+.panel > :last-child {
+  margin-bottom: 0;
+}
+
+.pending {
+  padding: var(--space-lg) var(--space-xl);
+  background: #fff8db;
+  border: 2px solid var(--sunny);
+  border-radius: var(--radius-card);
+  color: var(--ink);
+}
+
+.page-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-md) var(--space-lg);
+  margin-bottom: var(--space-md);
+  --sticker-size: 76px;
+}
+
+.page-heading h1 {
+  margin: 0;
+}

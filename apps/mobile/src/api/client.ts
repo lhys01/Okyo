@@ -12,9 +12,17 @@ import type {
   GenerateRecipeFromAnalysisResult,
 } from './types';
 import { normalizeOutboundRecipeMode } from '../utils/recipeModes';
+import { getAnonymousIdSync, uuidV4 } from '../analytics/identity';
+import { scanTraceLog } from '../utils/uiDebug';
 
 export const CORRECTION_FAILURE_MESSAGE = 'We couldn’t update the recipe. Try again.';
 const REQUEST_FAILURE_MESSAGE = 'Okyo couldn’t complete that request. Try again.';
+let optionalAuthTokenProvider: (() => Promise<string | null>) | null = null;
+
+/** Register the current Clerk session used by authenticated production requests. */
+export function setOptionalAuthTokenProvider(provider: (() => Promise<string | null>) | null): void {
+  optionalAuthTokenProvider = provider;
+}
 
 export class ApiClientError extends Error {
   constructor(
@@ -28,8 +36,24 @@ export class ApiClientError extends Error {
   }
 }
 
-export async function createMockScan(request: CreateScanRequest): Promise<CreateScanResult> {
-  return postJson<CreateScanResult>('/v1/scans', request);
+export type ApiRequestOptions = {
+  /** Stable for one user action; lets the API coalesce an ambiguous retry. */
+  idempotencyKey?: string;
+  /** Safe cross-layer correlation id for Development scan diagnostics. */
+  requestId?: string;
+  /** Cancels an in-flight scan request when the user leaves the processing screen. */
+  signal?: AbortSignal;
+};
+
+export async function submitIdea(category: 'idea' | 'improvement' | 'bug', message: string): Promise<{ id: string }> {
+  return postJson<{ id: string }>('/v1/ideas', { category, message });
+}
+
+export async function createMockScan(
+  request: CreateScanRequest,
+  options?: ApiRequestOptions,
+): Promise<CreateScanResult> {
+  return postJson<CreateScanResult>('/v1/scans', request, undefined, options?.signal, options);
 }
 
 export async function createTextRecipe(mealDescription: string, mode: CreateScanRequest['mode']): Promise<CreateScanResult> {
@@ -63,11 +87,12 @@ export async function generateRecipeFromAnalysis(
 // Regenerates a recipe from a user correction (wrong dish identified) without
 // retaking the photo. Reuses the same scan-result shape as createMockScan so
 // callers can treat the response identically.
-export async function correctScanRecipe(recipeId: string, request: CorrectRecipeRequest): Promise<CreateScanResult> {
+export async function correctScanRecipe(recipeId: string, request: CorrectRecipeRequest, signal?: AbortSignal): Promise<CreateScanResult> {
   return postJson<CreateScanResult>(
     `/v1/recipes/${encodeURIComponent(recipeId)}/correct`,
     request,
     CORRECTION_FAILURE_MESSAGE,
+    signal,
   );
 }
 
@@ -75,11 +100,131 @@ export async function askOkyo(recipeId: string, request: AskOkyoRequest): Promis
   return postJson<AskOkyoResult>(`/v1/recipes/${encodeURIComponent(recipeId)}/ask`, request);
 }
 
+/** Fetches account-scoped recipes with the active Clerk session token. */
+export async function getAuthenticatedLibrary(token: string): Promise<{ recipes: unknown[] }> {
+  if (!token) {
+    throw new ApiClientError('Please sign in to access your saved recipes.', 'authentication_required', 401);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OKYO_API_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${OKYO_API_BASE_URL}/v1/library`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'x-okyo-request-id': uuidV4(),
+      },
+      method: 'GET',
+      signal: controller.signal,
+    });
+    const payload = parseApiResponse<{ recipes: unknown[] }>(await response.text());
+    if (!response.ok || !payload?.ok) {
+      const error = payload && !payload.ok ? payload.error : undefined;
+      throw new ApiClientError(
+        error?.message ?? 'Okyo couldn’t load your saved recipes. Try again.',
+        error?.code ?? 'library_request_failed',
+        response.status,
+      );
+    }
+    return payload.data;
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Okyo couldn’t load your saved recipes. Try again.', 'network_or_parse_failure', 0);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Starts permanent deletion for the account represented by this short-lived
+ * Clerk session. The backend validates the token and derives the user ID; no
+ * user identifier is ever accepted from the device for this destructive call.
+ */
+export async function checkAccountDeletionSession(token: string): Promise<void> {
+  if (!token) throw new ApiClientError('Please sign in again.', 'authentication_required', 401);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OKYO_API_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${OKYO_API_BASE_URL}/v1/account/session`, {
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+        'x-okyo-request-id': uuidV4(),
+      },
+      method: 'GET',
+      signal: controller.signal,
+    });
+    // The protected route authenticates before Express can emit a conditional
+    // 304. Treat a legacy cache revalidation as a successful session check.
+    if (response.status === 304) return;
+    const payload = parseApiResponse<{ authenticated: boolean }>(await response.text());
+    if (!response.ok || !payload?.ok || payload.data.authenticated !== true) {
+      const error = payload && !payload.ok ? payload.error : undefined;
+      throw new ApiClientError('Okyo couldn’t confirm your session yet.', error?.code ?? 'authentication_unavailable', response.status);
+    }
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('Okyo couldn’t confirm your session yet.', 'network_or_parse_failure', 0);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function deleteAuthenticatedAccount(token: string): Promise<{
+  appleAuthorizationRevocation: 'not_applicable' | 'revoked' | 'manual_action_required' | 'unknown';
+}> {
+  if (!token) {
+    throw new ApiClientError('Please sign in again before deleting your account.', 'authentication_required', 401);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OKYO_API_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${OKYO_API_BASE_URL}/v1/account`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'x-okyo-request-id': uuidV4(),
+      },
+      method: 'DELETE',
+      signal: controller.signal,
+    });
+    const payload = parseApiResponse<{
+      deleted: boolean;
+      appleAuthorizationRevocation: 'not_applicable' | 'revoked' | 'manual_action_required' | 'unknown';
+    }>(await response.text());
+    if (!response.ok || !payload?.ok || payload.data.deleted !== true) {
+      const error = payload && !payload.ok ? payload.error : undefined;
+      throw new ApiClientError(
+        error?.message ?? 'We couldn’t delete your account yet. Please try again.',
+        error?.code ?? 'account_deletion_failed',
+        response.status,
+        error?.details,
+      );
+    }
+    const appleAuthorizationRevocation = payload.data.appleAuthorizationRevocation;
+    return {
+      appleAuthorizationRevocation:
+        appleAuthorizationRevocation === 'not_applicable' || appleAuthorizationRevocation === 'revoked' ||
+        appleAuthorizationRevocation === 'manual_action_required'
+          ? appleAuthorizationRevocation
+          : 'unknown',
+    };
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError('We couldn’t delete your account yet. Please try again.', 'network_or_parse_failure', 0);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function postJson<T>(
   path: string,
   body: unknown,
   safeFailureMessage?: string,
   externalSignal?: AbortSignal,
+  options?: ApiRequestOptions,
 ): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OKYO_API_TIMEOUT_MS);
@@ -88,19 +233,39 @@ async function postJson<T>(
   externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true });
   const normalizedBody = normalizeRecipeApiRequestBody(path, body);
   const requestBody = JSON.stringify(normalizedBody);
-  logApiRequest(path, requestBody, normalizedBody);
+  const requestId = isValidRequestId(options?.requestId) ? options.requestId : uuidV4();
+  const startedAt = Date.now();
+  logApiRequest(requestId, requestBody, normalizedBody);
 
   try {
+    const correlationHeaders: Record<string, string> = { 'x-okyo-request-id': requestId, 'idempotency-key': uuidV4() };
+    const anonId = getAnonymousIdSync();
+    if (anonId) correlationHeaders['x-okyo-anon-id'] = anonId;
+    if (isValidIdempotencyKey(options?.idempotencyKey)) {
+      correlationHeaders['idempotency-key'] = options.idempotencyKey;
+    }
+
+    // Production AI endpoints verify the session before processing a dish.
+    // Development can still exercise the local guest/demo flow.
+    if (optionalAuthTokenProvider) {
+      try {
+        const token = await optionalAuthTokenProvider();
+        if (token && /^[A-Za-z0-9._~-]+$/.test(token)) correlationHeaders.authorization = `Bearer ${token}`;
+      } catch {
+        // A transient auth SDK failure must not force guest users into sign-in.
+      }
+    }
+
     const response = await fetch(`${OKYO_API_BASE_URL}${path}`, {
       body: requestBody,
-      headers: getJsonHeaders(path),
+      headers: { ...getJsonHeaders(path), ...correlationHeaders },
       method: 'POST',
       signal: controller.signal,
     });
 
     const responseText = await response.text();
     const payload = parseApiResponse<T>(responseText);
-    logApiResponse(path, response.status, payload);
+    logApiResponse(response.status, payload, requestId, Date.now() - startedAt);
 
     if (!payload) {
       throw new Error(safeFailureMessage ?? REQUEST_FAILURE_MESSAGE);
@@ -120,6 +285,13 @@ async function postJson<T>(
 
     return payload.data;
   } catch (error) {
+    if (path === '/v1/scans') {
+      scanTraceLog('request_failed', {
+        requestId,
+        elapsedMs: Date.now() - startedAt,
+        failureCode: getSafeScanFailureCode(error),
+      });
+    }
     if (safeFailureMessage) {
       if (error instanceof ApiClientError) {
         throw new ApiClientError(safeFailureMessage, error.code, error.status, error.details);
@@ -136,9 +308,13 @@ async function postJson<T>(
   }
 }
 
+function isValidIdempotencyKey(value: string | undefined): value is string {
+  return Boolean(value && /^[A-Za-z0-9_-]{8,128}$/.test(value));
+}
+
 export function normalizeRecipeApiRequestBody(path: string, body: unknown): unknown {
-  const isRecipeRequest = path === '/v1/scans' ||
-    path === '/v1/scans/analyze' ||
+  const isScanRequest = path === '/v1/scans' || path === '/v1/scans/analyze';
+  const isRecipeRequest = isScanRequest ||
     /^\/v1\/scans\/analyze\/[^/]+\/recipe$/.test(path) ||
     /^\/v1\/recipes\/[^/]+\/correct$/.test(path);
   if (
@@ -151,10 +327,27 @@ export function normalizeRecipeApiRequestBody(path: string, body: unknown): unkn
   }
 
   const request = body as Record<string, unknown>;
-  return {
+  const normalized: Record<string, unknown> = {
     ...request,
     mode: normalizeOutboundRecipeMode(request.mode),
   };
+  // Local file paths and original filenames are useful only for the device
+  // preview. The API needs the sanitized JPEG payload and basic dimensions;
+  // dropping the rest prevents local paths and photo names leaving the device.
+  if (isScanRequest && 'image' in request) {
+    normalized.image = sanitizeOutboundScanImage(request.image);
+  }
+  return normalized;
+}
+
+function sanitizeOutboundScanImage(image: unknown): unknown {
+  if (!image || typeof image !== 'object' || Array.isArray(image)) return image;
+  const source = image as Record<string, unknown>;
+  const safe: Record<string, unknown> = {};
+  for (const key of ['dataUrl', 'dataUrlSizeBytes', 'height', 'mimeType', 'placeholder', 'source', 'width', 'conversionError']) {
+    if (source[key] !== undefined) safe[key] = source[key];
+  }
+  return safe;
 }
 
 export function parseApiResponse<T>(responseText: string): ApiResponse<T> | null {
@@ -196,27 +389,28 @@ function getJsonHeaders(path: string): Record<string, string> {
   return headers;
 }
 
-function logApiRequest(path: string, requestBody: string, body: unknown) {
+function logApiRequest(requestId: string, requestBody: string, body: unknown) {
   if (typeof __DEV__ === 'undefined' || !__DEV__) {
     return;
   }
 
   console.log('okyo_scan_request_body_keys', {
     bodyKeys: body && typeof body === 'object' ? Object.keys(body).sort() : [],
-    endpoint: `${OKYO_API_BASE_URL}${path}`,
     hasImageDataUrl: hasScanImageDataUrl(body),
     imageKeys: getScanImageKeys(body),
-    imageDataUrlLength: getScanImageDataUrlLength(body),
     requestBodyLength: requestBody.length,
   });
   console.log('okyo_api_request', {
-    path,
+    requestId,
     bodyLength: requestBody.length,
-    ...getScanRequestSummary(body),
+    hasImage: hasScanImageDataUrl(body),
   });
+  if (body && typeof body === 'object' && 'source' in body) {
+    scanTraceLog('request_sent', { requestId, source: (body as { source?: unknown }).source, stage: 'upload' });
+  }
 }
 
-function logApiResponse(path: string, status: number, payload: unknown) {
+function logApiResponse(status: number, payload: unknown, requestId: string, elapsedMs: number) {
   if (typeof __DEV__ === 'undefined' || !__DEV__) {
     return;
   }
@@ -225,50 +419,16 @@ function logApiResponse(path: string, status: number, payload: unknown) {
   console.log('okyo_scan_api_response_status', { httpStatus: status, status: summary.status, ok: summary.ok });
   console.log('okyo_scan_api_response_scan_state', { scanState: summary.scanState });
   console.log('okyo_scan_api_response_food_detected', { foodDetected: summary.foodDetected });
-  console.log('okyo_scan_api_response_dish_name', { dishName: summary.dishName });
   console.log('okyo_scan_api_response_recipes_length', { recipesLength: summary.recipesLength });
-  console.log('okyo_api_response', {
-    path,
-    status,
-    payload: summary,
+  scanTraceLog('response_received', {
+    requestId,
+    httpStatus: status,
+    elapsedMs,
+    status: summary.status,
+    hasScan: summary.hasScan,
+    hasRecipe: summary.hasRecipe,
+    recipesLength: summary.recipesLength,
   });
-}
-
-function getScanRequestSummary(body: unknown) {
-  if (!body || typeof body !== 'object' || !('image' in body)) {
-    return {};
-  }
-
-  const request = body as {
-    image?: {
-      conversionError?: string;
-      dataUrl?: string;
-      dataUrlSizeBytes?: number;
-      height?: number;
-      mimeType?: string;
-      source?: string;
-      uri?: string;
-      width?: number;
-    };
-    mode?: string;
-    source?: string;
-  };
-  const image = request.image;
-
-  return {
-    endpointSource: request.source,
-    mode: request.mode,
-    imageExists: Boolean(image),
-    imageFields: image ? Object.keys(image).sort() : [],
-    imageUri: image?.uri,
-    imageDataUrlExists: Boolean(image?.dataUrl),
-    imageDataUrlLength: image?.dataUrl?.length ?? 0,
-    imageDataUrlSizeBytes: image?.dataUrlSizeBytes,
-    imageMimeType: image?.mimeType,
-    imageConversionError: image?.conversionError,
-    imageWidth: image?.width,
-    imageHeight: image?.height,
-  };
 }
 
 function getScanImageKeys(body: unknown) {
@@ -299,51 +459,60 @@ function getResponseSummary(payload: unknown) {
   if (!payload || typeof payload !== 'object') {
     return {
       ok: false,
-      error: { message: 'Response payload was not an object.' },
       status: undefined,
       scanState: undefined,
-      dishName: undefined,
       foodDetected: false,
-      recipesLength: 0,
+      hasScan: false,
       hasRecipe: false,
-      rejectionType: undefined,
-      rejectionReason: undefined,
-      fallbackReason: undefined,
-      image: undefined,
+      recipesLength: 0,
     };
   }
 
   const response = payload as {
     data?: CreateScanResult;
-    error?: { code?: string; message?: string };
     ok?: boolean;
   };
   const data = response.data;
 
   return {
     ok: response.ok,
-    error: response.error,
     status: data?.status,
     scanState: data?.scan?.scanState ?? data?.scanState,
-    dishName: data?.scan?.dishName,
     foodDetected: isFoodScanState(data?.scan?.scanState ?? data?.scanState),
-    recipesLength: data?.recipes?.length ?? 0,
+    hasScan: Boolean(data?.scan),
     hasRecipe: Boolean(data?.recipe),
-    rejectionType: data?.rejectionType,
-    rejectionReason: data?.rejectionReason,
-    fallbackReason: data?.fallbackReason,
-    image: data?.image ? {
-      conversionError: data.image.conversionError,
-      dataUrlSizeBytes: data.image.dataUrlSizeBytes,
-      hasDataUrl: Boolean(data.image.dataUrl),
-      hasDataUrlFromApi: 'hasDataUrl' in data.image ? Boolean((data.image as { hasDataUrl?: boolean }).hasDataUrl) : undefined,
-      mimeType: data.image.mimeType,
-    } : undefined,
+    recipesLength: (data?.recipes?.length ?? 0) + (data?.recipe ? 1 : 0),
   };
+}
+
+function isValidRequestId(value: string | undefined): value is string {
+  return Boolean(value && /^[A-Za-z0-9_-]{8,128}$/.test(value));
+}
+
+function getSafeScanFailureCode(error: unknown) {
+  if (error instanceof ApiClientError && /^[a-z0-9_-]{1,64}$/i.test(error.code)) return error.code;
+  if (error instanceof Error && /abort|timeout/i.test(error.name)) return 'request_aborted';
+  if (error instanceof Error && /network|fetch/i.test(error.message)) return 'network_failure';
+  return 'client_request_failure';
 }
 
 function isFoodScanState(scanState: string | null | undefined) {
   return scanState === 'clear_food' ||
     scanState === 'food_present_uncertain_dish' ||
     scanState === 'partial_food';
+}
+
+/** Only a capability flag crosses the API; private admin membership stays server-side. */
+export async function getAccountCapabilities(token: string): Promise<{ canManageOnboardingExperiments: boolean }> {
+  if (!token || !/^[A-Za-z0-9._~-]+$/.test(token)) throw new ApiClientError('Please sign in again.', 'authentication_required', 401);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OKYO_API_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${OKYO_API_BASE_URL}/v1/account/capabilities`, {
+      headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
+    });
+    const payload = parseApiResponse<{ canManageOnboardingExperiments?: unknown }>(await response.text());
+    if (!response.ok || !payload?.ok) throw new Error('Account capabilities unavailable');
+    return { canManageOnboardingExperiments: payload.data?.canManageOnboardingExperiments === true };
+  } finally { clearTimeout(timeout); }
 }

@@ -1,0 +1,16 @@
+---
+import Base from '../layouts/Base.astro';
+import { termsOfService } from '../config/legalDocuments';
+import '../styles/prose.css';
+const documents = [termsOfService];
+---
+<Base title="Terms of Service" description="Terms for using Okyo, subscriptions, cancellations, and AI-generated recipes.">
+  <div class="container page">
+    <h1>Terms of Service</h1>
+    {documents.map((document) => <article class="content-panel prose">
+      <h2>{document.title}</h2>
+      <p>Version {document.version} · Updated {document.effectiveDate}</p>
+      {document.sections.map((section) => <section><h3>{section.heading}</h3>{section.body.split('\n\n').map((paragraph) => <p>{paragraph}</p>)}</section>)}
+    </article>)}
+  </div>
+</Base>

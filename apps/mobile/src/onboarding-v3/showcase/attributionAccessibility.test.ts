@@ -22,7 +22,7 @@ test('attribution options are six individually actionable native radio controls'
   assert.match(attribution, /accessibilityRole="radio"/);
   assert.match(attribution, /accessibilityState=\{\{ selected \}\}/);
   assert.match(attribution, /onPress=\{onPress\}/);
-  assert.match(attribution, /minHeight: 52/);
+  assert.match(attribution, /minHeight: 64/);
   for (const [label, testID] of options) {
     assert.match(attribution, new RegExp(`label: '${label.replace(/[?]/g, '\\$&')}'`));
     assert.match(attribution, new RegExp(`testID: '${testID}'`));
@@ -34,15 +34,15 @@ test('the option list does not collapse its accessible children', () => {
   assert.match(attribution, /accessibilityRole="radiogroup" accessible=\{false\}/);
 });
 
-test('the attribution content balances the option group above the fixed CTA on larger screens', () => {
+test('the attribution content adapts its spacing to compact and larger screens', () => {
   assert.match(attribution, /layout\.compact \? styles\.contentCompact : styles\.contentBalanced/);
-  assert.match(attribution, /contentBalanced: \{ flexGrow: 1, justifyContent: 'center'/);
+  assert.match(attribution, /contentBalanced: \{ flexGrow: 1, justifyContent: 'flex-start'/);
   assert.match(attribution, /contentCompact: \{ paddingBottom: 12/);
   assert.doesNotMatch(attribution, /contentBalanced: \{[^}]*minHeight/);
 });
 
 test('attribution Next is disabled until selection, then enabled and persisted through the existing callback', () => {
-  assert.match(pager, /accessibilityLabel=\{showcasePage === 5 \? 'Continue from attribution' : undefined\}/);
+  assert.match(pager, /accessibilityLabel=\{showcasePage === 5 \? 'Continue to food goals' : undefined\}/);
   assert.match(pager, /disabled=\{showcasePage === 5 && attribution === null\}/);
   assert.match(pager, /testID=\{showcasePage === 5 \? 'attribution-next' : undefined\}/);
   assert.match(attribution, /const \[selected, setSelected\] = useState<AttributionSource \| null>\(props\.attribution\)/);

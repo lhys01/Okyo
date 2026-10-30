@@ -33,8 +33,8 @@ test('Design System V2 exposes the approved canvas, accents, geometry, and typog
   assert.equal(spacing.scrollClearance, 96);
   assert.equal(radius.glass, 34);
   assert.equal(shadows.float.shadowOpacity, 0.12);
-  assert.equal(typography.title.fontFamily, 'Inter_900Black');
-  assert.equal(typography.numericLarge.fontFamily, 'Inter_800ExtraBold');
+  assert.equal(typography.title.fontFamily, 'Manrope_800ExtraBold');
+  assert.equal(typography.numericLarge.fontFamily, 'Manrope_800ExtraBold');
 });
 
 test('approved text colors meet their intended cream-canvas contrast', () => {

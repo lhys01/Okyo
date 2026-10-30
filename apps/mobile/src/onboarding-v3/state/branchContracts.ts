@@ -7,6 +7,7 @@ import {
   type PrimaryGoal,
 } from './personalizedOnboarding';
 import { calculateNutritionTargets, type ActivityLevel, type BiologicalSexForEstimate, type NutritionTargets } from './nutritionTargets';
+import type { MacroDetailPreference } from './macroPreferences';
 
 /**
  * Typed, pure branch contracts for the V4 rebuild (Okyo_Onboarding_V4_Implementation_Plan.md
@@ -39,9 +40,13 @@ export const V4_BRANCH_FIELD_IDS = [
   'resolvedPrimaryGoal',
   'savings.takeoutFrequency',
   'savings.spendPerMealDollars',
+  'savings.cookingPriority',
+  'savings.comparisonStatus',
+  'savings.replacementsPerWeek',
   'health.healthierDefinition',
   'health.healthBarrier',
   'macros.macroFocus',
+  'macros.detailPreference',
   'macros.targetPath',
   'macros.knownTargets',
   'macros.calculatorInputs',
@@ -69,9 +74,13 @@ export const V4_BRANCH_FIELD_DOWNSTREAM_USES: Readonly<Record<V4BranchFieldId, r
   resolvedPrimaryGoal: ['personal_plan', 'recipe_generation_guidance', 'result_hierarchy', 'paywall_benefit_order', 'canonical_app_profile'],
   'savings.takeoutFrequency': ['personal_insight', 'personal_plan', 'recipe_generation_guidance', 'result_hierarchy', 'paywall_benefit_order'],
   'savings.spendPerMealDollars': ['personal_insight', 'personal_plan', 'recipe_generation_guidance', 'result_hierarchy', 'paywall_benefit_order'],
+  'savings.cookingPriority': ['personal_insight', 'recipe_generation_guidance', 'canonical_app_profile'],
+  'savings.comparisonStatus': ['personal_insight'],
+  'savings.replacementsPerWeek': ['personal_insight'],
   'health.healthierDefinition': ['personal_insight', 'recipe_generation_guidance', 'result_hierarchy', 'suggested_edit', 'paywall_benefit_order'],
   'health.healthBarrier': ['personal_insight', 'suggested_edit'],
   'macros.macroFocus': ['personal_insight', 'recipe_generation_guidance', 'result_hierarchy', 'paywall_benefit_order'],
+  'macros.detailPreference': ['personal_insight', 'recipe_generation_guidance', 'canonical_app_profile'],
   'macros.targetPath': ['personal_plan', 'recipe_generation_guidance', 'canonical_app_profile'],
   'macros.knownTargets': ['recipe_generation_guidance', 'result_hierarchy', 'canonical_app_profile'],
   'macros.calculatorInputs': ['recipe_generation_guidance', 'result_hierarchy', 'canonical_app_profile'],
@@ -92,10 +101,18 @@ export function isTakeoutFrequencyBucket(value: unknown): value is TakeoutFreque
 }
 
 export type SavingsBranchAnswers = {
+  cookingPriority?: 'Quick & easy' | 'Lower ingredient cost' | 'Keep the restaurant flavor' | 'Use what I already have';
+  comparisonStatus?: 'answered' | 'skipped';
+  replacementsPerWeek?: number;
   takeoutFrequency: TakeoutFrequencyBucket | null;
   /** User-editable estimate of one typical order's cost, in whole dollars. "A rough estimate is perfect" — never treated as exact. */
   spendPerMealDollars: number | null;
 };
+
+export const SAVINGS_COOKING_PRIORITIES = ['Quick & easy', 'Lower ingredient cost', 'Keep the restaurant flavor', 'Use what I already have'] as const;
+export function isSavingsCookingPriority(value: unknown): value is NonNullable<SavingsBranchAnswers['cookingPriority']> {
+  return typeof value === 'string' && (SAVINGS_COOKING_PRIORITIES as readonly string[]).includes(value);
+}
 
 export const emptySavingsBranchAnswers: SavingsBranchAnswers = Object.freeze({ takeoutFrequency: null, spendPerMealDollars: null });
 
@@ -214,13 +231,13 @@ export function calculateEatingOutVsHomeComparison(answers: SavingsBranchAnswers
 // Eat Healthier branch
 // ---------------------------------------------------------------------------
 
-export const HEALTHIER_DEFINITIONS = ['More balanced', 'More vegetables', 'Lower calories', 'Lower sodium', 'Less processed', 'Something else'] as const;
+export const HEALTHIER_DEFINITIONS = ['More balanced', 'More vegetables', 'Lower calories', 'Lower sodium', 'Less processed', 'Something else', 'Better portions', 'Less takeout'] as const;
 export type HealthierDefinition = (typeof HEALTHIER_DEFINITIONS)[number];
 export function isHealthierDefinition(value: unknown): value is HealthierDefinition {
   return typeof value === 'string' && (HEALTHIER_DEFINITIONS as readonly string[]).includes(value);
 }
 
-export const HEALTH_BARRIERS = ['Time', 'Cravings', 'Boring recipes', 'Confusion about what\'s healthy', 'Giving up favorites'] as const;
+export const HEALTH_BARRIERS = ['Time', 'Cravings', 'Boring recipes', 'Confusion about what\'s healthy', 'Giving up favorites', 'Ingredients add up', 'Choosing meals'] as const;
 export type HealthBarrier = (typeof HEALTH_BARRIERS)[number];
 export function isHealthBarrier(value: unknown): value is HealthBarrier {
   return typeof value === 'string' && (HEALTH_BARRIERS as readonly string[]).includes(value);
@@ -241,6 +258,8 @@ export type HealthTransformationGuidance = {
 };
 
 const HEALTH_FOCUS_GUIDANCE: Record<HealthierDefinition, HealthTransformationGuidance> = {
+  'Better portions': { exampleLine: 'See serving sizes alongside the ingredients you need.', resultPriorityFields: ['servings'], suggestedEditKeys: ['adjust_servings'] },
+  'Less takeout': { exampleLine: 'Turn a takeout favorite into something you can make at home.', resultPriorityFields: ['ingredient_list'], suggestedEditKeys: ['simplify_steps'] },
   'More balanced': { exampleLine: 'Add a vegetable side to a meal you already like.', resultPriorityFields: ['balance_summary'], suggestedEditKeys: ['add_vegetable_side'] },
   'More vegetables': { exampleLine: 'Swap half the starch for roasted vegetables.', resultPriorityFields: ['vegetable_count'], suggestedEditKeys: ['increase_vegetables'] },
   'Lower calories': { exampleLine: 'Use a lighter cooking method for the same dish.', resultPriorityFields: ['calories'], suggestedEditKeys: ['lighter_cooking_method'] },
@@ -291,6 +310,7 @@ export const emptyMacroCalculatorInputs: MacroCalculatorInputs = Object.freeze({
 });
 
 export type MacroBranchAnswers = {
+  detailPreference?: MacroDetailPreference;
   macroFocus: MacroFocus | null;
   targetPath: MacroTargetPath | null;
   knownTargets: KnownMacroTargets;

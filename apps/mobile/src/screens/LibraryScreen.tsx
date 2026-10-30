@@ -4,20 +4,23 @@ import {
   Clock,
   Search,
 } from 'iconoir-react-native';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { analyticsEvents, track } from '../analytics/track';
+import { useTour, useTourAnchor } from '../tour/TourContext';
+
 import { actionIcons } from '../assets/actionIcons';
 import { FoodImage } from '../components/FoodImage';
 import { colors } from '../components/OkyoUI';
-import { fontFamilies } from '../theme/okyoTheme';
+import { LibrarySkeleton } from '../components/Skeleton';
+import { fontFamilies, mainTabHeading, spacing } from '../theme/okyoTheme';
 import { type Recipe } from '../mocks';
 import type { RootStackParamList } from '../navigation/types';
 import { resolveCanonicalRecipes, type CanonicalRecipe } from '../state/canonicalRecipes';
 import { useOkyoStore } from '../state/useOkyoStore';
 import { getRecipeImageSource, getRecipeImageStatus, getRecipeImageUrl } from '../utils/recipeImages';
+import { isUserScanRecipe } from '../utils/recipeImageSource';
 import { getSavedMealCategories, type SavedMealCategory } from '../utils/recipeMealCategories';
 import { checkImageFileExists, getStorageLocation } from '../utils/imageValidation';
 import { imageTraceLog, uiLog } from '../utils/uiDebug';
@@ -37,8 +40,20 @@ const filters: Array<{ id: LibraryFilter; label: string }> = [
 const formatCurrency = (value: number) => `$${Math.max(0, value).toFixed(2)}`;
 export function LibraryScreen() {
   const navigation = useNavigation<LibraryNavigation>();
+  const likedExploreAnchorRef = useTourAnchor('liked-explore-recipes');
+  const likedFirstRecipeAnchorRef = useTourAnchor('liked-first-saved-recipe');
+  const libraryScrollRef = useRef<ScrollView>(null);
+  const { active: tourActive, registerScrollRef, reportScrollOffset, requestRemeasure } = useTour();
+  useEffect(() => {
+    registerScrollRef('LibraryScreen', libraryScrollRef);
+  }, [registerScrollRef]);
+  const onTourScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    reportScrollOffset('LibraryScreen', event.nativeEvent.contentOffset.y);
+    requestRemeasure();
+  };
   const recipesById = useOkyoStore((state) => state.recipesById);
   const savedRecipeIds = useOkyoStore((state) => state.savedRecipeIds);
+  const hasHydrated = useOkyoStore((state) => state.hasHydrated);
   const addRecipeToGrocery = useOkyoStore((state) => state.addRecipeToGrocery);
   const setSelectedMode = useOkyoStore((state) => state.setSelectedMode);
   const [searchQuery, setSearchQuery] = useState('');
@@ -63,10 +78,7 @@ export function LibraryScreen() {
 
     uiLog('LibraryScreen', 'enter', { malformedRecipeCount });
     didTrackMalformedData.current = true;
-    track(analyticsEvents.RESULT_ERROR, {
-      errorMessage: 'Liked recipe data was missing fields.',
-      screen: 'LibraryScreen',
-    });
+
   }, [malformedRecipeCount]);
 
   const prepareRecipeContext = (recipe: CanonicalRecipe) => {
@@ -121,22 +133,32 @@ export function LibraryScreen() {
     navigation.navigate('MainTabs', { screen: 'RestaurantPacksScreen' });
   };
 
-  if (safeSavedRecipes.length === 0) {
+  if (!hasHydrated) {
     return (
       <LibraryFrame>
+        <LibrarySkeleton />
+      </LibraryFrame>
+    );
+  }
+
+  if (safeSavedRecipes.length === 0) {
+    return (
+      <LibraryFrame onScroll={onTourScroll} scrollRef={libraryScrollRef}>
         <TopBar title="Liked" />
-        <View style={styles.emptyCard}>
-          <Image accessibilityIgnoresInvertColors resizeMode="contain" source={require('../../assets/food/states/liked-empty-kiko.png')} style={styles.emptyArt} />
-          <Text style={styles.emptyTitle}>No liked recipes yet</Text>
-          <Text style={styles.emptyBody}>Save recipes you love and they'll show up here.</Text>
-          <PrimaryAction label="Explore recipes" onPress={goToExplore} />
+        <View style={styles.emptyCenterWrap}>
+          <View style={styles.emptyCard}>
+            <Image accessibilityIgnoresInvertColors resizeMode="contain" source={require('../../assets/onboarding-v3/stickers/fox-sleeping.png')} style={styles.emptyArt} />
+            <Text style={styles.emptyTitle}>No liked recipes yet</Text>
+            <Text style={styles.emptyBody}>Save recipes you love and they'll show up here.</Text>
+            <PrimaryAction label="Explore recipes" onLayout={tourActive ? requestRemeasure : undefined} onPress={goToExplore} tourAnchorRef={likedExploreAnchorRef} />
+          </View>
         </View>
       </LibraryFrame>
     );
   }
 
   return (
-    <LibraryFrame>
+    <LibraryFrame onScroll={onTourScroll} scrollRef={libraryScrollRef}>
       <TopBar title="Liked" />
 
       <View style={styles.searchRow}>
@@ -156,7 +178,7 @@ export function LibraryScreen() {
         </View>
       </View>
 
-      <ScrollView horizontal contentContainerStyle={styles.filterList} showsHorizontalScrollIndicator={false}>
+      <ScrollView horizontal contentContainerStyle={styles.filterList} showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
         {filters.map((filter) => {
           const selected = activeFilter === filter.id;
 
@@ -182,12 +204,13 @@ export function LibraryScreen() {
 
       <View style={styles.recipeList}>
         {filteredRecipes.length > 0 ? (
-          filteredRecipes.map((recipe) => (
+          filteredRecipes.map((recipe, index) => (
             <SavedRecipeCard
               key={recipe.id}
               recipe={recipe}
               onCook={() => openSavedRecipe(recipe)}
               onGroceries={() => openGroceries(recipe)}
+              tourAnchorRef={index === 0 ? likedFirstRecipeAnchorRef : undefined}
             />
           ))
         ) : (
@@ -201,10 +224,10 @@ export function LibraryScreen() {
   );
 }
 
-function LibraryFrame({ children }: { children: ReactNode }) {
+function LibraryFrame({ children, onScroll, scrollRef }: { children: ReactNode; onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void; scrollRef?: RefObject<ScrollView | null> }) {
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.screenContent} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.screenContent} onScroll={onScroll} scrollEventThrottle={32} showsVerticalScrollIndicator={false}>
         {children}
       </ScrollView>
     </SafeAreaView>
@@ -214,9 +237,7 @@ function LibraryFrame({ children }: { children: ReactNode }) {
 function TopBar({ title }: { title: string }) {
   return (
     <View style={styles.topBar}>
-      <View style={styles.topSpacer} />
       <Text style={styles.topTitle}>{title}</Text>
-      <View style={styles.topSpacer} />
     </View>
   );
 }
@@ -225,10 +246,12 @@ function SavedRecipeCard({
   recipe,
   onCook,
   onGroceries,
+  tourAnchorRef,
 }: {
   recipe: CanonicalRecipe;
   onCook: () => void;
   onGroceries: () => void;
+  tourAnchorRef?: RefObject<View | null>;
 }) {
   const protein = getFiniteNumber(recipe.nutritionEstimate?.proteinGrams);
 
@@ -236,6 +259,7 @@ function SavedRecipeCard({
     <Pressable
       accessibilityHint="Opens this recipe"
       accessibilityRole="button"
+      ref={tourAnchorRef}
       style={({ pressed }) => [styles.recipeCard, pressed ? styles.recipeCardPressed : null]}
       onPress={onCook}
     >
@@ -263,7 +287,9 @@ function SavedRecipeCard({
           style={({ pressed }) => [styles.groceryButton, pressed ? styles.pressed : null]}
           onPress={onGroceries}
         >
-          <Image accessibilityElementsHidden resizeMode="contain" source={actionIcons.grocery} style={styles.groceryIcon} />
+          <View style={styles.groceryIconBadge}>
+            <Image accessibilityElementsHidden resizeMode="contain" source={actionIcons.grocery} style={styles.groceryIcon} />
+          </View>
           <Text style={styles.groceryButtonText}>Groceries</Text>
         </Pressable>
       </View>
@@ -277,16 +303,20 @@ function RecipeThumb({ recipe }: { recipe: Recipe }) {
       imageSource={getRecipeImageSource(recipe)}
       imageStatus={getRecipeImageStatus(recipe)}
       imageUrl={getRecipeImageUrl(recipe)}
+      disableFallback={isUserScanRecipe(recipe)}
       style={styles.recipeImage}
     />
   );
 }
 
-function PrimaryAction({ label, onPress }: { label: string; onPress: () => void }) {
+function PrimaryAction({ label, onLayout, onPress, tourAnchorRef }: { label: string; onLayout?: () => void; onPress: () => void; tourAnchorRef?: RefObject<View | null> }) {
   return (
     <Pressable
       accessibilityRole="button"
+      collapsable={false}
+      ref={tourAnchorRef}
       style={({ pressed }) => [styles.primaryAction, pressed ? styles.pressed : null]}
+      onLayout={onLayout}
       onPress={onPress}
     >
       <Text style={styles.primaryActionText}>{label}</Text>
@@ -362,29 +392,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   screenContent: {
+    flexGrow: 1,
     gap: 10,
-    padding: 20,
+    padding: spacing.gutter,
     paddingBottom: 150,
-    paddingTop: 0,
+    paddingTop: spacing.md,
   },
   topBar: {
     alignItems: 'center',
     flexDirection: 'row',
-    marginTop: 6,
-    justifyContent: 'space-between',
-    minHeight: 44,
+    minHeight: 34,
   },
   topTitle: {
-    color: colors.charcoal,
+    ...mainTabHeading,
     flex: 1,
-    fontFamily: fontFamilies.extraBold,
-    fontSize: 28,
-    fontWeight: '900',
-    letterSpacing: 0,
-    textAlign: 'center',
-  },
-  topSpacer: {
-    width: 48,
+    textAlign: 'left',
   },
   searchRow: {
     alignItems: 'center',
@@ -400,22 +422,31 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     gap: 10,
-    minHeight: 46,
+    height: 48,
     paddingHorizontal: 14,
   },
   searchInput: {
+    includeFontPadding: false,
     color: colors.charcoal,
     flex: 1,
     fontSize: 15,
     fontWeight: '500',
+    height: 46,
+    lineHeight: 22,
     minWidth: 0,
     paddingVertical: 0,
+    textAlignVertical: 'center',
   },
   filterList: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 7,
     paddingRight: 8,
+  },
+  filterScroll: {
+    flexGrow: 0,
+    flexShrink: 0,
+    height: 40,
   },
   filterChip: {
     alignItems: 'center',
@@ -437,29 +468,30 @@ const styles = StyleSheet.create({
     color: colors.coralDark,
   },
   recipeList: {
-    gap: 12,
+    gap: 9,
   },
   recipeCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 20,
+    borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
-    gap: 10,
-    padding: 10,
+    gap: 8,
+    padding: 9,
   },
   recipeCardPressed: {
     opacity: 0.86,
   },
   recipeTop: {
+    alignItems: 'center',
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
     minWidth: 0,
   },
   recipeImage: {
     backgroundColor: colors.cream,
-    borderRadius: 16,
-    height: 92,
-    width: 92,
+    borderRadius: 14,
+    height: 84,
+    width: 84,
   },
   recipeContent: {
     flex: 1,
@@ -470,16 +502,16 @@ const styles = StyleSheet.create({
   recipeTitle: {
     color: colors.charcoal,
     fontFamily: fontFamilies.bold,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
     letterSpacing: 0,
-    lineHeight: 21,
+    lineHeight: 19,
   },
   recipeMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginTop: 6,
+    marginTop: 4,
   },
   recipeMetaText: {
     color: colors.body,
@@ -491,7 +523,7 @@ const styles = StyleSheet.create({
     color: colors.body,
     fontSize: 12,
     fontWeight: '600',
-    marginTop: 3,
+    marginTop: 2,
   },
   cardActions: {
     alignItems: 'center',
@@ -505,7 +537,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     justifyContent: 'center',
     flex: 1,
-    minHeight: 40,
+    minHeight: 38,
     minWidth: 0,
     paddingHorizontal: 12,
   },
@@ -524,7 +556,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 6,
     justifyContent: 'center',
-    minHeight: 40,
+    minHeight: 38,
     minWidth: 0,
     paddingHorizontal: 8,
   },
@@ -533,7 +565,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  groceryIcon: { height: 24, width: 24 },
+  groceryIcon: { height: 15, width: 15 },
+  groceryIconBadge: {
+    alignItems: 'center',
+    backgroundColor: '#FFF9EA',
+    borderRadius: 999,
+    height: 24,
+    justifyContent: 'center',
+    width: 24,
+  },
   noMatchesCard: {
     padding: 20,
   },
@@ -548,22 +588,26 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 6,
   },
+  emptyCenterWrap: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+  },
   emptyCard: {
     alignItems: 'center',
     gap: 12,
-    marginTop: 28,
     paddingHorizontal: 20,
   },
   emptyArt: {
-    height: 238,
-    marginBottom: 0,
-    width: '100%',
+    height: 168,
+    marginBottom: 4,
+    width: 210,
   },
   emptyTitle: {
     color: colors.charcoal,
     fontFamily: fontFamilies.extraBold,
     fontSize: 22,
-    fontWeight: '900',
+    fontWeight: '800',
     lineHeight: 26,
     textAlign: 'center',
   },
@@ -586,9 +630,12 @@ const styles = StyleSheet.create({
     width: '80%',
   },
   primaryActionText: {
+    alignSelf: 'center',
     color: '#fffdf8',
+    flex: 1,
     fontSize: 17,
     fontWeight: '700',
+    textAlign: 'center',
   },
   pressed: {
     opacity: 0.72,

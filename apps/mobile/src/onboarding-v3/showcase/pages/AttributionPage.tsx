@@ -63,7 +63,7 @@ function AttributionRow({ option, index, selected, settled, onPress }: {
         testID={option.testID}
       >
         <View style={[styles.iconCircle, { backgroundColor: `${option.color}14` }]}><Icon color={option.color} height={21} strokeWidth={2.2} width={21} /></View>
-        <Text maxFontSizeMultiplier={1.2} style={styles.rowLabel}>{option.label}</Text>
+        <Text maxFontSizeMultiplier={2} style={styles.rowLabel}>{option.label}</Text>
         <Animated.View style={[styles.check, checkStyle]}><Check color={colors.coralDark} height={20} strokeWidth={3} width={20} /></Animated.View>
       </Pressable>
     </Animated.View>
@@ -76,9 +76,9 @@ export function AttributionPage(props: ShowcasePageProps & {
   onSkipAttribution: () => void;
 }) {
   const [selected, setSelected] = useState<AttributionSource | null>(props.attribution);
-  const { height } = useWindowDimensions();
+  const { fontScale, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const layout = getShowcaseResponsiveLayout({ windowHeight: height, topInset: insets.top, bottomInset: insets.bottom });
+  const layout = getShowcaseResponsiveLayout({ windowHeight: height, topInset: insets.top, bottomInset: insets.bottom, fontScale });
   const reduceMotion = useReduceMotion();
   const advance = useSharedValue(0);
 
@@ -100,7 +100,7 @@ export function AttributionPage(props: ShowcasePageProps & {
   return (
     <ShowcasePageShell ctaLabel="Next" onBack={props.onBack} onNext={() => { props.onSkipAttribution(); props.onNext(); }} page={props.page}>
       <ScrollView contentContainerStyle={[styles.content, layout.compact ? styles.contentCompact : styles.contentBalanced]} showsVerticalScrollIndicator={false}>
-        <Text accessibilityRole="header" maxFontSizeMultiplier={1.25} style={[styles.title, layout.compact && styles.titleCompact]}>How did you hear about Okyo?</Text>
+        <Text accessibilityRole="header" maxFontSizeMultiplier={2} style={[styles.title, layout.compact && styles.titleCompact, { lineHeight: (layout.compact ? 32 : 35) * layout.fontScale }]}>How did you hear about Okyo?</Text>
         <View accessibilityRole="radiogroup" accessible={false} style={[styles.rows, layout.compact && styles.rowsCompact]}>
           {OPTIONS.map((option, index) => (
             <AttributionRow
@@ -119,17 +119,17 @@ export function AttributionPage(props: ShowcasePageProps & {
 }
 
 const styles = StyleSheet.create({
-  content: { alignItems: 'center', paddingBottom: 8, paddingHorizontal: 24, paddingTop: 14 },
-  contentBalanced: { flexGrow: 1, justifyContent: 'center', paddingBottom: 18, paddingTop: 18 },
-  contentCompact: { paddingBottom: 12, paddingHorizontal: 20, paddingTop: 8 },
-  title: { ...onboardingTitleFont, alignSelf: 'center', color: colors.charcoal, fontSize: 30, letterSpacing: -0.6, lineHeight: 35, marginBottom: 14, maxWidth: 340, textAlign: 'center' },
-  titleCompact: { fontSize: 28, lineHeight: 32, marginBottom: 10 },
-  rows: { gap: 6, maxWidth: 360, width: '100%' },
-  rowsCompact: { gap: 5 },
+  content: { alignItems: 'center', paddingBottom: 8, paddingHorizontal: 24, paddingTop: 0 },
+  contentBalanced: { flexGrow: 1, justifyContent: 'flex-start', paddingBottom: 18, paddingTop: 8 },
+  contentCompact: { paddingBottom: 12, paddingHorizontal: 20, paddingTop: 0 },
+  title: { ...onboardingTitleFont, alignSelf: 'center', color: colors.charcoal, fontSize: 30, letterSpacing: -0.6, lineHeight: 35, marginBottom: 24, maxWidth: 340, textAlign: 'center' },
+  titleCompact: { fontSize: 28, lineHeight: 32, marginBottom: 16 },
+  rows: { gap: 8, maxWidth: 360, width: '100%' },
+  rowsCompact: { gap: 7 },
   rowWrap: { borderRadius: 16, ...homeRecipeCardShadow, width: '100%' },
-  row: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 16, borderWidth: 1, flexDirection: 'row', minHeight: 52, paddingHorizontal: 12 },
+  row: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 16, borderWidth: 1, flexDirection: 'row', minHeight: 64, paddingHorizontal: 16, paddingVertical: 8 },
   rowSelected: { backgroundColor: colors.coralSoft, borderColor: colors.coral },
-  iconCircle: { alignItems: 'center', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
-  rowLabel: { color: colors.charcoal, flex: 1, fontFamily: fontFamilies.semibold, fontSize: 14, fontWeight: '600', marginLeft: 12 },
+  iconCircle: { alignItems: 'center', borderRadius: 18, height: 40, justifyContent: 'center', width: 40 },
+  rowLabel: { color: colors.charcoal, flex: 1, fontFamily: fontFamilies.semibold, fontSize: 16, fontWeight: '600', marginLeft: 14 },
   check: { alignItems: 'center', height: 24, justifyContent: 'center', width: 24 },
 });

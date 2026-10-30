@@ -1,4 +1,4 @@
-import type { PrimaryGoal } from '../onboarding-v3/state/personalizedOnboarding';
+import { sanitizeProperties, type AnalyticsProperties } from './sanitize';
 
 /**
  * Event taxonomy for the V4 onboarding rebuild (Okyo_Onboarding_V4_Implementation_Plan.md
@@ -52,25 +52,12 @@ export type OnboardingV4EventName = (typeof onboardingV4Events)[keyof typeof onb
 export type OnboardingV4EventProperties = Partial<{
   screen: string;
   step: string;
-  branch: PrimaryGoal | 'not_sure';
   source: string;
   actionType: string;
   permissionResult: 'granted' | 'denied' | 'undetermined';
   errorKind: string;
   durationMs: number;
-  isMinor: boolean;
-  /** Step 06: how many entries were saved per dietary group — a count, never the group's actual values. */
-  allergyCount: number;
-  restrictionCount: number;
-  dislikeCount: number;
-  /** Step 06: whether the user explicitly chose "None of these" — never the underlying selections. */
-  selectedNoneOfThese: boolean;
 }>;
-
-const ALLOWED_PROPERTY_KEYS: ReadonlySet<string> = new Set<keyof OnboardingV4EventProperties>([
-  'screen', 'step', 'branch', 'source', 'actionType', 'permissionResult', 'errorKind', 'durationMs', 'isMinor',
-  'allergyCount', 'restrictionCount', 'dislikeCount', 'selectedNoneOfThese',
-]);
 
 /**
  * Runtime defense-in-depth alongside the compile-time allow-list type above:
@@ -82,18 +69,33 @@ const ALLOWED_PROPERTY_KEYS: ReadonlySet<string> = new Set<keyof OnboardingV4Eve
 export function sanitizeOnboardingV4EventProperties(
   properties: Record<string, unknown> = {},
 ): OnboardingV4EventProperties {
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(properties)) {
-    if (ALLOWED_PROPERTY_KEYS.has(key)) sanitized[key] = value;
+  const safe: Record<string, unknown> = {};
+  if (typeof properties.screen === 'string') {
+    const screenMap: Record<string, string> = {
+      splash: 'welcome', promise: 'welcome', dietarySafety: 'onboarding', personalInsight: 'onboarding',
+      plan: 'onboarding', scanEntry: 'scan', recipe: 'recipe', paywall: 'settings',
+    };
+    safe.screen = screenMap[properties.screen];
   }
-  return sanitized as OnboardingV4EventProperties;
+  if (typeof properties.source === 'string' && ['first_recipe', 'onboarding', 'camera', 'photos', 'description'].includes(properties.source)) {
+    safe.source = properties.source === 'first_recipe' ? 'onboarding' : properties.source;
+  }
+  if (properties.actionType === 'cook' || properties.actionType === 'customize') safe.action = properties.actionType;
+  if (properties.actionType === 'camera' || properties.actionType === 'photos' || properties.actionType === 'description') safe.source = properties.actionType;
+  if (properties.permissionResult === 'granted' || properties.permissionResult === 'denied' || properties.permissionResult === 'undetermined') {
+    safe.result = properties.permissionResult === 'undetermined' ? 'unknown' : properties.permissionResult === 'granted' ? 'success' : 'failure';
+  }
+  if (typeof properties.durationMs === 'number') safe.duration_ms = properties.durationMs;
+  if (properties.errorKind === 'network' || properties.errorKind === 'timeout' || properties.errorKind === 'unknown') safe.reason = properties.errorKind;
+  return sanitizeProperties(safe) as OnboardingV4EventProperties;
 }
 
-export async function trackOnboardingV4(eventName: OnboardingV4EventName, properties: OnboardingV4EventProperties = {}) {
+/** Single bridge into the standard typed transport; unsafe V4 values are discarded above. */
+export async function trackOnboardingV4(eventName: OnboardingV4EventName, properties: OnboardingV4EventProperties = {}): Promise<void> {
   try {
     const { track } = await import('./track');
-    track(eventName, sanitizeOnboardingV4EventProperties(properties));
+    track(eventName, sanitizeOnboardingV4EventProperties(properties) as AnalyticsProperties);
   } catch {
-    // Analytics must never interrupt the app.
+    // Analytics remains best-effort if the app module is unavailable.
   }
 }
