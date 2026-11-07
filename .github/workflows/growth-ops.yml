@@ -1,0 +1,34 @@
+name: Growth Ops Checks
+
+on:
+  push:
+    paths:
+      - 'tools/growth-ops/**'
+      - '.github/workflows/growth-ops.yml'
+  pull_request:
+    paths:
+      - 'tools/growth-ops/**'
+      - '.github/workflows/growth-ops.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test growth calculations
+        run: node --test tools/growth-ops/engine.test.mjs
+      - name: Validate browser module syntax
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          html = Path('tools/growth-ops/index.html').read_text()
+          match = re.search(r'<script type="module">(.*?)</script>', html, flags=re.S)
+          if not match:
+              raise SystemExit('Missing inline module script')
+          Path('/tmp/okyo-growth-inline.mjs').write_text(match.group(1))
+          PY
+          node --check /tmp/okyo-growth-inline.mjs
