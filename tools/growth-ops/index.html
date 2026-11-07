@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Okyo · Growth Ops</title>
+  <style>
+    :root { color-scheme: light; --cream:#FBF1E5; --ink:#292723; --muted:#79736c; --coral:#f36d96; --line:#e9e1d8; --white:#fff; --green:#2c7a61; }
+    *{box-sizing:border-box} body{margin:0;background:#fcfaf7;color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{opacity:.46;cursor:not-allowed}
+    .shell{display:flex;min-height:100vh}.side{width:238px;background:var(--cream);padding:29px 17px;border-right:1px solid #ebddcd;flex-shrink:0}
+    .brand{font-weight:850;font-size:26px;letter-spacing:-1.3px;margin:0 0 3px 13px}.tag{font-size:11px;text-transform:uppercase;letter-spacing:1.8px;color:var(--muted);margin:0 0 34px 13px}
+    nav{display:grid;gap:5px}nav button{border:0;background:transparent;text-align:left;border-radius:11px;padding:12px 14px;color:#5a554d;font-weight:630}
+    nav button.active{background:#fff;box-shadow:0 1px 3px #998a7715;color:var(--ink)} .side-foot{font-size:12px;color:#87776d;margin:35px 13px}
+    main{flex:1;min-width:0;padding:38px min(4vw,62px);max-width:1400px}
+    header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:28px}h1{margin:0;font-size:32px;letter-spacing:-1px;font-weight:760}h2{font-size:19px;letter-spacing:-.4px;margin:0 0 14px}p{margin:5px 0}.muted{color:var(--muted);font-size:13px}.caps{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);font-weight:700}
+    .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card,.panel{background:white;border:1px solid var(--line);border-radius:17px;box-shadow:0 2px 10px #50432c07}
+    .card{padding:19px}.card strong{font-size:29px;display:block;margin:11px 0 5px;letter-spacing:-.8px}
+    .grid2{display:grid;grid-template-columns:1.35fr 1fr;gap:17px;margin-top:18px}.panel{padding:22px;margin-bottom:18px}
+    .hint{padding:12px 15px;border:1px dashed #e1d6ca;border-radius:11px;background:#fffaf5;color:#6e645c;font-size:13px;margin:15px 0}
+    .form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}.form-grid label{display:block;font-size:12px;color:#6d675f;font-weight:650}
+    input,select,textarea{width:100%;margin-top:6px;background:white;border:1px solid #ddd6cf;border-radius:9px;padding:10px 11px;color:var(--ink);outline:none}
+    input:focus,select:focus,textarea:focus{border-color:var(--coral);box-shadow:0 0 0 3px #ff8bae23}textarea{min-height:78px;resize:vertical}
+    .span2{grid-column:span 2}.span3{grid-column:span 3}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.between{justify-content:space-between}
+    .btn{border:0;border-radius:10px;background:var(--ink);color:#fff;padding:10px 15px;font-size:13px;font-weight:700}
+    .btn.light{background:#fff;border:1px solid var(--line);color:var(--ink)}.btn.coral{background:var(--coral)}.btn.small{font-size:12px;padding:7px 10px}
+    .form-actions{margin-top:14px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:12px 9px;border-bottom:1px solid #eee9e3;font-size:13px;vertical-align:middle}th{font-size:11px;text-transform:uppercase;color:var(--muted);letter-spacing:.75px}tr:last-child td{border:0}
+    .scroll{overflow-x:auto}.pill{display:inline-block;background:#f4eee7;border-radius:20px;padding:3px 8px;font-size:11px;color:#70655c}.pill.ok{background:#e6f6eb;color:#25734b}.pill.warn{background:#fff1de;color:#93601c}
+    .empty{border:1px dashed var(--line);border-radius:12px;padding:26px;color:var(--muted);font-size:13px;text-align:center}.code{white-space:pre-wrap;background:#fbf7f2;border:1px solid var(--line);padding:18px;border-radius:12px;max-height:420px;overflow:auto;font:12px/1.6 ui-monospace,SFMono-Regular,monospace}
+    .line{border:0;border-top:1px solid var(--line);margin:22px 0}.toast{position:fixed;right:22px;bottom:22px;background:var(--ink);color:#fff;padding:12px 17px;border-radius:11px;box-shadow:0 7px 25px #0002;z-index:99}
+    @media(max-width:1000px){.cards{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}.form-grid{grid-template-columns:repeat(2,1fr)}.span3{grid-column:span 2}}
+    @media(max-width:660px){.shell{display:block}.side{width:100%;padding:12px;border-right:0;border-bottom:1px solid var(--line)}.brand,.tag,.side-foot{display:none}nav{display:flex;overflow-x:auto;gap:4px}nav button{white-space:nowrap;font-size:12px;padding:9px}main{padding:24px 14px}header{flex-wrap:wrap}h1{font-size:26px}.card strong{font-size:23px}.form-grid{grid-template-columns:1fr}.span2,.span3{grid-column:span 1}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side"><div class="brand">okyo<span style="color:#ff8bae">.</span></div><div class="tag">Creator growth ops</div>
+    <nav id="nav"></nav><div class="side-foot">Private, local-only workspace.<br>No automatic messages or payments.</div>
+  </aside>
+  <main>
+    <header><div><div class="caps">Founder workspace</div><h1 id="title">Overview</h1><p class="muted" id="subtitle"></p></div>
+      <label class="caps">Reporting month<input type="month" id="month" style="width:170px"></label>
+    </header>
+    <div id="panel"></div>
+  </main>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module">
+import {uid,cents,dollars,number,safeNumber,csvRows,toCsv,calculateCreatorPayout,report,hookPerformance,draftBrief} from './engine.mjs';
+const STORAGE = 'okyo-growth-ops-v1';
+const blank = () => ({creators:[],hooks:[],posts:[],briefApprovals:{},payoutApprovals:{}});
+let data;
+try {data = {...blank(),...JSON.parse(localStorage.getItem(STORAGE) || '{}')};} catch {data = blank();}
+let tab = 'Overview';
+let month = new Date().toLocaleDateString('en-CA').slice(0,7);
+const tabs = ['Overview','Creators','Videos','Hooks','Briefs','Payouts','Data'];
+const $ = (sel) => document.querySelector(sel);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const get = (obj,key) => obj.find(x=>x.id===key);
+const toast = msg => { $('#toast').innerHTML = '<div class="toast">'+esc(msg)+'</div>'; setTimeout(()=>$('#toast').innerHTML='',3100); };
+const save = () => {localStorage.setItem(STORAGE,JSON.stringify(data));};
+const changed = () => {delete data.payoutApprovals[month];save();render();};
+const formValue = (form,key) => (new FormData(form).get(key) || '').toString().trim();
+const formSelect = (label,key,options,required=true) => '<label>'+label+'<select name="'+key+'" '+(required?'required':'')+'>'+options+'</select></label>';
+const options = (items,text) => items.map(x=>'<option value="'+esc(x.id)+'">'+esc(text(x))+'</option>').join('');
+const blankTable = msg => '<div class="empty">'+msg+'</div>';
+const status = (s) => '<span class="pill '+(s==='active'||s==='posted'||s==='approved'?'ok':'')+'">'+esc(s)+'</span>';
+const monthPosts = () => data.posts.filter(p=>p.postedAt.slice(0,7)===month && p.status==='posted');
+const button = (name,action,extra='')=>'<button type="button" class="btn light small" data-action="'+action+'" '+extra+'>'+name+'</button>';
+$('#month').value=month;
+$('#month').addEventListener('change',e=>{month=e.target.value||month;render();});
+$('#nav').addEventListener('click',e=>{const el=e.target.closest('[data-tab]');if(!el)return;tab=el.dataset.tab;render();});
+function render() {
+  $('#title').textContent=tab;
+  $('#subtitle').textContent = ({Overview:'See the difference between attention and actual growth.',Creators:'Keep deals and commitments in one place.',Videos:'Log published content and verified seven-day snapshots.',Hooks:'Find the creative formats worth repeating.',Briefs:'Approve scripts before sharing them with creators.',Payouts:'Review proposed amounts. No payments are sent.',Data:'Import tracked data and back up your work.'})[tab];
+  $('#nav').innerHTML=tabs.map(t=>'<button type="button" data-tab="'+t+'" class="'+(tab===t?'active':'')+'">'+t+'</button>').join('');
+  $('#panel').innerHTML=({Overview:overview,Creators:creators,Videos:videos,Hooks:hooks,Briefs:briefs,Payouts:payouts,Data:manageData})[tab]();
+}
+function overview(){
+ const r=report(data.creators,data.posts,month), hp=hookPerformance(data.hooks,data.posts,month).slice(0,5);
+ const cards=[['Total video views',number(r.views),'Not installs'],['Attributed installs',r.installs===null?'—':number(r.installs),r.attributedPosts+' videos with attribution'],['Reported paid users',r.paid===null?'—':number(r.paid),'From manually entered attribution'],['Proposed creator cost',dollars(r.payoutCents),r.payouts.some(x=>!x.ready)?'Incomplete seven-day snapshots':'Base + measured bonuses']];
+ return '<div class="cards">'+cards.map(([a,b,c])=>'<div class="card"><div class="caps">'+esc(a)+'</div><strong>'+b+'</strong><span class="muted">'+esc(c)+'</span></div>').join('')+'</div>'+
+ '<div class="hint">Views do not prove downloads. Installs and revenue only appear when attributed data is supplied. Numbers are manually entered, not live synced to Apple, PostHog, Superwall, or TikTok.</div>'+
+ '<div class="grid2"><section class="panel"><h2>Top hooks this month</h2>'+
+ (hp.length?'<div class="scroll"><table><thead><tr><th>Hook</th><th>Posts</th><th>Views</th><th>Attributed installs</th></tr></thead><tbody>'+hp.map(x=>'<tr><td>'+esc(x.title)+'</td><td>'+number(x.attempts)+'</td><td>'+number(x.views)+'</td><td>'+(x.installs===null?'—':number(x.installs))+'</td></tr>').join('')+'</tbody></table></div>':blankTable('Add your first hook to begin testing creative formats.'))+'</section>'+
+ '<section class="panel"><h2>Campaign pulse</h2><p><b>'+number(r.creatorCount)+'</b> active creators</p><p><b>'+number(r.posts)+'</b> published videos in '+esc(month)+'</p><p><b>'+(r.costPerInstallCents===null?'—':dollars(r.costPerInstallCents))+'</b> provisional cost per attributed install</p><hr class="line"><p class="muted">Start with 2–3 creators. Run a small test before scaling. Weekly reporting and approvals are manual in V1.</p></section></div>';
+}
+function creators() {
+ return '<section class="panel"><h2>Add a creator and their deal</h2>'+
+ '<form id="creator-form"><div class="form-grid">'+
+ '<label>Name<input name="name" maxlength="80" required placeholder="Creator name"></label>'+
+ '<label>Handle<input name="handle" maxlength="80" required placeholder="@handle"></label>'+
+ '<label>Platform<select name="platform"><option>TikTok</option><option>Instagram</option><option>YouTube</option><option>Multi-platform</option></select></label>'+
+ '<label>Monthly base ($)<input name="base" type="number" min="0" max="1000000" step=".01" value="0" required></label>'+
+ '<label>Bonus per 100k seven-day views ($)<input name="bonus" type="number" min="0" max="1000000" step=".01" value="0" required></label>'+
+ '<label>Seven-day views cap per post<input name="cap" type="number" min="1" step="1" value="1000000" required></label>'+
+ '<label>Posts per month<input name="target" type="number" min="0" step="1" value="8" required></label>'+
+ '<label>Creator status<select name="status"><option value="active">active</option><option value="paused">paused</option></select></label>'+
+ '</div><div class="form-actions"><button class="btn">Add creator</button></div></form></section>'+
+ '<section class="panel"><h2>Creator roster</h2>'+(data.creators.length?'<div class="scroll"><table><thead><tr><th>Creator</th><th>Platform</th><th>Agreement</th><th>Target</th><th>Status</th><th></th></tr></thead><tbody>'+
+ data.creators.map(c=>'<tr><td><b>'+esc(c.name)+'</b><div class="muted">'+esc(c.handle)+'</div></td><td>'+esc(c.platform)+'</td><td>'+dollars(c.monthlyBaseCents)+'/mo + '+dollars(c.bonusPer100kCents)+'/100k views</td><td>'+number(c.postsPerMonth)+'</td><td>'+status(c.status)+'</td><td>'+button(c.status==='active'?'Pause':'Activate','toggle-creator','data-id="'+esc(c.id)+'"')+'</td></tr>').join('')+'</tbody></table></div>':blankTable('No creators yet. Add your first creator above.'))+'</section>';
+}
+function hooks() {
+ const hp=hookPerformance(data.hooks,data.posts,month);
+ return '<section class="panel"><h2>Create a video hook</h2><form id="hook-form"><div class="form-grid"><label>Opening line / hook<input name="title" maxlength="180" required placeholder="I tried making my $22 takeout at home..."></label><label class="span2">Creative angle<input name="angle" maxlength="300" placeholder="Reaction + real in-app recipe demo"></label></div><div class="form-actions"><button class="btn">Add hook</button></div></form></section>'+
+ '<section class="panel"><h2>Hook results in '+esc(month)+'</h2><div class="hint">An experiment with at least five attempts and no video reaching 10k views may be a candidate to retire—not an automatic decision.</div>'+
+ (hp.length?'<div class="scroll"><table><thead><tr><th>Hook</th><th>Attempts</th><th>Avg views</th><th>Total views</th><th>Status</th></tr></thead><tbody>'+hp.map(h=>'<tr><td><b>'+esc(h.title)+'</b><div class="muted">'+esc(h.angle)+'</div></td><td>'+number(h.attempts)+'</td><td>'+number(h.averageViews)+'</td><td>'+number(h.views)+'</td><td>'+((h.attempts>=5&&h.averageViews<10000)?'<span class="pill warn">Review</span>':'<span class="pill">Testing</span>')+'</td></tr>').join('')+'</tbody></table></div>':blankTable('Add a hook, then attach it to published videos to measure performance.'))+'</section>';
+}
+function videos(){
+ const co=options(data.creators,c=>c.name+' ('+c.handle+')');
+ const ho='<option value="">No hook</option>'+options(data.hooks,h=>h.title);
+ const rows=[...monthPosts()].sort((a,b)=>b.postedAt.localeCompare(a.postedAt));
+ return '<section class="panel"><h2>Log a published video</h2><p class="muted">For payout bonuses, enter the seven-day view snapshot after seven days. Do not use current lifetime views as a substitute.</p>'+
+ (data.creators.length?'<form id="post-form"><div class="form-grid">'+
+ formSelect('Creator','creatorId',co)+formSelect('Hook','hookId',ho,false)+
+ '<label>Publish date<input name="postedAt" type="date" required value="'+esc(new Date().toLocaleDateString('en-CA'))+'"></label>'+
+ '<label class="span2">Public video URL<input name="url" type="url" maxlength="500" required placeholder="https://..."></label>'+
+ '<label>Total views now<input name="views" type="number" min="0" step="1" value="0" required></label>'+
+ '<label>Views at day 7 (leave blank until ready)<input name="views7d" type="number" min="0" step="1" placeholder="Not measured yet"></label>'+
+ '<label>Likes<input name="likes" type="number" min="0" step="1" value="0"></label>'+
+ '<label>Attributed installs (optional)<input name="installs" type="number" min="0" step="1" placeholder="Not known"></label>'+
+ '<label>Attributed trials (optional)<input name="trials" type="number" min="0" step="1" placeholder="Not known"></label>'+
+ '<label>Attributed paid users (optional)<input name="paid" type="number" min="0" step="1" placeholder="Not known"></label>'+
+ '<label>Attributed revenue ($, optional)<input name="revenue" type="number" min="0" step=".01" placeholder="Not known"></label>'+
+ '</div><div class="form-actions"><button class="btn">Save video</button></div></form>':blankTable('Add a creator before logging videos.'))+'</section>'+
+ '<section class="panel"><h2>Videos posted this month</h2>'+(rows.length?'<div class="scroll"><table><thead><tr><th>Date</th><th>Creator</th><th>Video</th><th>Views</th><th>Day-7 views</th><th>Installs</th></tr></thead><tbody>'+
+ rows.map(p=>'<tr><td>'+esc(p.postedAt)+'</td><td>'+esc(get(data.creators,p.creatorId)?.name || 'Unknown')+'</td><td><a target="_blank" rel="noopener noreferrer" href="'+esc(p.url)+'">Open video</a></td><td>'+number(p.views)+'</td><td>'+(p.views7d===''?'Pending':number(p.views7d))+'</td><td>'+(p.installs===''?'—':number(p.installs))+'</td></tr>').join('')+'</tbody></table></div>':blankTable('No posted videos in this reporting month.'))+'</section>';
+}
+function briefs(){
+ const co=options(data.creators.filter(c=>c.status==='active'),c=>c.name);
+ const ho=options(data.hooks,h=>h.title);
+ const preview=data._briefDraft || null;
+ const approved=preview ? data.briefApprovals[preview.key]===true : false;
+ return '<section class="panel"><h2>Generate a creator brief</h2>'+
+ (co&&ho?'<form id="brief-form"><div class="form-grid">'+formSelect('Creator','creatorId',co)+formSelect('Hook','hookId',ho)+'<label>Brief date<input name="date" type="date" required value="'+esc(new Date().toLocaleDateString('en-CA'))+'"></label></div><div class="form-actions"><button class="btn">Draft brief</button></div></form>':blankTable('Add an active creator and at least one hook first.'))+'</section>'+
+ (preview?'<section class="panel"><h2>Brief preview '+(approved?status('approved'):status('draft'))+'</h2><div class="code">'+esc(preview.text)+'</div><div class="row form-actions">'+
+ (approved?'<button class="btn" data-action="copy-brief">Copy approved brief</button>':'<button class="btn coral" data-action="approve-brief">Approve brief</button>')+
+ '<span class="muted">No creator is contacted automatically.</span></div></section>':'');
+}
+function payouts(){
+ const r=report(data.creators,data.posts,month);
+ const approval=data.payoutApprovals[month]===true;
+ const canApprove=r.payouts.length>0 && r.payouts.every(p=>p.ready);
+ return '<section class="panel"><div class="row between"><div><h2>Creator payout review — '+esc(month)+'</h2><p class="muted">Monthly base plus per-video seven-day view bonuses, prorated per 100k and capped per video.</p></div>'+status(approval?'approved':'draft')+'</div>'+
+ '<div class="hint">These are proposed contractual amounts—not payroll or invoices. This MVP assumes the full base for each currently active creator. Review contracts, dates, caps, and completed posts before approval. Incomplete seven-day snapshots block final approval.</div>'+
+ (r.payouts.length?'<div class="scroll"><table><thead><tr><th>Creator</th><th>Posts / target</th><th>Base</th><th>Bonus</th><th>Proposed total</th><th>Data</th></tr></thead><tbody>'+r.payouts.map(p=>'<tr><td>'+esc(p.creatorName)+'</td><td>'+number(p.posts)+' / '+number(p.expectedPosts)+'</td><td>'+dollars(p.baseCents)+'</td><td>'+dollars(p.bonusCents)+'</td><td><b>'+dollars(p.totalCents)+'</b></td><td>'+(p.ready?status('ready'):'<span class="pill warn">'+p.incomplete+' snapshot(s) missing</span>')+'</td></tr>').join('')+'</tbody></table></div>':blankTable('No active creators on the roster.'))+
+ '<hr class="line"><div class="row between"><h2>Proposed total: '+dollars(r.payoutCents)+'</h2><div class="row">'+(approval?'<button class="btn" data-action="export-payouts">Export approved CSV</button>':'<button class="btn coral" data-action="approve-payouts" '+(canApprove?'':'disabled')+'>Approve payout list</button>')+'</div></div>'+
+ '<p class="muted">Approval is recorded locally. No money moves, and no automated messages are sent.</p></section>';
+}
+function manageData(){
+ return '<section class="panel"><h2>Import performance CSV</h2><p class="muted">Only posts from existing creators can be imported. Duplicates with the same video URL and creator are updated. Imports are all-or-nothing.</p>'+
+ '<p class="muted"><b>Headers:</b> creator_handle, hook_title, posted_at, url, views, views_7d, likes, installs, trials, paid, revenue_usd, status</p>'+
+ '<div class="row"><input id="csv-file" type="file" accept=".csv,text/csv" style="max-width:350px"><button class="btn light" data-action="template-csv">Download CSV template</button></div>'+
+ '<div class="hint">For attribution, only enter installs/trials/revenue verified by trackable sources. Leave unknown values blank. Importing an app-wide total as a creator-specific number would be misleading.</div></section>'+
+ '<section class="panel"><h2>Backup and restore</h2><p class="muted">All information stays in this browser, unless you choose to export it. Clearing site data can erase it. Create a regular backup.</p>'+
+ '<div class="row"><button class="btn" data-action="export-json">Export JSON backup</button><label style="max-width:290px">Import JSON backup<input id="json-file" type="file" accept=".json,application/json"></label></div></section>'+
+ '<section class="panel"><h2>Not connected yet</h2><p>Automatic data from Apple App Store Connect, PostHog, Superwall, RevenueCat, TikTok, Instagram, YouTube, Slack, and ViewTrack is <b>not configured</b>. This is a working local first version with manual entry/import, not a live analytics integration.</p><p class="muted">Never upload secrets, creator contracts or private identifiers into a public repository. This page makes no network requests.</p></section>';
+}
+function download(filename,body,type){
+ const blob=new Blob([body],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');
+ a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function importPosts(raw){
+ const rows=csvRows(raw);
+ const required=['creator_handle','posted_at','url','views','views_7d','likes','installs','trials','paid','revenue_usd','status','hook_title'];
+ const heading=raw.replace(/^\uFEFF/,'').split(/\r?\n/)[0]||'';
+ for(const name of required)if(!csvRows(heading+'\n')[0] && !heading.split(',').map(x=>x.trim()).includes(name))throw Error('Missing column '+name);
+ const parsed=rows.map((r,i)=>{
+   const line=i+2; const creator=data.creators.find(c=>c.handle.toLowerCase()===r.creator_handle.toLowerCase());
+   if(!creator)throw Error('Row '+line+': unknown creator handle '+r.creator_handle);
+   const hook=r.hook_title ? data.hooks.find(h=>h.title.toLowerCase()===r.hook_title.toLowerCase()):null;
+   if(r.hook_title&&!hook)throw Error('Row '+line+': unknown hook '+r.hook_title);
+   if(!/^\d{4}-\d\d-\d\d$/.test(r.posted_at) || Number.isNaN(Date.parse(r.posted_at)))throw Error('Row '+line+': invalid post date.');
+   let url;try{url=new URL(r.url);if(!['https:','http:'].includes(url.protocol))throw Error();}catch{throw Error('Row '+line+': invalid video URL.');}
+   const num=(key)=>{if(r[key]==='')return '';if(!/^\d+(\.\d+)?$/.test(r[key]))throw Error('Row '+line+': invalid '+key);return Number(r[key]);};
+   const value={id:uid(),creatorId:creator.id,hookId:hook?.id||'',postedAt:r.posted_at,url:r.url,
+     views:num('views')||0,views7d:num('views_7d'),likes:num('likes')||0,installs:num('installs'),
+     trials:num('trials'),paid:num('paid'),revenueCents:r.revenue_usd===''?'':cents(num('revenue_usd')),status:r.status || 'posted'};
+   if(!['posted','draft'].includes(value.status))throw Error('Row '+line+': invalid status.');
+   return value;
+ });
+ const updated=[...data.posts];
+ for(const p of parsed){const existing=updated.findIndex(x=>x.creatorId===p.creatorId&&x.url===p.url);if(existing>=0){p.id=updated[existing].id;updated[existing]=p;}else updated.push(p);}
+ data.posts=updated;data.payoutApprovals={};save();render();toast('Imported '+parsed.length+' video rows.');
+}
+document.addEventListener('submit',e=>{
+ const form=e.target;if(!form.id)return;e.preventDefault();
+ try{
+ if(form.id==='creator-form'){
+  const handle=formValue(form,'handle').replace(/^@?/,'@');if(data.creators.some(c=>c.handle.toLowerCase()===handle.toLowerCase()))throw Error('Creator handle already exists.');
+  data.creators.push({id:uid(),name:formValue(form,'name'),handle,platform:formValue(form,'platform'),
+   monthlyBaseCents:cents(formValue(form,'base')),bonusPer100kCents:cents(formValue(form,'bonus')),
+   bonusCapViews:safeNumber(formValue(form,'cap')),postsPerMonth:safeNumber(formValue(form,'target')),status:formValue(form,'status')});
+  changed();toast('Creator added.');
+ }else if(form.id==='hook-form'){
+  const title=formValue(form,'title');if(data.hooks.some(h=>h.title.toLowerCase()===title.toLowerCase()))throw Error('Hook already exists.');
+  data.hooks.push({id:uid(),title,angle:formValue(form,'angle')});changed();toast('Hook added.');
+ }else if(form.id==='post-form'){
+  const url=formValue(form,'url');const creatorId=formValue(form,'creatorId');
+  if(data.posts.some(p=>p.creatorId===creatorId&&p.url===url))throw Error('Video already exists. Use CSV import to update it.');
+  data.posts.push({id:uid(),creatorId,hookId:formValue(form,'hookId'),postedAt:formValue(form,'postedAt'),url,
+   views:safeNumber(formValue(form,'views')),views7d:formValue(form,'views7d')===''?'':safeNumber(formValue(form,'views7d')),
+   likes:safeNumber(formValue(form,'likes')),installs:formValue(form,'installs')===''?'':safeNumber(formValue(form,'installs')),
+   trials:formValue(form,'trials')===''?'':safeNumber(formValue(form,'trials')),
+   paid:formValue(form,'paid')===''?'':safeNumber(formValue(form,'paid')),
+   revenueCents:formValue(form,'revenue')===''?'':cents(formValue(form,'revenue')),status:'posted'});
+  changed();toast('Video logged.');
+ }else if(form.id==='brief-form'){
+  const creator=get(data.creators,formValue(form,'creatorId')),hook=get(data.hooks,formValue(form,'hookId')),date=formValue(form,'date');
+  if(!creator||!hook)throw Error('Select a creator and a hook.');
+  const key=[creator.id,hook.id,date].join(':');
+  data._briefDraft={key,text:draftBrief(creator,hook,date)};save();render();
+ }
+ }catch(error){toast(error.message||'Could not save.');}
+});
+document.addEventListener('click',async e=>{
+ const el=e.target.closest('[data-action]');if(!el)return;
+ const action=el.dataset.action;
+ if(action==='toggle-creator'){const c=get(data.creators,el.dataset.id);if(c){c.status=c.status==='active'?'paused':'active';changed();}}
+ if(action==='approve-brief'&&data._briefDraft){data.briefApprovals[data._briefDraft.key]=true;save();render();toast('Brief approved.');}
+ if(action==='copy-brief'&&data._briefDraft&&data.briefApprovals[data._briefDraft.key]){
+  try{await navigator.clipboard.writeText(data._briefDraft.text);toast('Approved brief copied.');}catch{toast('Clipboard blocked; select and copy the preview.');}
+ }
+ if(action==='approve-payouts'){
+  const r=report(data.creators,data.posts,month);
+  if(r.payouts.length&&r.payouts.every(p=>p.ready)){data.payoutApprovals[month]=true;save();render();toast('Payout list approved locally.');}
+ }
+ if(action==='export-payouts'&&data.payoutApprovals[month]){
+  const r=report(data.creators,data.posts,month);
+  download('okyo-payouts-'+month+'.csv',toCsv(r.payouts.map(p=>({month,creator:p.creatorName,posts:p.posts,base_usd:(p.baseCents/100).toFixed(2),
+    bonus_usd:(p.bonusCents/100).toFixed(2),total_usd:(p.totalCents/100).toFixed(2),status:'approved_proposal'})),
+    ['month','creator','posts','base_usd','bonus_usd','total_usd','status']),'text/csv');
+ }
+ if(action==='export-json')download('okyo-growth-backup.json',JSON.stringify(data,null,2),'application/json');
+ if(action==='template-csv')download('okyo-videos-template.csv',toCsv([{creator_handle:'@creator',hook_title:'',posted_at:'2026-11-07',url:'https://example.com/video',
+   views:'1000',views_7d:'',likes:'40',installs:'',trials:'',paid:'',revenue_usd:'',status:'posted'}],
+   ['creator_handle','hook_title','posted_at','url','views','views_7d','likes','installs','trials','paid','revenue_usd','status']),'text/csv');
+});
+document.addEventListener('change',async e=>{
+ const input=e.target;if(input.id==='csv-file'&&input.files?.[0]){
+  try{await importPosts(await input.files[0].text());}catch(err){toast(err.message||'Invalid CSV.');}
+  input.value='';
+ }
+ if(input.id==='json-file'&&input.files?.[0]){
+  try{
+   const obj=JSON.parse(await input.files[0].text());
+   if(!obj||!Array.isArray(obj.creators)||!Array.isArray(obj.hooks)||!Array.isArray(obj.posts))throw Error('Not a valid Okyo Growth Ops backup.');
+   if(!confirm('Replace all local data with this backup?'))return;
+   data={...blank(),...obj};save();render();toast('Backup restored.');
+  }catch(err){toast(err.message||'Cannot restore backup.');}input.value='';
+ }
+});
+render();
+</script>
+</body>
+</html>
