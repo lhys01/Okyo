@@ -165,7 +165,7 @@ function importPosts(raw){
  const rows=csvRows(raw);
  const required=['creator_handle','posted_at','url','views','views_7d','likes','installs','trials','paid','revenue_usd','status','hook_title'];
  const heading=raw.replace(/^\uFEFF/,'').split(/\r?\n/)[0]||'';
- for(const name of required)if(!csvRows(heading+'\n')[0] && !heading.split(',').map(x=>x.trim()).includes(name))throw Error('Missing column '+name);
+ for(const name of required)if(!heading.split(',').map(x=>x.trim()).includes(name))throw Error('Missing column '+name);
  const parsed=rows.map((r,i)=>{
    const line=i+2; const creator=data.creators.find(c=>c.handle.toLowerCase()===r.creator_handle.toLowerCase());
    if(!creator)throw Error('Row '+line+': unknown creator handle '+r.creator_handle);
@@ -198,6 +198,7 @@ document.addEventListener('submit',e=>{
   data.hooks.push({id:uid(),title,angle:formValue(form,'angle')});changed();toast('Hook added.');
  }else if(form.id==='post-form'){
   const url=formValue(form,'url');const creatorId=formValue(form,'creatorId');
+  if(!/^https?:\/\//i.test(url))throw Error('Video URL must begin with http:// or https://.');
   if(data.posts.some(p=>p.creatorId===creatorId&&p.url===url))throw Error('Video already exists. Use CSV import to update it.');
   data.posts.push({id:uid(),creatorId,hookId:formValue(form,'hookId'),postedAt:formValue(form,'postedAt'),url,
    views:safeNumber(formValue(form,'views')),views7d:formValue(form,'views7d')===''?'':safeNumber(formValue(form,'views7d')),
